@@ -1,0 +1,26 @@
+name: Documentation improvement
+description: Suggest a focused documentation fix or addition
+title: "docs: "
+labels: ["type: docs", "needs triage"]
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Page or section
+      description: Which document needs improvement?
+      placeholder: README.md, docs/acl.md, CONTRIBUTING.md, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is unclear, missing, or wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-change
+    attributes:
+      label: Suggested change
+      description: Optional. Draft wording or examples are welcome.
+    validations:
+      required: false
