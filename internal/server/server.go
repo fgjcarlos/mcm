@@ -36,7 +36,7 @@ type aclRuleRequest struct {
 	Description string         `json:"description"`
 }
 
-type errorResponse struct {
+type aclErrorResponse struct {
 	Error   string   `json:"error"`
 	Details []string `json:"details,omitempty"`
 }
@@ -48,7 +48,7 @@ func (api *aclAPI) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 func (api *aclAPI) handleListRules(w http.ResponseWriter, r *http.Request) {
 	rules, err := api.store.ListRules(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "failed to list acl rules"})
+		writeJSON(w, http.StatusInternalServerError, aclErrorResponse{Error: "failed to list acl rules"})
 		return
 	}
 
@@ -74,7 +74,7 @@ func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "acl rule id is required"})
+		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: "acl rule id is required"})
 		return
 	}
 
@@ -96,7 +96,7 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "acl rule id is required"})
+		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: "acl rule id is required"})
 		return
 	}
 
@@ -136,22 +136,13 @@ func writeAPIError(w http.ResponseWriter, err error) {
 	var validationErr *acl.ValidationError
 	switch {
 	case errors.As(err, &validationErr):
-		writeJSON(w, http.StatusBadRequest, errorResponse{
+		writeJSON(w, http.StatusBadRequest, aclErrorResponse{
 			Error:   "acl validation failed",
 			Details: validationErr.Problems,
 		})
 	case errors.Is(err, acl.ErrRuleNotFound):
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "acl rule not found"})
+		writeJSON(w, http.StatusNotFound, aclErrorResponse{Error: "acl rule not found"})
 	default:
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: err.Error()})
 	}
 }

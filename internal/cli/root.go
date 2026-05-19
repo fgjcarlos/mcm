@@ -1,17 +1,9 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 
-	"github.com/fgjcarlos/mcm/internal/acl"
-	"github.com/fgjcarlos/mcm/internal/config"
-	"github.com/fgjcarlos/mcm/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -38,51 +30,6 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 		newVersionCommand(version),
 	)
 
-	return cmd
-}
-
-func newServerCommand() *cobra.Command {
-	var configPath string
-
-	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "Start the MCM API and web UI server",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(configPath)
-			if err != nil {
-				return err
-			}
-
-			addr := fmt.Sprintf("%s:%d", cfg.HTTP.BindAddress, cfg.HTTP.Port)
-			srv := &http.Server{
-				Addr:    addr,
-				Handler: server.NewHandler(acl.NewMemoryStore()),
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			errCh := make(chan error, 1)
-			go func() {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "mcm server listening on http://%s\n", addr)
-				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					errCh <- err
-					return
-				}
-				errCh <- nil
-			}()
-
-			select {
-			case err := <-errCh:
-				return err
-			case <-ctx.Done():
-				return srv.Shutdown(context.Background())
-			}
-		},
-	}
-
-	addConfigFlag(cmd, &configPath)
 	return cmd
 }
 
