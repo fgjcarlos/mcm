@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use MCM in research, documentation, talks, articles, or public deployments, please cite it as below."
+title: "Mosquitto Control Manager"
+authors:
+  - family-names: "Fontán"
+    given-names: "Carlos"
+repository-code: "https://github.com/fgjcarlos/mcm"
+license: "Apache-2.0"
+date-released: 2026-05-19

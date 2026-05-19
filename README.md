@@ -229,12 +229,11 @@ Good early contributions will include:
 
 ## License
 
-License to be decided before the first public release.
+MCM is licensed under the [Apache License 2.0](./LICENSE).
 
-Recommended options:
+Please preserve copyright, license, and attribution notices when redistributing or modifying the project. See [NOTICE](./NOTICE).
 
-- **Apache-2.0** if permissive use and future commercial adoption are important.
-- **AGPL-3.0** if protecting open source network-service usage is more important.
+If you use MCM in research, documentation, talks, articles, commercial case studies, or public deployments, citation is appreciated. See [CITATION.cff](./CITATION.cff).
 
 ---
 
