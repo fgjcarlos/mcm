@@ -208,18 +208,35 @@ The local Mosquitto configuration lives in [`deploy/mosquitto/config/mosquitto.c
 
 > This configuration allows anonymous access for local development only. Do not use it as-is in production.
 
+### MCM CLI development
+
+The initial Go CLI skeleton is available under [`cmd/mcm`](./cmd/mcm).
+
+```bash
+# Show available commands
+go run ./cmd/mcm --help
+
+# Print build/version information
+go run ./cmd/mcm version
+
+# Run tests
+go test ./...
+# or
+make test
+
+# Build the CLI binary
+make build
+```
+
 ### Future MCM service
 
-The Compose stack currently starts Mosquitto only because the backend skeleton has not been created yet. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).
+The Compose stack currently starts Mosquitto only because the backend service is still a skeleton. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).
 
-Expected future workflow once the backend and frontend exist:
+Expected future workflow once the backend server and frontend exist:
 
 ```bash
 # Start full development stack
 make dev
-
-# Run backend tests
-make test
 
 # Build frontend + backend
 make build

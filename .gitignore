@@ -1,0 +1,6 @@
+# Build outputs
+bin/
+
+# Go test artifacts
+*.test
+coverage.out
