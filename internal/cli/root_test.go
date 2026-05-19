@@ -77,7 +77,6 @@ func TestConfigHelpListsSubcommands(t *testing.T) {
 
 func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 	tests := [][]string{
-		{"server"},
 		{"doctor"},
 		{"status"},
 	}

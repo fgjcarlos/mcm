@@ -19,6 +19,9 @@ func TestParseValidConfig(t *testing.T) {
 	if cfg.HTTP.Port != 8080 {
 		t.Fatalf("unexpected http port: %d", cfg.HTTP.Port)
 	}
+	if cfg.Auth.TokenTTL != "24h" {
+		t.Fatalf("unexpected auth token ttl: %q", cfg.Auth.TokenTTL)
+	}
 }
 
 func TestParseMissingRequiredMosquittoSettings(t *testing.T) {
@@ -28,6 +31,12 @@ http:
   port: 8080
 database:
   path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: short
+  token_ttl: invalid
+  bootstrap_admin:
+    username: admin
+    password: ""
 mosquitto:
   host: ""
   port: 1883
@@ -43,6 +52,9 @@ logging:
 	}
 
 	for _, want := range []string{
+		"auth.jwt_secret must be at least 32 characters",
+		"auth.token_ttl must be a valid duration",
+		"auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty",
 		"mosquitto.host is required",
 		"mosquitto.username and mosquitto.password must both be set or both be empty",
 	} {
@@ -59,6 +71,12 @@ http:
   port: 0
 database:
   path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
 mosquitto:
   host: 127.0.0.1
   port: 70000

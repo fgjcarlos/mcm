@@ -33,10 +33,6 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 	return cmd
 }
 
-func newServerCommand() *cobra.Command {
-	return placeholderCommand("server", "Start the MCM API and web UI server")
-}
-
 func newDoctorCommand() *cobra.Command {
 	return placeholderCommand("doctor", "Run diagnostics against MCM and Mosquitto")
 }
