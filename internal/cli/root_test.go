@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fgjcarlos/mcm/internal/config"
 )
 
 func executeForTest(args ...string) (string, error) {
@@ -78,7 +82,6 @@ func TestConfigHelpListsSubcommands(t *testing.T) {
 func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 	tests := [][]string{
 		{"server"},
-		{"doctor"},
 		{"status"},
 	}
 
@@ -89,6 +92,76 @@ func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 		}
 		if !strings.Contains(output, "not implemented yet") {
 			t.Fatalf("%v output missing placeholder message; got:\n%s", args, output)
+		}
+	}
+}
+
+func TestDoctorReportsReachableBroker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "doctor.yaml")
+	if err := os.WriteFile(path, []byte(config.ExampleYAML()), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	cmd := newDoctorCommandWithCheck(func(ctx context.Context, cfg config.MosquittoConfig) error {
+		if cfg.Host != "127.0.0.1" {
+			t.Fatalf("unexpected host: %q", cfg.Host)
+		}
+		if cfg.Port != 1883 {
+			t.Fatalf("unexpected port: %d", cfg.Port)
+		}
+		return nil
+	})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--config", path})
+
+	if _, err := cmd.ExecuteC(); err != nil {
+		t.Fatalf("doctor command returned error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"Checking Mosquitto connectivity at 127.0.0.1:1883...",
+		"Mosquitto: reachable (127.0.0.1:1883)",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("doctor output missing %q; got:\n%s", want, output)
+		}
+	}
+}
+
+func TestDoctorReportsUnreachableBroker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "doctor.yaml")
+	if err := os.WriteFile(path, []byte(config.ExampleYAML()), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	cmd := newDoctorCommandWithCheck(func(context.Context, config.MosquittoConfig) error {
+		return errors.New("dial tcp 127.0.0.1:1883: connect: connection refused")
+	})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--config", path})
+
+	_, err := cmd.ExecuteC()
+	if err == nil {
+		t.Fatal("doctor command succeeded, want error")
+	}
+	if err.Error() != "mosquitto broker is unreachable" {
+		t.Fatalf("unexpected doctor error: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"Checking Mosquitto connectivity at 127.0.0.1:1883...",
+		"Mosquitto: unreachable (127.0.0.1:1883): dial tcp 127.0.0.1:1883: connect: connection refused",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("doctor output missing %q; got:\n%s", want, output)
 		}
 	}
 }
