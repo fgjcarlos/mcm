@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and support
+    url: https://github.com/fgjcarlos/mcm
+    about: Please avoid opening vague support issues. Open an issue only when it is actionable and follows a template.
