@@ -60,7 +60,6 @@ func TestRootHelpListsInitialCommands(t *testing.T) {
 
 func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 	tests := [][]string{
-		{"server"},
 		{"doctor"},
 		{"status"},
 		{"config", "validate"},
@@ -73,6 +72,24 @@ func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 		}
 		if !strings.Contains(output, "not implemented yet") {
 			t.Fatalf("%v output missing placeholder message; got:\n%s", args, output)
+		}
+	}
+}
+
+func TestServerHelpListsRuntimeFlags(t *testing.T) {
+	output, err := executeForTest("server", "--help")
+	if err != nil {
+		t.Fatalf("server help returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"--listen-addr",
+		"--broker-url",
+		":8080",
+		"tcp://localhost:1883",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("server help missing %q; got:\n%s", want, output)
 		}
 	}
 }
