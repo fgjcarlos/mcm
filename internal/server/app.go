@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -21,9 +22,10 @@ const currentUserContextKey contextKey = "current_user"
 
 // App wires the HTTP API to storage and auth dependencies.
 type App struct {
-	store  *storage.Store
-	tokens *auth.TokenManager
-	now    func() time.Time
+	store    *storage.Store
+	aclStore acl.Store
+	tokens   *auth.TokenManager
+	now      func() time.Time
 }
 
 // New creates an HTTP app configured for the auth MVP.
@@ -34,9 +36,10 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 	}
 
 	return &App{
-		store:  store,
-		tokens: auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
-		now:    time.Now,
+		store:    store,
+		aclStore: acl.NewMemoryStore(),
+		tokens:   auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
+		now:      time.Now,
 	}, nil
 }
 
@@ -71,7 +74,14 @@ func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
 
 // Handler returns the configured HTTP handler tree.
 func (a *App) Handler() http.Handler {
+	aclAPI := &aclAPI{store: a.aclStore}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
+	mux.HandleFunc("GET /api/v1/acls", aclAPI.handleListRules)
+	mux.HandleFunc("POST /api/v1/acls", aclAPI.handleCreateRule)
+	mux.HandleFunc("PUT /api/v1/acls/{id}", aclAPI.handleUpdateRule)
+	mux.HandleFunc("DELETE /api/v1/acls/{id}", aclAPI.handleDeleteRule)
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))
 	mux.Handle("GET /api/v1/admin-users", a.requireAuth(http.HandlerFunc(a.handleListAdminUsers)))

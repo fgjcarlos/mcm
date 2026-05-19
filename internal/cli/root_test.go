@@ -92,6 +92,22 @@ func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 	}
 }
 
+func TestServerHelpIncludesConfigFlag(t *testing.T) {
+	output, err := executeForTest("server", "--help")
+	if err != nil {
+		t.Fatalf("server help returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"Start the MCM API and web UI server",
+		"--config",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("server help output missing %q; got:\n%s", want, output)
+		}
+	}
+}
+
 func TestConfigInitWritesExampleConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mcm.yaml")
 
