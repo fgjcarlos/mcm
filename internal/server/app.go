@@ -308,7 +308,7 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		claims, err := a.tokens.Verify(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
+		claims, err := a.tokens.VerifyAt(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), a.now().UTC())
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 			return
