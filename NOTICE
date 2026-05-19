@@ -1,0 +1,9 @@
+Mosquitto Control Manager (MCM)
+Copyright 2026 Carlos Fontán and contributors.
+
+MCM is an open source control plane for Eclipse Mosquitto.
+
+This product includes software developed by the MCM project.
+Project repository: https://github.com/fgjcarlos/mcm
+
+Eclipse Mosquitto is a trademark/project of the Eclipse Foundation. MCM is not affiliated with, endorsed by, or sponsored by the Eclipse Foundation.
