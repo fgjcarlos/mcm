@@ -7,7 +7,7 @@ services:
       - "1883:1883"
       - "9001:9001"
     volumes:
-      - ./deploy/mosquitto/config:/mosquitto/config
+      - ./deploy/mosquitto/config:/mosquitto/config:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
     healthcheck:
