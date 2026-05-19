@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +42,7 @@ func newServerCommand() *cobra.Command {
 }
 
 func newDoctorCommand() *cobra.Command {
-	return placeholderCommand("doctor", "Run diagnostics against MCM and Mosquitto")
+	return newDoctorCommandWithCheck(diagnostics.CheckMosquittoConnection)
 }
 
 func newStatusCommand() *cobra.Command {
@@ -66,6 +70,42 @@ func placeholderCommand(use string, short string) *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newDoctorCommandWithCheck(check func(context.Context, config.MosquittoConfig) error) *cobra.Command {
+	var configPath string
+
+	cmd := &cobra.Command{
+		Use:          "doctor",
+		Short:        "Run diagnostics against MCM and Mosquitto",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+
+			out := cmd.OutOrStdout()
+			address := fmt.Sprintf("%s:%d", cfg.Mosquitto.Host, cfg.Mosquitto.Port)
+			_, _ = fmt.Fprintf(out, "Checking Mosquitto connectivity at %s...\n", address)
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+
+			if err := check(ctx, cfg.Mosquitto); err != nil {
+				_, _ = fmt.Fprintf(out, "Mosquitto: unreachable (%s): %v\n", address, err)
+				return fmt.Errorf("mosquitto broker is unreachable")
+			}
+
+			_, _ = fmt.Fprintf(out, "Mosquitto: reachable (%s)\n", address)
+			return nil
+		},
+	}
+
+	addConfigFlag(cmd, &configPath)
+
+	return cmd
 }
 
 func printVersion(out io.Writer, version VersionInfo) {

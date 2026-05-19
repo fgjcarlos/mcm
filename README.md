@@ -204,6 +204,15 @@ The development broker exposes:
 - MQTT TCP: `localhost:1883`
 - MQTT over WebSocket: `localhost:9001`
 
+Manual verification for the initial `mcm doctor` broker check:
+
+```bash
+go run ./cmd/mcm config init --config ./tmp/mcm.yaml
+go run ./cmd/mcm doctor --config ./tmp/mcm.yaml
+```
+
+With `docker compose up -d` running, the command should report `Mosquitto: reachable (127.0.0.1:1883)` and exit `0`. After stopping the broker, it should report `Mosquitto: unreachable (...)` and exit non-zero.
+
 The local Mosquitto configuration lives in [`deploy/mosquitto/config/mosquitto.conf`](./deploy/mosquitto/config/mosquitto.conf).
 
 > This configuration allows anonymous access for local development only. Do not use it as-is in production.
