@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,6 +25,7 @@ var validLogLevels = map[string]struct{}{
 type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
 	Database  DatabaseConfig  `yaml:"database"`
+	Auth      AuthConfig      `yaml:"auth"`
 	Mosquitto MosquittoConfig `yaml:"mosquitto"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
@@ -37,6 +39,19 @@ type HTTPConfig struct {
 // DatabaseConfig controls SQLite persistence.
 type DatabaseConfig struct {
 	Path string `yaml:"path"`
+}
+
+// AuthConfig controls API authentication.
+type AuthConfig struct {
+	JWTSecret      string               `yaml:"jwt_secret"`
+	TokenTTL       string               `yaml:"token_ttl"`
+	BootstrapAdmin BootstrapAdminConfig `yaml:"bootstrap_admin"`
+}
+
+// BootstrapAdminConfig configures one-time bootstrap admin creation.
+type BootstrapAdminConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // MosquittoConfig controls MQTT broker connectivity.
@@ -81,6 +96,14 @@ func Default() Config {
 		Database: DatabaseConfig{
 			Path: "var/lib/mcm/mcm.db",
 		},
+		Auth: AuthConfig{
+			JWTSecret: "replace-this-secret-with-at-least-32-characters",
+			TokenTTL:  "24h",
+			BootstrapAdmin: BootstrapAdminConfig{
+				Username: "admin",
+				Password: "change-this-admin-password",
+			},
+		},
 		Mosquitto: MosquittoConfig{
 			Host: "127.0.0.1",
 			Port: 1883,
@@ -119,6 +142,14 @@ http:
 database:
   path: %q
 
+# API authentication settings.
+auth:
+  jwt_secret: %q
+  token_ttl: %q
+  bootstrap_admin:
+    username: %q
+    password: %q
+
 # Mosquitto connection settings.
 # Prefer environment overrides or secret mounts for credentials in production.
 mosquitto:
@@ -136,7 +167,7 @@ mosquitto:
 # Valid levels: debug, info, warn, error.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Logging.Level)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Logging.Level)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -183,6 +214,17 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		problems = append(problems, "database.path is required")
+	}
+	if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
+		problems = append(problems, "auth.jwt_secret must be at least 32 characters")
+	}
+	if strings.TrimSpace(c.Auth.TokenTTL) == "" {
+		problems = append(problems, "auth.token_ttl is required")
+	} else if _, err := time.ParseDuration(c.Auth.TokenTTL); err != nil {
+		problems = append(problems, fmt.Sprintf("auth.token_ttl must be a valid duration: %v", err))
+	}
+	if (c.Auth.BootstrapAdmin.Username == "") != (c.Auth.BootstrapAdmin.Password == "") {
+		problems = append(problems, "auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty")
 	}
 
 	if strings.TrimSpace(c.Mosquitto.Host) == "" {
