@@ -180,16 +180,42 @@ The project should treat security as a product requirement, not a later add-on:
 
 ## Development setup
 
-Development instructions will be added once the initial project structure is created.
+### Mosquitto development stack
 
-Expected future workflow:
+The repository includes a Docker Compose stack for local Mosquitto development.
 
 ```bash
 # Clone repository
 git clone https://github.com/fgjcarlos/mcm.git
 cd mcm
 
-# Start development stack
+# Start local Mosquitto
+docker compose up -d
+
+# Follow broker logs
+docker compose logs -f mosquitto
+
+# Stop the stack
+docker compose down
+```
+
+The development broker exposes:
+
+- MQTT TCP: `localhost:1883`
+- MQTT over WebSocket: `localhost:9001`
+
+The local Mosquitto configuration lives in [`deploy/mosquitto/config/mosquitto.conf`](./deploy/mosquitto/config/mosquitto.conf).
+
+> This configuration allows anonymous access for local development only. Do not use it as-is in production.
+
+### Future MCM service
+
+The Compose stack currently starts Mosquitto only because the backend skeleton has not been created yet. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).
+
+Expected future workflow once the backend and frontend exist:
+
+```bash
+# Start full development stack
 make dev
 
 # Run backend tests
