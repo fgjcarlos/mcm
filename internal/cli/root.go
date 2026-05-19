@@ -45,15 +45,6 @@ func newStatusCommand() *cobra.Command {
 	return placeholderCommand("status", "Show MCM and Mosquitto runtime status")
 }
 
-func newConfigCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage and validate MCM configuration",
-	}
-	cmd.AddCommand(placeholderCommand("validate", "Validate the MCM configuration file"))
-	return cmd
-}
-
 func newVersionCommand(version VersionInfo) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
