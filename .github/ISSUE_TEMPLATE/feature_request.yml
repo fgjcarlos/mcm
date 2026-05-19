@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a focused feature for MCM
+title: "feat: "
+labels: ["type: feature", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are welcome when they are focused and aligned with MCM's roadmap.
+        For large ideas, expect discussion and possible re-scoping before implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user/operator problem does this solve?
+      placeholder: As a Mosquitto operator, I need ... so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version of the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Include workarounds or simpler approaches.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - auth
+        - acl
+        - mosquitto integration
+        - frontend
+        - cli
+        - deployment
+        - documentation
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How would we know this is done?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true

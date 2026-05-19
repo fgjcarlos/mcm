@@ -289,16 +289,11 @@ This keeps the public vision readable while making actual execution trackable.
 
 ## Contributing
 
-MCM is in an early stage. Contributions are welcome once the initial architecture and contribution guidelines are in place.
+MCM is public and feedback is welcome, but it is currently maintainer-led. Issues and pull requests should be focused, actionable, and aligned with the roadmap.
 
-Good early contributions will include:
+Before opening a non-trivial pull request, please open an issue first and wait for maintainer feedback. All changes to `main` go through pull requests and require maintainer/code owner review.
 
-- Mosquitto integration research
-- ACL model design
-- Go backend foundations
-- Frontend UX prototypes
-- Docker Compose development setup
-- Documentation improvements
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution workflow and [SECURITY.md](./SECURITY.md) for security reporting.
 
 ---
 
