@@ -228,6 +228,22 @@ make test
 make build
 ```
 
+### Frontend development
+
+The React and Vite frontend skeleton lives under [`frontend/`](./frontend/).
+
+```bash
+# Install frontend dependencies
+cd frontend
+npm install
+
+# Start the Vite development server
+npm run dev
+
+# Create a production build
+npm run build
+```
+
 ### Future MCM service
 
 The Compose stack currently starts Mosquitto only because the backend service is still a skeleton. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).

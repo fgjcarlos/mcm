@@ -1,5 +1,7 @@
 # Build outputs
 bin/
+frontend/dist/
+frontend/node_modules/
 
 # Go test artifacts
 *.test
