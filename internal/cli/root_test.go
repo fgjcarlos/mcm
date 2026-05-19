@@ -77,7 +77,6 @@ func TestConfigHelpListsSubcommands(t *testing.T) {
 
 func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 	tests := [][]string{
-		{"server"},
 		{"doctor"},
 		{"status"},
 	}
@@ -89,6 +88,22 @@ func TestPlaceholderCommandsReturnNotImplemented(t *testing.T) {
 		}
 		if !strings.Contains(output, "not implemented yet") {
 			t.Fatalf("%v output missing placeholder message; got:\n%s", args, output)
+		}
+	}
+}
+
+func TestServerHelpIncludesConfigFlag(t *testing.T) {
+	output, err := executeForTest("server", "--help")
+	if err != nil {
+		t.Fatalf("server help returned error: %v", err)
+	}
+
+	for _, want := range []string{
+		"Start the MCM API and web UI server",
+		"--config",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("server help output missing %q; got:\n%s", want, output)
 		}
 	}
 }

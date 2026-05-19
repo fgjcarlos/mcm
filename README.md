@@ -219,6 +219,9 @@ go run ./cmd/mcm --help
 # Print build/version information
 go run ./cmd/mcm version
 
+# Start the initial API server
+go run ./cmd/mcm server --config ./mcm.yaml
+
 # Run tests
 go test ./...
 # or
@@ -227,6 +230,19 @@ make test
 # Build the CLI binary
 make build
 ```
+
+## ACL API
+
+The initial ACL model and REST API are documented in [`docs/acl.md`](./docs/acl.md).
+
+The current API provides:
+
+- `GET /api/v1/acls`
+- `POST /api/v1/acls`
+- `PUT /api/v1/acls/{id}`
+- `DELETE /api/v1/acls/{id}`
+
+It supports MQTT wildcard topic filters, validates invalid wildcard placement, and maps permissions directly to Mosquitto ACL lines such as `topic read ...`, `topic write ...`, and `topic readwrite ...`.
 
 ### Frontend development
 
