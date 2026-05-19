@@ -48,12 +48,17 @@ func (m *TokenManager) Issue(userID int64, username string, now time.Time) (stri
 
 // Verify validates a signed JWT and returns the user identity claims.
 func (m *TokenManager) Verify(tokenString string) (UserClaims, error) {
+	return m.VerifyAt(tokenString, time.Now())
+}
+
+// VerifyAt validates a signed JWT using the provided clock instant.
+func (m *TokenManager) VerifyAt(tokenString string, now time.Time) (UserClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method %q", token.Method.Alg())
 		}
 		return m.secret, nil
-	})
+	}, jwt.WithTimeFunc(func() time.Time { return now }))
 	if err != nil {
 		return UserClaims{}, fmt.Errorf("parse token: %w", err)
 	}
