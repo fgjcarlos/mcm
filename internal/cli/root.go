@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/fgjcarlos/mcm/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +40,29 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 }
 
 func newServerCommand() *cobra.Command {
-	return placeholderCommand("server", "Start the MCM API and web UI server")
+	var listenAddr string
+	var brokerURL string
+
+	cmd := &cobra.Command{
+		Use:   "server",
+		Short: "Start the MCM API and web UI server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			}))
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			runtime := server.NewRuntime(logger, listenAddr, brokerURL)
+			return runtime.Run(ctx)
+		},
+	}
+
+	cmd.Flags().StringVar(&listenAddr, "listen-addr", ":8080", "HTTP listen address")
+	cmd.Flags().StringVar(&brokerURL, "broker-url", "tcp://localhost:1883", "MQTT broker URL")
+
+	return cmd
 }
 
 func newDoctorCommand() *cobra.Command {
