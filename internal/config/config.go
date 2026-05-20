@@ -27,6 +27,7 @@ type Config struct {
 	Database  DatabaseConfig  `yaml:"database"`
 	Auth      AuthConfig      `yaml:"auth"`
 	Mosquitto MosquittoConfig `yaml:"mosquitto"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
@@ -72,6 +73,11 @@ type MosquittoTLSConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
+// MetricsConfig controls persisted broker metrics.
+type MetricsConfig struct {
+	BrokerRetention string `yaml:"broker_retention"`
+}
+
 // LoggingConfig controls log verbosity.
 type LoggingConfig struct {
 	Level string `yaml:"level"`
@@ -111,6 +117,9 @@ func Default() Config {
 				Enabled:            false,
 				InsecureSkipVerify: false,
 			},
+		},
+		Metrics: MetricsConfig{
+			BrokerRetention: "168h",
 		},
 		Logging: LoggingConfig{
 			Level: "info",
@@ -164,10 +173,14 @@ mosquitto:
     client_key_file: ""
     insecure_skip_verify: %t
 
+# Broker metric/event persistence. Raw message payloads are not stored.
+metrics:
+  broker_retention: %q
+
 # Valid levels: debug, info, warn, error.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Logging.Level)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Logging.Level)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -193,6 +206,10 @@ func Parse(data []byte) (Config, error) {
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config YAML: %w", err)
+	}
+
+	if cfg.Metrics.BrokerRetention == "" {
+		cfg.Metrics.BrokerRetention = Default().Metrics.BrokerRetention
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -246,6 +263,14 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.Mosquitto.TLS.ClientKeyFile) == "" {
 			problems = append(problems, "mosquitto.tls.client_key_file is required when mosquitto.tls.enabled is true")
 		}
+	}
+
+	if strings.TrimSpace(c.Metrics.BrokerRetention) == "" {
+		problems = append(problems, "metrics.broker_retention is required")
+	} else if retention, err := time.ParseDuration(c.Metrics.BrokerRetention); err != nil {
+		problems = append(problems, fmt.Sprintf("metrics.broker_retention must be a valid duration: %v", err))
+	} else if retention <= 0 {
+		problems = append(problems, "metrics.broker_retention must be greater than zero")
 	}
 
 	level := strings.ToLower(strings.TrimSpace(c.Logging.Level))
