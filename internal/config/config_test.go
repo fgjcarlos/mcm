@@ -22,6 +22,9 @@ func TestParseValidConfig(t *testing.T) {
 	if cfg.Auth.TokenTTL != "24h" {
 		t.Fatalf("unexpected auth token ttl: %q", cfg.Auth.TokenTTL)
 	}
+	if cfg.Metrics.BrokerRetention != "168h" {
+		t.Fatalf("unexpected broker metrics retention: %q", cfg.Metrics.BrokerRetention)
+	}
 }
 
 func TestParseMissingRequiredMosquittoSettings(t *testing.T) {
@@ -44,6 +47,8 @@ mosquitto:
   password: ""
   tls:
     enabled: false
+metrics:
+  broker_retention: 168h
 logging:
   level: info
 `))
@@ -84,6 +89,8 @@ mosquitto:
   password: ""
   tls:
     enabled: false
+metrics:
+  broker_retention: 168h
 logging:
   level: info
 `))
@@ -98,6 +105,70 @@ logging:
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("validation error missing %q; got %v", want, err)
 		}
+	}
+}
+
+func TestParseDefaultsMissingMetricsRetention(t *testing.T) {
+	cfg, err := Parse([]byte(`
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  username: ""
+  password: ""
+  tls:
+    enabled: false
+logging:
+  level: info
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if cfg.Metrics.BrokerRetention != Default().Metrics.BrokerRetention {
+		t.Fatalf("broker retention = %q, want default %q", cfg.Metrics.BrokerRetention, Default().Metrics.BrokerRetention)
+	}
+}
+
+func TestParseInvalidMetricsRetention(t *testing.T) {
+	_, err := Parse([]byte(`
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  username: ""
+  password: ""
+  tls:
+    enabled: false
+metrics:
+  broker_retention: 0s
+logging:
+  level: info
+`))
+	if err == nil {
+		t.Fatal("Parse succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "metrics.broker_retention must be greater than zero") {
+		t.Fatalf("validation error missing metrics retention problem; got %v", err)
 	}
 }
 

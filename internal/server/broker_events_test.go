@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
 func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
@@ -48,6 +51,30 @@ func TestTopicEventTruncatesLargePayloads(t *testing.T) {
 	}
 	if event.PayloadPreview != "123456" {
 		t.Fatalf("PayloadPreview = %q, want %q", event.PayloadPreview, "123456")
+	}
+	if event.PayloadBytes != 10 {
+		t.Fatalf("PayloadBytes = %d, want 10", event.PayloadBytes)
+	}
+}
+
+func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {
+	app, store := newTestApp(t)
+	defer store.Close()
+
+	app.brokerEvents.Publish(TopicEvent("factory/line1", []byte("hello"), 256))
+
+	events, err := store.ListBrokerMetricEvents(context.Background(), storage.BrokerMetricQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListBrokerMetricEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d persisted broker metric events, want 1", len(events))
+	}
+	if events[0].Topic != "factory/line1" || events[0].PayloadBytes != 5 || events[0].PayloadFormat != "text" {
+		t.Fatalf("unexpected persisted broker metric event: %#v", events[0])
+	}
+	if events[0].PayloadFormat == "hello" {
+		t.Fatal("raw payload was persisted")
 	}
 }
 
