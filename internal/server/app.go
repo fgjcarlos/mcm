@@ -22,10 +22,11 @@ const currentUserContextKey contextKey = "current_user"
 
 // App wires the HTTP API to storage and auth dependencies.
 type App struct {
-	store    *storage.Store
-	aclStore acl.Store
-	tokens   *auth.TokenManager
-	now      func() time.Time
+	store        *storage.Store
+	aclStore     acl.Store
+	tokens       *auth.TokenManager
+	brokerEvents *BrokerEventHub
+	now          func() time.Time
 }
 
 // New creates an HTTP app configured for the auth MVP.
@@ -36,10 +37,11 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 	}
 
 	return &App{
-		store:    store,
-		aclStore: acl.NewMemoryStore(),
-		tokens:   auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
-		now:      time.Now,
+		store:        store,
+		aclStore:     acl.NewMemoryStore(),
+		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
+		brokerEvents: NewBrokerEventHub(),
+		now:          time.Now,
 	}, nil
 }
 
@@ -89,6 +91,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
 	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
 	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	return mux
 }
 
