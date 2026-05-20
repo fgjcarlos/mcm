@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/spf13/cobra"
@@ -57,13 +56,4 @@ func newConfigValidateCommand() *cobra.Command {
 
 	addConfigFlag(cmd, &configPath)
 	return cmd
-}
-
-func addConfigFlag(cmd *cobra.Command, target *string) {
-	defaultPath, err := config.DefaultPath()
-	if err != nil {
-		defaultPath = filepath.Join(".", "mcm.yaml")
-	}
-
-	cmd.Flags().StringVar(target, "config", defaultPath, "Path to the MCM config file")
 }

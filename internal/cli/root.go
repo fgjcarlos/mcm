@@ -33,10 +33,6 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 	return cmd
 }
 
-func newDoctorCommand() *cobra.Command {
-	return placeholderCommand("doctor", "Run diagnostics against MCM and Mosquitto")
-}
-
 func newStatusCommand() *cobra.Command {
 	return placeholderCommand("status", "Show MCM and Mosquitto runtime status")
 }
