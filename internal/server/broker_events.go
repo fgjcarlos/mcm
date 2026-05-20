@@ -32,9 +32,21 @@ type BrokerEvent struct {
 }
 
 type BrokerEventHub struct {
-	mu          sync.RWMutex
-	subscribers map[chan BrokerEvent]struct{}
-	status      BrokerEvent
+	mu            sync.RWMutex
+	subscribers   map[chan BrokerEvent]struct{}
+	status        BrokerEvent
+	statusEvents  uint64
+	topicMessages uint64
+	lastMessageAt *time.Time
+}
+
+// BrokerEventSnapshot is a point-in-time, read-only view of broker stream state.
+type BrokerEventSnapshot struct {
+	Status           BrokerEvent
+	EventSubscribers int
+	StatusEvents     uint64
+	TopicMessages    uint64
+	LastMessageAt    *time.Time
 }
 
 func NewBrokerEventHub() *BrokerEventHub {
@@ -75,6 +87,11 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	h.mu.Lock()
 	if event.Type == "broker_status" {
 		h.status = event
+		h.statusEvents++
+	} else if event.Type == "topic_message" {
+		h.topicMessages++
+		observedAt := event.ObservedAt
+		h.lastMessageAt = &observedAt
 	}
 	for ch := range h.subscribers {
 		select {
@@ -83,6 +100,25 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 		}
 	}
 	h.mu.Unlock()
+}
+
+func (h *BrokerEventHub) Snapshot() BrokerEventSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	var lastMessageAt *time.Time
+	if h.lastMessageAt != nil {
+		value := *h.lastMessageAt
+		lastMessageAt = &value
+	}
+
+	return BrokerEventSnapshot{
+		Status:           h.status,
+		EventSubscribers: len(h.subscribers),
+		StatusEvents:     h.statusEvents,
+		TopicMessages:    h.topicMessages,
+		LastMessageAt:    lastMessageAt,
+	}
 }
 
 func BrokerStatusEvent(status string) BrokerEvent {

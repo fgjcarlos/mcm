@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type App struct {
 	aclStore     acl.Store
 	tokens       *auth.TokenManager
 	brokerEvents *BrokerEventHub
+	mosquitto    config.MosquittoConfig
 	now          func() time.Time
 }
 
@@ -41,6 +43,7 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 		aclStore:     acl.NewMemoryStore(),
 		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents: NewBrokerEventHub(),
+		mosquitto:    cfg.Mosquitto,
 		now:          time.Now,
 	}, nil
 }
@@ -91,8 +94,34 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
 	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
 	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	return mux
+}
+
+type statusResponse struct {
+	Broker brokerStatusResponse `json:"broker"`
+}
+
+type brokerStatusResponse struct {
+	Status     string                `json:"status"`
+	ObservedAt time.Time             `json:"observed_at"`
+	Target     brokerTargetResponse  `json:"target"`
+	Metrics    brokerMetricsResponse `json:"metrics"`
+}
+
+type brokerTargetResponse struct {
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Address    string `json:"address"`
+	TLSEnabled bool   `json:"tls_enabled"`
+}
+
+type brokerMetricsResponse struct {
+	EventSubscribers int        `json:"event_subscribers"`
+	StatusEvents     uint64     `json:"status_events"`
+	TopicMessages    uint64     `json:"topic_messages"`
+	LastMessageAt    *time.Time `json:"last_message_at,omitempty"`
 }
 
 type loginRequest struct {
@@ -122,6 +151,30 @@ type adminUserResponse struct {
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
+	snapshot := a.brokerEvents.Snapshot()
+	address := net.JoinHostPort(a.mosquitto.Host, strconv.Itoa(a.mosquitto.Port))
+
+	writeJSON(w, http.StatusOK, statusResponse{
+		Broker: brokerStatusResponse{
+			Status:     snapshot.Status.Status,
+			ObservedAt: snapshot.Status.ObservedAt,
+			Target: brokerTargetResponse{
+				Host:       a.mosquitto.Host,
+				Port:       a.mosquitto.Port,
+				Address:    address,
+				TLSEnabled: a.mosquitto.TLS.Enabled,
+			},
+			Metrics: brokerMetricsResponse{
+				EventSubscribers: snapshot.EventSubscribers,
+				StatusEvents:     snapshot.StatusEvents,
+				TopicMessages:    snapshot.TopicMessages,
+				LastMessageAt:    snapshot.LastMessageAt,
+			},
+		},
+	})
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
