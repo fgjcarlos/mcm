@@ -35,12 +35,19 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse auth token ttl: %w", err)
 	}
+	metricsRetention, err := time.ParseDuration(cfg.Metrics.BrokerRetention)
+	if err != nil {
+		return nil, fmt.Errorf("parse broker metrics retention: %w", err)
+	}
+
+	brokerEvents := NewBrokerEventHub()
+	brokerEvents.SetPersistence(store, metricsRetention)
 
 	return &App{
 		store:        store,
 		aclStore:     acl.NewMemoryStore(),
 		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
-		brokerEvents: NewBrokerEventHub(),
+		brokerEvents: brokerEvents,
 		now:          time.Now,
 	}, nil
 }
