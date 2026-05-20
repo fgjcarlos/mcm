@@ -18,7 +18,11 @@ import (
 	"github.com/fgjcarlos/mcm/internal/config"
 )
 
-const maxPayloadPreviewBytes = 1024
+const (
+	maxPayloadPreviewBytes        = 1024
+	maxBrokerLogBuffer            = 100
+	brokerEventSubscriberCapacity = maxBrokerLogBuffer + 16
+)
 
 // BrokerEvent is the JSON contract streamed to the frontend broker WebSocket.
 type BrokerEvent struct {
@@ -28,6 +32,9 @@ type BrokerEvent struct {
 	PayloadPreview string    `json:"payload_preview,omitempty"`
 	PayloadFormat  string    `json:"payload_format,omitempty"`
 	Truncated      bool      `json:"truncated,omitempty"`
+	Source         string    `json:"source,omitempty"`
+	Severity       string    `json:"severity,omitempty"`
+	Message        string    `json:"message,omitempty"`
 	ObservedAt     time.Time `json:"observed_at"`
 }
 
@@ -35,6 +42,7 @@ type BrokerEventHub struct {
 	mu          sync.RWMutex
 	subscribers map[chan BrokerEvent]struct{}
 	status      BrokerEvent
+	logs        []BrokerEvent
 }
 
 func NewBrokerEventHub() *BrokerEventHub {
@@ -49,10 +57,13 @@ func NewBrokerEventHub() *BrokerEventHub {
 }
 
 func (h *BrokerEventHub) Subscribe() (<-chan BrokerEvent, func()) {
-	ch := make(chan BrokerEvent, 16)
+	ch := make(chan BrokerEvent, brokerEventSubscriberCapacity)
 
 	h.mu.Lock()
 	ch <- h.status
+	for _, event := range h.logs {
+		ch <- event
+	}
 	h.subscribers[ch] = struct{}{}
 	h.mu.Unlock()
 
@@ -75,6 +86,11 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	h.mu.Lock()
 	if event.Type == "broker_status" {
 		h.status = event
+	} else if event.Type == "broker_log" {
+		h.logs = append(h.logs, event)
+		if len(h.logs) > maxBrokerLogBuffer {
+			h.logs = append([]BrokerEvent(nil), h.logs[len(h.logs)-maxBrokerLogBuffer:]...)
+		}
 	}
 	for ch := range h.subscribers {
 		select {
@@ -87,6 +103,23 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 
 func BrokerStatusEvent(status string) BrokerEvent {
 	return BrokerEvent{Type: "broker_status", Status: status, ObservedAt: time.Now().UTC()}
+}
+
+func BrokerLogEvent(source string, severity string, message string) BrokerEvent {
+	return BrokerEvent{
+		Type:       "broker_log",
+		Source:     strings.TrimSpace(source),
+		Severity:   strings.TrimSpace(severity),
+		Message:    strings.TrimSpace(message),
+		ObservedAt: time.Now().UTC(),
+	}
+}
+
+func (a *App) publishBrokerStatus(status string, logSeverity string, logMessage string) {
+	a.brokerEvents.Publish(BrokerStatusEvent(status))
+	if strings.TrimSpace(logMessage) != "" {
+		a.brokerEvents.Publish(BrokerLogEvent("broker", logSeverity, logMessage))
+	}
 }
 
 func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
@@ -219,7 +252,10 @@ func writeWebSocketTextFrame(rw interface {
 func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig) {
 	for {
 		if err := a.streamMQTTBroker(ctx, cfg); err != nil {
-			a.brokerEvents.Publish(BrokerStatusEvent("disconnected"))
+			if ctx.Err() != nil {
+				return
+			}
+			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker disconnected: %v", err))
 		}
 
 		select {
@@ -281,7 +317,7 @@ func (a *App) streamMQTTBroker(ctx context.Context, cfg config.MosquittoConfig) 
 		return err
 	}
 
-	a.brokerEvents.Publish(BrokerStatusEvent("connected"))
+	a.publishBrokerStatus("connected", "info", fmt.Sprintf("Broker connected to %s", address))
 	for {
 		select {
 		case <-ctx.Done():
