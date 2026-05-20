@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
 const (
@@ -31,6 +32,7 @@ type BrokerEvent struct {
 	Topic          string    `json:"topic,omitempty"`
 	PayloadPreview string    `json:"payload_preview,omitempty"`
 	PayloadFormat  string    `json:"payload_format,omitempty"`
+	PayloadBytes   int       `json:"payload_bytes,omitempty"`
 	Truncated      bool      `json:"truncated,omitempty"`
 	Source         string    `json:"source,omitempty"`
 	Severity       string    `json:"severity,omitempty"`
@@ -43,6 +45,8 @@ type BrokerEventHub struct {
 	subscribers map[chan BrokerEvent]struct{}
 	status      BrokerEvent
 	logs        []BrokerEvent
+	store       *storage.Store
+	retention   time.Duration
 }
 
 func NewBrokerEventHub() *BrokerEventHub {
@@ -54,6 +58,13 @@ func NewBrokerEventHub() *BrokerEventHub {
 			ObservedAt: time.Now().UTC(),
 		},
 	}
+}
+
+func (h *BrokerEventHub) SetPersistence(store *storage.Store, retention time.Duration) {
+	h.mu.Lock()
+	h.store = store
+	h.retention = retention
+	h.mu.Unlock()
 }
 
 func (h *BrokerEventHub) Subscribe() (<-chan BrokerEvent, func()) {
@@ -92,6 +103,8 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 			h.logs = append([]BrokerEvent(nil), h.logs[len(h.logs)-maxBrokerLogBuffer:]...)
 		}
 	}
+	store := h.store
+	retention := h.retention
 	for ch := range h.subscribers {
 		select {
 		case ch <- event:
@@ -99,6 +112,8 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 		}
 	}
 	h.mu.Unlock()
+
+	persistBrokerEvent(store, retention, event)
 }
 
 func BrokerStatusEvent(status string) BrokerEvent {
@@ -119,6 +134,25 @@ func (a *App) publishBrokerStatus(status string, logSeverity string, logMessage 
 	a.brokerEvents.Publish(BrokerStatusEvent(status))
 	if strings.TrimSpace(logMessage) != "" {
 		a.brokerEvents.Publish(BrokerLogEvent("broker", logSeverity, logMessage))
+	}
+}
+
+func persistBrokerEvent(store *storage.Store, retention time.Duration, event BrokerEvent) {
+	if store == nil {
+		return
+	}
+	ctx := context.Background()
+	_, _ = store.RecordBrokerMetricEvent(ctx, storage.CreateBrokerMetricEventParams{
+		Type:          event.Type,
+		Status:        event.Status,
+		Topic:         event.Topic,
+		PayloadFormat: event.PayloadFormat,
+		PayloadBytes:  event.PayloadBytes,
+		Truncated:     event.Truncated,
+		ObservedAt:    event.ObservedAt,
+	})
+	if retention > 0 {
+		_, _, _ = store.PruneBrokerMetrics(ctx, time.Now().UTC().Add(-retention))
 	}
 }
 
@@ -152,6 +186,7 @@ func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 		Topic:          topic,
 		PayloadPreview: preview,
 		PayloadFormat:  format,
+		PayloadBytes:   len(payload),
 		Truncated:      truncated,
 		ObservedAt:     time.Now().UTC(),
 	}

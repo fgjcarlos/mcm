@@ -40,6 +40,35 @@ CREATE TABLE admin_users (
 CREATE INDEX idx_admin_users_username ON admin_users(username);
 `,
 	},
+	{
+		version: 2,
+		name:    "create_broker_metrics",
+		sql: `
+CREATE TABLE broker_metric_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	type TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT '',
+	topic TEXT NOT NULL DEFAULT '',
+	payload_format TEXT NOT NULL DEFAULT '',
+	payload_bytes INTEGER NOT NULL DEFAULT 0,
+	truncated INTEGER NOT NULL DEFAULT 0,
+	observed_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+CREATE INDEX idx_broker_metric_events_observed_at ON broker_metric_events(observed_at);
+CREATE INDEX idx_broker_metric_events_type ON broker_metric_events(type);
+
+CREATE TABLE broker_metric_samples (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	observed_at TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT '',
+	messages_total INTEGER NOT NULL DEFAULT 0,
+	payload_bytes_total INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
+);
+CREATE INDEX idx_broker_metric_samples_observed_at ON broker_metric_samples(observed_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
@@ -64,6 +93,47 @@ type UpdateAdminUserParams struct {
 	Username     string
 	PasswordHash *string
 	Disabled     bool
+}
+
+// BrokerMetricEvent is a persisted broker metric/event without raw payload data.
+type BrokerMetricEvent struct {
+	ID            int64     `json:"id"`
+	Type          string    `json:"type"`
+	Status        string    `json:"status,omitempty"`
+	Topic         string    `json:"topic,omitempty"`
+	PayloadFormat string    `json:"payload_format,omitempty"`
+	PayloadBytes  int       `json:"payload_bytes,omitempty"`
+	Truncated     bool      `json:"truncated,omitempty"`
+	ObservedAt    time.Time `json:"observed_at"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CreateBrokerMetricEventParams holds broker metric fields safe for persistence.
+type CreateBrokerMetricEventParams struct {
+	Type          string
+	Status        string
+	Topic         string
+	PayloadFormat string
+	PayloadBytes  int
+	Truncated     bool
+	ObservedAt    time.Time
+}
+
+// BrokerMetricSample stores counters derived from broker events.
+type BrokerMetricSample struct {
+	ID                int64     `json:"id"`
+	ObservedAt        time.Time `json:"observed_at"`
+	Status            string    `json:"status,omitempty"`
+	MessagesTotal     int       `json:"messages_total"`
+	PayloadBytesTotal int       `json:"payload_bytes_total"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// BrokerMetricQuery controls metric query bounds.
+type BrokerMetricQuery struct {
+	Since time.Time
+	Until time.Time
+	Limit int
 }
 
 // Store wraps SQLite persistence.
@@ -298,6 +368,216 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
 		return ErrUserNotFound
 	}
 	return nil
+}
+
+// RecordBrokerMetricEvent stores a broker event and its derived counter sample.
+func (s *Store) RecordBrokerMetricEvent(ctx context.Context, params CreateBrokerMetricEventParams) (BrokerMetricEvent, error) {
+	if strings.TrimSpace(params.Type) == "" {
+		return BrokerMetricEvent{}, fmt.Errorf("broker metric event type is required")
+	}
+	if params.PayloadBytes < 0 {
+		return BrokerMetricEvent{}, fmt.Errorf("broker metric payload bytes cannot be negative")
+	}
+	observedAt := params.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	createdAt := time.Now().UTC()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("begin broker metric transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.ExecContext(ctx, `
+INSERT INTO broker_metric_events(type, status, topic, payload_format, payload_bytes, truncated, observed_at, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		strings.TrimSpace(params.Type),
+		strings.TrimSpace(params.Status),
+		strings.TrimSpace(params.Topic),
+		strings.TrimSpace(params.PayloadFormat),
+		params.PayloadBytes,
+		boolToInt(params.Truncated),
+		observedAt.Format(time.RFC3339Nano),
+		createdAt.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("insert broker metric event: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("get broker metric event id: %w", err)
+	}
+
+	messagesTotal := 0
+	payloadBytesTotal := 0
+	if strings.TrimSpace(params.Type) == "topic_message" {
+		messagesTotal = 1
+		payloadBytesTotal = params.PayloadBytes
+	}
+	if _, err = tx.ExecContext(ctx, `
+INSERT INTO broker_metric_samples(observed_at, status, messages_total, payload_bytes_total, created_at)
+VALUES(?, ?, ?, ?, ?)`,
+		observedAt.Format(time.RFC3339Nano),
+		strings.TrimSpace(params.Status),
+		messagesTotal,
+		payloadBytesTotal,
+		createdAt.Format(time.RFC3339Nano),
+	); err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("insert broker metric sample: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("commit broker metric event: %w", err)
+	}
+
+	return BrokerMetricEvent{
+		ID:            id,
+		Type:          strings.TrimSpace(params.Type),
+		Status:        strings.TrimSpace(params.Status),
+		Topic:         strings.TrimSpace(params.Topic),
+		PayloadFormat: strings.TrimSpace(params.PayloadFormat),
+		PayloadBytes:  params.PayloadBytes,
+		Truncated:     params.Truncated,
+		ObservedAt:    observedAt,
+		CreatedAt:     createdAt,
+	}, nil
+}
+
+// ListBrokerMetricEvents returns persisted broker events ordered newest first.
+func (s *Store) ListBrokerMetricEvents(ctx context.Context, query BrokerMetricQuery) ([]BrokerMetricEvent, error) {
+	where, args := brokerMetricWhere(query)
+	limit := query.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, type, status, topic, payload_format, payload_bytes, truncated, observed_at, created_at FROM broker_metric_events`+where+` ORDER BY observed_at DESC, id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list broker metric events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []BrokerMetricEvent
+	for rows.Next() {
+		event, err := scanBrokerMetricEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate broker metric events: %w", err)
+	}
+	return events, nil
+}
+
+// ListBrokerMetricSamples returns persisted broker metric samples ordered newest first.
+func (s *Store) ListBrokerMetricSamples(ctx context.Context, query BrokerMetricQuery) ([]BrokerMetricSample, error) {
+	where, args := brokerMetricWhere(query)
+	limit := query.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, status, messages_total, payload_bytes_total, created_at FROM broker_metric_samples`+where+` ORDER BY observed_at DESC, id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list broker metric samples: %w", err)
+	}
+	defer rows.Close()
+
+	var samples []BrokerMetricSample
+	for rows.Next() {
+		var sample BrokerMetricSample
+		var observedAt string
+		var createdAt string
+		if err := rows.Scan(&sample.ID, &observedAt, &sample.Status, &sample.MessagesTotal, &sample.PayloadBytesTotal, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan broker metric sample: %w", err)
+		}
+		var err error
+		sample.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse broker metric sample observed_at: %w", err)
+		}
+		sample.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse broker metric sample created_at: %w", err)
+		}
+		samples = append(samples, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate broker metric samples: %w", err)
+	}
+	return samples, nil
+}
+
+// PruneBrokerMetrics deletes broker metrics older than cutoff and returns deleted row counts.
+func (s *Store) PruneBrokerMetrics(ctx context.Context, cutoff time.Time) (int64, int64, error) {
+	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
+	eventResult, err := s.db.ExecContext(ctx, `DELETE FROM broker_metric_events WHERE observed_at < ?`, cutoffText)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune broker metric events: %w", err)
+	}
+	sampleResult, err := s.db.ExecContext(ctx, `DELETE FROM broker_metric_samples WHERE observed_at < ?`, cutoffText)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune broker metric samples: %w", err)
+	}
+	eventsDeleted, err := eventResult.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("count pruned broker metric events: %w", err)
+	}
+	samplesDeleted, err := sampleResult.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("count pruned broker metric samples: %w", err)
+	}
+	return eventsDeleted, samplesDeleted, nil
+}
+
+func scanBrokerMetricEvent(rows interface {
+	Scan(dest ...any) error
+}) (BrokerMetricEvent, error) {
+	var event BrokerMetricEvent
+	var truncated int
+	var observedAt string
+	var createdAt string
+	if err := rows.Scan(&event.ID, &event.Type, &event.Status, &event.Topic, &event.PayloadFormat, &event.PayloadBytes, &truncated, &observedAt, &createdAt); err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("scan broker metric event: %w", err)
+	}
+	var err error
+	event.Truncated = truncated == 1
+	event.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("parse broker metric event observed_at: %w", err)
+	}
+	event.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return BrokerMetricEvent{}, fmt.Errorf("parse broker metric event created_at: %w", err)
+	}
+	return event, nil
+}
+
+func brokerMetricWhere(query BrokerMetricQuery) (string, []any) {
+	var clauses []string
+	var args []any
+	if !query.Since.IsZero() {
+		clauses = append(clauses, "observed_at >= ?")
+		args = append(args, query.Since.UTC().Format(time.RFC3339Nano))
+	}
+	if !query.Until.IsZero() {
+		clauses = append(clauses, "observed_at <= ?")
+		args = append(args, query.Until.UTC().Format(time.RFC3339Nano))
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
 func boolToInt(value bool) int {
