@@ -24,6 +24,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := app.BootstrapAdmin(ctx, cfg); err != nil {
 		return err
 	}
+	go app.StartBrokerMonitor(ctx, cfg.Mosquitto)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.HTTP.BindAddress, cfg.HTTP.Port),

@@ -1,4 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+
+type BrokerEvent = {
+  type: 'broker_status' | 'topic_message'
+  status?: 'connected' | 'disconnected'
+  topic?: string
+  payload_preview?: string
+  payload_format?: 'json' | 'text'
+  truncated?: boolean
+  observed_at: string
+}
+
+type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
 
 type NavItem = {
   id: string
@@ -6,7 +18,6 @@ type NavItem = {
   eyebrow: string
   title: string
   description: string
-  metrics: Array<{ label: string; value: string }>
 }
 
 const navItems: NavItem[] = [
@@ -14,85 +25,72 @@ const navItems: NavItem[] = [
     id: 'dashboard',
     label: 'Dashboard',
     eyebrow: 'Broker overview',
-    title: 'Operational snapshot',
-    description:
-      'Reserve this space for cluster health, retained alerts, connection rates, and the most recent management events.',
-    metrics: [
-      { label: 'Brokers', value: '01' },
-      { label: 'Alerts', value: '00' },
-      { label: 'Clients', value: '128' },
-    ],
+    title: 'Live broker snapshot',
+    description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
+  },
+  {
+    id: 'topics',
+    label: 'Topics',
+    eyebrow: 'Traffic',
+    title: 'Topic explorer',
+    description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
   },
   {
     id: 'users',
     label: 'Users',
     eyebrow: 'Identity',
     title: 'User directory placeholder',
-    description:
-      'This page will host account provisioning, credential resets, and status views for broker users.',
-    metrics: [
-      { label: 'Users', value: '42' },
-      { label: 'Admins', value: '03' },
-      { label: 'Pending', value: '01' },
-    ],
+    description: 'Account provisioning, credential resets, and status views for broker users land here next.',
   },
   {
     id: 'acls',
     label: 'ACLs',
     eyebrow: 'Authorization',
     title: 'ACL policy workspace',
-    description:
-      'Use this section later for topic permissions, policy reviews, and audit-safe change workflows.',
-    metrics: [
-      { label: 'Policies', value: '18' },
-      { label: 'Wildcards', value: '05' },
-      { label: 'Drafts', value: '02' },
-    ],
-  },
-  {
-    id: 'topics',
-    label: 'Topics',
-    eyebrow: 'Traffic',
-    title: 'Topic explorer placeholder',
-    description:
-      'This area is reserved for retained message browsing, topic activity, and payload inspection tools.',
-    metrics: [
-      { label: 'Streams', value: '64' },
-      { label: 'Retained', value: '11' },
-      { label: 'Matches', value: '07' },
-    ],
-  },
-  {
-    id: 'clients',
-    label: 'Clients',
-    eyebrow: 'Connections',
-    title: 'Client session monitor',
-    description:
-      'Future work can surface active sessions, keepalive state, client metadata, and disconnect history here.',
-    metrics: [
-      { label: 'Online', value: '97' },
-      { label: 'Idle', value: '24' },
-      { label: 'Blocked', value: '00' },
-    ],
+    description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
   },
   {
     id: 'settings',
     label: 'Settings',
     eyebrow: 'System',
     title: 'Platform settings placeholder',
-    description:
-      'This page is ready for global defaults, integration configuration, and broker-level safety controls.',
-    metrics: [
-      { label: 'Profiles', value: '04' },
-      { label: 'TLS', value: 'On' },
-      { label: 'Audit', value: 'On' },
-    ],
+    description: 'Global defaults, integration configuration, and broker-level safety controls.',
   },
 ]
 
 function App() {
   const [activeId, setActiveId] = useState<string>(navItems[0].id)
+  const [brokerStatus, setBrokerStatus] = useState<'connected' | 'disconnected'>('disconnected')
+  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const [topics, setTopics] = useState<TopicMessage[]>([])
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
+
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/broker/events`)
+
+    socket.addEventListener('open', () => setStreamState('connected'))
+    socket.addEventListener('close', () => setStreamState('disconnected'))
+    socket.addEventListener('error', () => setStreamState('disconnected'))
+    socket.addEventListener('message', (message) => {
+      try {
+        const event = JSON.parse(message.data) as BrokerEvent
+        if (event.type === 'broker_status' && event.status) {
+          setBrokerStatus(event.status)
+        }
+        if (event.type === 'topic_message' && event.topic) {
+          setTopics((current) => [event as TopicMessage, ...current].slice(0, 20))
+        }
+      } catch {
+        setStreamState('disconnected')
+      }
+    })
+
+    return () => socket.close()
+  }, [])
+
+  const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
+  const latestTopic = topics[0]
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
@@ -100,30 +98,24 @@ function App() {
         <aside className="mb-4 w-full rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur lg:mb-0 lg:w-80 lg:p-6">
           <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">
-                MCM
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                Control Manager
-              </h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Control Manager</h1>
             </div>
-            <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">
-              Alpha
-            </div>
+            <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">Alpha</div>
           </div>
 
-          <div className="mt-6">
-            <p className="text-sm leading-6 text-slate-300">
-              Initial frontend shell for Mosquitto Control Manager. Navigation
-              is in place so feature pages can land without reworking the
-              layout.
-            </p>
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Broker</span>
+              <span className={`h-3 w-3 rounded-full ${brokerStatus === 'connected' ? 'bg-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.9)]' : 'bg-rose-400'}`} />
+            </div>
+            <p className="mt-2 text-lg font-semibold capitalize text-white">{brokerStatus}</p>
+            <p className="mt-1 text-xs text-slate-400">Event stream: {streamState}</p>
           </div>
 
           <nav className="mt-8 space-y-2" aria-label="Primary navigation">
-            {navItems.map((item) => {
+            {navItems.map((item, index) => {
               const isActive = item.id === activeItem.id
-
               return (
                 <button
                   key={item.id}
@@ -137,13 +129,9 @@ function App() {
                 >
                   <span>
                     <span className="block text-sm font-semibold">{item.label}</span>
-                    <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">
-                      {item.eyebrow}
-                    </span>
+                    <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
                   </span>
-                  <span className="font-mono text-xs text-slate-400">
-                    {String(navItems.indexOf(item) + 1).padStart(2, '0')}
-                  </span>
+                  <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
                 </button>
               )
             })}
@@ -154,64 +142,65 @@ function App() {
           <div className="rounded-[2rem] border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-slate-950/40 backdrop-blur sm:p-8">
             <div className="flex flex-col gap-6 border-b border-white/10 pb-8 xl:flex-row xl:items-end xl:justify-between">
               <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">
-                  {activeItem.eyebrow}
-                </p>
-                <h2 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                  {activeItem.title}
-                </h2>
-                <p className="mt-4 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
-                  {activeItem.description}
-                </p>
+                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">{activeItem.eyebrow}</p>
+                <h2 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">{activeItem.title}</h2>
+                <p className="mt-4 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">{activeItem.description}</p>
               </div>
 
               <div className="grid grid-cols-3 gap-3 sm:min-w-[24rem]">
-                {activeItem.metrics.map((metric) => (
-                  <div
-                    key={metric.label}
-                    className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4"
-                  >
-                    <div className="font-mono text-2xl font-semibold text-white">
-                      {metric.value}
-                    </div>
-                    <div className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">
-                      {metric.label}
-                    </div>
-                  </div>
-                ))}
+                <Metric label="Status" value={brokerStatus} />
+                <Metric label="Topics" value={String(uniqueTopicCount).padStart(2, '0')} />
+                <Metric label="Messages" value={String(topics.length).padStart(2, '0')} />
               </div>
             </div>
 
-            <section className="mt-8 grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+            <section className="mt-8 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
               <article className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">
-                  Placeholder content
-                </p>
-                <h3 className="mt-3 text-2xl font-semibold text-white">
-                  Ready for feature implementation
-                </h3>
-                <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200/90">
-                  Issue #7 sets the application shell only. Each navigation
-                  target is a stub so future issues can add data loading,
-                  actions, tables, and forms without revisiting the frame.
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">Latest message</p>
+                {latestTopic ? (
+                  <>
+                    <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
+                    <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
+                    <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-300">
+                      {latestTopic.payload_format}{latestTopic.truncated ? ' · truncated' : ''}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-3 text-sm leading-7 text-slate-200/90">Waiting for messages from the development broker.</p>
+                )}
               </article>
 
               <article className="rounded-[1.75rem] border border-dashed border-cyan-300/25 bg-slate-900/70 p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">
-                  Frontend stack
-                </p>
-                <ul className="mt-4 space-y-3 text-sm text-slate-300">
-                  <li>React 19 with TypeScript and Vite</li>
-                  <li>Tailwind CSS via the Vite plugin</li>
-                  <li>Single responsive navigation layout</li>
-                  <li>Placeholder views for MVP sections</li>
-                </ul>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Topic explorer</p>
+                <div className="mt-4 space-y-3">
+                  {topics.length === 0 ? (
+                    <p className="text-sm text-slate-300">No topic activity received yet.</p>
+                  ) : (
+                    topics.map((topic, index) => (
+                      <div key={`${topic.topic}-${topic.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
+                          <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
+                        </div>
+                        <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
               </article>
             </section>
           </div>
         </main>
       </div>
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
+      <div className="font-mono text-2xl font-semibold capitalize text-white">{value}</div>
+      <div className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">{label}</div>
     </div>
   )
 }
