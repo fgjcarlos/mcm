@@ -57,6 +57,22 @@ func TestTopicEventTruncatesLargePayloads(t *testing.T) {
 	if event.PayloadBytes != 10 {
 		t.Fatalf("PayloadBytes = %d, want 10", event.PayloadBytes)
 	}
+	if event.Sparkplug != nil {
+		t.Fatalf("Sparkplug = %+v, want nil for generic MQTT topic", event.Sparkplug)
+	}
+}
+
+func TestTopicEventAddsSparkplugMetadataForSparkplugTopics(t *testing.T) {
+	event := TopicEvent("spBv1.0/PlantA/DDATA/Line1/Motor7", []byte("protobuf bytes"), 256)
+	if event.Sparkplug == nil {
+		t.Fatal("Sparkplug = nil, want metadata")
+	}
+	if event.Sparkplug.Namespace != "spBv1.0" || event.Sparkplug.GroupID != "PlantA" || event.Sparkplug.MessageType != "DDATA" || event.Sparkplug.EdgeNodeID != "Line1" || event.Sparkplug.DeviceID != "Motor7" {
+		t.Fatalf("Sparkplug metadata = %+v, want parsed DDATA metadata", event.Sparkplug)
+	}
+	if event.PayloadPreview == "" || event.PayloadBytes == 0 {
+		t.Fatalf("TopicEvent lost payload preview metadata: %+v", event)
+	}
 }
 
 func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {
