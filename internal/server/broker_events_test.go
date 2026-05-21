@@ -80,6 +80,60 @@ func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {
 	}
 }
 
+func TestComputeBrokerTrafficMetricsAggregatesRecentTopicHotspots(t *testing.T) {
+	now := time.Date(2026, 5, 21, 14, 5, 30, 0, time.UTC)
+	events := []BrokerEvent{
+		{Type: "topic_message", Topic: "factory/line1/temp", ObservedAt: now.Add(-30 * time.Second)},
+		{Type: "topic_message", Topic: "factory/line1/temp", ObservedAt: now.Add(-90 * time.Second)},
+		{Type: "topic_message", Topic: "factory/line2/temp", ObservedAt: now.Add(-2 * time.Minute)},
+		{Type: "topic_message", Topic: "factory/old", ObservedAt: now.Add(-10 * time.Minute)},
+		{Type: "broker_log", Message: "ignored", ObservedAt: now.Add(-time.Minute)},
+	}
+
+	metrics := computeBrokerTrafficMetrics(events, now, 5*time.Minute, 5)
+
+	if metrics.MessageCount != 3 {
+		t.Fatalf("MessageCount = %d, want 3", metrics.MessageCount)
+	}
+	if metrics.MessageRatePerMinute != 0.6 {
+		t.Fatalf("MessageRatePerMinute = %v, want 0.6", metrics.MessageRatePerMinute)
+	}
+	if len(metrics.TopTopics) != 2 {
+		t.Fatalf("TopTopics length = %d, want 2", len(metrics.TopTopics))
+	}
+	if metrics.TopTopics[0].Name != "factory/line1/temp" || metrics.TopTopics[0].Count != 2 {
+		t.Fatalf("top topic = %+v, want factory/line1/temp count 2", metrics.TopTopics[0])
+	}
+	if metrics.TopClientsAvailable || metrics.TopClientsNote == "" {
+		t.Fatalf("top client availability = %v note %q, want unavailable with note", metrics.TopClientsAvailable, metrics.TopClientsNote)
+	}
+	if len(metrics.RatePoints) == 0 {
+		t.Fatal("RatePoints is empty")
+	}
+}
+
+func TestBrokerEventHubSnapshotIncludesPersistedTrafficMetrics(t *testing.T) {
+	app, store := newTestApp(t)
+	defer store.Close()
+
+	now := time.Now().UTC()
+	app.brokerEvents.Publish(BrokerEvent{Type: "topic_message", Topic: "factory/persisted", ObservedAt: now.Add(-time.Minute)})
+
+	restarted := NewBrokerEventHub()
+	restarted.SetPersistence(store, time.Hour)
+	snapshot := restarted.Snapshot()
+
+	if snapshot.Traffic.MessageCount != 1 {
+		t.Fatalf("persisted traffic message count = %d, want 1", snapshot.Traffic.MessageCount)
+	}
+	if len(snapshot.Traffic.TopTopics) != 1 || snapshot.Traffic.TopTopics[0].Name != "factory/persisted" {
+		t.Fatalf("persisted traffic top topics = %+v, want factory/persisted", snapshot.Traffic.TopTopics)
+	}
+	if !strings.Contains(snapshot.Traffic.Persistence, "persisted") {
+		t.Fatalf("traffic persistence note = %q, want persisted note", snapshot.Traffic.Persistence)
+	}
+}
+
 func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
 	hub := NewBrokerEventHub()
 	first, unsubscribeFirst := hub.Subscribe()
