@@ -159,8 +159,29 @@ mcm doctor           # Run diagnostics against Mosquitto, config, DB, TLS, disk
 mcm status           # Show broker and MCM runtime status
 mcm config init      # Create initial config file
 mcm config validate  # Validate config file
+mcm backup create    # Create a portable SQLite backup artifact
+mcm backup restore   # Restore local state from a SQLite backup artifact
 mcm version          # Print version/build information
 ```
+
+### Backup and restore
+
+MCM stores its local application state in the SQLite database configured by `database.path`. Operators can create a consistent backup artifact and restore it later with the CLI:
+
+```bash
+# Create a backup from the configured SQLite database.
+mcm backup create --config ./mcm.yaml --output ./backups/mcm.db
+
+# Restore into the configured database path.
+# If the target database already exists, --force is required to overwrite it.
+mcm backup restore --config ./mcm.yaml --input ./backups/mcm.db --force
+```
+
+Backup artifacts are SQLite database files created from a consistent snapshot of the configured MCM database. They include MCM state stored in SQLite, such as admin users, persisted broker metrics, security events, and audit events.
+
+Backups do **not** include files outside the MCM SQLite database, including external Mosquitto configuration, Mosquitto password files, ACL files, TLS CA/client certificates or keys, Docker volumes, logs, or files referenced from configuration. Back up those assets separately according to your deployment process.
+
+Restore validates the input artifact before writing it. To protect running installations from accidental data loss, restore refuses to overwrite an existing configured database unless `--force` is provided. Stop the MCM server before restore so no process is using the database while it is replaced.
 
 ---
 

@@ -31,6 +31,7 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 		newDoctorCommand(),
 		newStatusCommand(),
 		newConfigCommand(),
+		newBackupCommand(),
 		newVersionCommand(version),
 	)
 
