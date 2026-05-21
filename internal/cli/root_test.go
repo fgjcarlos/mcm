@@ -79,13 +79,40 @@ func TestConfigHelpListsSubcommands(t *testing.T) {
 	}
 }
 
-func TestStatusPlaceholderCommandReturnsNotImplemented(t *testing.T) {
-	output, err := executeForTest("status")
+func TestStatusCommandReportsReachableMosquitto(t *testing.T) {
+	listener := startCLIMQTTTestBroker(t, []byte{0x20, 0x02, 0x00, 0x00})
+	configPath := writeCLIConfig(t, listener.Addr().(*net.TCPAddr).Port)
+
+	output, err := executeForTest("status", "--config", configPath)
 	if err != nil {
-		t.Fatalf("status returned unexpected error: %v", err)
+		t.Fatalf("status returned error for reachable broker: %v\noutput:\n%s", err, output)
 	}
-	if !strings.Contains(output, "not implemented yet") {
-		t.Fatalf("status output missing placeholder message; got:\n%s", output)
+	for _, want := range []string{
+		"MCM status",
+		"Mosquitto target: 127.0.0.1:",
+		"Mosquitto TLS: false",
+		"Broker: connected",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("status output missing %q; got:\n%s", want, output)
+		}
+	}
+}
+
+func TestStatusCommandReportsUnreachableMosquitto(t *testing.T) {
+	listener := startCLIMQTTTestBroker(t, []byte{0x20, 0x02, 0x00, 0x00})
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	configPath := writeCLIConfig(t, port)
+
+	output, err := executeForTest("status", "--config", configPath)
+	if err == nil {
+		t.Fatal("status succeeded for unreachable broker, want error")
+	}
+	if !strings.Contains(output, "Broker: disconnected") {
+		t.Fatalf("status output missing disconnected broker status; got:\n%s", output)
 	}
 }
 

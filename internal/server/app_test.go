@@ -16,6 +16,40 @@ import (
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
+func TestStatusEndpointReportsBrokerSnapshotAndTarget(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	observedAt := time.Date(2026, 5, 20, 10, 30, 0, 0, time.UTC)
+	app.brokerEvents.Publish(BrokerEvent{Type: "broker_status", Status: "connected", ObservedAt: observedAt})
+	app.brokerEvents.Publish(BrokerEvent{Type: "topic_message", Topic: "factory/line1", ObservedAt: observedAt.Add(time.Second)})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status endpoint status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp statusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.Broker.Status != "connected" {
+		t.Fatalf("broker status = %q, want connected", resp.Broker.Status)
+	}
+	if resp.Broker.Target.Address != "127.0.0.1:1883" {
+		t.Fatalf("broker target address = %q, want 127.0.0.1:1883", resp.Broker.Target.Address)
+	}
+	if resp.Broker.Metrics.StatusEvents != 1 || resp.Broker.Metrics.TopicMessages != 1 {
+		t.Fatalf("broker metrics = %+v, want one status event and one topic message", resp.Broker.Metrics)
+	}
+	if resp.Broker.Metrics.LastMessageAt == nil || !resp.Broker.Metrics.LastMessageAt.Equal(observedAt.Add(time.Second)) {
+		t.Fatalf("last_message_at = %v, want %s", resp.Broker.Metrics.LastMessageAt, observedAt.Add(time.Second))
+	}
+}
+
 func TestLoginSuccessAndCurrentUser(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })

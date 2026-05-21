@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +38,44 @@ func NewRootCommand(version VersionInfo) *cobra.Command {
 }
 
 func newStatusCommand() *cobra.Command {
-	return placeholderCommand("status", "Show MCM and Mosquitto runtime status")
+	var configPath string
+	var timeout time.Duration
+
+	cmd := &cobra.Command{
+		Use:          "status",
+		Short:        "Show MCM and Mosquitto runtime status",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+
+			result := diagnostics.CheckMQTTConnectivity(ctx, cfg.Mosquitto)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "MCM status\n")
+			fmt.Fprintf(out, "Mosquitto target: %s\n", result.Address)
+			fmt.Fprintf(out, "Mosquitto TLS: %t\n", cfg.Mosquitto.TLS.Enabled)
+			if result.OK {
+				_, err := fmt.Fprintf(out, "Broker: connected (%s)\n", result.Message)
+				return err
+			}
+
+			_, writeErr := fmt.Fprintf(out, "Broker: disconnected (%s)\n", result.Message)
+			if writeErr != nil {
+				return writeErr
+			}
+			return fmt.Errorf("Mosquitto connectivity check failed")
+		},
+	}
+
+	addConfigFlag(cmd, &configPath)
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Maximum time to wait for Mosquitto status check")
+	return cmd
 }
 
 func newVersionCommand(version VersionInfo) *cobra.Command {
