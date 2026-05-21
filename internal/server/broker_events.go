@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ const (
 	maxPayloadPreviewBytes        = 1024
 	maxBrokerLogBuffer            = 100
 	brokerEventSubscriberCapacity = maxBrokerLogBuffer + 16
+	brokerTrafficWindow           = 5 * time.Minute
+	maxBrokerTrafficEvents        = 5000
 )
 
 // BrokerEvent is the JSON contract streamed to the frontend broker WebSocket.
@@ -45,6 +48,7 @@ type BrokerEventHub struct {
 	subscribers   map[chan BrokerEvent]struct{}
 	status        BrokerEvent
 	logs          []BrokerEvent
+	trafficEvents []BrokerEvent
 	statusEvents  uint64
 	topicMessages uint64
 	lastMessageAt *time.Time
@@ -59,6 +63,33 @@ type BrokerEventSnapshot struct {
 	StatusEvents     uint64
 	TopicMessages    uint64
 	LastMessageAt    *time.Time
+	Traffic          BrokerTrafficMetrics
+}
+
+// BrokerTrafficMetrics summarizes recent topic activity for operator dashboards.
+type BrokerTrafficMetrics struct {
+	WindowSeconds        int                 `json:"window_seconds"`
+	MessageCount         int                 `json:"message_count"`
+	MessageRatePerMinute float64             `json:"message_rate_per_minute"`
+	RatePoints           []BrokerRatePoint   `json:"rate_points"`
+	TopTopics            []BrokerTrafficItem `json:"top_topics"`
+	TopClients           []BrokerTrafficItem `json:"top_clients"`
+	TopClientsAvailable  bool                `json:"top_clients_available"`
+	TopClientsNote       string              `json:"top_clients_note"`
+	Persistence          string              `json:"persistence"`
+}
+
+// BrokerTrafficItem is a count and percentage for a traffic hotspot.
+type BrokerTrafficItem struct {
+	Name       string  `json:"name"`
+	Count      int     `json:"count"`
+	Percentage float64 `json:"percentage"`
+}
+
+// BrokerRatePoint is a one-minute message-rate bucket.
+type BrokerRatePoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Count     int       `json:"count"`
 }
 
 func NewBrokerEventHub() *BrokerEventHub {
@@ -119,6 +150,8 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 		h.topicMessages++
 		observedAt := event.ObservedAt
 		h.lastMessageAt = &observedAt
+		h.trafficEvents = append(h.trafficEvents, event)
+		h.pruneTrafficEventsLocked(observedAt)
 	}
 	store := h.store
 	retention := h.retention
@@ -149,7 +182,120 @@ func (h *BrokerEventHub) Snapshot() BrokerEventSnapshot {
 		StatusEvents:     h.statusEvents,
 		TopicMessages:    h.topicMessages,
 		LastMessageAt:    lastMessageAt,
+		Traffic:          h.trafficMetricsLocked(time.Now().UTC()),
 	}
+}
+
+func (h *BrokerEventHub) pruneTrafficEventsLocked(now time.Time) {
+	cutoff := now.Add(-brokerTrafficWindow)
+	start := 0
+	for start < len(h.trafficEvents) && h.trafficEvents[start].ObservedAt.Before(cutoff) {
+		start++
+	}
+	if start > 0 {
+		h.trafficEvents = append([]BrokerEvent(nil), h.trafficEvents[start:]...)
+	}
+	if len(h.trafficEvents) > maxBrokerTrafficEvents {
+		h.trafficEvents = append([]BrokerEvent(nil), h.trafficEvents[len(h.trafficEvents)-maxBrokerTrafficEvents:]...)
+	}
+}
+
+func (h *BrokerEventHub) trafficMetricsLocked(now time.Time) BrokerTrafficMetrics {
+	events := append([]BrokerEvent(nil), h.trafficEvents...)
+	store := h.store
+	if store != nil {
+		persisted, err := store.ListBrokerMetricEvents(context.Background(), storage.BrokerMetricQuery{
+			Since: now.Add(-brokerTrafficWindow),
+			Until: now,
+			Limit: maxBrokerTrafficEvents,
+		})
+		if err == nil {
+			events = make([]BrokerEvent, 0, len(persisted))
+			for i := len(persisted) - 1; i >= 0; i-- {
+				event := persisted[i]
+				if event.Type != "topic_message" {
+					continue
+				}
+				events = append(events, BrokerEvent{
+					Type:       event.Type,
+					Topic:      event.Topic,
+					ObservedAt: event.ObservedAt,
+				})
+			}
+		}
+	}
+	metrics := computeBrokerTrafficMetrics(events, now, brokerTrafficWindow, 5)
+	if store != nil {
+		metrics.Persistence = "persisted broker metric events are used when available"
+	} else {
+		metrics.Persistence = "in-memory only; metrics reset when the server restarts"
+	}
+	return metrics
+}
+
+func computeBrokerTrafficMetrics(events []BrokerEvent, now time.Time, window time.Duration, limit int) BrokerTrafficMetrics {
+	if window <= 0 {
+		window = brokerTrafficWindow
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	cutoff := now.Add(-window)
+	topicCounts := make(map[string]int)
+	buckets := make(map[time.Time]int)
+	messageCount := 0
+	for _, event := range events {
+		if event.Type != "topic_message" || strings.TrimSpace(event.Topic) == "" {
+			continue
+		}
+		observedAt := event.ObservedAt.UTC()
+		if observedAt.IsZero() || observedAt.Before(cutoff) || observedAt.After(now) {
+			continue
+		}
+		messageCount++
+		topicCounts[event.Topic]++
+		bucket := observedAt.Truncate(time.Minute)
+		buckets[bucket]++
+	}
+
+	points := make([]BrokerRatePoint, 0, int(window/time.Minute)+1)
+	start := cutoff.Truncate(time.Minute)
+	end := now.Truncate(time.Minute)
+	for cursor := start; !cursor.After(end); cursor = cursor.Add(time.Minute) {
+		points = append(points, BrokerRatePoint{Timestamp: cursor, Count: buckets[cursor]})
+	}
+
+	metrics := BrokerTrafficMetrics{
+		WindowSeconds:        int(window.Seconds()),
+		MessageCount:         messageCount,
+		MessageRatePerMinute: float64(messageCount) / window.Minutes(),
+		RatePoints:           points,
+		TopTopics:            topTrafficItems(topicCounts, messageCount, limit),
+		TopClientsAvailable:  false,
+		TopClientsNote:       "Client identity is not included in MQTT application messages observed via wildcard subscriptions. Enable broker-side client metrics or log ingestion to populate this widget in a future release.",
+	}
+	return metrics
+}
+
+func topTrafficItems(counts map[string]int, total int, limit int) []BrokerTrafficItem {
+	items := make([]BrokerTrafficItem, 0, len(counts))
+	for name, count := range counts {
+		percentage := 0.0
+		if total > 0 {
+			percentage = float64(count) * 100 / float64(total)
+		}
+		items = append(items, BrokerTrafficItem{Name: name, Count: count, Percentage: percentage})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].Count > items[j].Count
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items
 }
 
 func BrokerStatusEvent(status string) BrokerEvent {

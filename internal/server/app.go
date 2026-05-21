@@ -130,10 +130,11 @@ type brokerTargetResponse struct {
 }
 
 type brokerMetricsResponse struct {
-	EventSubscribers int        `json:"event_subscribers"`
-	StatusEvents     uint64     `json:"status_events"`
-	TopicMessages    uint64     `json:"topic_messages"`
-	LastMessageAt    *time.Time `json:"last_message_at,omitempty"`
+	EventSubscribers int                  `json:"event_subscribers"`
+	StatusEvents     uint64               `json:"status_events"`
+	TopicMessages    uint64               `json:"topic_messages"`
+	LastMessageAt    *time.Time           `json:"last_message_at,omitempty"`
+	Traffic          BrokerTrafficMetrics `json:"traffic"`
 }
 
 type loginRequest struct {
@@ -184,6 +185,7 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 				StatusEvents:     snapshot.StatusEvents,
 				TopicMessages:    snapshot.TopicMessages,
 				LastMessageAt:    snapshot.LastMessageAt,
+				Traffic:          snapshot.Traffic,
 			},
 		},
 	})
