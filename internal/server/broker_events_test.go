@@ -57,6 +57,67 @@ func TestTopicEventTruncatesLargePayloads(t *testing.T) {
 	if event.PayloadBytes != 10 {
 		t.Fatalf("PayloadBytes = %d, want 10", event.PayloadBytes)
 	}
+	if event.Payload == nil || !event.Payload.Truncated || event.Payload.ByteLength != 10 {
+		t.Fatalf("Payload inspection = %+v, want truncated metadata for 10 bytes", event.Payload)
+	}
+}
+
+func TestTopicEventInspectsJSONObject(t *testing.T) {
+	event := TopicEvent("factory/json", []byte(`{"unit":"c","temperature":21.5,"line":"one"}`), 256)
+	if event.PayloadFormat != "json" || event.Payload == nil {
+		t.Fatalf("event payload metadata = format %q inspection %+v, want json inspection", event.PayloadFormat, event.Payload)
+	}
+	if event.Payload.DetectedType != "json_object" || !event.Payload.JSONValid {
+		t.Fatalf("inspection = %+v, want valid json object", event.Payload)
+	}
+	wantKeys := []string{"line", "temperature", "unit"}
+	if fmt.Sprint(event.Payload.JSONTopLevelKeys) != fmt.Sprint(wantKeys) {
+		t.Fatalf("top-level keys = %v, want %v", event.Payload.JSONTopLevelKeys, wantKeys)
+	}
+	if !strings.Contains(event.PayloadPreview, "temperature") {
+		t.Fatalf("PayloadPreview = %q, want formatted JSON preview", event.PayloadPreview)
+	}
+}
+
+func TestTopicEventInspectsJSONArray(t *testing.T) {
+	event := TopicEvent("factory/array", []byte(`[1,{"ok":true},3]`), 256)
+	if event.Payload == nil || event.Payload.DetectedType != "json_array" || event.Payload.JSONElementCount != 3 {
+		t.Fatalf("inspection = %+v, want json array element count 3", event.Payload)
+	}
+}
+
+func TestTopicEventInspectsJSONScalar(t *testing.T) {
+	event := TopicEvent("factory/scalar", []byte(`"active"`), 256)
+	if event.Payload == nil || event.Payload.DetectedType != "json_scalar" || !strings.Contains(event.Payload.JSONScalarSummary, "active") {
+		t.Fatalf("inspection = %+v, want json scalar summary", event.Payload)
+	}
+}
+
+func TestTopicEventKeepsInvalidJSONAsSafeTextPreview(t *testing.T) {
+	event := TopicEvent("factory/invalid-json", []byte(`{"unit":"c"`), 256)
+	if event.PayloadFormat != "text" || event.Payload == nil || event.Payload.JSONValid {
+		t.Fatalf("event = %+v inspection %+v, want invalid JSON treated as text", event, event.Payload)
+	}
+	if event.PayloadPreview != `{"unit":"c"` {
+		t.Fatalf("PayloadPreview = %q, want existing text preview", event.PayloadPreview)
+	}
+}
+
+func TestTopicEventClassifiesPlainText(t *testing.T) {
+	event := TopicEvent("factory/text", []byte("pump started"), 256)
+	if event.PayloadFormat != "text" || event.Payload == nil || event.Payload.DetectedType != "text" || event.Payload.JSONValid {
+		t.Fatalf("event = %+v inspection %+v, want text metadata", event, event.Payload)
+	}
+}
+
+func TestTopicEventOmitsBinaryLikeRawPayload(t *testing.T) {
+	event := TopicEvent("factory/binary", []byte{0x00, 0xff, 's', 'e', 'c', 'r', 'e', 't'}, 256)
+	if event.PayloadFormat != "binary" || event.Payload == nil || event.Payload.DetectedType != "binary" {
+		t.Fatalf("event = %+v inspection %+v, want binary metadata", event, event.Payload)
+	}
+	if strings.Contains(event.PayloadPreview, "secret") || !strings.Contains(event.PayloadPreview, "binary payload omitted") {
+		t.Fatalf("PayloadPreview = %q, want bounded binary omission without raw bytes", event.PayloadPreview)
+	}
 }
 
 func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {

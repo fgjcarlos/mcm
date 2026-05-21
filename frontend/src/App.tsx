@@ -5,12 +5,24 @@ type BrokerEvent = {
   status?: 'connected' | 'disconnected'
   topic?: string
   payload_preview?: string
-  payload_format?: 'json' | 'text'
+  payload_format?: 'json' | 'text' | 'binary'
+  payload_bytes?: number
   truncated?: boolean
+  payload_inspection?: PayloadInspection
   source?: string
   severity?: 'debug' | 'info' | 'warning' | 'error'
   message?: string
   observed_at: string
+}
+
+type PayloadInspection = {
+  detected_type: 'json_object' | 'json_array' | 'json_scalar' | 'text' | 'binary' | string
+  byte_length: number
+  truncated: boolean
+  json_valid: boolean
+  json_top_level_keys?: string[]
+  json_element_count?: number
+  json_scalar_summary?: string
 }
 
 type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
@@ -440,10 +452,8 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
         {latestTopic ? (
           <>
             <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
+            <PayloadMetadata event={latestTopic} />
             <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
-            <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-300">
-              {latestTopic.payload_format}{latestTopic.truncated ? ' · truncated' : ''}
-            </p>
           </>
         ) : (
           <p className="mt-3 text-sm leading-7 text-slate-200/90">Waiting for messages from the development broker.</p>
@@ -463,6 +473,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
                   <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
                 </div>
                 <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
+                <PayloadSummary event={topic} />
               </div>
             ))
           )}
@@ -470,6 +481,74 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
       </article>
     </section>
   )
+}
+
+function PayloadMetadata({ event }: { event: TopicMessage }) {
+  const inspection = event.payload_inspection
+  const chips = payloadChips(event)
+
+  return (
+    <div className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+      <div className="flex flex-wrap gap-2">
+        {chips.map((chip) => (
+          <span key={chip} className="rounded-full bg-cyan-400/10 px-3 py-1 font-mono text-xs text-cyan-100">{chip}</span>
+        ))}
+      </div>
+      {inspection?.json_valid ? (
+        <div className="grid gap-3 text-sm text-slate-200 sm:grid-cols-2">
+          {inspection.detected_type === 'json_object' ? (
+            <div className="sm:col-span-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Top-level keys</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(inspection.json_top_level_keys ?? []).length === 0 ? (
+                  <span className="text-slate-300">No keys.</span>
+                ) : (
+                  inspection.json_top_level_keys?.map((key) => (
+                    <span key={key} className="rounded-lg bg-white/[0.06] px-2 py-1 font-mono text-xs text-slate-100">{key}</span>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+          {inspection.detected_type === 'json_array' ? <PayloadFact label="Elements" value={String(inspection.json_element_count ?? 0)} /> : null}
+          {inspection.detected_type === 'json_scalar' && inspection.json_scalar_summary ? <PayloadFact label="Scalar" value={inspection.json_scalar_summary} /> : null}
+        </div>
+      ) : (
+        <p className="text-sm text-slate-300">Preview remains bounded and escaped by the UI; raw payloads are not persisted.</p>
+      )}
+    </div>
+  )
+}
+
+function PayloadSummary({ event }: { event: TopicMessage }) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {payloadChips(event).map((chip) => (
+        <span key={chip} className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-[0.7rem] text-slate-300">{chip}</span>
+      ))}
+    </div>
+  )
+}
+
+function PayloadFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-1 break-all font-mono text-slate-100">{value}</p>
+    </div>
+  )
+}
+
+function payloadChips(event: TopicMessage) {
+  const inspection = event.payload_inspection
+  const type = inspection?.detected_type ?? event.payload_format ?? 'unknown'
+  const bytes = inspection?.byte_length ?? event.payload_bytes
+  return [
+    type,
+    bytes === undefined ? undefined : `${bytes} bytes`,
+    inspection?.json_valid ? 'valid JSON' : event.payload_format === 'json' ? 'JSON' : undefined,
+    (inspection?.truncated ?? event.truncated) ? 'truncated' : undefined,
+  ].filter((chip): chip is string => Boolean(chip))
 }
 
 function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: string }) {
