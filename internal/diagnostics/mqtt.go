@@ -3,9 +3,12 @@ package diagnostics
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +24,32 @@ type MQTTResult struct {
 	Message string
 }
 
+type mqttDiagnosticStage string
+
+const (
+	mqttStageTCP    mqttDiagnosticStage = "tcp"
+	mqttStageTLS    mqttDiagnosticStage = "tls"
+	mqttStageMQTT   mqttDiagnosticStage = "mqtt"
+	mqttStageConfig mqttDiagnosticStage = "config"
+)
+
+type mqttDiagnosticError struct {
+	stage mqttDiagnosticStage
+	err   error
+}
+
+func (e *mqttDiagnosticError) Error() string {
+	return e.err.Error()
+}
+
+func (e *mqttDiagnosticError) Unwrap() error {
+	return e.err
+}
+
+func diagnosticError(stage mqttDiagnosticStage, format string, args ...any) error {
+	return &mqttDiagnosticError{stage: stage, err: fmt.Errorf(format, args...)}
+}
+
 // CheckMQTTConnectivity attempts a real MQTT CONNECT/CONNACK exchange with the
 // configured Mosquitto broker.
 func CheckMQTTConnectivity(ctx context.Context, cfg config.MosquittoConfig) MQTTResult {
@@ -31,7 +60,7 @@ func CheckMQTTConnectivity(ctx context.Context, cfg config.MosquittoConfig) MQTT
 		return MQTTResult{
 			Address: address,
 			OK:      false,
-			Message: fmt.Sprintf("Mosquitto is unreachable at %s: %v", address, err),
+			Message: formatMQTTDiagnosticMessage(address, cfg.TLS.Enabled, err),
 		}
 	}
 
@@ -42,28 +71,49 @@ func CheckMQTTConnectivity(ctx context.Context, cfg config.MosquittoConfig) MQTT
 	}
 }
 
+func formatMQTTDiagnosticMessage(address string, tlsEnabled bool, err error) string {
+	var diagErr *mqttDiagnosticError
+	if !errors.As(err, &diagErr) {
+		return fmt.Sprintf("Mosquitto is unreachable at %s: TCP connection failed: %v. Check mosquitto.host, mosquitto.port, listener binding, firewall rules, and container networking.", address, err)
+	}
+
+	switch diagErr.stage {
+	case mqttStageConfig:
+		return fmt.Sprintf("Mosquitto TLS configuration is invalid for %s: %v. Check certificate paths, secret mounts, and file permissions.", address, diagErr.err)
+	case mqttStageTCP:
+		return fmt.Sprintf("Mosquitto is unreachable at %s: TCP connection failed: %v. Check mosquitto.host, mosquitto.port, listener binding, firewall rules, and container networking.", address, diagErr.err)
+	case mqttStageTLS:
+		return fmt.Sprintf("Mosquitto TCP connection succeeded at %s, but TLS handshake failed: %v. Check the broker TLS listener, CA trust, server certificate name/SANs, client certificate/key, and avoid insecure_skip_verify in production.", address, diagErr.err)
+	case mqttStageMQTT:
+		transport := "TCP"
+		if tlsEnabled {
+			transport = "TCP and TLS"
+		}
+		return fmt.Sprintf("Mosquitto %s connection succeeded at %s, but MQTT CONNECT/CONNACK failed: %v. Check username/password, ACL/auth plugin status, protocol listener settings, and broker logs.", transport, address, diagErr.err)
+	default:
+		return fmt.Sprintf("Mosquitto connectivity check failed at %s: %v", address, diagErr.err)
+	}
+}
+
 func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.Duration) error {
 	address := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return err
+		return diagnosticError(mqttStageTCP, "%w", err)
 	}
 	defer conn.Close()
 
 	if cfg.TLS.Enabled {
-		serverName := cfg.Host
-		if net.ParseIP(serverName) != nil {
-			serverName = ""
+		tlsConfig, err := buildTLSConfig(cfg)
+		if err != nil {
+			return diagnosticError(mqttStageConfig, "%w", err)
 		}
 
-		tlsConn := tls.Client(conn, &tls.Config{ //nolint:gosec // User-controlled diagnostic option for local/self-signed brokers.
-			ServerName:         serverName,
-			InsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
-		})
+		tlsConn := tls.Client(conn, tlsConfig)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return fmt.Errorf("TLS handshake failed: %w", err)
+			return diagnosticError(mqttStageTLS, "%w", err)
 		}
 		conn = tlsConn
 	}
@@ -73,30 +123,84 @@ func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.D
 		deadline = time.Now().Add(timeout)
 	}
 	if err := conn.SetDeadline(deadline); err != nil {
-		return fmt.Errorf("set MQTT connection deadline: %w", err)
+		return diagnosticError(mqttStageMQTT, "set MQTT connection deadline: %w", err)
 	}
 
 	packet, err := buildMQTTConnectPacket(cfg)
 	if err != nil {
-		return err
+		return diagnosticError(mqttStageMQTT, "%w", err)
 	}
 
 	if _, err := conn.Write(packet); err != nil {
-		return fmt.Errorf("send MQTT CONNECT: %w", err)
+		return diagnosticError(mqttStageMQTT, "send MQTT CONNECT: %w", err)
 	}
 
 	connack := make([]byte, 4)
 	if _, err := io.ReadFull(conn, connack); err != nil {
-		return fmt.Errorf("read MQTT CONNACK: %w", err)
+		return diagnosticError(mqttStageMQTT, "read MQTT CONNACK: %w", err)
 	}
 	if connack[0] != 0x20 || connack[1] != 0x02 {
-		return fmt.Errorf("unexpected MQTT CONNACK header % x", connack[:2])
+		return diagnosticError(mqttStageMQTT, "unexpected MQTT CONNACK header % x", connack[:2])
 	}
 	if connack[3] != 0x00 {
-		return fmt.Errorf("broker refused MQTT connection with return code %d", connack[3])
+		return diagnosticError(mqttStageMQTT, "broker refused MQTT connection with return code %d (%s)", connack[3], mqttConnackReturnCode(connack[3]))
 	}
 
 	return nil
+}
+
+func buildTLSConfig(cfg config.MosquittoConfig) (*tls.Config, error) {
+	serverName := strings.TrimSpace(cfg.Host)
+
+	tlsConfig := &tls.Config{ //nolint:gosec // User-controlled diagnostic option for local/self-signed brokers.
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         serverName,
+		InsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
+	}
+
+	if strings.TrimSpace(cfg.TLS.CACertFile) != "" {
+		caPEM, err := os.ReadFile(cfg.TLS.CACertFile)
+		if err != nil {
+			return nil, fmt.Errorf("read mosquitto.tls.ca_cert_file %q: %w", cfg.TLS.CACertFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("mosquitto.tls.ca_cert_file %q does not contain a valid PEM CA certificate", cfg.TLS.CACertFile)
+		}
+		tlsConfig.RootCAs = pool
+	}
+
+	clientCertFile := strings.TrimSpace(cfg.TLS.ClientCertFile)
+	clientKeyFile := strings.TrimSpace(cfg.TLS.ClientKeyFile)
+	if clientCertFile != "" || clientKeyFile != "" {
+		if clientCertFile == "" || clientKeyFile == "" {
+			return nil, fmt.Errorf("mosquitto.tls.client_cert_file and mosquitto.tls.client_key_file must both be set for client certificate authentication")
+		}
+		cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load Mosquitto client certificate/key pair: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsConfig, nil
+}
+
+func mqttConnackReturnCode(code byte) string {
+	switch code {
+	case 1:
+		return "unacceptable protocol version"
+	case 2:
+		return "identifier rejected"
+	case 3:
+		return "server unavailable"
+	case 4:
+		return "bad username or password"
+	case 5:
+		return "not authorized"
+	default:
+		return "unknown reason"
+	}
 }
 
 func buildMQTTConnectPacket(cfg config.MosquittoConfig) ([]byte, error) {

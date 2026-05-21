@@ -160,7 +160,9 @@ auth:
     password: %q
 
 # Mosquitto connection settings.
-# Prefer environment overrides or secret mounts for credentials in production.
+# Prefer environment overrides or secret mounts for credentials and TLS files in production.
+# For production TLS, use a TLS listener (often port 8883), mount CA/client cert/key
+# files read-only, and keep insecure_skip_verify false.
 mosquitto:
   host: %q
   port: %d
@@ -171,6 +173,7 @@ mosquitto:
     ca_cert_file: ""
     client_cert_file: ""
     client_key_file: ""
+    # Development-only escape hatch for self-signed testing; never enable in production.
     insecure_skip_verify: %t
 
 # Broker metric/event persistence. Raw message payloads are not stored.
