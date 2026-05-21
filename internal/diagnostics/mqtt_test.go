@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/config"
@@ -40,6 +41,57 @@ func TestCheckMQTTConnectivityReportsUnreachableBroker(t *testing.T) {
 	result := CheckMQTTConnectivity(context.Background(), cfg)
 	if result.OK {
 		t.Fatalf("CheckMQTTConnectivity OK=true, want false; result: %+v", result)
+	}
+	if !strings.Contains(result.Message, "TCP connection failed") {
+		t.Fatalf("message = %q, want TCP failure category", result.Message)
+	}
+}
+
+func TestCheckMQTTConnectivityReportsTLSHandshakeFailure(t *testing.T) {
+	listener := startMQTTTestBroker(t, []byte{0x20, 0x02, 0x00, 0x00})
+
+	cfg := config.Default().Mosquitto
+	cfg.Host = "127.0.0.1"
+	cfg.Port = listener.Addr().(*net.TCPAddr).Port
+	cfg.TLS.Enabled = true
+	cfg.TLS.InsecureSkipVerify = true
+
+	result := CheckMQTTConnectivity(context.Background(), cfg)
+	if result.OK {
+		t.Fatalf("CheckMQTTConnectivity OK=true, want false; result: %+v", result)
+	}
+	if !strings.Contains(result.Message, "TCP connection succeeded") || !strings.Contains(result.Message, "TLS handshake failed") {
+		t.Fatalf("message = %q, want TLS handshake failure category", result.Message)
+	}
+}
+
+func TestCheckMQTTConnectivityReportsConnackRejection(t *testing.T) {
+	listener := startMQTTTestBroker(t, []byte{0x20, 0x02, 0x00, 0x05})
+
+	cfg := config.Default().Mosquitto
+	cfg.Host = "127.0.0.1"
+	cfg.Port = listener.Addr().(*net.TCPAddr).Port
+
+	result := CheckMQTTConnectivity(context.Background(), cfg)
+	if result.OK {
+		t.Fatalf("CheckMQTTConnectivity OK=true, want false; result: %+v", result)
+	}
+	if !strings.Contains(result.Message, "MQTT CONNECT/CONNACK failed") || !strings.Contains(result.Message, "not authorized") {
+		t.Fatalf("message = %q, want MQTT CONNACK rejection category", result.Message)
+	}
+}
+
+func TestBuildTLSConfigReportsMissingClientKeyPairFile(t *testing.T) {
+	cfg := config.Default().Mosquitto
+	cfg.TLS.Enabled = true
+	cfg.TLS.ClientCertFile = "client.crt"
+
+	_, err := buildTLSConfig(cfg)
+	if err == nil {
+		t.Fatal("buildTLSConfig returned nil error, want missing key pair error")
+	}
+	if !strings.Contains(err.Error(), "client_cert_file") || !strings.Contains(err.Error(), "client_key_file") {
+		t.Fatalf("error = %q, want actionable client cert/key message", err.Error())
 	}
 }
 
