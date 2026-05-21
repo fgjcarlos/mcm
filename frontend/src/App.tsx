@@ -16,6 +16,17 @@ type BrokerEvent = {
 type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
 type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
 
+type AuditEvent = {
+  id: number
+  occurred_at: string
+  actor: string
+  action: string
+  resource_type: string
+  resource_id?: string
+  result: 'success' | 'failure' | string
+  metadata?: Record<string, unknown>
+}
+
 type SecurityEvent = {
   id: number
   category: string
@@ -111,6 +122,13 @@ const navItems: NavItem[] = [
     description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
   },
   {
+    id: 'audit',
+    label: 'Audit',
+    eyebrow: 'Security',
+    title: 'Administrative audit log',
+    description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
+  },
+  {
     id: 'settings',
     label: 'Settings',
     eyebrow: 'System',
@@ -144,6 +162,8 @@ function App() {
   const [logs, setLogs] = useState<BrokerLog[]>([])
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [securityError, setSecurityError] = useState<string>('')
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [auditError, setAuditError] = useState<string>('')
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
 
   useEffect(() => {
@@ -210,6 +230,26 @@ function App() {
         setSecurityError('')
       })
       .catch((error: Error) => setSecurityError(error.message))
+  }, [activeId])
+
+  useEffect(() => {
+    if (activeId !== 'audit') return
+
+    const token = window.localStorage.getItem('mcm_token') ?? window.localStorage.getItem('mcm_admin_token')
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
+
+    fetch('/api/v1/audit-events?limit=25', { headers })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(response.status === 401 ? 'Sign in with an admin token to view audit events.' : 'Failed to load audit events.')
+        }
+        return response.json() as Promise<{ events?: AuditEvent[] }>
+      })
+      .then((body) => {
+        setAuditEvents(body.events ?? [])
+        setAuditError('')
+      })
+      .catch((error: Error) => setAuditError(error.message))
   }, [activeId])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
@@ -285,6 +325,8 @@ function App() {
               <LogsPanel logs={logs} streamState={streamState} />
             ) : activeId === 'security' ? (
               <SecurityPanel events={securityEvents} error={securityError} />
+            ) : activeId === 'audit' ? (
+              <AuditPanel events={auditEvents} error={auditError} />
             ) : activeId === 'dashboard' ? (
               <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
             ) : (
@@ -465,6 +507,48 @@ function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: stri
           ))}
         </div>
       )}
+    </section>
+  )
+}
+
+
+function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) {
+  return (
+    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Audit history</p>
+          <p className="mt-2 text-sm text-slate-300">Recent administrative user and ACL mutations.</p>
+        </div>
+        <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Read only</span>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {error ? (
+          <div className="rounded-2xl border border-dashed border-amber-300/20 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+        ) : events.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No audit events recorded yet.</div>
+        ) : (
+          events.map((event) => (
+            <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${event.result === 'success' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-rose-400/10 text-rose-200'}`}>{event.result}</span>
+                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{event.actor}</span>
+                  <span className="rounded-full bg-white/[0.06] px-2.5 py-1 font-mono text-xs text-slate-200">{event.action}</span>
+                </div>
+                <time className="text-xs text-slate-400" dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time>
+              </div>
+              <p className="mt-3 break-all text-sm text-slate-100">
+                {event.resource_type}{event.resource_id ? ` #${event.resource_id}` : ''}
+              </p>
+              {event.metadata && Object.keys(event.metadata).length > 0 ? (
+                <pre className="mt-3 max-h-32 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-xs text-slate-200">{JSON.stringify(event.metadata, null, 2)}</pre>
+              ) : null}
+            </article>
+          ))
+        )}
+      </div>
     </section>
   )
 }

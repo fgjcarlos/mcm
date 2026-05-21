@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -326,6 +327,77 @@ func TestCreateAdminUserStoresPasswordHash(t *testing.T) {
 	}
 	if !match {
 		t.Fatal("stored password hash does not match original password")
+	}
+
+	events, err := store.ListAuditEvents(context.Background(), storage.AuditEventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d audit events, want 1", len(events))
+	}
+	if events[0].Actor != "admin" || events[0].Action != "admin_user.create" || events[0].ResourceType != "admin_user" || events[0].ResourceID != strconv.FormatInt(storedUser.ID, 10) || events[0].Result != "success" {
+		t.Fatalf("unexpected audit event: %#v", events[0])
+	}
+	if strings.Contains(string(events[0].Metadata), "new-password") || strings.Contains(strings.ToLower(string(events[0].Metadata)), "password") {
+		t.Fatalf("audit metadata includes password material: %s", string(events[0].Metadata))
+	}
+}
+
+func TestCreateACLRuleWritesAuditEvent(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	loginToken := loginAsSeededUser(t, app, store, "admin", "secret-password")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/acls", strings.NewReader(`{"principal":"sensor-writer","topic_filter":"sensors/+/temperature","permission":"write","description":"allow test writer"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+loginToken)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create acl status = %d, want %d, body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	events, err := store.ListAuditEvents(context.Background(), storage.AuditEventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d audit events, want 1", len(events))
+	}
+	if events[0].Actor != "admin" || events[0].Action != "acl.create" || events[0].ResourceType != "acl_rule" || events[0].Result != "success" {
+		t.Fatalf("unexpected acl audit event: %#v", events[0])
+	}
+	if !strings.Contains(string(events[0].Metadata), "sensor-writer") {
+		t.Fatalf("audit metadata missing safe principal: %s", string(events[0].Metadata))
+	}
+}
+
+func TestListAuditEventsEndpointRequiresAuthAndPaginates(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	if _, err := store.RecordAuditEvent(context.Background(), storage.CreateAuditEventParams{Actor: "admin", Action: "admin_user.create", ResourceType: "admin_user", ResourceID: "1", Result: "success"}); err != nil {
+		t.Fatalf("RecordAuditEvent returned error: %v", err)
+	}
+	loginToken := loginAsSeededUser(t, app, store, "admin", "secret-password")
+
+	unauthRec := httptest.NewRecorder()
+	unauthReq := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events", nil)
+	app.Handler().ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth audit events status = %d, want %d", unauthRec.Code, http.StatusUnauthorized)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?limit=1&offset=0", nil)
+	req.Header.Set("Authorization", "Bearer "+loginToken)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audit events status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "admin_user.create") {
+		t.Fatalf("audit events response missing recorded event: %s", rec.Body.String())
 	}
 }
 
