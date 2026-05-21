@@ -16,6 +16,17 @@ type BrokerEvent = {
 type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
 type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
 
+type SecurityEvent = {
+  id: number
+  category: string
+  reason: string
+  username?: string
+  source_ip?: string
+  method?: string
+  path?: string
+  observed_at: string
+}
+
 type NavItem = {
   id: string
   label: string
@@ -61,6 +72,13 @@ const navItems: NavItem[] = [
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
   },
   {
+    id: 'security',
+    label: 'Security',
+    eyebrow: 'Audit',
+    title: 'Recent security events',
+    description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
+  },
+  {
     id: 'settings',
     label: 'Settings',
     eyebrow: 'System',
@@ -75,6 +93,8 @@ function App() {
   const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [topics, setTopics] = useState<TopicMessage[]>([])
   const [logs, setLogs] = useState<BrokerLog[]>([])
+  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
+  const [securityError, setSecurityError] = useState<string>('')
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
 
   useEffect(() => {
@@ -103,6 +123,25 @@ function App() {
 
     return () => socket.close()
   }, [])
+
+  useEffect(() => {
+    if (activeId !== 'security') return
+
+    const token = window.localStorage.getItem('mcm_admin_token')
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
+    fetch('/api/v1/security/events?limit=50', { headers })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(response.status === 401 ? 'Sign in with an admin token to view security events.' : 'Unable to load security events.')
+        }
+        return response.json() as Promise<{ events?: SecurityEvent[] }>
+      })
+      .then((body) => {
+        setSecurityEvents(body.events ?? [])
+        setSecurityError('')
+      })
+      .catch((error: Error) => setSecurityError(error.message))
+  }, [activeId])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
   const latestTopic = topics[0]
@@ -171,6 +210,8 @@ function App() {
 
             {activeId === 'logs' ? (
               <LogsPanel logs={logs} streamState={streamState} />
+            ) : activeId === 'security' ? (
+              <SecurityPanel events={securityEvents} error={securityError} />
             ) : (
               <TopicsPanel topics={topics} latestTopic={latestTopic} />
             )}
@@ -217,6 +258,45 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
           )}
         </div>
       </article>
+    </section>
+  )
+}
+
+function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: string }) {
+  return (
+    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Audit feed</p>
+          <p className="mt-2 text-sm text-slate-300">Sanitized security events only; passwords, JWTs, and request bodies are never displayed.</p>
+        </div>
+        <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Recent</span>
+      </div>
+
+      {error ? (
+        <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+      ) : events.length === 0 ? (
+        <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No security events recorded yet.</div>
+      ) : (
+        <div className="mt-5 space-y-3">
+          {events.map((event) => (
+            <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">{event.category}</span>
+                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{event.reason}</span>
+                </div>
+                <time className="text-xs text-slate-400" dateTime={event.observed_at}>{new Date(event.observed_at).toLocaleString()}</time>
+              </div>
+              <dl className="mt-3 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
+                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">User</dt><dd className="mt-1 font-mono">{event.username || 'n/a'}</dd></div>
+                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">Source IP</dt><dd className="mt-1 font-mono">{event.source_ip || 'unknown'}</dd></div>
+                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">Endpoint</dt><dd className="mt-1 break-all font-mono">{event.method} {event.path}</dd></div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   )
 }

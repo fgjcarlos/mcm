@@ -69,6 +69,25 @@ CREATE TABLE broker_metric_samples (
 CREATE INDEX idx_broker_metric_samples_observed_at ON broker_metric_samples(observed_at);
 `,
 	},
+	{
+		version: 3,
+		name:    "create_security_events",
+		sql: `
+CREATE TABLE security_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	category TEXT NOT NULL,
+	reason TEXT NOT NULL,
+	username TEXT NOT NULL DEFAULT '',
+	source_ip TEXT NOT NULL DEFAULT '',
+	method TEXT NOT NULL DEFAULT '',
+	path TEXT NOT NULL DEFAULT '',
+	observed_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+CREATE INDEX idx_security_events_observed_at ON security_events(observed_at);
+CREATE INDEX idx_security_events_category ON security_events(category);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
@@ -133,6 +152,35 @@ type BrokerMetricSample struct {
 type BrokerMetricQuery struct {
 	Since time.Time
 	Until time.Time
+	Limit int
+}
+
+// SecurityEvent is an operator-facing audit event without secrets or request payloads.
+type SecurityEvent struct {
+	ID         int64     `json:"id"`
+	Category   string    `json:"category"`
+	Reason     string    `json:"reason"`
+	Username   string    `json:"username,omitempty"`
+	SourceIP   string    `json:"source_ip,omitempty"`
+	Method     string    `json:"method,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	ObservedAt time.Time `json:"observed_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// CreateSecurityEventParams holds sanitized event fields safe for persistence.
+type CreateSecurityEventParams struct {
+	Category   string
+	Reason     string
+	Username   string
+	SourceIP   string
+	Method     string
+	Path       string
+	ObservedAt time.Time
+}
+
+// SecurityEventQuery controls security event query bounds.
+type SecurityEventQuery struct {
 	Limit int
 }
 
@@ -540,6 +588,82 @@ func (s *Store) PruneBrokerMetrics(ctx context.Context, cutoff time.Time) (int64
 	return eventsDeleted, samplesDeleted, nil
 }
 
+// RecordSecurityEvent stores a sanitized security event for operator visibility.
+func (s *Store) RecordSecurityEvent(ctx context.Context, params CreateSecurityEventParams) (SecurityEvent, error) {
+	category := strings.TrimSpace(params.Category)
+	reason := strings.TrimSpace(params.Reason)
+	if category == "" {
+		return SecurityEvent{}, fmt.Errorf("security event category is required")
+	}
+	if reason == "" {
+		return SecurityEvent{}, fmt.Errorf("security event reason is required")
+	}
+	observedAt := params.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	createdAt := time.Now().UTC()
+
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO security_events(category, reason, username, source_ip, method, path, observed_at, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		category,
+		reason,
+		strings.TrimSpace(params.Username),
+		strings.TrimSpace(params.SourceIP),
+		strings.TrimSpace(params.Method),
+		strings.TrimSpace(params.Path),
+		observedAt.Format(time.RFC3339Nano),
+		createdAt.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return SecurityEvent{}, fmt.Errorf("insert security event: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return SecurityEvent{}, fmt.Errorf("get security event id: %w", err)
+	}
+
+	return SecurityEvent{
+		ID:         id,
+		Category:   category,
+		Reason:     reason,
+		Username:   strings.TrimSpace(params.Username),
+		SourceIP:   strings.TrimSpace(params.SourceIP),
+		Method:     strings.TrimSpace(params.Method),
+		Path:       strings.TrimSpace(params.Path),
+		ObservedAt: observedAt,
+		CreatedAt:  createdAt,
+	}, nil
+}
+
+// ListSecurityEvents returns recent security events ordered newest first.
+func (s *Store) ListSecurityEvents(ctx context.Context, query SecurityEventQuery) ([]SecurityEvent, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, category, reason, username, source_ip, method, path, observed_at, created_at FROM security_events ORDER BY observed_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list security events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []SecurityEvent
+	for rows.Next() {
+		event, err := scanSecurityEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate security events: %w", err)
+	}
+	return events, nil
+}
+
 func scanBrokerMetricEvent(rows interface {
 	Scan(dest ...any) error
 }) (BrokerMetricEvent, error) {
@@ -559,6 +683,27 @@ func scanBrokerMetricEvent(rows interface {
 	event.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
 		return BrokerMetricEvent{}, fmt.Errorf("parse broker metric event created_at: %w", err)
+	}
+	return event, nil
+}
+
+func scanSecurityEvent(rows interface {
+	Scan(dest ...any) error
+}) (SecurityEvent, error) {
+	var event SecurityEvent
+	var observedAt string
+	var createdAt string
+	if err := rows.Scan(&event.ID, &event.Category, &event.Reason, &event.Username, &event.SourceIP, &event.Method, &event.Path, &observedAt, &createdAt); err != nil {
+		return SecurityEvent{}, fmt.Errorf("scan security event: %w", err)
+	}
+	var err error
+	event.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+	if err != nil {
+		return SecurityEvent{}, fmt.Errorf("parse security event observed_at: %w", err)
+	}
+	event.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return SecurityEvent{}, fmt.Errorf("parse security event created_at: %w", err)
 	}
 	return event, nil
 }
