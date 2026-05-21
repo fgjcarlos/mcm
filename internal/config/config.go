@@ -28,6 +28,7 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth"`
 	Mosquitto MosquittoConfig `yaml:"mosquitto"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
+	Alerting  AlertingConfig  `yaml:"alerting"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
@@ -78,6 +79,14 @@ type MetricsConfig struct {
 	BrokerRetention string `yaml:"broker_retention"`
 }
 
+// AlertingConfig controls outbound operational webhook alerts.
+type AlertingConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	EndpointURL   string `yaml:"endpoint_url"`
+	Timeout       string `yaml:"timeout"`
+	SigningSecret string `yaml:"signing_secret"`
+}
+
 // LoggingConfig controls log verbosity.
 type LoggingConfig struct {
 	Level string `yaml:"level"`
@@ -120,6 +129,10 @@ func Default() Config {
 		},
 		Metrics: MetricsConfig{
 			BrokerRetention: "168h",
+		},
+		Alerting: AlertingConfig{
+			Enabled: false,
+			Timeout: "5s",
 		},
 		Logging: LoggingConfig{
 			Level: "info",
@@ -177,10 +190,18 @@ mosquitto:
 metrics:
   broker_retention: %q
 
+# Optional outbound webhook alerts for operational events.
+# signing_secret enables the X-MCM-Signature HMAC-SHA256 header.
+alerting:
+  enabled: %t
+  endpoint_url: ""
+  timeout: %q
+  signing_secret: ""
+
 # Valid levels: debug, info, warn, error.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Logging.Level)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -210,6 +231,9 @@ func Parse(data []byte) (Config, error) {
 
 	if cfg.Metrics.BrokerRetention == "" {
 		cfg.Metrics.BrokerRetention = Default().Metrics.BrokerRetention
+	}
+	if cfg.Alerting.Timeout == "" {
+		cfg.Alerting.Timeout = Default().Alerting.Timeout
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -271,6 +295,17 @@ func (c Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("metrics.broker_retention must be a valid duration: %v", err))
 	} else if retention <= 0 {
 		problems = append(problems, "metrics.broker_retention must be greater than zero")
+	}
+
+	if c.Alerting.Enabled && strings.TrimSpace(c.Alerting.EndpointURL) == "" {
+		problems = append(problems, "alerting.endpoint_url is required when alerting.enabled is true")
+	}
+	if strings.TrimSpace(c.Alerting.Timeout) == "" {
+		problems = append(problems, "alerting.timeout is required")
+	} else if timeout, err := time.ParseDuration(c.Alerting.Timeout); err != nil {
+		problems = append(problems, fmt.Sprintf("alerting.timeout must be a valid duration: %v", err))
+	} else if timeout <= 0 {
+		problems = append(problems, "alerting.timeout must be greater than zero")
 	}
 
 	level := strings.ToLower(strings.TrimSpace(c.Logging.Level))
