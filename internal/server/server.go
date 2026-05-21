@@ -27,6 +27,7 @@ func NewHandler(store acl.Store) http.Handler {
 
 type aclAPI struct {
 	store acl.Store
+	audit func(r *http.Request, action string, resourceType string, resourceID string, result string, metadata map[string]any)
 }
 
 type aclRuleRequest struct {
@@ -58,16 +59,19 @@ func (api *aclAPI) handleListRules(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	rule, err := decodeRuleRequest(r)
 	if err != nil {
+		api.recordAudit(r, "acl.create", "acl_rule", "", "failure", map[string]any{"reason": "invalid_request"})
 		writeAPIError(w, err)
 		return
 	}
 
 	created, err := api.store.CreateRule(r.Context(), rule)
 	if err != nil {
+		api.recordAudit(r, "acl.create", "acl_rule", "", "failure", map[string]any{"principal": rule.Principal, "topic_filter": rule.TopicFilter, "permission": string(rule.Permission), "reason": err.Error()})
 		writeAPIError(w, err)
 		return
 	}
 
+	api.recordAudit(r, "acl.create", "acl_rule", created.ID, "success", map[string]any{"principal": created.Principal, "topic_filter": created.TopicFilter, "permission": string(created.Permission)})
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -80,16 +84,19 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 
 	rule, err := decodeRuleRequest(r)
 	if err != nil {
+		api.recordAudit(r, "acl.update", "acl_rule", id, "failure", map[string]any{"reason": "invalid_request"})
 		writeAPIError(w, err)
 		return
 	}
 
 	updated, err := api.store.UpdateRule(r.Context(), id, rule)
 	if err != nil {
+		api.recordAudit(r, "acl.update", "acl_rule", id, "failure", map[string]any{"principal": rule.Principal, "topic_filter": rule.TopicFilter, "permission": string(rule.Permission), "reason": err.Error()})
 		writeAPIError(w, err)
 		return
 	}
 
+	api.recordAudit(r, "acl.update", "acl_rule", updated.ID, "success", map[string]any{"principal": updated.Principal, "topic_filter": updated.TopicFilter, "permission": string(updated.Permission)})
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -101,11 +108,19 @@ func (api *aclAPI) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := api.store.DeleteRule(r.Context(), id); err != nil {
+		api.recordAudit(r, "acl.delete", "acl_rule", id, "failure", map[string]any{"reason": err.Error()})
 		writeAPIError(w, err)
 		return
 	}
 
+	api.recordAudit(r, "acl.delete", "acl_rule", id, "success", nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (api *aclAPI) recordAudit(r *http.Request, action string, resourceType string, resourceID string, result string, metadata map[string]any) {
+	if api.audit != nil {
+		api.audit(r, action, resourceType, resourceID, result, metadata)
+	}
 }
 
 func decodeRuleRequest(r *http.Request) (acl.Rule, error) {

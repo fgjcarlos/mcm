@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ func TestMigrationsCreateBrokerMetricTables(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 
-	for _, table := range []string{"broker_metric_events", "broker_metric_samples"} {
+	for _, table := range []string{"broker_metric_events", "broker_metric_samples", "audit_events"} {
 		var name string
 		if err := store.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("table %s was not created: %v", table, err)
@@ -19,8 +20,54 @@ func TestMigrationsCreateBrokerMetricTables(t *testing.T) {
 	}
 
 	var version int
-	if err := store.db.QueryRow(`SELECT version FROM schema_migrations WHERE version = 2`).Scan(&version); err != nil {
-		t.Fatalf("broker metrics migration was not recorded: %v", err)
+	if err := store.db.QueryRow(`SELECT version FROM schema_migrations WHERE version = 3`).Scan(&version); err != nil {
+		t.Fatalf("audit events migration was not recorded: %v", err)
+	}
+}
+
+func TestRecordListAndPersistAuditEvents(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "mcm.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+
+	occurredAt := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	metadata := json.RawMessage(`{"username":"operator","disabled":false}`)
+	recorded, err := store.RecordAuditEvent(context.Background(), CreateAuditEventParams{
+		OccurredAt:   occurredAt,
+		Actor:        "admin",
+		Action:       "admin_user.create",
+		ResourceType: "admin_user",
+		ResourceID:   "42",
+		Result:       "success",
+		Metadata:     metadata,
+	})
+	if err != nil {
+		t.Fatalf("RecordAuditEvent returned error: %v", err)
+	}
+	if recorded.ID == 0 || recorded.Actor != "admin" || recorded.Action != "admin_user.create" {
+		t.Fatalf("unexpected recorded audit event: %#v", recorded)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	reopened, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen Open returned error: %v", err)
+	}
+	defer reopened.Close()
+
+	events, err := reopened.ListAuditEvents(context.Background(), AuditEventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d audit events, want 1", len(events))
+	}
+	if events[0].Actor != "admin" || events[0].ResourceID != "42" || !events[0].OccurredAt.Equal(occurredAt) {
+		t.Fatalf("unexpected persisted audit event: %#v", events[0])
 	}
 }
 

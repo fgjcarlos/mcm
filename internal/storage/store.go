@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -67,6 +68,25 @@ CREATE TABLE broker_metric_samples (
 	created_at TEXT NOT NULL
 );
 CREATE INDEX idx_broker_metric_samples_observed_at ON broker_metric_samples(observed_at);
+`,
+	},
+	{
+		version: 3,
+		name:    "create_audit_events",
+		sql: `
+CREATE TABLE audit_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	occurred_at TEXT NOT NULL,
+	actor TEXT NOT NULL,
+	action TEXT NOT NULL,
+	resource_type TEXT NOT NULL,
+	resource_id TEXT NOT NULL DEFAULT '',
+	result TEXT NOT NULL,
+	metadata TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX idx_audit_events_occurred_at ON audit_events(occurred_at);
+CREATE INDEX idx_audit_events_resource ON audit_events(resource_type, resource_id);
+CREATE INDEX idx_audit_events_actor ON audit_events(actor);
 `,
 	},
 }
@@ -134,6 +154,35 @@ type BrokerMetricQuery struct {
 	Since time.Time
 	Until time.Time
 	Limit int
+}
+
+// AuditEvent is a durable record of a security-relevant administrative action.
+type AuditEvent struct {
+	ID           int64           `json:"id"`
+	OccurredAt   time.Time       `json:"occurred_at"`
+	Actor        string          `json:"actor"`
+	Action       string          `json:"action"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   string          `json:"resource_id,omitempty"`
+	Result       string          `json:"result"`
+	Metadata     json.RawMessage `json:"metadata"`
+}
+
+// CreateAuditEventParams holds fields for audit event creation.
+type CreateAuditEventParams struct {
+	OccurredAt   time.Time
+	Actor        string
+	Action       string
+	ResourceType string
+	ResourceID   string
+	Result       string
+	Metadata     json.RawMessage
+}
+
+// AuditEventQuery controls audit event pagination.
+type AuditEventQuery struct {
+	Limit  int
+	Offset int
 }
 
 // Store wraps SQLite persistence.
@@ -540,6 +589,86 @@ func (s *Store) PruneBrokerMetrics(ctx context.Context, cutoff time.Time) (int64
 	return eventsDeleted, samplesDeleted, nil
 }
 
+// RecordAuditEvent stores a sanitized audit event.
+func (s *Store) RecordAuditEvent(ctx context.Context, params CreateAuditEventParams) (AuditEvent, error) {
+	occurredAt := params.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	metadata := strings.TrimSpace(string(params.Metadata))
+	if metadata == "" || !json.Valid([]byte(metadata)) {
+		metadata = "{}"
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO audit_events(occurred_at, actor, action, resource_type, resource_id, result, metadata)
+VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		occurredAt.Format(time.RFC3339Nano),
+		defaultString(strings.TrimSpace(params.Actor), "unknown"),
+		strings.TrimSpace(params.Action),
+		strings.TrimSpace(params.ResourceType),
+		strings.TrimSpace(params.ResourceID),
+		defaultString(strings.TrimSpace(params.Result), "unknown"),
+		metadata,
+	)
+	if err != nil {
+		return AuditEvent{}, fmt.Errorf("record audit event: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return AuditEvent{}, fmt.Errorf("get audit event id: %w", err)
+	}
+	return AuditEvent{
+		ID:           id,
+		OccurredAt:   occurredAt,
+		Actor:        defaultString(strings.TrimSpace(params.Actor), "unknown"),
+		Action:       strings.TrimSpace(params.Action),
+		ResourceType: strings.TrimSpace(params.ResourceType),
+		ResourceID:   strings.TrimSpace(params.ResourceID),
+		Result:       defaultString(strings.TrimSpace(params.Result), "unknown"),
+		Metadata:     json.RawMessage(metadata),
+	}, nil
+}
+
+// ListAuditEvents returns audit events ordered newest first with offset pagination.
+func (s *Store) ListAuditEvents(ctx context.Context, query AuditEventQuery) ([]AuditEvent, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, occurred_at, actor, action, resource_type, resource_id, result, metadata FROM audit_events ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list audit events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []AuditEvent
+	for rows.Next() {
+		var event AuditEvent
+		var occurredAt string
+		var metadata string
+		if err := rows.Scan(&event.ID, &occurredAt, &event.Actor, &event.Action, &event.ResourceType, &event.ResourceID, &event.Result, &metadata); err != nil {
+			return nil, fmt.Errorf("scan audit event: %w", err)
+		}
+		var err error
+		event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse audit event occurred_at: %w", err)
+		}
+		event.Metadata = json.RawMessage(metadata)
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit events: %w", err)
+	}
+	return events, nil
+}
+
 func scanBrokerMetricEvent(rows interface {
 	Scan(dest ...any) error
 }) (BrokerMetricEvent, error) {
@@ -578,6 +707,13 @@ func brokerMetricWhere(query BrokerMetricQuery) (string, []any) {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func boolToInt(value bool) int {
