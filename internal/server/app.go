@@ -88,16 +88,17 @@ func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
 func (a *App) Handler() http.Handler {
 	aclAPI := &aclAPI{
 		store:                 a.aclStore,
+		audit:                 a.recordAuditFromRequest,
 		recordSecurityFailure: a.recordSecurityFailure,
 		recordSecurityChange:  a.recordSecurityChange,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
-	mux.HandleFunc("GET /api/v1/acls", aclAPI.handleListRules)
-	mux.HandleFunc("POST /api/v1/acls", aclAPI.handleCreateRule)
-	mux.HandleFunc("PUT /api/v1/acls/{id}", aclAPI.handleUpdateRule)
-	mux.HandleFunc("DELETE /api/v1/acls/{id}", aclAPI.handleDeleteRule)
+	mux.Handle("GET /api/v1/acls", a.optionalAuth(http.HandlerFunc(aclAPI.handleListRules)))
+	mux.Handle("POST /api/v1/acls", a.optionalAuth(http.HandlerFunc(aclAPI.handleCreateRule)))
+	mux.Handle("PUT /api/v1/acls/{id}", a.optionalAuth(http.HandlerFunc(aclAPI.handleUpdateRule)))
+	mux.Handle("DELETE /api/v1/acls/{id}", a.optionalAuth(http.HandlerFunc(aclAPI.handleDeleteRule)))
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))
 	mux.Handle("GET /api/v1/admin-users", a.requireAuth(http.HandlerFunc(a.handleListAdminUsers)))
@@ -105,6 +106,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
 	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
 	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.Handle("GET /api/v1/audit-events", a.requireAuth(http.HandlerFunc(a.handleListAuditEvents)))
 	mux.Handle("GET /api/v1/security/events", a.requireAuth(http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
@@ -279,11 +281,13 @@ func (a *App) handleListAdminUsers(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleCreateAdminUser(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeAdminUserRequest(w, r)
 	if !ok {
+		a.recordAuditFromRequest(r, "admin_user.create", "admin_user", "", "failure", map[string]any{"reason": "invalid_request"})
 		return
 	}
 
 	passwordHash, err := auth.HashPassword(req.Password)
 	if err != nil {
+		a.recordAuditFromRequest(r, "admin_user.create", "admin_user", "", "failure", map[string]any{"username": req.Username, "reason": "password_hash_failed"})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}
@@ -294,10 +298,12 @@ func (a *App) handleCreateAdminUser(w http.ResponseWriter, r *http.Request) {
 		Disabled:     req.Disabled,
 	})
 	if err != nil {
+		a.recordAuditFromRequest(r, "admin_user.create", "admin_user", "", "failure", map[string]any{"username": req.Username, "disabled": req.Disabled, "reason": err.Error()})
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
 
+	a.recordAuditFromRequest(r, "admin_user.create", "admin_user", strconv.FormatInt(user.ID, 10), "success", map[string]any{"username": user.Username, "disabled": user.Disabled})
 	writeJSON(w, http.StatusCreated, toAdminUserResponse(user))
 }
 
@@ -328,13 +334,16 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 
 	req, ok := decodeAdminUserRequest(w, r)
 	if !ok {
+		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": "invalid_request"})
 		return
 	}
 
 	var passwordHash *string
-	if req.Password != "" {
+	passwordChanged := req.Password != ""
+	if passwordChanged {
 		hashed, err := auth.HashPassword(req.Password)
 		if err != nil {
+			a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"username": req.Username, "reason": "password_hash_failed"})
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 			return
 		}
@@ -347,14 +356,17 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 		Disabled:     req.Disabled,
 	})
 	if errors.Is(err, storage.ErrUserNotFound) {
+		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": "admin user not found"})
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "admin user not found"})
 		return
 	}
 	if err != nil {
+		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"username": req.Username, "disabled": req.Disabled, "password_changed": passwordChanged, "reason": err.Error()})
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
 
+	a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(user.ID, 10), "success", map[string]any{"username": user.Username, "disabled": user.Disabled, "password_changed": passwordChanged})
 	writeJSON(w, http.StatusOK, toAdminUserResponse(user))
 }
 
@@ -363,14 +375,29 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	resourceID := strconv.FormatInt(id, 10)
 
 	if err := a.store.DeleteAdminUser(r.Context(), id); errors.Is(err, storage.ErrUserNotFound) {
+		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": "admin user not found"})
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "admin user not found"})
 	} else if err != nil {
+		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 	} else {
+		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (a *App) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	events, err := a.store.ListAuditEvents(r.Context(), storage.AuditEventQuery{Limit: limit, Offset: offset})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "limit": limit, "offset": offset})
 }
 
 func (a *App) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
@@ -391,7 +418,6 @@ func (a *App) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
-
 func (a *App) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -411,6 +437,53 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), currentUserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (a *App) optionalAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := strings.TrimSpace(r.Header.Get("Authorization"))
+		if strings.HasPrefix(header, "Bearer ") {
+			if claims, err := a.tokens.VerifyAt(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), a.now().UTC()); err == nil {
+				r = r.WithContext(context.WithValue(r.Context(), currentUserContextKey, claims))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *App) recordAuditFromRequest(r *http.Request, action string, resourceType string, resourceID string, result string, metadata map[string]any) {
+	actor := "anonymous"
+	if claims, ok := currentUserFromContext(r.Context()); ok && strings.TrimSpace(claims.Username) != "" {
+		actor = claims.Username
+	}
+	payload, err := json.Marshal(sanitizeAuditMetadata(metadata))
+	if err != nil {
+		payload = []byte(`{}`)
+	}
+	_, _ = a.store.RecordAuditEvent(r.Context(), storage.CreateAuditEventParams{
+		OccurredAt:   a.now().UTC(),
+		Actor:        actor,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Result:       result,
+		Metadata:     payload,
+	})
+}
+
+func sanitizeAuditMetadata(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		return map[string]any{}
+	}
+	safe := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "password") || strings.Contains(lower, "token") || strings.Contains(lower, "jwt") || strings.Contains(lower, "secret") {
+			continue
+		}
+		safe[key] = value
+	}
+	return safe
 }
 
 func (a *App) recordSecurityFailure(r *http.Request, category string, reason string, username string) {
