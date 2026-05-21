@@ -55,6 +55,7 @@ func TestRootHelpListsInitialCommands(t *testing.T) {
 		"doctor",
 		"status",
 		"config",
+		"backup",
 		"version",
 	} {
 		if !strings.Contains(output, want) {
