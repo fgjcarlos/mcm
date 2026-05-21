@@ -86,7 +86,11 @@ func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
 
 // Handler returns the configured HTTP handler tree.
 func (a *App) Handler() http.Handler {
-	aclAPI := &aclAPI{store: a.aclStore}
+	aclAPI := &aclAPI{
+		store:                 a.aclStore,
+		recordSecurityFailure: a.recordSecurityFailure,
+		recordSecurityChange:  a.recordSecurityChange,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
@@ -101,6 +105,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
 	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
 	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.Handle("GET /api/v1/security/events", a.requireAuth(http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	return mux
@@ -199,6 +204,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := a.store.GetAdminUserByUsername(r.Context(), req.Username)
 	if errors.Is(err, storage.ErrUserNotFound) {
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_credentials", strings.TrimSpace(req.Username))
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
 		return
 	}
@@ -207,6 +213,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user.Disabled {
+		a.recordSecurityFailure(r, "admin_login_failed", "disabled_user", user.Username)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "user is disabled"})
 		return
 	}
@@ -217,6 +224,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !match {
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_credentials", user.Username)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
 		return
 	}
@@ -365,16 +373,37 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil || parsedLimit < 1 {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid limit"})
+			return
+		}
+		limit = parsedLimit
+	}
+
+	events, err := a.store.ListSecurityEvents(r.Context(), storage.SecurityEventQuery{Limit: limit})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
 func (a *App) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
 		if !strings.HasPrefix(header, "Bearer ") {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "missing_bearer_token", "")
 			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 			return
 		}
 
 		claims, err := a.tokens.VerifyAt(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), a.now().UTC())
 		if err != nil {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "invalid_bearer_token", "")
 			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 			return
 		}
@@ -382,6 +411,50 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), currentUserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (a *App) recordSecurityFailure(r *http.Request, category string, reason string, username string) {
+	a.recordSecurityEvent(r, category, reason, username)
+}
+
+func (a *App) recordSecurityChange(r *http.Request, category string, reason string, _ string) {
+	a.recordSecurityEvent(r, category, reason, "")
+}
+
+func (a *App) recordSecurityEvent(r *http.Request, category string, reason string, username string) {
+	_, _ = a.store.RecordSecurityEvent(r.Context(), storage.CreateSecurityEventParams{
+		Category:   category,
+		Reason:     reason,
+		Username:   username,
+		SourceIP:   clientIP(r),
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		ObservedAt: a.now().UTC(),
+	})
+}
+
+func clientIP(r *http.Request) string {
+	if forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwardedFor != "" {
+		first := strings.TrimSpace(strings.Split(forwardedFor, ",")[0])
+		if parsed := net.ParseIP(first); parsed != nil {
+			return parsed.String()
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		if parsed := net.ParseIP(realIP); parsed != nil {
+			return parsed.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		if parsed := net.ParseIP(host); parsed != nil {
+			return parsed.String()
+		}
+	}
+	if parsed := net.ParseIP(r.RemoteAddr); parsed != nil {
+		return parsed.String()
+	}
+	return ""
 }
 
 func currentUserFromContext(ctx context.Context) (auth.UserClaims, bool) {

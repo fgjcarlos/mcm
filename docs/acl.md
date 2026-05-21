@@ -96,3 +96,11 @@ topic readwrite factory/line1/#
 ```
 
 The current implementation stores ACL rules in memory so the API and validation logic stay isolated and easy to test. Persisting the same model in SQLite can be added later without changing the HTTP contract.
+
+## Security event visibility
+
+MCM records sanitized security events for ACL API changes and ACL API failures. These events include the timestamp, event category/reason, source IP when available, HTTP method, and path. They do not include passwords, JWTs, request bodies, or other secrets.
+
+Recent events are available to authenticated admins through `GET /api/v1/security/events?limit=100`, which returns newest events first.
+
+Mosquitto-side authentication and ACL denials are not fully visible in this first slice. The embedded status/event stream currently observes MCM broker connectivity, topic traffic, and MCM-ingested broker log events; it does not parse Mosquitto log files nor subscribe to a broker `$SYS` topic that reliably exposes per-client auth/ACL denials. A future integration should prefer a configured, least-privilege Mosquitto log source or plugin hook and continue to redact client secrets and payloads.

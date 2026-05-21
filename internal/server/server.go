@@ -26,7 +26,9 @@ func NewHandler(store acl.Store) http.Handler {
 }
 
 type aclAPI struct {
-	store acl.Store
+	store                 acl.Store
+	recordSecurityFailure func(*http.Request, string, string, string)
+	recordSecurityChange  func(*http.Request, string, string, string)
 }
 
 type aclRuleRequest struct {
@@ -58,15 +60,18 @@ func (api *aclAPI) handleListRules(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	rule, err := decodeRuleRequest(r)
 	if err != nil {
+		api.recordACLSecurityFailure(r, "acl_create_failed", "invalid_request", "")
 		writeAPIError(w, err)
 		return
 	}
 
 	created, err := api.store.CreateRule(r.Context(), rule)
 	if err != nil {
+		api.recordACLSecurityFailure(r, "acl_create_failed", reasonForACLError(err), "")
 		writeAPIError(w, err)
 		return
 	}
+	api.recordACLSecurityChange(r, "acl_rule_created", "acl_rule", created.ID)
 
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -74,21 +79,25 @@ func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
+		api.recordACLSecurityFailure(r, "acl_update_failed", "missing_rule_id", "")
 		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: "acl rule id is required"})
 		return
 	}
 
 	rule, err := decodeRuleRequest(r)
 	if err != nil {
+		api.recordACLSecurityFailure(r, "acl_update_failed", "invalid_request", id)
 		writeAPIError(w, err)
 		return
 	}
 
 	updated, err := api.store.UpdateRule(r.Context(), id, rule)
 	if err != nil {
+		api.recordACLSecurityFailure(r, "acl_update_failed", reasonForACLError(err), id)
 		writeAPIError(w, err)
 		return
 	}
+	api.recordACLSecurityChange(r, "acl_rule_updated", "acl_rule", updated.ID)
 
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -96,14 +105,17 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 func (api *aclAPI) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
+		api.recordACLSecurityFailure(r, "acl_delete_failed", "missing_rule_id", "")
 		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: "acl rule id is required"})
 		return
 	}
 
 	if err := api.store.DeleteRule(r.Context(), id); err != nil {
+		api.recordACLSecurityFailure(r, "acl_delete_failed", reasonForACLError(err), id)
 		writeAPIError(w, err)
 		return
 	}
+	api.recordACLSecurityChange(r, "acl_rule_deleted", "acl_rule", id)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -144,5 +156,29 @@ func writeAPIError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusNotFound, aclErrorResponse{Error: "acl rule not found"})
 	default:
 		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: err.Error()})
+	}
+}
+
+func (api *aclAPI) recordACLSecurityFailure(r *http.Request, category string, reason string, resourceID string) {
+	if api.recordSecurityFailure != nil {
+		api.recordSecurityFailure(r, category, reason, resourceID)
+	}
+}
+
+func (api *aclAPI) recordACLSecurityChange(r *http.Request, category string, reason string, resourceID string) {
+	if api.recordSecurityChange != nil {
+		api.recordSecurityChange(r, category, reason, resourceID)
+	}
+}
+
+func reasonForACLError(err error) string {
+	var validationErr *acl.ValidationError
+	switch {
+	case errors.As(err, &validationErr):
+		return "validation_failed"
+	case errors.Is(err, acl.ErrRuleNotFound):
+		return "rule_not_found"
+	default:
+		return "request_failed"
 	}
 }
