@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -76,6 +78,82 @@ func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {
 	if events[0].PayloadFormat == "hello" {
 		t.Fatal("raw payload was persisted")
 	}
+}
+
+func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
+	hub := NewBrokerEventHub()
+	first, unsubscribeFirst := hub.Subscribe()
+	defer unsubscribeFirst()
+	second, unsubscribeSecond := hub.Subscribe()
+	defer unsubscribeSecond()
+
+	drainInitialStatus(t, first)
+	drainInitialStatus(t, second)
+
+	hub.Publish(BrokerLogEvent("broker", "info", "Broker connected"))
+
+	for name, ch := range map[string]<-chan BrokerEvent{"first": first, "second": second} {
+		event := readBrokerEvent(t, ch)
+		if event.Type != "broker_log" {
+			t.Fatalf("%s subscriber event type = %q, want broker_log", name, event.Type)
+		}
+		if event.Source != "broker" || event.Severity != "info" || event.Message != "Broker connected" {
+			t.Fatalf("%s subscriber log event = %+v, want broker/info/Broker connected", name, event)
+		}
+	}
+}
+
+func TestBrokerEventHubReplaysBoundedLogBuffer(t *testing.T) {
+	hub := NewBrokerEventHub()
+	for i := 0; i < maxBrokerLogBuffer+5; i++ {
+		hub.Publish(BrokerLogEvent("broker", "debug", fmt.Sprintf("log-%03d", i)))
+	}
+
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	drainInitialStatus(t, events)
+
+	count := 0
+	var firstLog BrokerEvent
+	for {
+		select {
+		case event := <-events:
+			if event.Type != "broker_log" {
+				t.Fatalf("replayed event type = %q, want broker_log", event.Type)
+			}
+			if count == 0 {
+				firstLog = event
+			}
+			count++
+		case <-time.After(25 * time.Millisecond):
+			if count != maxBrokerLogBuffer {
+				t.Fatalf("replayed log count = %d, want %d", count, maxBrokerLogBuffer)
+			}
+			if firstLog.Message != "log-005" {
+				t.Fatalf("first replayed log = %q, want oldest retained log-005", firstLog.Message)
+			}
+			return
+		}
+	}
+}
+
+func drainInitialStatus(t *testing.T, ch <-chan BrokerEvent) {
+	t.Helper()
+	event := readBrokerEvent(t, ch)
+	if event.Type != "broker_status" || event.Status != "disconnected" {
+		t.Fatalf("initial event = %+v, want disconnected broker status", event)
+	}
+}
+
+func readBrokerEvent(t *testing.T, ch <-chan BrokerEvent) BrokerEvent {
+	t.Helper()
+	select {
+	case event := <-ch:
+		return event
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("timed out waiting for broker event")
+	}
+	return BrokerEvent{}
 }
 
 func openTestWebSocket(t *testing.T, serverURL string, path string) (net.Conn, *bufio.Reader) {

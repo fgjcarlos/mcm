@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 
 type BrokerEvent = {
-  type: 'broker_status' | 'topic_message'
+  type: 'broker_status' | 'topic_message' | 'broker_log'
   status?: 'connected' | 'disconnected'
   topic?: string
   payload_preview?: string
   payload_format?: 'json' | 'text'
   truncated?: boolean
+  source?: string
+  severity?: 'debug' | 'info' | 'warning' | 'error'
+  message?: string
   observed_at: string
 }
 
 type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
+type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
 
 type NavItem = {
   id: string
@@ -34,6 +38,13 @@ const navItems: NavItem[] = [
     eyebrow: 'Traffic',
     title: 'Topic explorer',
     description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
+  },
+  {
+    id: 'logs',
+    label: 'Logs',
+    eyebrow: 'Operations',
+    title: 'Realtime broker logs',
+    description: 'Monitor connection transitions and MCM broker operational events as they are ingested.',
   },
   {
     id: 'users',
@@ -63,6 +74,7 @@ function App() {
   const [brokerStatus, setBrokerStatus] = useState<'connected' | 'disconnected'>('disconnected')
   const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [topics, setTopics] = useState<TopicMessage[]>([])
+  const [logs, setLogs] = useState<BrokerLog[]>([])
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
 
   useEffect(() => {
@@ -80,6 +92,9 @@ function App() {
         }
         if (event.type === 'topic_message' && event.topic) {
           setTopics((current) => [event as TopicMessage, ...current].slice(0, 20))
+        }
+        if (event.type === 'broker_log' && event.source && event.severity && event.message) {
+          setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
         }
       } catch {
         setStreamState('disconnected')
@@ -150,50 +165,108 @@ function App() {
               <div className="grid grid-cols-3 gap-3 sm:min-w-[24rem]">
                 <Metric label="Status" value={brokerStatus} />
                 <Metric label="Topics" value={String(uniqueTopicCount).padStart(2, '0')} />
-                <Metric label="Messages" value={String(topics.length).padStart(2, '0')} />
+                <Metric label="Logs" value={String(logs.length).padStart(2, '0')} />
               </div>
             </div>
 
-            <section className="mt-8 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-              <article className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">Latest message</p>
-                {latestTopic ? (
-                  <>
-                    <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
-                    <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
-                    <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-300">
-                      {latestTopic.payload_format}{latestTopic.truncated ? ' · truncated' : ''}
-                    </p>
-                  </>
-                ) : (
-                  <p className="mt-3 text-sm leading-7 text-slate-200/90">Waiting for messages from the development broker.</p>
-                )}
-              </article>
-
-              <article className="rounded-[1.75rem] border border-dashed border-cyan-300/25 bg-slate-900/70 p-6">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Topic explorer</p>
-                <div className="mt-4 space-y-3">
-                  {topics.length === 0 ? (
-                    <p className="text-sm text-slate-300">No topic activity received yet.</p>
-                  ) : (
-                    topics.map((topic, index) => (
-                      <div key={`${topic.topic}-${topic.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
-                          <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
-                        </div>
-                        <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </article>
-            </section>
+            {activeId === 'logs' ? (
+              <LogsPanel logs={logs} streamState={streamState} />
+            ) : (
+              <TopicsPanel topics={topics} latestTopic={latestTopic} />
+            )}
           </div>
         </main>
       </div>
     </div>
   )
+}
+
+function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTopic?: TopicMessage }) {
+  return (
+    <section className="mt-8 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+      <article className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">Latest message</p>
+        {latestTopic ? (
+          <>
+            <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
+            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
+            <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-300">
+              {latestTopic.payload_format}{latestTopic.truncated ? ' · truncated' : ''}
+            </p>
+          </>
+        ) : (
+          <p className="mt-3 text-sm leading-7 text-slate-200/90">Waiting for messages from the development broker.</p>
+        )}
+      </article>
+
+      <article className="rounded-[1.75rem] border border-dashed border-cyan-300/25 bg-slate-900/70 p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Topic explorer</p>
+        <div className="mt-4 space-y-3">
+          {topics.length === 0 ? (
+            <p className="text-sm text-slate-300">No topic activity received yet.</p>
+          ) : (
+            topics.map((topic, index) => (
+              <div key={`${topic.topic}-${topic.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
+                  <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
+                </div>
+                <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </article>
+    </section>
+  )
+}
+
+function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: 'connecting' | 'connected' | 'disconnected' }) {
+  return (
+    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Log feed</p>
+          <p className="mt-2 text-sm text-slate-300">WebSocket state: <span className="capitalize text-white">{streamState}</span></p>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${streamState === 'connected' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-rose-400/10 text-rose-200'}`}>
+          {streamState === 'connected' ? 'Live' : streamState}
+        </span>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {logs.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+            {streamState === 'connected' ? 'No broker log events received yet.' : 'Connect to the event stream to receive broker logs.'}
+          </div>
+        ) : (
+          logs.map((log, index) => (
+            <article key={`${log.observed_at}-${log.source}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SeverityBadge severity={log.severity} />
+                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{log.source}</span>
+                </div>
+                <time className="text-xs text-slate-400" dateTime={log.observed_at}>{new Date(log.observed_at).toLocaleString()}</time>
+              </div>
+              <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-100">{log.message}</p>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SeverityBadge({ severity }: { severity: BrokerLog['severity'] }) {
+  const className = {
+    debug: 'bg-slate-400/10 text-slate-200',
+    info: 'bg-cyan-400/10 text-cyan-200',
+    warning: 'bg-amber-400/10 text-amber-200',
+    error: 'bg-rose-400/10 text-rose-200',
+  }[severity]
+
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${className}`}>{severity}</span>
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
