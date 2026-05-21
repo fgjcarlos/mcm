@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -313,10 +314,25 @@ func BrokerLogEvent(source string, severity string, message string) BrokerEvent 
 }
 
 func (a *App) publishBrokerStatus(status string, logSeverity string, logMessage string) {
-	a.brokerEvents.Publish(BrokerStatusEvent(status))
+	previousStatus := a.brokerEvents.Snapshot().Status.Status
+	event := BrokerStatusEvent(status)
+	a.brokerEvents.Publish(event)
 	if strings.TrimSpace(logMessage) != "" {
 		a.brokerEvents.Publish(BrokerLogEvent("broker", logSeverity, logMessage))
 	}
+	if previousStatus == status {
+		return
+	}
+	a.alerts.Enqueue(alerting.WebhookAlert{
+		Type:       "broker_status",
+		Severity:   strings.TrimSpace(logSeverity),
+		Source:     "broker",
+		Message:    strings.TrimSpace(logMessage),
+		ObservedAt: event.ObservedAt,
+		Details: map[string]any{
+			"status": status,
+		},
+	})
 }
 
 func persistBrokerEvent(store *storage.Store, retention time.Duration, event BrokerEvent) {

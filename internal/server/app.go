@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
+	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -27,6 +28,7 @@ type App struct {
 	aclStore     acl.Store
 	tokens       *auth.TokenManager
 	brokerEvents *BrokerEventHub
+	alerts       *alerting.WebhookAlerter
 	mosquitto    config.MosquittoConfig
 	now          func() time.Time
 }
@@ -50,6 +52,7 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 		aclStore:     acl.NewMemoryStore(),
 		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents: brokerEvents,
+		alerts:       alerting.NewWebhookAlerter(cfg.Alerting),
 		mosquitto:    cfg.Mosquitto,
 		now:          time.Now,
 	}, nil
@@ -495,6 +498,7 @@ func (a *App) recordSecurityChange(r *http.Request, category string, reason stri
 }
 
 func (a *App) recordSecurityEvent(r *http.Request, category string, reason string, username string) {
+	observedAt := a.now().UTC()
 	_, _ = a.store.RecordSecurityEvent(r.Context(), storage.CreateSecurityEventParams{
 		Category:   category,
 		Reason:     reason,
@@ -502,7 +506,22 @@ func (a *App) recordSecurityEvent(r *http.Request, category string, reason strin
 		SourceIP:   clientIP(r),
 		Method:     r.Method,
 		Path:       r.URL.Path,
-		ObservedAt: a.now().UTC(),
+		ObservedAt: observedAt,
+	})
+	a.alerts.Enqueue(alerting.WebhookAlert{
+		Type:       "security_event",
+		Severity:   "warning",
+		Source:     "http_api",
+		Message:    fmt.Sprintf("Security event: %s (%s)", category, reason),
+		ObservedAt: observedAt,
+		Details: map[string]any{
+			"category":  category,
+			"reason":    reason,
+			"username":  username,
+			"source_ip": clientIP(r),
+			"method":    r.Method,
+			"path":      r.URL.Path,
+		},
 	})
 }
 
