@@ -129,6 +129,93 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/login/mfa:
+    post:
+      tags: [Auth]
+      summary: Complete an MFA-protected login
+      description: |
+        Exchanges the `mfa_challenge` returned by `POST /api/v1/auth/login` for a
+        full access token, given a valid TOTP code or single-use recovery code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginMFARequest" }
+      responses:
+        "200":
+          description: MFA verified.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400":
+          description: Missing fields.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Invalid challenge, expired challenge, or invalid TOTP / recovery code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/mfa/setup:
+    post:
+      tags: [Auth]
+      summary: Begin TOTP MFA enrollment
+      description: |
+        Generates a fresh TOTP secret and a set of single-use recovery codes for
+        the current user. The secret stays "pending" (`mfa_enabled` does not flip)
+        until a matching code is sent to `POST /api/v1/auth/mfa/verify`.
+
+        The plaintext recovery codes are returned exactly once. Show them to the
+        operator, then drop them — only their bcrypt hashes are persisted.
+      responses:
+        "200":
+          description: Pending enrollment payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MFASetupResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Finish TOTP MFA enrollment
+      description: Validates the first TOTP code from the pending secret and flips `mfa_enabled` to true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MFAVerifyRequest" }
+      responses:
+        "204": { description: MFA is now enabled for the user. }
+        "400":
+          description: Missing code or no pending enrollment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/mfa:
+    delete:
+      tags: [Auth]
+      summary: Disable TOTP MFA for the current user
+      description: Requires the operator to re-enter their password. Clears the secret and revokes all recovery codes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MFADisableRequest" }
+      responses:
+        "204": { description: MFA disabled. }
+        "400":
+          description: Missing password.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Missing or invalid bearer token, or wrong password.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/auth/me:
     get:
       tags: [Auth]
@@ -552,11 +639,55 @@ components:
       required: [username, password]
     LoginResponse:
       type: object
+      description: |
+        Either issues a token (single-factor login) or returns `mfa_required: true`
+        plus a short-lived `mfa_challenge` to be exchanged at `POST /api/v1/auth/login/mfa`.
       properties:
         token: { type: string, format: jwt }
         expires_at: { type: string, format: date-time }
         user: { $ref: "#/components/schemas/AdminUser" }
-      required: [token, expires_at, user]
+        mfa_required: { type: boolean }
+        mfa_challenge:
+          type: string
+          format: jwt
+          description: Short-lived JWT (purpose=mfa_challenge) accepted only by `/api/v1/auth/login/mfa`.
+    LoginMFARequest:
+      type: object
+      properties:
+        mfa_challenge: { type: string, format: jwt }
+        code:
+          type: string
+          description: TOTP code (6 digits) or one of the recovery codes returned at enrollment.
+      required: [mfa_challenge, code]
+    MFASetupResponse:
+      type: object
+      properties:
+        otpauth_url:
+          type: string
+          description: Provisioning URI for authenticator apps; usually rendered as a QR.
+        secret:
+          type: string
+          description: Base32 TOTP secret. Provided as a fallback for apps that cannot scan the QR.
+        recovery_codes:
+          type: array
+          items: { type: string }
+          description: Plaintext single-use recovery codes — surfaced exactly once.
+      required: [otpauth_url, secret, recovery_codes]
+    MFAVerifyRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          description: First TOTP code from the pending secret.
+      required: [code]
+    MFADisableRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+          description: The current account password — required for re-authentication before disabling MFA.
+      required: [password]
     AdminUser:
       type: object
       properties:
