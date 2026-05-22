@@ -1,6 +1,10 @@
 # Mosquitto Control Manager (MCM)
 
 [![CI](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![Go](https://img.shields.io/badge/go-1.24-00ADD8?logo=go&logoColor=white)](./go.mod)
+[![Node](https://img.shields.io/badge/node-22.13%20%7C%2024-339933?logo=node.js&logoColor=white)](./frontend/.nvmrc)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./docs/openapi.yaml)
 
 **MCM is an open source control plane for Eclipse Mosquitto.**
 
@@ -29,11 +33,19 @@ MCM is not intended to compete with enterprise MQTT brokers at the broker level.
 
 ## Project status
 
-**Status: early concept / pre-MVP.**
+**Status: Alpha — the MVP is feature-complete and the project is in a hardening phase.**
 
-The repository is currently being prepared for the first technical milestone. The first target is a small, usable MVP that can manage a Mosquitto instance in a local or edge deployment.
+MCM now ships an end-to-end stack: backend API + CLI, persistent SQLite, MQTT 3.1.1 client (paho), realtime WebSocket stream, dashboard UI with real login, RBAC, structured logging, Prometheus metrics, optional HTTPS / mTLS, audit and security event trails, and webhook alerting. See [What works today](#what-works-today) for the full list.
 
-See [ROADMAP.md](./ROADMAP.md) for the planned phases and [docs/adr](./docs/adr/) for architecture decision records. Operational webhook alerting is documented in [docs/webhook-alerting.md](./docs/webhook-alerting.md), topic-level Sparkplug B awareness is documented in [docs/sparkplug.md](./docs/sparkplug.md), and JSON schema validation is documented in [docs/json-schemas.md](./docs/json-schemas.md).
+Reference docs:
+
+- [ROADMAP.md](./ROADMAP.md) — high-level phases and direction.
+- [docs/openapi.yaml](./docs/openapi.yaml) — full REST + WebSocket API contract (OpenAPI 3.1).
+- [docs/adr](./docs/adr/) — architecture decision records.
+- [docs/acl.md](./docs/acl.md) — ACL model and REST shape.
+- [docs/json-schemas.md](./docs/json-schemas.md) — JSON Schema validators bound to MQTT topic filters.
+- [docs/sparkplug.md](./docs/sparkplug.md) — Sparkplug B topic awareness.
+- [docs/webhook-alerting.md](./docs/webhook-alerting.md) — outbound operational webhooks.
 
 ---
 
@@ -59,30 +71,46 @@ See [ROADMAP.md](./ROADMAP.md) for the planned phases and [docs/adr](./docs/adr/
 
 ---
 
-## Planned MVP scope
+## What works today
 
-The first usable version should stay intentionally small:
+**Backend**
 
-- Authentication and admin login
-- User management
-- Visual ACL management
-- Basic Mosquitto configuration integration
-- Basic dashboard with broker/client status
-- Topic explorer / MQTT message viewer
-- REST API
-- WebSocket events for realtime UI updates
-- Docker Compose development environment
-- SQLite-based local persistence
-- Initial CLI commands: `server`, `doctor`, `status`, `config validate`, `version`
+- Admin authentication with bcrypt-hashed passwords, JWT tokens, and an /auth/me session check.
+- Login brute-force protection: per-IP and per-username failure counters with HTTP 429 + `Retry-After` lockouts and security events.
+- Role-based access control with four roles (`viewer < auditor < operator < admin`); every protected endpoint declares a minimum role.
+- ACL management persisted in SQLite, MQTT wildcard validation, and Mosquitto ACL line projection.
+- JSON Schema validators attached to MQTT topic filters, evaluated live against incoming payloads.
+- Sparkplug B namespace classification on observed topics.
+- MQTT subscription via the maintained `eclipse/paho.mqtt.golang` client (keepalive, auto-reconnect, TLS).
+- WebSocket event stream at `/api/v1/broker/events` authenticated via `Sec-WebSocket-Protocol` (no token in URLs).
+- Optional HTTPS and mTLS on the MCM HTTP API.
+- Persistent admin audit trail and operator-facing security event log.
+- Outbound webhook alerting with HMAC signatures.
+- Prometheus `/metrics` endpoint with bounded label cardinality, plus a starter Grafana dashboard.
+- Structured `log/slog` JSON logs with request-ID propagation (`X-Request-ID`).
+- OpenAPI 3.1 contract for every endpoint, linted in CI.
 
-Non-goals for the MVP:
+**Frontend**
+
+- Real login screen against `/api/v1/auth/login`; the token is the single source of truth for protected API calls and the broker WebSocket subprotocol handshake.
+- Dashboard with broker status, traffic widgets, topic explorer, realtime log feed, audit + security panels.
+- Logout from the sidebar; expired or 401 responses bounce the user back to the login screen.
+
+**Operations**
+
+- Single-binary CLI (`mcm server | doctor | status | config | backup | version`).
+- Docker Compose dev stack for a local Mosquitto broker.
+- GoReleaser packaging targeting Linux amd64/arm64, macOS arm64, Windows amd64.
+- CI on every PR: `go test -race` + cross-OS builds + frontend lint/build + OpenAPI lint.
+
+**Out of scope for the first stable release**
 
 - Multi-broker management
 - Clustering / high availability
 - Multi-tenancy
-- SSO / LDAP
+- SSO / LDAP / SAML
 - Advanced industrial protocol bridges
-- Automatic broker replacement or embedded broker mode
+- Embedded broker mode (Mosquitto stays the broker)
 
 ---
 
@@ -118,42 +146,34 @@ The frontend can be embedded into the Go binary for simple distribution:
 
 ---
 
-## Suggested technology stack
+## Tech stack
 
 ### Backend
 
-- Go
-- HTTP framework: Echo, Gin, or Fiber
-- SQLite for MVP persistence
-- Cobra for CLI commands
-- MQTT client integration for broker status, topic inspection, and realtime events
+- **Go 1.24** with the stdlib `net/http` ServeMux (no third-party HTTP framework) and `log/slog` for structured logging.
+- **SQLite** via the pure-Go `modernc.org/sqlite` driver so the binary cross-compiles to every supported target without CGO.
+- **Cobra** for the CLI.
+- **MQTT**: `eclipse/paho.mqtt.golang` for broker subscription, status, and topic inspection.
+- **Auth**: `golang-jwt/jwt/v5` + `golang.org/x/crypto/argon2`/bcrypt for password hashing.
+- **Metrics**: `prometheus/client_golang` on a private registry.
+- **Tests**: stdlib `testing`; in-process MQTT broker for integration via `mochi-mqtt/server/v2`.
 
 ### Frontend
 
-- React
-- Vite
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-- Realtime updates through WebSocket
+- **React 19** + **Vite 8** + **TypeScript 6**
+- **Tailwind CSS 4** via `@tailwindcss/vite`
+- **ESLint 10** (with `eslint-plugin-react-hooks` 7)
+- Reproducible installs pinned by `frontend/package-lock.json` and `frontend/.nvmrc`.
 
 ### Deployment
 
-- Docker Compose for development and quick trials
-- Single binary for lightweight production installs
-- Future multi-arch builds with GoReleaser
-
-Target platforms:
-
-- linux-amd64
-- linux-arm64
-- linux-arm/v7
-- windows-amd64
-- darwin-arm64
+- Single statically linked Go binary (CGO disabled; pure-Go SQLite driver covers every target).
+- Docker Compose stack for local Mosquitto.
+- **GoReleaser** multi-arch builds for `linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`.
 
 ---
 
-## Initial CLI concept
+## CLI
 
 ```bash
 mcm server           # Start API, web UI, and Mosquitto integration
@@ -165,6 +185,8 @@ mcm backup create    # Create a portable SQLite backup artifact
 mcm backup restore   # Restore local state from a SQLite backup artifact
 mcm version          # Print version/build information
 ```
+
+Every command takes a global `--config` flag pointing at the YAML file documented in [docs/openapi.yaml](./docs/openapi.yaml) and the [`config init` template](./internal/config/).
 
 ### Backup and restore
 
@@ -233,7 +255,7 @@ The local Mosquitto configuration lives in [`deploy/mosquitto/config/mosquitto.c
 
 ### MCM CLI development
 
-The initial Go CLI skeleton is available under [`cmd/mcm`](./cmd/mcm).
+The Go CLI lives under [`cmd/mcm`](./cmd/mcm); production wiring is in [`internal/cli`](./internal/cli) and [`internal/server`](./internal/server).
 
 ```bash
 # Show available commands
@@ -269,7 +291,7 @@ It supports MQTT wildcard topic filters, validates invalid wildcard placement, a
 
 ### Frontend development
 
-The React and Vite frontend skeleton lives under [`frontend/`](./frontend/).
+The React + Vite frontend lives under [`frontend/`](./frontend/). It ships a login screen, a broker dashboard, audit/security panels, and the realtime topic explorer.
 
 **Toolchain requirements:**
 
@@ -382,18 +404,21 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
 
 **Production guidance**: use certificates issued by your internal CA (or a public ACME provider for internet-exposed deployments), keep `key_file` mode `0600`, and bind only to the interface that should accept inbound traffic. For mTLS, ship the trusted client CA bundle to `client_ca_file` and enable `require_client_cert: true` to make a missing or invalid client certificate fail closed.
 
-### Future MCM service
+### Running MCM alongside Mosquitto
 
-The Compose stack currently starts Mosquitto only because the backend service is still a skeleton. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).
+The Compose stack starts Mosquitto only; the MCM service is launched separately with the CLI so operators control its lifecycle and TLS posture. The intended deployment shape (and the operator-facing variables) is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).
 
-Expected future workflow once the backend server and frontend exist:
+End-to-end development loop:
 
 ```bash
-# Start full development stack
-make dev
+# 1. Start the local broker
+docker compose up -d
 
-# Build frontend + backend
-make build
+# 2. Start MCM against the dev config
+go run ./cmd/mcm server --config ./mcm.yaml
+
+# 3. In a second terminal, build the frontend (or `npm run dev` for HMR)
+npm --prefix frontend run build
 ```
 
 ---
