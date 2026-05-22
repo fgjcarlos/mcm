@@ -565,6 +565,18 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	token, ok := extractWebSocketBearer(r.Header.Get("Sec-WebSocket-Protocol"))
+	if !ok {
+		a.recordSecurityFailure(r, "protected_websocket_access_failed", "missing_bearer_token", "")
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+		return
+	}
+	if _, err := a.tokens.VerifyAt(token, a.now().UTC()); err != nil {
+		a.recordSecurityFailure(r, "protected_websocket_access_failed", "invalid_bearer_token", "")
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+		return
+	}
+
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "websocket upgrade unsupported"})
@@ -587,7 +599,8 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 	_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
 	_, _ = rw.WriteString("Upgrade: websocket\r\n")
 	_, _ = rw.WriteString("Connection: Upgrade\r\n")
-	_, _ = rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n\r\n")
+	_, _ = rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
+	_, _ = rw.WriteString("Sec-WebSocket-Protocol: " + webSocketSubprotocol + "\r\n\r\n")
 	if err := rw.Flush(); err != nil {
 		return
 	}
@@ -617,6 +630,34 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 
 func isWebSocketRequest(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+const (
+	webSocketSubprotocol      = "mcm.v1"
+	webSocketBearerPrefix     = "Bearer."
+)
+
+// extractWebSocketBearer reads the bearer token offered via Sec-WebSocket-Protocol.
+// Clients advertise "mcm.v1, Bearer.<token>" so the JWT never lands in URL query logs.
+func extractWebSocketBearer(header string) (string, bool) {
+	if strings.TrimSpace(header) == "" {
+		return "", false
+	}
+	for _, part := range strings.Split(header, ",") {
+		trimmed := strings.TrimSpace(part)
+		if len(trimmed) <= len(webSocketBearerPrefix) {
+			continue
+		}
+		if !strings.EqualFold(trimmed[:len(webSocketBearerPrefix)], webSocketBearerPrefix) {
+			continue
+		}
+		token := strings.TrimSpace(trimmed[len(webSocketBearerPrefix):])
+		if token == "" {
+			continue
+		}
+		return token, true
+	}
+	return "", false
 }
 
 func websocketAcceptKey(key string) (string, error) {

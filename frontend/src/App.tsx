@@ -215,8 +215,17 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const token = window.localStorage.getItem('mcm_admin_token')
+    if (!token) {
+      setStreamState('disconnected')
+      return
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/broker/events`)
+    const socket = new WebSocket(
+      `${protocol}//${window.location.host}/api/v1/broker/events`,
+      ['mcm.v1', `Bearer.${token}`],
+    )
 
     socket.addEventListener('open', () => setStreamState('connected'))
     socket.addEventListener('close', () => setStreamState('disconnected'))
@@ -265,7 +274,7 @@ function App() {
   useEffect(() => {
     if (activeId !== 'audit') return
 
-    const token = window.localStorage.getItem('mcm_token') ?? window.localStorage.getItem('mcm_admin_token')
+    const token = window.localStorage.getItem('mcm_admin_token')
     const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
 
     fetch('/api/v1/audit-events?limit=25', { headers })
