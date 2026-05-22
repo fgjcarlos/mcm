@@ -17,6 +17,7 @@ type BrokerEvent = {
   payload_bytes?: number
   truncated?: boolean
   payload_inspection?: PayloadInspection
+  schema_validation?: SchemaValidation
   sparkplug?: SparkplugMetadata
   source?: string
   severity?: 'debug' | 'info' | 'warning' | 'error'
@@ -32,6 +33,14 @@ type PayloadInspection = {
   json_top_level_keys?: string[]
   json_element_count?: number
   json_scalar_summary?: string
+}
+
+type SchemaValidation = {
+  schema_id: number
+  schema_name: string
+  topic_filter: string
+  valid: boolean
+  errors?: string[]
 }
 
 type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
@@ -462,6 +471,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
         {latestTopic ? (
           <>
             <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
+            {latestTopic.schema_validation ? <SchemaValidationDetails validation={latestTopic.schema_validation} /> : null}
             {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} /> : null}
             <PayloadMetadata event={latestTopic} />
             <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
@@ -482,6 +492,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
+                    {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}
                     {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
                   </div>
                   <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
@@ -495,6 +506,33 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
         </div>
       </article>
     </section>
+  )
+}
+
+function SchemaValidationBadge({ validation }: { validation: SchemaValidation }) {
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${validation.valid ? 'bg-emerald-400/10 text-emerald-200' : 'bg-red-400/10 text-red-200'}`}>
+      Schema {validation.valid ? 'valid' : 'invalid'}
+    </span>
+  )
+}
+
+function SchemaValidationDetails({ validation }: { validation: SchemaValidation }) {
+  return (
+    <div className={`mt-4 rounded-2xl border p-3 ${validation.valid ? 'border-emerald-300/20 bg-emerald-400/10' : 'border-red-300/20 bg-red-400/10'}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <SchemaValidationBadge validation={validation} />
+        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-100">{validation.schema_name}</span>
+        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-100">{validation.topic_filter}</span>
+      </div>
+      {!validation.valid && validation.errors?.length ? (
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-red-100">
+          {validation.errors.map((error) => (
+            <li key={error} className="break-all">{error}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 
@@ -596,6 +634,7 @@ function payloadChips(event: TopicMessage) {
     type,
     bytes === undefined ? undefined : `${bytes} bytes`,
     inspection?.json_valid ? 'valid JSON' : event.payload_format === 'json' ? 'JSON' : undefined,
+    event.schema_validation ? `schema ${event.schema_validation.valid ? 'valid' : 'invalid'}` : undefined,
     (inspection?.truncated ?? event.truncated) ? 'truncated' : undefined,
   ].filter((chip): chip is string => Boolean(chip))
 }

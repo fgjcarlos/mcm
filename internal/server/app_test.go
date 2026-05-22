@@ -401,6 +401,95 @@ func TestListAuditEventsEndpointRequiresAuthAndPaginates(t *testing.T) {
 	}
 }
 
+func TestJSONSchemaAPIRequiresAuthAndSupportsCRUD(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	unauthRec := httptest.NewRecorder()
+	unauthReq := httptest.NewRequest(http.MethodGet, "/api/v1/json-schemas", nil)
+	app.Handler().ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth json schema status = %d, want %d", unauthRec.Code, http.StatusUnauthorized)
+	}
+
+	token := loginAsSeededUser(t, app, store, "admin", "secret-password")
+	createBody := `{"name":"Temperature","topic_filter":"factory/+/temperature","schema":{"type":"object","required":["temperature"],"properties":{"temperature":{"type":"number"}}},"description":"temperature payload","enabled":true}`
+	createRec := httptest.NewRecorder()
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/json-schemas", strings.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create json schema status = %d, want %d, body = %s", createRec.Code, http.StatusCreated, createRec.Body.String())
+	}
+	var created storage.JSONSchemaDefinition
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created schema: %v", err)
+	}
+	if created.ID == 0 || created.TopicFilter != "factory/+/temperature" {
+		t.Fatalf("unexpected created schema: %#v", created)
+	}
+
+	listRec := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/json-schemas", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list json schemas status = %d, want %d, body = %s", listRec.Code, http.StatusOK, listRec.Body.String())
+	}
+	if !strings.Contains(listRec.Body.String(), "Temperature") {
+		t.Fatalf("list response missing created schema: %s", listRec.Body.String())
+	}
+
+	updateBody := `{"name":"Temperature disabled","topic_filter":"factory/line1/temperature","schema":{"type":"object"},"enabled":false}`
+	updateRec := httptest.NewRecorder()
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/json-schemas/"+strconv.FormatInt(created.ID, 10), strings.NewReader(updateBody))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateReq.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update json schema status = %d, want %d, body = %s", updateRec.Code, http.StatusOK, updateRec.Body.String())
+	}
+
+	deleteRec := httptest.NewRecorder()
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/json-schemas/"+strconv.FormatInt(created.ID, 10), nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete json schema status = %d, want %d, body = %s", deleteRec.Code, http.StatusNoContent, deleteRec.Body.String())
+	}
+}
+
+func TestTopicEventIncludesJSONSchemaValidationResult(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	_, err := store.CreateJSONSchema(context.Background(), storage.CreateJSONSchemaParams{
+		Name:        "Temperature",
+		TopicFilter: "factory/+/temperature",
+		Schema:      json.RawMessage(`{"type":"object","required":["temperature","unit"],"properties":{"temperature":{"type":"number"},"unit":{"type":"string"}}}`),
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateJSONSchema returned error: %v", err)
+	}
+
+	validEvent := app.TopicEvent("factory/line1/temperature", []byte(`{"temperature":21.5,"unit":"c"}`), 256)
+	if validEvent.SchemaValidation == nil || !validEvent.SchemaValidation.Valid || validEvent.SchemaValidation.SchemaName != "Temperature" {
+		t.Fatalf("valid event schema validation = %#v, want valid Temperature result", validEvent.SchemaValidation)
+	}
+
+	invalidEvent := app.TopicEvent("factory/line1/temperature", []byte(`{"temperature":"hot"}`), 256)
+	if invalidEvent.SchemaValidation == nil || invalidEvent.SchemaValidation.Valid || len(invalidEvent.SchemaValidation.Errors) == 0 {
+		t.Fatalf("invalid event schema validation = %#v, want bounded errors", invalidEvent.SchemaValidation)
+	}
+
+	unmatchedEvent := app.TopicEvent("factory/line1/humidity", []byte(`{"humidity":60}`), 256)
+	if unmatchedEvent.SchemaValidation != nil {
+		t.Fatalf("unmatched event schema validation = %#v, want nil", unmatchedEvent.SchemaValidation)
+	}
+}
+
 func newTestApp(t *testing.T) (*App, *storage.Store) {
 	t.Helper()
 
