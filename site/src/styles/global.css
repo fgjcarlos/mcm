@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-mcm-cyan: oklch(0.85 0.13 200);
+  --color-mcm-deep: oklch(0.18 0.04 250);
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
+    Monaco, Consolas, monospace;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-mcm-cyan);
+  color: var(--color-mcm-deep);
+}

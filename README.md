@@ -6,7 +6,7 @@
 [![Node](https://img.shields.io/badge/node-22.13%20%7C%2024-339933?logo=node.js&logoColor=white)](./frontend/.nvmrc)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./docs/openapi.yaml)
 
-**MCM is an open source control plane for Eclipse Mosquitto.**
+**Website**: [fgjcarlos.github.io/mcm](https://fgjcarlos.github.io/mcm) · **MCM is an open source control plane for Eclipse Mosquitto.**
 
 It aims to make Mosquitto easier to operate by adding a modern web UI, REST API, realtime observability, user management, ACL management, and deployment tooling — without replacing Mosquitto as the MQTT broker.
 
