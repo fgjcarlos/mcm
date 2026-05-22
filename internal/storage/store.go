@@ -169,6 +169,30 @@ ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
 CREATE INDEX idx_admin_users_role ON admin_users(role);
 `,
 	},
+	{
+		version: 9,
+		name:    "add_admin_users_mfa",
+		sql: `
+ALTER TABLE admin_users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admin_users ADD COLUMN mfa_secret TEXT NOT NULL DEFAULT '';
+`,
+	},
+	{
+		version: 10,
+		name:    "create_admin_mfa_recovery_codes",
+		sql: `
+CREATE TABLE admin_mfa_recovery_codes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	admin_user_id INTEGER NOT NULL,
+	code_hash TEXT NOT NULL,
+	used INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	used_at TEXT NOT NULL DEFAULT '',
+	FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_admin_mfa_recovery_codes_user ON admin_mfa_recovery_codes(admin_user_id, used);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
@@ -178,6 +202,8 @@ type AdminUser struct {
 	PasswordHash string    `json:"-"`
 	Disabled     bool      `json:"disabled"`
 	Role         string    `json:"role"`
+	MFAEnabled   bool      `json:"mfa_enabled"`
+	MFASecret    string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -424,7 +450,7 @@ func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParam
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO admin_users(username, password_hash, disabled, role, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO admin_users(username, password_hash, disabled, role, mfa_enabled, mfa_secret, created_at, updated_at) VALUES(?, ?, ?, ?, 0, '', ?, ?)`,
 		strings.TrimSpace(params.Username),
 		params.PasswordHash,
 		boolToInt(params.Disabled),
@@ -446,17 +472,18 @@ func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParam
 
 // GetAdminUserByID returns an admin user by ID.
 func (s *Store) GetAdminUserByID(ctx context.Context, id int64) (AdminUser, error) {
-	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users WHERE id = ?`, id)
+	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, mfa_enabled, mfa_secret, created_at, updated_at FROM admin_users WHERE id = ?`, id)
 }
 
 // GetAdminUserByUsername returns an admin user by username.
 func (s *Store) GetAdminUserByUsername(ctx context.Context, username string) (AdminUser, error) {
-	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users WHERE username = ?`, strings.TrimSpace(username))
+	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, mfa_enabled, mfa_secret, created_at, updated_at FROM admin_users WHERE username = ?`, strings.TrimSpace(username))
 }
 
 func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminUser, error) {
 	var user AdminUser
 	var disabled int
+	var mfaEnabled int
 	var createdAt string
 	var updatedAt string
 
@@ -466,6 +493,8 @@ func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminU
 		&user.PasswordHash,
 		&disabled,
 		&user.Role,
+		&mfaEnabled,
+		&user.MFASecret,
 		&createdAt,
 		&updatedAt,
 	)
@@ -477,6 +506,7 @@ func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminU
 	}
 
 	user.Disabled = disabled == 1
+	user.MFAEnabled = mfaEnabled == 1
 	user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
 		return AdminUser{}, fmt.Errorf("parse admin user created_at: %w", err)
@@ -491,7 +521,7 @@ func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminU
 
 // ListAdminUsers returns all admin users ordered by username.
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users ORDER BY username ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, disabled, role, mfa_enabled, mfa_secret, created_at, updated_at FROM admin_users ORDER BY username ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list admin users: %w", err)
 	}
@@ -501,12 +531,14 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	for rows.Next() {
 		var user AdminUser
 		var disabled int
+		var mfaEnabled int
 		var createdAt string
 		var updatedAt string
-		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &disabled, &user.Role, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &disabled, &user.Role, &mfaEnabled, &user.MFASecret, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan admin user: %w", err)
 		}
 		user.Disabled = disabled == 1
+		user.MFAEnabled = mfaEnabled == 1
 		user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse admin user created_at: %w", err)

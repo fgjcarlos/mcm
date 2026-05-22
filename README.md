@@ -76,6 +76,7 @@ Reference docs:
 **Backend**
 
 - Admin authentication with bcrypt-hashed passwords, JWT tokens, and an /auth/me session check.
+- Optional TOTP MFA per admin user: `/auth/mfa/setup` returns an `otpauth://` URL and ten single-use recovery codes (hashed at rest); enrolled users complete login via a short-lived MFA challenge token.
 - Login brute-force protection: per-IP and per-username failure counters with HTTP 429 + `Retry-After` lockouts and security events.
 - Role-based access control with four roles (`viewer < auditor < operator < admin`); every protected endpoint declares a minimum role.
 - ACL management persisted in SQLite, MQTT wildcard validation, and Mosquitto ACL line projection.

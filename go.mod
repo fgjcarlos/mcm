@@ -6,6 +6,7 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/mochi-mqtt/server/v2 v2.7.9
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.12.0
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/crypto v0.42.0
@@ -15,6 +16,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
