@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fgjcarlos/mcm/internal/acl"
+	"github.com/fgjcarlos/mcm/internal/schema"
 	_ "modernc.org/sqlite"
 )
 
@@ -106,6 +108,24 @@ CREATE TABLE audit_events (
 CREATE INDEX idx_audit_events_occurred_at ON audit_events(occurred_at);
 CREATE INDEX idx_audit_events_resource ON audit_events(resource_type, resource_id);
 CREATE INDEX idx_audit_events_actor ON audit_events(actor);
+`,
+	},
+	{
+		version: 5,
+		name:    "create_json_schemas",
+		sql: `
+CREATE TABLE json_schemas (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	topic_filter TEXT NOT NULL,
+	schema TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_json_schemas_topic_filter ON json_schemas(topic_filter);
+CREATE INDEX idx_json_schemas_enabled ON json_schemas(enabled);
 `,
 	},
 }
@@ -231,6 +251,36 @@ type CreateAuditEventParams struct {
 type AuditEventQuery struct {
 	Limit  int
 	Offset int
+}
+
+// JSONSchemaDefinition is an operator-defined JSON schema bound to an MQTT topic filter.
+type JSONSchemaDefinition struct {
+	ID          int64           `json:"id"`
+	Name        string          `json:"name"`
+	TopicFilter string          `json:"topic_filter"`
+	Schema      json.RawMessage `json:"schema"`
+	Description string          `json:"description,omitempty"`
+	Enabled     bool            `json:"enabled"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// CreateJSONSchemaParams holds fields for schema definition creation.
+type CreateJSONSchemaParams struct {
+	Name        string
+	TopicFilter string
+	Schema      json.RawMessage
+	Description string
+	Enabled     bool
+}
+
+// UpdateJSONSchemaParams holds mutable schema definition fields.
+type UpdateJSONSchemaParams struct {
+	Name        string
+	TopicFilter string
+	Schema      json.RawMessage
+	Description string
+	Enabled     bool
 }
 
 // Store wraps SQLite persistence.
@@ -465,6 +515,142 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
 		return ErrUserNotFound
 	}
 	return nil
+}
+
+// CreateJSONSchema creates a JSON schema definition.
+func (s *Store) CreateJSONSchema(ctx context.Context, params CreateJSONSchemaParams) (JSONSchemaDefinition, error) {
+	if err := validateJSONSchemaFields(params.Name, params.TopicFilter, params.Schema); err != nil {
+		return JSONSchemaDefinition{}, err
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `
+INSERT INTO json_schemas(name, topic_filter, schema, description, enabled, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		strings.TrimSpace(params.Name),
+		strings.TrimSpace(params.TopicFilter),
+		strings.TrimSpace(string(params.Schema)),
+		strings.TrimSpace(params.Description),
+		boolToInt(params.Enabled),
+		now.Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("create json schema: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("get json schema id: %w", err)
+	}
+	return s.GetJSONSchema(ctx, id)
+}
+
+// GetJSONSchema returns a schema definition by ID.
+func (s *Store) GetJSONSchema(ctx context.Context, id int64) (JSONSchemaDefinition, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, topic_filter, schema, description, enabled, created_at, updated_at FROM json_schemas WHERE id = ?`, id)
+	return scanJSONSchema(row)
+}
+
+// ListJSONSchemas returns all schema definitions ordered by topic filter and name.
+func (s *Store) ListJSONSchemas(ctx context.Context) ([]JSONSchemaDefinition, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, topic_filter, schema, description, enabled, created_at, updated_at FROM json_schemas ORDER BY topic_filter ASC, name ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list json schemas: %w", err)
+	}
+	defer rows.Close()
+	var schemas []JSONSchemaDefinition
+	for rows.Next() {
+		definition, err := scanJSONSchema(rows)
+		if err != nil {
+			return nil, err
+		}
+		schemas = append(schemas, definition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate json schemas: %w", err)
+	}
+	return schemas, nil
+}
+
+// UpdateJSONSchema updates a schema definition.
+func (s *Store) UpdateJSONSchema(ctx context.Context, id int64, params UpdateJSONSchemaParams) (JSONSchemaDefinition, error) {
+	if err := validateJSONSchemaFields(params.Name, params.TopicFilter, params.Schema); err != nil {
+		return JSONSchemaDefinition{}, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+UPDATE json_schemas SET name = ?, topic_filter = ?, schema = ?, description = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(params.Name),
+		strings.TrimSpace(params.TopicFilter),
+		strings.TrimSpace(string(params.Schema)),
+		strings.TrimSpace(params.Description),
+		boolToInt(params.Enabled),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		id,
+	)
+	if err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("update json schema: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("get updated json schema row count: %w", err)
+	} else if affected == 0 {
+		return JSONSchemaDefinition{}, sql.ErrNoRows
+	}
+	return s.GetJSONSchema(ctx, id)
+}
+
+// DeleteJSONSchema removes a schema definition.
+func (s *Store) DeleteJSONSchema(ctx context.Context, id int64) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM json_schemas WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete json schema: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("get deleted json schema row count: %w", err)
+	} else if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func validateJSONSchemaFields(name, topicFilter string, schemaDoc json.RawMessage) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("schema name is required")
+	}
+	if err := acl.ValidateTopicFilter(strings.TrimSpace(topicFilter)); err != nil {
+		return err
+	}
+	if len(schemaDoc) > 64*1024 {
+		return fmt.Errorf("schema document exceeds 65536 bytes")
+	}
+	if err := schema.ValidateSchemaDocument(schemaDoc); err != nil {
+		return err
+	}
+	return nil
+}
+
+func scanJSONSchema(rows interface{ Scan(dest ...any) error }) (JSONSchemaDefinition, error) {
+	var definition JSONSchemaDefinition
+	var schemaText string
+	var enabled int
+	var createdAt string
+	var updatedAt string
+	if err := rows.Scan(&definition.ID, &definition.Name, &definition.TopicFilter, &schemaText, &definition.Description, &enabled, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return JSONSchemaDefinition{}, err
+		}
+		return JSONSchemaDefinition{}, fmt.Errorf("scan json schema: %w", err)
+	}
+	definition.Schema = json.RawMessage(schemaText)
+	definition.Enabled = enabled == 1
+	var err error
+	definition.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("parse json schema created_at: %w", err)
+	}
+	definition.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return JSONSchemaDefinition{}, fmt.Errorf("parse json schema updated_at: %w", err)
+	}
+	return definition, nil
 }
 
 // RecordBrokerMetricEvent stores a broker event and its derived counter sample.

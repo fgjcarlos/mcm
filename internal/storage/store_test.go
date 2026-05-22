@@ -144,6 +144,83 @@ func TestPruneBrokerMetrics(t *testing.T) {
 	}
 }
 
+func TestJSONSchemaDefinitionCRUD(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	created, err := store.CreateJSONSchema(ctx, CreateJSONSchemaParams{
+		Name:        "Temperature reading",
+		TopicFilter: "factory/+/temperature",
+		Schema:      json.RawMessage(`{"type":"object","required":["temperature"],"properties":{"temperature":{"type":"number"}}}`),
+		Description: "Line temperature payload",
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateJSONSchema returned error: %v", err)
+	}
+	if created.ID == 0 || created.Name != "Temperature reading" || !created.Enabled {
+		t.Fatalf("unexpected created schema: %#v", created)
+	}
+
+	listed, err := store.ListJSONSchemas(ctx)
+	if err != nil {
+		t.Fatalf("ListJSONSchemas returned error: %v", err)
+	}
+	if len(listed) != 1 || listed[0].TopicFilter != "factory/+/temperature" {
+		t.Fatalf("unexpected schema list: %#v", listed)
+	}
+
+	updated, err := store.UpdateJSONSchema(ctx, created.ID, UpdateJSONSchemaParams{
+		Name:        "Temperature v2",
+		TopicFilter: "factory/line1/temperature",
+		Schema:      json.RawMessage(`{"type":"object","required":["temperature","unit"],"properties":{"temperature":{"type":"number"},"unit":{"type":"string"}}}`),
+		Description: "line 1 only",
+		Enabled:     false,
+	})
+	if err != nil {
+		t.Fatalf("UpdateJSONSchema returned error: %v", err)
+	}
+	if updated.Name != "Temperature v2" || updated.Enabled {
+		t.Fatalf("unexpected updated schema: %#v", updated)
+	}
+
+	if err := store.DeleteJSONSchema(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteJSONSchema returned error: %v", err)
+	}
+	listed, err = store.ListJSONSchemas(ctx)
+	if err != nil {
+		t.Fatalf("ListJSONSchemas after delete returned error: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("schema list after delete = %#v, want empty", listed)
+	}
+}
+
+func TestJSONSchemaRejectsMalformedSchemaAndInvalidTopicFilter(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	if _, err := store.CreateJSONSchema(ctx, CreateJSONSchemaParams{
+		Name:        "bad topic",
+		TopicFilter: "factory/#/temperature",
+		Schema:      json.RawMessage(`{"type":"object"}`),
+		Enabled:     true,
+	}); err == nil {
+		t.Fatal("CreateJSONSchema accepted invalid topic filter")
+	}
+
+	if _, err := store.CreateJSONSchema(ctx, CreateJSONSchemaParams{
+		Name:        "bad schema",
+		TopicFilter: "factory/#",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"value":{"type":"bogus"}}}`),
+		Enabled:     true,
+	}); err == nil {
+		t.Fatal("CreateJSONSchema accepted malformed JSON schema")
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(filepath.Join(t.TempDir(), "mcm.db"))
