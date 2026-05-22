@@ -128,6 +128,23 @@ CREATE INDEX idx_json_schemas_topic_filter ON json_schemas(topic_filter);
 CREATE INDEX idx_json_schemas_enabled ON json_schemas(enabled);
 `,
 	},
+	{
+		version: 6,
+		name:    "create_acl_rules",
+		sql: `
+CREATE TABLE acl_rules (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	principal TEXT NOT NULL,
+	topic_filter TEXT NOT NULL,
+	permission TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_acl_rules_principal ON acl_rules(principal);
+CREATE INDEX idx_acl_rules_topic_filter ON acl_rules(topic_filter);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
