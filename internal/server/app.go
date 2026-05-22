@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,6 +110,10 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
 	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
 	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.Handle("GET /api/v1/json-schemas", a.requireAuth(http.HandlerFunc(a.handleListJSONSchemas)))
+	mux.Handle("POST /api/v1/json-schemas", a.requireAuth(http.HandlerFunc(a.handleCreateJSONSchema)))
+	mux.Handle("PUT /api/v1/json-schemas/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateJSONSchema)))
+	mux.Handle("DELETE /api/v1/json-schemas/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteJSONSchema)))
 	mux.Handle("GET /api/v1/audit-events", a.requireAuth(http.HandlerFunc(a.handleListAuditEvents)))
 	mux.Handle("GET /api/v1/security/events", a.requireAuth(http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
@@ -151,6 +156,14 @@ type adminUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Disabled bool   `json:"disabled"`
+}
+
+type jsonSchemaRequest struct {
+	Name        string          `json:"name"`
+	TopicFilter string          `json:"topic_filter"`
+	Schema      json.RawMessage `json:"schema"`
+	Description string          `json:"description"`
+	Enabled     bool            `json:"enabled"`
 }
 
 type loginResponse struct {
@@ -390,6 +403,97 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (a *App) handleListJSONSchemas(w http.ResponseWriter, r *http.Request) {
+	schemas, err := a.store.ListJSONSchemas(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"schemas": schemas})
+}
+
+func (a *App) handleCreateJSONSchema(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSONSchemaRequest(w, r)
+	if !ok {
+		a.recordAuditFromRequest(r, "json_schema.create", "json_schema", "", "failure", map[string]any{"reason": "invalid_request"})
+		return
+	}
+	definition, err := a.store.CreateJSONSchema(r.Context(), storage.CreateJSONSchemaParams{
+		Name:        req.Name,
+		TopicFilter: req.TopicFilter,
+		Schema:      req.Schema,
+		Description: req.Description,
+		Enabled:     req.Enabled,
+	})
+	if err != nil {
+		a.recordAuditFromRequest(r, "json_schema.create", "json_schema", "", "failure", map[string]any{"name": req.Name, "topic_filter": req.TopicFilter, "reason": err.Error()})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	a.recordAuditFromRequest(r, "json_schema.create", "json_schema", strconv.FormatInt(definition.ID, 10), "success", map[string]any{"name": definition.Name, "topic_filter": definition.TopicFilter, "enabled": definition.Enabled})
+	writeJSON(w, http.StatusCreated, definition)
+}
+
+func (a *App) handleUpdateJSONSchema(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseIDParam(w, r)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSONSchemaRequest(w, r)
+	if !ok {
+		a.recordAuditFromRequest(r, "json_schema.update", "json_schema", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": "invalid_request"})
+		return
+	}
+	definition, err := a.store.UpdateJSONSchema(r.Context(), id, storage.UpdateJSONSchemaParams{
+		Name:        req.Name,
+		TopicFilter: req.TopicFilter,
+		Schema:      req.Schema,
+		Description: req.Description,
+		Enabled:     req.Enabled,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		a.recordAuditFromRequest(r, "json_schema.update", "json_schema", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": "json schema not found"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "json schema not found"})
+		return
+	}
+	if err != nil {
+		a.recordAuditFromRequest(r, "json_schema.update", "json_schema", strconv.FormatInt(id, 10), "failure", map[string]any{"name": req.Name, "topic_filter": req.TopicFilter, "reason": err.Error()})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	a.recordAuditFromRequest(r, "json_schema.update", "json_schema", strconv.FormatInt(definition.ID, 10), "success", map[string]any{"name": definition.Name, "topic_filter": definition.TopicFilter, "enabled": definition.Enabled})
+	writeJSON(w, http.StatusOK, definition)
+}
+
+func (a *App) handleDeleteJSONSchema(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseIDParam(w, r)
+	if !ok {
+		return
+	}
+	resourceID := strconv.FormatInt(id, 10)
+	if err := a.store.DeleteJSONSchema(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
+		a.recordAuditFromRequest(r, "json_schema.delete", "json_schema", resourceID, "failure", map[string]any{"reason": "json schema not found"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "json schema not found"})
+	} else if err != nil {
+		a.recordAuditFromRequest(r, "json_schema.delete", "json_schema", resourceID, "failure", map[string]any{"reason": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+	} else {
+		a.recordAuditFromRequest(r, "json_schema.delete", "json_schema", resourceID, "success", nil)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func decodeJSONSchemaRequest(w http.ResponseWriter, r *http.Request) (jsonSchemaRequest, bool) {
+	var req jsonSchemaRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return req, false
+	}
+	return req, true
 }
 
 func (a *App) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {

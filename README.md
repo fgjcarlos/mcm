@@ -31,7 +31,7 @@ MCM is not intended to compete with enterprise MQTT brokers at the broker level.
 
 The repository is currently being prepared for the first technical milestone. The first target is a small, usable MVP that can manage a Mosquitto instance in a local or edge deployment.
 
-See [ROADMAP.md](./ROADMAP.md) for the planned phases and [docs/adr](./docs/adr/) for architecture decision records. Operational webhook alerting is documented in [docs/webhook-alerting.md](./docs/webhook-alerting.md), and topic-level Sparkplug B awareness is documented in [docs/sparkplug.md](./docs/sparkplug.md).
+See [ROADMAP.md](./ROADMAP.md) for the planned phases and [docs/adr](./docs/adr/) for architecture decision records. Operational webhook alerting is documented in [docs/webhook-alerting.md](./docs/webhook-alerting.md), topic-level Sparkplug B awareness is documented in [docs/sparkplug.md](./docs/sparkplug.md), and JSON schema validation is documented in [docs/json-schemas.md](./docs/json-schemas.md).
 
 ---
 
