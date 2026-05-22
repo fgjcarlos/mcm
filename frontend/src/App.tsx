@@ -185,7 +185,9 @@ const emptyTrafficMetrics: BrokerTrafficMetrics = {
 function App() {
   const [activeId, setActiveId] = useState<string>(navItems[0].id)
   const [brokerStatus, setBrokerStatus] = useState<'connected' | 'disconnected'>('disconnected')
-  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>(() =>
+    typeof window !== 'undefined' && window.localStorage.getItem('mcm_admin_token') ? 'connecting' : 'disconnected',
+  )
   const [topics, setTopics] = useState<TopicMessage[]>([])
   const [trafficEvents, setTrafficEvents] = useState<TopicMessage[]>([])
   const [trafficMetrics, setTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
@@ -217,7 +219,6 @@ function App() {
   useEffect(() => {
     const token = window.localStorage.getItem('mcm_admin_token')
     if (!token) {
-      setStreamState('disconnected')
       return
     }
 
