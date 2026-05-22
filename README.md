@@ -1,5 +1,7 @@
 # Mosquitto Control Manager (MCM)
 
+[![CI](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml)
+
 **MCM is an open source control plane for Eclipse Mosquitto.**
 
 It aims to make Mosquitto easier to operate by adding a modern web UI, REST API, realtime observability, user management, ACL management, and deployment tooling — without replacing Mosquitto as the MQTT broker.
