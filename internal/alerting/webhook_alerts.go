@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -35,9 +35,13 @@ type WebhookAlerter struct {
 	timeout       time.Duration
 	client        *http.Client
 	queue         chan WebhookAlert
+	logger        *slog.Logger
 }
 
-func NewWebhookAlerter(cfg config.AlertingConfig) *WebhookAlerter {
+func NewWebhookAlerter(cfg config.AlertingConfig, logger *slog.Logger) *WebhookAlerter {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	timeout, err := time.ParseDuration(cfg.Timeout)
 	if err != nil || timeout <= 0 {
 		timeout = 5 * time.Second
@@ -50,6 +54,7 @@ func NewWebhookAlerter(cfg config.AlertingConfig) *WebhookAlerter {
 		timeout:       timeout,
 		client:        &http.Client{Timeout: timeout},
 		queue:         make(chan WebhookAlert, webhookAlertQueueSize),
+		logger:        logger.With(slog.String("component", "webhook_alerter")),
 	}
 	if a.enabled {
 		go a.run()
@@ -70,7 +75,10 @@ func (a *WebhookAlerter) Enqueue(alert WebhookAlert) {
 	select {
 	case a.queue <- alert:
 	default:
-		log.Printf("webhook alert queue full; dropping alert type=%s", alert.Type)
+		a.logger.Warn("webhook alert queue full; dropping alert",
+			slog.String("alert_type", alert.Type),
+			slog.String("severity", alert.Severity),
+		)
 	}
 }
 
@@ -80,7 +88,11 @@ func (a *WebhookAlerter) run() {
 		err := a.deliver(ctx, alert)
 		cancel()
 		if err != nil {
-			log.Printf("webhook alert delivery failed type=%s: %v", alert.Type, err)
+			a.logger.Error("webhook alert delivery failed",
+				slog.String("alert_type", alert.Type),
+				slog.String("severity", alert.Severity),
+				slog.String("error", err.Error()),
+			)
 		}
 	}
 }
