@@ -50,7 +50,7 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 
 	return &App{
 		store:        store,
-		aclStore:     acl.NewMemoryStore(),
+		aclStore:     store.ACLStore(),
 		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents: brokerEvents,
 		alerts:       alerting.NewWebhookAlerter(cfg.Alerting),
