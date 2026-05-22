@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/config"
@@ -692,186 +693,76 @@ func writeWebSocketTextFrame(rw interface {
 	return rw.Flush()
 }
 
+// StartBrokerMonitor opens an MQTT subscription to "#" and bridges every received
+// message into the broker event hub. The paho client handles reconnect, keepalive,
+// and TLS; this function only translates its callbacks into BrokerEvent publishes
+// and runs until ctx is cancelled.
 func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig) {
-	for {
-		if err := a.streamMQTTBroker(ctx, cfg); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker disconnected: %v", err))
-		}
+	address := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	client := buildMQTTClient(cfg, address, a)
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(5 * time.Second):
-		}
+	if token := client.Connect(); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+		a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker initial connect failed: %v", token.Error()))
 	}
+
+	<-ctx.Done()
+	client.Disconnect(250)
 }
 
-func (a *App) streamMQTTBroker(ctx context.Context, cfg config.MosquittoConfig) error {
-	address := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
-	dialer := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return err
+func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Client {
+	scheme := "tcp"
+	if cfg.TLS.Enabled {
+		scheme = "ssl"
 	}
-	defer conn.Close()
+
+	opts := mqtt.NewClientOptions().
+		AddBroker(fmt.Sprintf("%s://%s", scheme, address)).
+		SetClientID(fmt.Sprintf("mcm-ui-%d", time.Now().UnixNano())).
+		SetCleanSession(true).
+		SetKeepAlive(30 * time.Second).
+		SetPingTimeout(10 * time.Second).
+		SetConnectTimeout(5 * time.Second).
+		SetAutoReconnect(true).
+		SetMaxReconnectInterval(30 * time.Second).
+		SetConnectRetry(true).
+		SetConnectRetryInterval(5 * time.Second)
 
 	if cfg.TLS.Enabled {
 		serverName := cfg.Host
 		if net.ParseIP(serverName) != nil {
 			serverName = ""
 		}
-		tlsConn := tls.Client(conn, &tls.Config{ //nolint:gosec // MCM honors the user-controlled Mosquitto TLS diagnostic option.
+		opts.SetTLSConfig(&tls.Config{ //nolint:gosec // MCM honors the user-controlled Mosquitto TLS diagnostic option.
 			ServerName:         serverName,
 			InsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
 		})
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			return err
+	}
+	if strings.TrimSpace(cfg.Username) != "" {
+		opts.SetUsername(strings.TrimSpace(cfg.Username))
+		opts.SetPassword(cfg.Password)
+	}
+
+	opts.SetDefaultPublishHandler(func(_ mqtt.Client, msg mqtt.Message) {
+		a.brokerEvents.Publish(a.TopicEvent(msg.Topic(), msg.Payload(), maxPayloadPreviewBytes))
+	})
+
+	opts.SetOnConnectHandler(func(client mqtt.Client) {
+		// Clean session means subscriptions are lost across reconnects — resubscribe each time
+		// before announcing "connected" so subscribers can assume topic messages will follow.
+		if token := client.Subscribe("#", 0, nil); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", token.Error()))
+			return
 		}
-		conn = tlsConn
-	}
+		a.publishBrokerStatus("connected", "info", fmt.Sprintf("Broker connected to %s", address))
+	})
 
-	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return err
-	}
-	if _, err := conn.Write(buildMQTTConnectPacket(cfg)); err != nil {
-		return err
-	}
-	packetType, payload, err := readMQTTPacket(conn)
-	if err != nil {
-		return err
-	}
-	if packetType != 2 || len(payload) < 2 || payload[1] != 0 {
-		return fmt.Errorf("MQTT broker rejected connection")
-	}
-	if _, err := conn.Write(buildMQTTSubscribePacket("#")); err != nil {
-		return err
-	}
-	packetType, _, err = readMQTTPacket(conn)
-	if err != nil {
-		return err
-	}
-	if packetType != 9 {
-		return fmt.Errorf("unexpected MQTT SUBACK packet type %d", packetType)
-	}
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		return err
-	}
-
-	a.publishBrokerStatus("connected", "info", fmt.Sprintf("Broker connected to %s", address))
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		packetType, payload, err := readMQTTPacket(conn)
+	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		message := "Broker disconnected"
 		if err != nil {
-			return err
+			message = fmt.Sprintf("Broker disconnected: %v", err)
 		}
-		if packetType == 3 {
-			topic, message, ok := parseMQTTPublish(payload)
-			if ok {
-				a.brokerEvents.Publish(a.TopicEvent(topic, message, maxPayloadPreviewBytes))
-			}
-		}
-	}
-}
+		a.publishBrokerStatus("disconnected", "warning", message)
+	})
 
-func buildMQTTConnectPacket(cfg config.MosquittoConfig) []byte {
-	clientID := fmt.Sprintf("mcm-ui-%d", time.Now().UnixNano())
-	flags := byte(0x02)
-	if strings.TrimSpace(cfg.Username) != "" {
-		flags |= 0x80 | 0x40
-	}
-	variableHeader := []byte{0, 4, 'M', 'Q', 'T', 'T', 4, flags, 0, 30}
-	payload := appendMQTTString(nil, clientID)
-	if strings.TrimSpace(cfg.Username) != "" {
-		payload = appendMQTTString(payload, strings.TrimSpace(cfg.Username))
-		payload = appendMQTTString(payload, cfg.Password)
-	}
-	packet := []byte{0x10}
-	packet = append(packet, encodeMQTTRemainingLength(len(variableHeader)+len(payload))...)
-	packet = append(packet, variableHeader...)
-	packet = append(packet, payload...)
-	return packet
-}
-
-func buildMQTTSubscribePacket(topic string) []byte {
-	variableHeader := []byte{0, 1}
-	payload := appendMQTTString(nil, topic)
-	payload = append(payload, 0) // QoS 0
-	packet := []byte{0x82}
-	packet = append(packet, encodeMQTTRemainingLength(len(variableHeader)+len(payload))...)
-	packet = append(packet, variableHeader...)
-	packet = append(packet, payload...)
-	return packet
-}
-
-func readMQTTPacket(r io.Reader) (byte, []byte, error) {
-	fixed := make([]byte, 1)
-	if _, err := io.ReadFull(r, fixed); err != nil {
-		return 0, nil, err
-	}
-	remainingLength, err := readMQTTRemainingLength(r)
-	if err != nil {
-		return 0, nil, err
-	}
-	payload := make([]byte, remainingLength)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
-	}
-	return fixed[0] >> 4, payload, nil
-}
-
-func readMQTTRemainingLength(r io.Reader) (int, error) {
-	multiplier := 1
-	value := 0
-	for i := 0; i < 4; i++ {
-		encoded := make([]byte, 1)
-		if _, err := io.ReadFull(r, encoded); err != nil {
-			return 0, err
-		}
-		value += int(encoded[0]&127) * multiplier
-		if encoded[0]&128 == 0 {
-			return value, nil
-		}
-		multiplier *= 128
-	}
-	return 0, fmt.Errorf("malformed MQTT remaining length")
-}
-
-func parseMQTTPublish(payload []byte) (string, []byte, bool) {
-	if len(payload) < 2 {
-		return "", nil, false
-	}
-	topicLength := int(binary.BigEndian.Uint16(payload[:2]))
-	if len(payload) < 2+topicLength {
-		return "", nil, false
-	}
-	return string(payload[2 : 2+topicLength]), payload[2+topicLength:], true
-}
-
-func appendMQTTString(packet []byte, value string) []byte {
-	packet = append(packet, byte(len(value)>>8), byte(len(value)))
-	packet = append(packet, value...)
-	return packet
-}
-
-func encodeMQTTRemainingLength(length int) []byte {
-	encoded := make([]byte, 0, 4)
-	for {
-		digit := byte(length % 128)
-		length /= 128
-		if length > 0 {
-			digit |= 0x80
-		}
-		encoded = append(encoded, digit)
-		if length == 0 {
-			return encoded
-		}
-	}
+	return mqtt.NewClient(opts)
 }
