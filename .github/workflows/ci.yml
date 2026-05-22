@@ -74,3 +74,14 @@ jobs:
         run: npm run lint
       - name: npm run build
         run: npm run build
+
+  openapi:
+    name: OpenAPI spec lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+      - name: redocly lint
+        run: npx -y @redocly/cli@latest lint docs/openapi.yaml

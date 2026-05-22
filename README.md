@@ -292,6 +292,23 @@ npm run dev
 npm run build
 ```
 
+### API specification
+
+The full REST + WebSocket API is described in OpenAPI 3.1 at [`docs/openapi.yaml`](./docs/openapi.yaml). It covers every endpoint MCM currently exposes (health, metrics, auth, admin users, ACLs, JSON schemas, audit/security events, broker WebSocket) with request/response schemas, auth requirements, and per-route role floors.
+
+Render or browse the spec with any OpenAPI viewer, for example:
+
+```bash
+# Local Swagger UI (no install)
+docker run --rm -p 8081:8080 -e SWAGGER_JSON=/spec/openapi.yaml \
+  -v "$(pwd)/docs:/spec" swaggerapi/swagger-ui
+
+# Or Redocly preview
+npx -y @redocly/cli@latest preview-docs docs/openapi.yaml
+```
+
+The spec is linted on every PR via `npx @redocly/cli lint` in CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml), `openapi` job), with rule overrides documented in [`redocly.yaml`](./redocly.yaml).
+
 ### Metrics and observability
 
 MCM exposes Prometheus metrics at `GET /metrics` (text exposition format, unauthenticated by design — gate it at your reverse proxy or via network policy in production).
