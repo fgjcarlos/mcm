@@ -3,7 +3,10 @@ package schema
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxValidationErrors = 5
@@ -106,6 +109,48 @@ func validateSchemaNode(path string, node map[string]any) error {
 			return fmt.Errorf("%s.additionalProperties must be a boolean", path)
 		}
 	}
+	if rawEnum, ok := node["enum"]; ok {
+		values, ok := rawEnum.([]any)
+		if !ok {
+			return fmt.Errorf("%s.enum must be an array", path)
+		}
+		if len(values) == 0 {
+			return fmt.Errorf("%s.enum must have at least one value", path)
+		}
+	}
+	for _, key := range []string{"minimum", "maximum"} {
+		if raw, ok := node[key]; ok {
+			if _, ok := raw.(float64); !ok {
+				return fmt.Errorf("%s.%s must be a number", path, key)
+			}
+		}
+	}
+	for _, key := range []string{"minLength", "maxLength"} {
+		if raw, ok := node[key]; ok {
+			f, ok := raw.(float64)
+			if !ok || f < 0 || f != float64(int64(f)) {
+				return fmt.Errorf("%s.%s must be a non-negative integer", path, key)
+			}
+		}
+	}
+	if rawPattern, ok := node["pattern"]; ok {
+		pattern, ok := rawPattern.(string)
+		if !ok {
+			return fmt.Errorf("%s.pattern must be a string", path)
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("%s.pattern is not a valid regular expression: %w", path, err)
+		}
+	}
+	if rawItems, ok := node["items"]; ok {
+		items, ok := rawItems.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s.items must be an object", path)
+		}
+		if err := validateSchemaNode(path+".items", items); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -125,6 +170,44 @@ func validateValue(path string, schema map[string]any, value any, errs *[]string
 	if rawType, ok := schema["type"].(string); ok && !valueMatchesType(value, rawType) {
 		*errs = append(*errs, fmt.Sprintf("%s must be %s", path, rawType))
 		return
+	}
+	if enumValues, ok := schema["enum"].([]any); ok {
+		if !enumContains(enumValues, value) {
+			*errs = append(*errs, fmt.Sprintf("%s must match one of the enum values", path))
+		}
+	}
+	if numeric, ok := value.(float64); ok {
+		if minimum, ok := schema["minimum"].(float64); ok && numeric < minimum {
+			*errs = append(*errs, fmt.Sprintf("%s must be >= %v", path, minimum))
+		}
+		if maximum, ok := schema["maximum"].(float64); ok && numeric > maximum {
+			*errs = append(*errs, fmt.Sprintf("%s must be <= %v", path, maximum))
+		}
+	}
+	if str, ok := value.(string); ok {
+		runeCount := utf8.RuneCountInString(str)
+		if minLength, ok := schema["minLength"].(float64); ok && runeCount < int(minLength) {
+			*errs = append(*errs, fmt.Sprintf("%s must have at least %d characters", path, int(minLength)))
+		}
+		if maxLength, ok := schema["maxLength"].(float64); ok && runeCount > int(maxLength) {
+			*errs = append(*errs, fmt.Sprintf("%s must have at most %d characters", path, int(maxLength)))
+		}
+		if pattern, ok := schema["pattern"].(string); ok {
+			// Pattern was validated at schema-doc time, so compile cannot fail here.
+			if re, err := regexp.Compile(pattern); err == nil && !re.MatchString(str) {
+				*errs = append(*errs, fmt.Sprintf("%s must match pattern %q", path, pattern))
+			}
+		}
+	}
+	if arr, isArray := value.([]any); isArray {
+		if itemSchema, ok := schema["items"].(map[string]any); ok {
+			for idx, element := range arr {
+				if len(*errs) > maxValidationErrors {
+					return
+				}
+				validateValue(fmt.Sprintf("%s[%d]", path, idx), itemSchema, element, errs)
+			}
+		}
 	}
 	object, isObject := value.(map[string]any)
 	if !isObject {
@@ -155,6 +238,15 @@ func validateValue(path string, schema map[string]any, value any, errs *[]string
 			}
 		}
 	}
+}
+
+func enumContains(values []any, candidate any) bool {
+	for _, v := range values {
+		if reflect.DeepEqual(v, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func valueMatchesType(value any, typeName string) bool {
