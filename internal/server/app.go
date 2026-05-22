@@ -25,13 +25,15 @@ const currentUserContextKey contextKey = "current_user"
 
 // App wires the HTTP API to storage and auth dependencies.
 type App struct {
-	store        *storage.Store
-	aclStore     acl.Store
-	tokens       *auth.TokenManager
-	brokerEvents *BrokerEventHub
-	alerts       *alerting.WebhookAlerter
-	mosquitto    config.MosquittoConfig
-	now          func() time.Time
+	store              *storage.Store
+	aclStore           acl.Store
+	tokens             *auth.TokenManager
+	brokerEvents       *BrokerEventHub
+	alerts             *alerting.WebhookAlerter
+	mosquitto          config.MosquittoConfig
+	loginLockoutWindow time.Duration
+	loginMaxAttempts   int
+	now                func() time.Time
 }
 
 // New creates an HTTP app configured for the auth MVP.
@@ -44,18 +46,24 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse broker metrics retention: %w", err)
 	}
+	loginLockoutWindow, err := time.ParseDuration(cfg.Auth.LoginLockout.Window)
+	if err != nil {
+		return nil, fmt.Errorf("parse auth login lockout window: %w", err)
+	}
 
 	brokerEvents := NewBrokerEventHub()
 	brokerEvents.SetPersistence(store, metricsRetention)
 
 	return &App{
-		store:        store,
-		aclStore:     store.ACLStore(),
-		tokens:       auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
-		brokerEvents: brokerEvents,
-		alerts:       alerting.NewWebhookAlerter(cfg.Alerting),
-		mosquitto:    cfg.Mosquitto,
-		now:          time.Now,
+		store:              store,
+		aclStore:           store.ACLStore(),
+		tokens:             auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
+		brokerEvents:       brokerEvents,
+		alerts:             alerting.NewWebhookAlerter(cfg.Alerting),
+		mosquitto:          cfg.Mosquitto,
+		loginLockoutWindow: loginLockoutWindow,
+		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
+		now:                time.Now,
 	}, nil
 }
 
@@ -215,14 +223,20 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(req.Username) == "" || req.Password == "" {
+	username := strings.TrimSpace(req.Username)
+	if username == "" || req.Password == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "username and password are required"})
 		return
 	}
 
-	user, err := a.store.GetAdminUserByUsername(r.Context(), req.Username)
+	if a.enforceLoginLockout(w, r, username) {
+		return
+	}
+
+	user, err := a.store.GetAdminUserByUsername(r.Context(), username)
 	if errors.Is(err, storage.ErrUserNotFound) {
-		a.recordSecurityFailure(r, "admin_login_failed", "invalid_credentials", strings.TrimSpace(req.Username))
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_credentials", username)
+		a.recordLoginAttempt(r, username, false)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
 		return
 	}
@@ -232,6 +246,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.Disabled {
 		a.recordSecurityFailure(r, "admin_login_failed", "disabled_user", user.Username)
+		a.recordLoginAttempt(r, user.Username, false)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "user is disabled"})
 		return
 	}
@@ -243,6 +258,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !match {
 		a.recordSecurityFailure(r, "admin_login_failed", "invalid_credentials", user.Username)
+		a.recordLoginAttempt(r, user.Username, false)
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
 		return
 	}
@@ -253,11 +269,70 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.recordLoginAttempt(r, user.Username, true)
+
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token:     token,
 		ExpiresAt: expiresAt,
 		User:      toAdminUserResponse(user),
 	})
+}
+
+func (a *App) enforceLoginLockout(w http.ResponseWriter, r *http.Request, username string) bool {
+	if a.loginMaxAttempts <= 0 || a.loginLockoutWindow <= 0 {
+		return false
+	}
+
+	now := a.now().UTC()
+	windowStart := now.Add(-a.loginLockoutWindow)
+	sourceIP := clientIP(r)
+
+	if sourceIP != "" {
+		if stats, err := a.store.CountFailedLoginAttemptsByIP(r.Context(), sourceIP, windowStart); err == nil && stats.Count >= a.loginMaxAttempts {
+			a.respondWithLockout(w, r, "ip_lockout", username, stats.OldestAt, now)
+			return true
+		}
+	}
+	if username != "" {
+		if stats, err := a.store.CountFailedLoginAttemptsByUsername(r.Context(), username, windowStart); err == nil && stats.Count >= a.loginMaxAttempts {
+			a.respondWithLockout(w, r, "username_lockout", username, stats.OldestAt, now)
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) respondWithLockout(w http.ResponseWriter, r *http.Request, reason string, username string, oldestAt time.Time, now time.Time) {
+	a.recordSecurityFailure(r, "admin_login_rate_limited", reason, username)
+
+	retryAfter := int64(1)
+	if !oldestAt.IsZero() {
+		until := oldestAt.Add(a.loginLockoutWindow).Sub(now)
+		if until > 0 {
+			seconds := int64(until / time.Second)
+			if until%time.Second > 0 {
+				seconds++
+			}
+			if seconds > retryAfter {
+				retryAfter = seconds
+			}
+		}
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+	writeJSON(w, http.StatusTooManyRequests, errorResponse{Error: "too many login attempts, please try again later"})
+}
+
+func (a *App) recordLoginAttempt(r *http.Request, username string, success bool) {
+	now := a.now().UTC()
+	_ = a.store.RecordLoginAttempt(r.Context(), storage.LoginAttemptParams{
+		Username:    username,
+		SourceIP:    clientIP(r),
+		Success:     success,
+		AttemptedAt: now,
+	})
+	if a.loginLockoutWindow > 0 {
+		_, _ = a.store.PruneLoginAttempts(r.Context(), now.Add(-a.loginLockoutWindow*4))
+	}
 }
 
 func (a *App) handleCurrentUser(w http.ResponseWriter, r *http.Request) {
