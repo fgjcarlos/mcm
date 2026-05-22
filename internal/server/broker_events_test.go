@@ -60,6 +60,9 @@ func TestTopicEventTruncatesLargePayloads(t *testing.T) {
 	if event.Payload == nil || !event.Payload.Truncated || event.Payload.ByteLength != 10 {
 		t.Fatalf("Payload inspection = %+v, want truncated metadata for 10 bytes", event.Payload)
 	}
+	if event.Sparkplug != nil {
+		t.Fatalf("Sparkplug = %+v, want nil for generic MQTT topic", event.Sparkplug)
+	}
 }
 
 func TestTopicEventInspectsJSONObject(t *testing.T) {
@@ -117,6 +120,19 @@ func TestTopicEventOmitsBinaryLikeRawPayload(t *testing.T) {
 	}
 	if strings.Contains(event.PayloadPreview, "secret") || !strings.Contains(event.PayloadPreview, "binary payload omitted") {
 		t.Fatalf("PayloadPreview = %q, want bounded binary omission without raw bytes", event.PayloadPreview)
+	}
+}
+
+func TestTopicEventAddsSparkplugMetadataForSparkplugTopics(t *testing.T) {
+	event := TopicEvent("spBv1.0/PlantA/DDATA/Line1/Motor7", []byte("protobuf bytes"), 256)
+	if event.Sparkplug == nil {
+		t.Fatal("Sparkplug = nil, want metadata")
+	}
+	if event.Sparkplug.Namespace != "spBv1.0" || event.Sparkplug.GroupID != "PlantA" || event.Sparkplug.MessageType != "DDATA" || event.Sparkplug.EdgeNodeID != "Line1" || event.Sparkplug.DeviceID != "Motor7" {
+		t.Fatalf("Sparkplug metadata = %+v, want parsed DDATA metadata", event.Sparkplug)
+	}
+	if event.PayloadPreview == "" || event.PayloadBytes == 0 || event.Payload == nil {
+		t.Fatalf("TopicEvent lost payload preview/inspection metadata: %+v", event)
 	}
 }
 

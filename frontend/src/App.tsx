@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 
+type SparkplugMetadata = {
+  namespace: string
+  group_id: string
+  message_type: string
+  edge_node_id: string
+  device_id?: string
+}
+
 type BrokerEvent = {
   type: 'broker_status' | 'topic_message' | 'broker_log'
   status?: 'connected' | 'disconnected'
@@ -9,6 +17,7 @@ type BrokerEvent = {
   payload_bytes?: number
   truncated?: boolean
   payload_inspection?: PayloadInspection
+  sparkplug?: SparkplugMetadata
   source?: string
   severity?: 'debug' | 'info' | 'warning' | 'error'
   message?: string
@@ -388,6 +397,7 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
         <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Latest activity</p>
           <p className="mt-3 text-sm text-slate-300">{latestTopic ? latestTopic.topic : topics.length === 0 ? 'Waiting for topic traffic.' : `${topics.length} recent messages loaded.`}</p>
+          {latestTopic?.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} compact /> : null}
         </article>
       </div>
     </section>
@@ -452,6 +462,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
         {latestTopic ? (
           <>
             <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
+            {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} /> : null}
             <PayloadMetadata event={latestTopic} />
             <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
           </>
@@ -469,9 +480,13 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
             topics.map((topic, index) => (
               <div key={`${topic.topic}-${topic.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
+                    {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
+                  </div>
                   <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
                 </div>
+                {topic.sparkplug ? <SparkplugDetails metadata={topic.sparkplug} compact /> : null}
                 <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
                 <PayloadSummary event={topic} />
               </div>
@@ -516,6 +531,40 @@ function PayloadMetadata({ event }: { event: TopicMessage }) {
       ) : (
         <p className="text-sm text-slate-300">Preview remains bounded and escaped by the UI; raw payloads are not persisted.</p>
       )}
+    </div>
+  )
+}
+
+function SparkplugBadge({ metadata }: { metadata: SparkplugMetadata }) {
+  return (
+    <span className="rounded-full bg-orange-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-orange-200">
+      Sparkplug {metadata.message_type}
+    </span>
+  )
+}
+
+function SparkplugDetails({ metadata, compact = false }: { metadata: SparkplugMetadata; compact?: boolean }) {
+  const items = [
+    ['Group', metadata.group_id],
+    ['Message', metadata.message_type],
+    ['Edge node', metadata.edge_node_id],
+    ['Device', metadata.device_id],
+  ].filter(([, value]) => Boolean(value))
+
+  return (
+    <div className={`${compact ? 'mt-2' : 'mt-4'} rounded-2xl border border-orange-300/20 bg-orange-400/10 p-3`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <SparkplugBadge metadata={metadata} />
+        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-orange-100">{metadata.namespace}</span>
+      </div>
+      <dl className="mt-3 grid gap-2 text-xs text-slate-200 sm:grid-cols-2">
+        {items.map(([label, value]) => (
+          <div key={label}>
+            <dt className="uppercase tracking-[0.18em] text-orange-100/70">{label}</dt>
+            <dd className="mt-1 break-all font-mono text-orange-50">{value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   )
 }

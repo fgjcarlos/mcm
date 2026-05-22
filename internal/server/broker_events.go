@@ -20,6 +20,7 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/sparkplug"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -33,18 +34,19 @@ const (
 
 // BrokerEvent is the JSON contract streamed to the frontend broker WebSocket.
 type BrokerEvent struct {
-	Type           string             `json:"type"`
-	Status         string             `json:"status,omitempty"`
-	Topic          string             `json:"topic,omitempty"`
-	PayloadPreview string             `json:"payload_preview,omitempty"`
-	PayloadFormat  string             `json:"payload_format,omitempty"`
-	PayloadBytes   int                `json:"payload_bytes,omitempty"`
-	Truncated      bool               `json:"truncated,omitempty"`
-	Payload        *PayloadInspection `json:"payload_inspection,omitempty"`
-	Source         string             `json:"source,omitempty"`
-	Severity       string             `json:"severity,omitempty"`
-	Message        string             `json:"message,omitempty"`
-	ObservedAt     time.Time          `json:"observed_at"`
+	Type           string              `json:"type"`
+	Status         string              `json:"status,omitempty"`
+	Topic          string              `json:"topic,omitempty"`
+	PayloadPreview string              `json:"payload_preview,omitempty"`
+	PayloadFormat  string              `json:"payload_format,omitempty"`
+	PayloadBytes   int                 `json:"payload_bytes,omitempty"`
+	Truncated      bool                `json:"truncated,omitempty"`
+	Payload        *PayloadInspection  `json:"payload_inspection,omitempty"`
+	Sparkplug      *sparkplug.Metadata `json:"sparkplug,omitempty"`
+	Source         string              `json:"source,omitempty"`
+	Severity       string              `json:"severity,omitempty"`
+	Message        string              `json:"message,omitempty"`
+	ObservedAt     time.Time           `json:"observed_at"`
 }
 
 // PayloadInspection contains bounded, derived metadata for an MQTT payload.
@@ -386,6 +388,7 @@ func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 		PayloadBytes:   len(payload),
 		Truncated:      truncated,
 		Payload:        &inspection,
+		Sparkplug:      sparkplug.ClassifyTopic(topic),
 		ObservedAt:     time.Now().UTC(),
 	}
 }
