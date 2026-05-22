@@ -17,6 +17,74 @@ import (
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
+func TestBrokerEventsWebSocketRejectsMissingBearerToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := httptest.NewServer(app.Handler())
+	t.Cleanup(server.Close)
+
+	response, conn, _ := dialTestWebSocket(t, server.URL, "/api/v1/broker/events", "")
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "protected_websocket_access_failed",
+		Reason:   "missing_bearer_token",
+		Method:   http.MethodGet,
+		Path:     "/api/v1/broker/events",
+	})
+}
+
+func TestBrokerEventsWebSocketRejectsInvalidBearerToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := httptest.NewServer(app.Handler())
+	t.Cleanup(server.Close)
+
+	response, conn, _ := dialTestWebSocket(t, server.URL, "/api/v1/broker/events", "mcm.v1, Bearer.not-a-valid-token")
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "protected_websocket_access_failed",
+		Reason:   "invalid_bearer_token",
+		Method:   http.MethodGet,
+		Path:     "/api/v1/broker/events",
+	})
+}
+
+func TestExtractWebSocketBearer(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+		ok     bool
+	}{
+		{"empty", "", "", false},
+		{"only subprotocol", "mcm.v1", "", false},
+		{"empty bearer", "mcm.v1, Bearer.", "", false},
+		{"valid", "mcm.v1, Bearer.abc.def.ghi", "abc.def.ghi", true},
+		{"case insensitive prefix", "MCM.v1, bearer.abc", "abc", true},
+		{"token with padding stripped", " mcm.v1 , Bearer.abc ", "abc", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := extractWebSocketBearer(tc.header)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("extractWebSocketBearer(%q) = (%q,%v), want (%q,%v)", tc.header, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
@@ -24,7 +92,7 @@ func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	t.Cleanup(server.Close)
 
-	conn, reader := openTestWebSocket(t, server.URL, "/api/v1/broker/events")
+	conn, reader := openAuthorizedTestWebSocket(t, app, server.URL, "/api/v1/broker/events")
 	t.Cleanup(func() { _ = conn.Close() })
 
 	initialFrame := readTestWebSocketFrame(t, reader)
@@ -287,7 +355,7 @@ func readBrokerEvent(t *testing.T, ch <-chan BrokerEvent) BrokerEvent {
 	return BrokerEvent{}
 }
 
-func openTestWebSocket(t *testing.T, serverURL string, path string) (net.Conn, *bufio.Reader) {
+func dialTestWebSocket(t *testing.T, serverURL string, path string, protocolHeader string) (*http.Response, net.Conn, *bufio.Reader) {
 	t.Helper()
 
 	addr := strings.TrimPrefix(serverURL, "http://")
@@ -301,7 +369,11 @@ func openTestWebSocket(t *testing.T, serverURL string, path string) (net.Conn, *
 		"Connection: Upgrade\r\n" +
 		"Upgrade: websocket\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+	if protocolHeader != "" {
+		request += "Sec-WebSocket-Protocol: " + protocolHeader + "\r\n"
+	}
+	request += "\r\n"
 	if _, err := conn.Write([]byte(request)); err != nil {
 		t.Fatalf("Write handshake returned error: %v", err)
 	}
@@ -311,8 +383,25 @@ func openTestWebSocket(t *testing.T, serverURL string, path string) (net.Conn, *
 	if err != nil {
 		t.Fatalf("ReadResponse returned error: %v", err)
 	}
+	return response, conn, reader
+}
+
+func openAuthorizedTestWebSocket(t *testing.T, app *App, serverURL string, path string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+
+	token, _, err := app.tokens.Issue(1, "ws-test", app.now().UTC())
+	if err != nil {
+		t.Fatalf("Issue token returned error: %v", err)
+	}
+
+	response, conn, reader := dialTestWebSocket(t, serverURL, path, "mcm.v1, Bearer."+token)
 	if response.StatusCode != http.StatusSwitchingProtocols {
+		_ = conn.Close()
 		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusSwitchingProtocols)
+	}
+	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != "mcm.v1" {
+		_ = conn.Close()
+		t.Fatalf("Sec-WebSocket-Protocol response = %q, want %q", got, "mcm.v1")
 	}
 	return conn, reader
 }
