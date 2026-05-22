@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/config"
@@ -39,11 +41,26 @@ type BrokerEvent struct {
 	PayloadFormat  string              `json:"payload_format,omitempty"`
 	PayloadBytes   int                 `json:"payload_bytes,omitempty"`
 	Truncated      bool                `json:"truncated,omitempty"`
+	Payload        *PayloadInspection  `json:"payload_inspection,omitempty"`
 	Sparkplug      *sparkplug.Metadata `json:"sparkplug,omitempty"`
 	Source         string              `json:"source,omitempty"`
 	Severity       string              `json:"severity,omitempty"`
 	Message        string              `json:"message,omitempty"`
 	ObservedAt     time.Time           `json:"observed_at"`
+}
+
+// PayloadInspection contains bounded, derived metadata for an MQTT payload.
+// It intentionally excludes the unbounded raw payload; callers should expose
+// PayloadPreview for operator-friendly snippets and keep persistence limited to
+// safe metadata such as format, byte length, and truncation state.
+type PayloadInspection struct {
+	DetectedType      string   `json:"detected_type"`
+	ByteLength        int      `json:"byte_length"`
+	Truncated         bool     `json:"truncated"`
+	JSONValid         bool     `json:"json_valid"`
+	JSONTopLevelKeys  []string `json:"json_top_level_keys,omitempty"`
+	JSONElementCount  int      `json:"json_element_count,omitempty"`
+	JSONScalarSummary string   `json:"json_scalar_summary,omitempty"`
 }
 
 type BrokerEventHub struct {
@@ -361,25 +378,7 @@ func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 		limit = maxPayloadPreviewBytes
 	}
 
-	truncated := len(payload) > limit
-	previewBytes := payload
-	if truncated {
-		previewBytes = payload[:limit]
-	}
-
-	preview := string(previewBytes)
-	format := "text"
-	var formatted any
-	if json.Valid(payload) && json.Unmarshal(payload, &formatted) == nil {
-		format = "json"
-		if data, err := json.MarshalIndent(formatted, "", "  "); err == nil {
-			preview = string(data)
-			if len(preview) > limit {
-				preview = preview[:limit]
-				truncated = true
-			}
-		}
-	}
+	preview, format, truncated, inspection := inspectPayload(payload, limit)
 
 	return BrokerEvent{
 		Type:           "topic_message",
@@ -388,9 +387,129 @@ func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 		PayloadFormat:  format,
 		PayloadBytes:   len(payload),
 		Truncated:      truncated,
+		Payload:        &inspection,
 		Sparkplug:      sparkplug.ClassifyTopic(topic),
 		ObservedAt:     time.Now().UTC(),
 	}
+}
+
+func inspectPayload(payload []byte, limit int) (string, string, bool, PayloadInspection) {
+	inspection := PayloadInspection{
+		DetectedType: "text",
+		ByteLength:   len(payload),
+	}
+
+	if !isLikelyText(payload) {
+		inspection.DetectedType = "binary"
+		preview := fmt.Sprintf("<binary payload omitted: %d bytes>", len(payload))
+		inspection.Truncated = len(preview) > limit
+		if inspection.Truncated {
+			preview = truncateStringUTF8(preview, limit)
+		}
+		return preview, "binary", inspection.Truncated, inspection
+	}
+
+	var formatted any
+	if json.Valid(payload) && json.Unmarshal(payload, &formatted) == nil {
+		inspection.JSONValid = true
+		inspection.DetectedType = jsonDetectedType(formatted)
+		populateJSONInspection(&inspection, formatted)
+
+		preview := string(payload)
+		if data, err := json.MarshalIndent(formatted, "", "  "); err == nil {
+			preview = string(data)
+		}
+		preview, inspection.Truncated = boundedPreview(preview, limit)
+		return preview, "json", inspection.Truncated, inspection
+	}
+
+	preview, truncated := boundedPreview(string(payload), limit)
+	inspection.Truncated = truncated
+	return preview, "text", truncated, inspection
+}
+
+func isLikelyText(payload []byte) bool {
+	if !utf8.Valid(payload) {
+		return false
+	}
+	for _, r := range string(payload) {
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonDetectedType(value any) string {
+	switch value.(type) {
+	case map[string]any:
+		return "json_object"
+	case []any:
+		return "json_array"
+	default:
+		return "json_scalar"
+	}
+}
+
+func populateJSONInspection(inspection *PayloadInspection, value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, truncateStringUTF8(key, 64))
+		}
+		sort.Strings(keys)
+		if len(keys) > 20 {
+			keys = keys[:20]
+		}
+		inspection.JSONTopLevelKeys = keys
+	case []any:
+		inspection.JSONElementCount = len(typed)
+	default:
+		inspection.JSONScalarSummary = summarizeJSONScalar(typed)
+	}
+}
+
+func summarizeJSONScalar(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return strconv.FormatBool(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case string:
+		preview, truncated := boundedPreview(typed, 80)
+		if truncated {
+			return fmt.Sprintf("string(len=%d, preview=%q, truncated)", len(typed), preview)
+		}
+		return fmt.Sprintf("string(len=%d, value=%q)", len(typed), preview)
+	default:
+		return fmt.Sprintf("%T", value)
+	}
+}
+
+func boundedPreview(value string, limit int) (string, bool) {
+	if limit <= 0 || len(value) <= limit {
+		return value, false
+	}
+	return truncateStringUTF8(value, limit), true
+}
+
+func truncateStringUTF8(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(value) <= limit {
+		return value
+	}
+	for limit > 0 && !utf8.ValidString(value[:limit]) {
+		limit--
+	}
+	return value[:limit]
 }
 
 func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
