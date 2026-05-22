@@ -15,6 +15,7 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -615,7 +616,7 @@ func newTestApp(t *testing.T) (*App, *storage.Store) {
 		t.Fatalf("storage.Open returned error: %v", err)
 	}
 
-	app, err := New(cfg, store)
+	app, err := New(cfg, store, logging.Discard())
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -745,7 +746,7 @@ func TestRBACBootstrapAdminGetsAdminRole(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	app, err := New(cfg, store)
+	app, err := New(cfg, store, logging.Discard())
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}

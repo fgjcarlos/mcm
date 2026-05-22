@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -33,11 +34,16 @@ type App struct {
 	mosquitto          config.MosquittoConfig
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
+	logger             *slog.Logger
 	now                func() time.Time
 }
 
-// New creates an HTTP app configured for the auth MVP.
-func New(cfg config.Config, store *storage.Store) (*App, error) {
+// New creates an HTTP app configured for the auth MVP. logger may be nil; the
+// app will fall back to slog.Default() in that case.
+func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ttl, err := time.ParseDuration(cfg.Auth.TokenTTL)
 	if err != nil {
 		return nil, fmt.Errorf("parse auth token ttl: %w", err)
@@ -59,10 +65,11 @@ func New(cfg config.Config, store *storage.Store) (*App, error) {
 		aclStore:           store.ACLStore(),
 		tokens:             auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents:       brokerEvents,
-		alerts:             alerting.NewWebhookAlerter(cfg.Alerting),
+		alerts:             alerting.NewWebhookAlerter(cfg.Alerting, logger),
 		mosquitto:          cfg.Mosquitto,
 		loginLockoutWindow: loginLockoutWindow,
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
+		logger:             logger,
 		now:                time.Now,
 	}, nil
 }
