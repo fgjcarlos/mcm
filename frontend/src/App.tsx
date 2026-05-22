@@ -104,6 +104,7 @@ type AdminUser = {
   id: number
   username: string
   disabled: boolean
+  role: 'viewer' | 'auditor' | 'operator' | 'admin' | string
   created_at: string
   updated_at: string
 }
@@ -424,6 +425,7 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Signed in</p>
                 <p className="mt-1 truncate text-sm font-semibold text-white">{currentUser.username}</p>
+                <p className="mt-1 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100">{currentUser.role}</p>
               </div>
               <button
                 type="button"

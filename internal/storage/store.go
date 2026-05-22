@@ -161,6 +161,14 @@ CREATE INDEX idx_login_attempts_username_attempted ON login_attempts(username, a
 CREATE INDEX idx_login_attempts_attempted_at ON login_attempts(attempted_at);
 `,
 	},
+	{
+		version: 8,
+		name:    "add_admin_users_role",
+		sql: `
+ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
+CREATE INDEX idx_admin_users_role ON admin_users(role);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
@@ -169,6 +177,7 @@ type AdminUser struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	Disabled     bool      `json:"disabled"`
+	Role         string    `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -178,6 +187,7 @@ type CreateAdminUserParams struct {
 	Username     string
 	PasswordHash string
 	Disabled     bool
+	Role         string
 }
 
 // UpdateAdminUserParams holds mutable fields for user updates.
@@ -185,6 +195,7 @@ type UpdateAdminUserParams struct {
 	Username     string
 	PasswordHash *string
 	Disabled     bool
+	Role         string
 }
 
 // BrokerMetricEvent is a persisted broker metric/event without raw payload data.
@@ -406,13 +417,18 @@ func (s *Store) CountAdminUsers(ctx context.Context) (int, error) {
 
 // CreateAdminUser creates a new admin user.
 func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParams) (AdminUser, error) {
+	role := strings.TrimSpace(params.Role)
+	if role == "" {
+		role = "admin"
+	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO admin_users(username, password_hash, disabled, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+		`INSERT INTO admin_users(username, password_hash, disabled, role, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(params.Username),
 		params.PasswordHash,
 		boolToInt(params.Disabled),
+		role,
 		now.Format(time.RFC3339Nano),
 		now.Format(time.RFC3339Nano),
 	)
@@ -430,12 +446,12 @@ func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParam
 
 // GetAdminUserByID returns an admin user by ID.
 func (s *Store) GetAdminUserByID(ctx context.Context, id int64) (AdminUser, error) {
-	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, created_at, updated_at FROM admin_users WHERE id = ?`, id)
+	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users WHERE id = ?`, id)
 }
 
 // GetAdminUserByUsername returns an admin user by username.
 func (s *Store) GetAdminUserByUsername(ctx context.Context, username string) (AdminUser, error) {
-	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, created_at, updated_at FROM admin_users WHERE username = ?`, strings.TrimSpace(username))
+	return s.getAdminUser(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users WHERE username = ?`, strings.TrimSpace(username))
 }
 
 func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminUser, error) {
@@ -449,6 +465,7 @@ func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminU
 		&user.Username,
 		&user.PasswordHash,
 		&disabled,
+		&user.Role,
 		&createdAt,
 		&updatedAt,
 	)
@@ -474,7 +491,7 @@ func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminU
 
 // ListAdminUsers returns all admin users ordered by username.
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, disabled, created_at, updated_at FROM admin_users ORDER BY username ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, username, password_hash, disabled, role, created_at, updated_at FROM admin_users ORDER BY username ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list admin users: %w", err)
 	}
@@ -486,7 +503,7 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 		var disabled int
 		var createdAt string
 		var updatedAt string
-		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &disabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &disabled, &user.Role, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan admin user: %w", err)
 		}
 		user.Disabled = disabled == 1
@@ -518,13 +535,18 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id int64, params UpdateAdmi
 	if params.PasswordHash != nil {
 		passwordHash = *params.PasswordHash
 	}
+	role := strings.TrimSpace(params.Role)
+	if role == "" {
+		role = current.Role
+	}
 
 	if _, err := s.db.ExecContext(
 		ctx,
-		`UPDATE admin_users SET username = ?, password_hash = ?, disabled = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE admin_users SET username = ?, password_hash = ?, disabled = ?, role = ?, updated_at = ? WHERE id = ?`,
 		strings.TrimSpace(params.Username),
 		passwordHash,
 		boolToInt(params.Disabled),
+		role,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		id,
 	); err != nil {

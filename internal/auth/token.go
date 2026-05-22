@@ -11,6 +11,7 @@ import (
 type UserClaims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
+	Role     Role   `json:"role"`
 }
 
 // TokenManager issues and verifies JWTs.
@@ -28,11 +29,12 @@ func NewTokenManager(secret string, ttl time.Duration) *TokenManager {
 }
 
 // Issue creates a signed JWT for the user.
-func (m *TokenManager) Issue(userID int64, username string, now time.Time) (string, time.Time, error) {
+func (m *TokenManager) Issue(userID int64, username string, role Role, now time.Time) (string, time.Time, error) {
 	expiresAt := now.Add(m.ttl)
 	claims := jwt.MapClaims{
 		"sub":      fmt.Sprintf("%d", userID),
 		"username": username,
+		"role":     string(role),
 		"iat":      now.Unix(),
 		"exp":      expiresAt.Unix(),
 	}
@@ -86,8 +88,15 @@ func (m *TokenManager) VerifyAt(tokenString string, now time.Time) (UserClaims, 
 		return UserClaims{}, fmt.Errorf("token username claim is required")
 	}
 
+	roleString, _ := mapClaims["role"].(string)
+	role, err := ParseRole(roleString, RoleAdmin)
+	if err != nil {
+		return UserClaims{}, fmt.Errorf("parse token role claim: %w", err)
+	}
+
 	return UserClaims{
 		UserID:   userID,
 		Username: username,
+		Role:     role,
 	}, nil
 }
