@@ -292,6 +292,50 @@ npm run dev
 npm run build
 ```
 
+### HTTPS and optional mTLS
+
+The MCM HTTP API can serve HTTPS by populating `http.tls` in the configuration:
+
+```yaml
+http:
+  bind_address: 0.0.0.0
+  port: 8443
+  tls:
+    enabled: true
+    cert_file: /etc/mcm/tls/server.crt
+    key_file: /etc/mcm/tls/server.key
+    min_version: "1.2"        # or "1.3"
+    client_ca_file: ""         # set to enable client cert verification
+    require_client_cert: false # set to true with client_ca_file for strict mTLS
+```
+
+When `tls.enabled` is true:
+
+- Cert and key are loaded with [`tls.LoadX509KeyPair`](https://pkg.go.dev/crypto/tls#LoadX509KeyPair); validation fails fast if either file is missing.
+- The minimum negotiated TLS version is enforced (`1.2` for broad compatibility, `1.3` for stricter deployments).
+- All responses include `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+- Setting `client_ca_file` enables client certificate verification: optional unless `require_client_cert: true`, in which case clients without a CA-signed certificate are rejected at the handshake.
+
+**Local development with `mkcert`** (trusted by the dev machine, no browser warning):
+
+```bash
+mkcert -install
+mkcert -cert-file dev.crt -key-file dev.key 127.0.0.1 localhost
+```
+
+Point `http.tls.cert_file`/`key_file` at `dev.crt`/`dev.key`.
+
+**Quick self-signed test certificate with `openssl`** (useful for non-browser clients):
+
+```bash
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+  -keyout server.key -out server.crt -days 365 -nodes \
+  -subj "/CN=mcm-local" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+**Production guidance**: use certificates issued by your internal CA (or a public ACME provider for internet-exposed deployments), keep `key_file` mode `0600`, and bind only to the interface that should accept inbound traffic. For mTLS, ship the trusted client CA bundle to `client_ca_file` and enable `require_client_cert: true` to make a missing or invalid client certificate fail closed.
+
 ### Future MCM service
 
 The Compose stack currently starts Mosquitto only because the backend service is still a skeleton. The expected future MCM service shape is documented in [`deploy/mcm/README.md`](./deploy/mcm/README.md).

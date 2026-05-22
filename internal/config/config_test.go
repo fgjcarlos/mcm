@@ -255,6 +255,90 @@ logging:
 	}
 }
 
+func TestParseRejectsTLSConfigWhenFilesMissing(t *testing.T) {
+	_, err := Parse([]byte(`
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+  tls:
+    enabled: true
+    cert_file: ""
+    key_file: ""
+    min_version: "1.2"
+    require_client_cert: true
+    client_ca_file: ""
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  tls:
+    enabled: false
+metrics:
+  broker_retention: 168h
+alerting:
+  enabled: false
+  timeout: 5s
+logging:
+  level: info
+`))
+	if err == nil {
+		t.Fatal("Parse succeeded, want validation error")
+	}
+	for _, want := range []string{
+		"http.tls.cert_file is required when http.tls.enabled is true",
+		"http.tls.key_file is required when http.tls.enabled is true",
+		"http.tls.client_ca_file is required when http.tls.require_client_cert is true",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q; got %v", want, err)
+		}
+	}
+}
+
+func TestParseRejectsUnsupportedTLSMinVersion(t *testing.T) {
+	_, err := Parse([]byte(`
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+  tls:
+    enabled: false
+    min_version: "1.0"
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  tls:
+    enabled: false
+metrics:
+  broker_retention: 168h
+alerting:
+  enabled: false
+  timeout: 5s
+logging:
+  level: info
+`))
+	if err == nil {
+		t.Fatal("Parse succeeded, want validation error")
+	}
+	if !strings.Contains(err.Error(), "http.tls.min_version") {
+		t.Fatalf("validation error missing http.tls.min_version mention; got %v", err)
+	}
+}
+
 func TestDefaultPath(t *testing.T) {
 	temp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", temp)

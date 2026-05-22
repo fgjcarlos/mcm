@@ -34,8 +34,19 @@ type Config struct {
 
 // HTTPConfig controls the HTTP listener.
 type HTTPConfig struct {
-	BindAddress string `yaml:"bind_address"`
-	Port        int    `yaml:"port"`
+	BindAddress string        `yaml:"bind_address"`
+	Port        int           `yaml:"port"`
+	TLS         HTTPTLSConfig `yaml:"tls"`
+}
+
+// HTTPTLSConfig controls HTTPS and optional mTLS for the MCM API.
+type HTTPTLSConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	CertFile          string `yaml:"cert_file"`
+	KeyFile           string `yaml:"key_file"`
+	MinVersion        string `yaml:"min_version"`
+	ClientCAFile      string `yaml:"client_ca_file"`
+	RequireClientCert bool   `yaml:"require_client_cert"`
 }
 
 // DatabaseConfig controls SQLite persistence.
@@ -114,6 +125,10 @@ func Default() Config {
 		HTTP: HTTPConfig{
 			BindAddress: "127.0.0.1",
 			Port:        8080,
+			TLS: HTTPTLSConfig{
+				Enabled:    false,
+				MinVersion: "1.2",
+			},
 		},
 		Database: DatabaseConfig{
 			Path: "var/lib/mcm/mcm.db",
@@ -167,9 +182,19 @@ func ExampleYAML() string {
 
 	return fmt.Sprintf(`# MCM configuration
 # HTTP listener configuration.
+# Enable tls.enabled and point cert_file/key_file at PEM files to serve HTTPS.
+# Set require_client_cert and client_ca_file to enforce mTLS.
 http:
   bind_address: %q
   port: %d
+  tls:
+    enabled: %t
+    cert_file: ""
+    key_file: ""
+    # Minimum TLS version: "1.2" (broad compatibility) or "1.3".
+    min_version: %q
+    client_ca_file: ""
+    require_client_cert: false
 
 # SQLite database location.
 database:
@@ -221,7 +246,7 @@ alerting:
 # Valid levels: debug, info, warn, error.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.HTTP.TLS.Enabled, cfg.HTTP.TLS.MinVersion, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -261,6 +286,9 @@ func Parse(data []byte) (Config, error) {
 	if cfg.Auth.LoginLockout.MaxAttempts == 0 {
 		cfg.Auth.LoginLockout.MaxAttempts = Default().Auth.LoginLockout.MaxAttempts
 	}
+	if cfg.HTTP.TLS.MinVersion == "" {
+		cfg.HTTP.TLS.MinVersion = Default().HTTP.TLS.MinVersion
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -278,6 +306,22 @@ func (c Config) Validate() error {
 	}
 	if err := validatePort("http.port", c.HTTP.Port); err != nil {
 		problems = append(problems, err.Error())
+	}
+	if c.HTTP.TLS.Enabled {
+		if strings.TrimSpace(c.HTTP.TLS.CertFile) == "" {
+			problems = append(problems, "http.tls.cert_file is required when http.tls.enabled is true")
+		}
+		if strings.TrimSpace(c.HTTP.TLS.KeyFile) == "" {
+			problems = append(problems, "http.tls.key_file is required when http.tls.enabled is true")
+		}
+		if c.HTTP.TLS.RequireClientCert && strings.TrimSpace(c.HTTP.TLS.ClientCAFile) == "" {
+			problems = append(problems, "http.tls.client_ca_file is required when http.tls.require_client_cert is true")
+		}
+	}
+	switch strings.TrimSpace(c.HTTP.TLS.MinVersion) {
+	case "1.2", "1.3":
+	default:
+		problems = append(problems, fmt.Sprintf(`http.tls.min_version must be "1.2" or "1.3"; got %q`, c.HTTP.TLS.MinVersion))
 	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		problems = append(problems, "database.path is required")
