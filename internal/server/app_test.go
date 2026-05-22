@@ -490,6 +490,116 @@ func TestTopicEventIncludesJSONSchemaValidationResult(t *testing.T) {
 	}
 }
 
+func TestLoginRateLimitedAfterMaxFailuresFromSameIP(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+
+	for i := 0; i < app.loginMaxAttempts; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong-password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", "203.0.113.10")
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", i+1, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	lockoutRec := httptest.NewRecorder()
+	lockoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	lockoutReq.Header.Set("Content-Type", "application/json")
+	lockoutReq.Header.Set("X-Forwarded-For", "203.0.113.10")
+	app.Handler().ServeHTTP(lockoutRec, lockoutReq)
+
+	if lockoutRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d, body = %s", lockoutRec.Code, http.StatusTooManyRequests, lockoutRec.Body.String())
+	}
+	if retry := lockoutRec.Header().Get("Retry-After"); retry == "" {
+		t.Fatal("Retry-After header missing on lockout response")
+	}
+	if got := lockoutRec.Body.String(); !strings.Contains(got, "too many login attempts") {
+		t.Fatalf("response body = %s, want generic too-many-attempts message", got)
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "admin_login_rate_limited",
+		Reason:   "ip_lockout",
+		Username: "admin",
+		SourceIP: "203.0.113.10",
+		Method:   http.MethodPost,
+		Path:     "/api/v1/auth/login",
+	})
+}
+
+func TestLoginRateLimitedAcrossIPsForSameUsername(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+
+	for i := 0; i < app.loginMaxAttempts; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong-password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		// Vary the IP every attempt so per-IP counters never reach the threshold.
+		req.Header.Set("X-Forwarded-For", "10.0.0."+strconv.Itoa(i+1))
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", i+1, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	lockoutRec := httptest.NewRecorder()
+	lockoutReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	lockoutReq.Header.Set("Content-Type", "application/json")
+	lockoutReq.Header.Set("X-Forwarded-For", "10.0.0.99")
+	app.Handler().ServeHTTP(lockoutRec, lockoutReq)
+
+	if lockoutRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d, body = %s", lockoutRec.Code, http.StatusTooManyRequests, lockoutRec.Body.String())
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "admin_login_rate_limited",
+		Reason:   "username_lockout",
+		Username: "admin",
+		SourceIP: "10.0.0.99",
+		Method:   http.MethodPost,
+		Path:     "/api/v1/auth/login",
+	})
+}
+
+func TestLoginSucceedsUnderRateLimitThreshold(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+
+	// Stay strictly below the per-IP threshold.
+	for i := 0; i < app.loginMaxAttempts-1; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong-password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", "198.51.100.5")
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", i+1, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	successRec := httptest.NewRecorder()
+	successReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	successReq.Header.Set("Content-Type", "application/json")
+	successReq.Header.Set("X-Forwarded-For", "198.51.100.5")
+	app.Handler().ServeHTTP(successRec, successReq)
+
+	if successRec.Code != http.StatusOK {
+		t.Fatalf("login status under threshold = %d, want %d, body = %s", successRec.Code, http.StatusOK, successRec.Body.String())
+	}
+}
+
 func newTestApp(t *testing.T) (*App, *storage.Store) {
 	t.Helper()
 
