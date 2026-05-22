@@ -1,0 +1,110 @@
+{
+  "title": "MCM Overview",
+  "uid": "mcm-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["mcm", "mosquitto"],
+  "timezone": "browser",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(mcm_broker_status, job)",
+        "current": {"text": "mcm", "value": "mcm"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Broker connection",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "disconnected", "color": "red"}, "1": {"text": "connected", "color": "green"}}}
+          ]
+        }
+      },
+      "targets": [
+        {"expr": "mcm_broker_status{job=\"$job\"}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Broker reconnects (5m rate)",
+      "type": "timeseries",
+      "gridPos": {"x": 6, "y": 0, "w": 9, "h": 4},
+      "targets": [
+        {"expr": "rate(mcm_broker_reconnects_total{job=\"$job\"}[5m])", "legendFormat": "reconnects/s", "refId": "A"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "MQTT messages (5m rate)",
+      "type": "timeseries",
+      "gridPos": {"x": 15, "y": 0, "w": 9, "h": 4},
+      "targets": [
+        {"expr": "rate(mcm_broker_messages_total{job=\"$job\"}[5m])", "legendFormat": "msg/s", "refId": "A"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HTTP requests by route (rate, 5m)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (route, status) (rate(mcm_http_requests_total{job=\"$job\"}[5m]))", "legendFormat": "{{route}} [{{status}}]", "refId": "A"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "HTTP latency p95 by route",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (route, le) (rate(mcm_http_request_duration_seconds_bucket{job=\"$job\"}[5m])))", "legendFormat": "p95 {{route}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Login attempts by result",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 6},
+      "targets": [
+        {"expr": "sum by (result) (rate(mcm_login_attempts_total{job=\"$job\"}[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Security events by category",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 6},
+      "targets": [
+        {"expr": "sum by (category) (rate(mcm_security_events_total{job=\"$job\"}[5m]))", "legendFormat": "{{category}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Audit events by result",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 6},
+      "targets": [
+        {"expr": "sum by (result) (rate(mcm_audit_events_total{job=\"$job\"}[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ]
+    }
+  ]
+}
