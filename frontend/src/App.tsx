@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 
 type SparkplugMetadata = {
   namespace: string
@@ -100,6 +100,22 @@ type StatusResponse = {
   }
 }
 
+type AdminUser = {
+  id: number
+  username: string
+  disabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+type LoginResponse = {
+  token: string
+  expires_at: string
+  user: AdminUser
+}
+
+const tokenStorageKey = 'mcm_admin_token'
+
 type NavItem = {
   id: string
   label: string
@@ -183,11 +199,70 @@ const emptyTrafficMetrics: BrokerTrafficMetrics = {
 }
 
 function App() {
+  const [token, setToken] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? window.localStorage.getItem(tokenStorageKey) : null,
+  )
+  const [currentUser, setCurrentUser] = useState<AdminUser | null>(null)
+
+  const handleLogin = (newToken: string, user: AdminUser) => {
+    window.localStorage.setItem(tokenStorageKey, newToken)
+    setCurrentUser(user)
+    setToken(newToken)
+  }
+
+  const handleLogout = () => {
+    window.localStorage.removeItem(tokenStorageKey)
+    setCurrentUser(null)
+    setToken(null)
+  }
+
+  useEffect(() => {
+    if (!token) return
+
+    let cancelled = false
+    fetch('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (cancelled) return
+        if (response.status === 401) {
+          handleLogout()
+          return
+        }
+        if (!response.ok) {
+          throw new Error('Failed to verify session.')
+        }
+        const user = (await response.json()) as AdminUser
+        if (!cancelled) {
+          setCurrentUser(user)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) handleLogout()
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  if (!token) {
+    return <LoginScreen onLogin={handleLogin} />
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
+        <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Restoring session…</p>
+      </div>
+    )
+  }
+
+  return <Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} />
+}
+
+function Dashboard({ token, currentUser, onLogout }: { token: string; currentUser: AdminUser; onLogout: () => void }) {
   const [activeId, setActiveId] = useState<string>(navItems[0].id)
   const [brokerStatus, setBrokerStatus] = useState<'connected' | 'disconnected'>('disconnected')
-  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>(() =>
-    typeof window !== 'undefined' && window.localStorage.getItem('mcm_admin_token') ? 'connecting' : 'disconnected',
-  )
+  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [topics, setTopics] = useState<TopicMessage[]>([])
   const [trafficEvents, setTrafficEvents] = useState<TopicMessage[]>([])
   const [trafficMetrics, setTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
@@ -217,11 +292,6 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const token = window.localStorage.getItem('mcm_admin_token')
-    if (!token) {
-      return
-    }
-
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(
       `${protocol}//${window.location.host}/api/v1/broker/events`,
@@ -251,46 +321,51 @@ function App() {
     })
 
     return () => socket.close()
-  }, [])
+  }, [token])
 
   useEffect(() => {
     if (activeId !== 'security') return
 
-    const token = window.localStorage.getItem('mcm_admin_token')
-    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
-    fetch('/api/v1/security/events?limit=50', { headers })
+    fetch('/api/v1/security/events?limit=50', { headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
+        if (response.status === 401) {
+          onLogout()
+          return null
+        }
         if (!response.ok) {
-          throw new Error(response.status === 401 ? 'Sign in with an admin token to view security events.' : 'Unable to load security events.')
+          throw new Error('Unable to load security events.')
         }
         return response.json() as Promise<{ events?: SecurityEvent[] }>
       })
       .then((body) => {
+        if (!body) return
         setSecurityEvents(body.events ?? [])
         setSecurityError('')
       })
       .catch((error: Error) => setSecurityError(error.message))
-  }, [activeId])
+  }, [activeId, token, onLogout])
 
   useEffect(() => {
     if (activeId !== 'audit') return
 
-    const token = window.localStorage.getItem('mcm_admin_token')
-    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
-
-    fetch('/api/v1/audit-events?limit=25', { headers })
+    fetch('/api/v1/audit-events?limit=25', { headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
+        if (response.status === 401) {
+          onLogout()
+          return null
+        }
         if (!response.ok) {
-          throw new Error(response.status === 401 ? 'Sign in with an admin token to view audit events.' : 'Failed to load audit events.')
+          throw new Error('Failed to load audit events.')
         }
         return response.json() as Promise<{ events?: AuditEvent[] }>
       })
       .then((body) => {
+        if (!body) return
         setAuditEvents(body.events ?? [])
         setAuditError('')
       })
       .catch((error: Error) => setAuditError(error.message))
-  }, [activeId])
+  }, [activeId, token, onLogout])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
   const liveTrafficMetrics = useMemo(
@@ -343,6 +418,22 @@ function App() {
               )
             })}
           </nav>
+
+          <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Signed in</p>
+                <p className="mt-1 truncate text-sm font-semibold text-white">{currentUser.username}</p>
+              </div>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-rose-100 transition hover:border-rose-300/60 hover:bg-rose-400/20"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
         </aside>
 
         <main className="flex-1 lg:pl-6">
@@ -832,6 +923,94 @@ function buildTrafficMetrics(events: TopicMessage[], base: BrokerTrafficMetrics)
     top_clients_available: false,
     top_clients_note: base.top_clients_note || defaultClientNote,
   }
+}
+
+function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {
+  const [username, setUsername] = useState<string>('')
+  const [password, setPassword] = useState<string>('')
+  const [submitting, setSubmitting] = useState<boolean>(false)
+  const [error, setError] = useState<string>('')
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submitting) return
+    setSubmitting(true)
+    setError('')
+    try {
+      const response = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      })
+      if (response.status === 401) {
+        setError('Invalid username or password.')
+        return
+      }
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null
+        setError(body?.error ?? 'Login failed. Please try again.')
+        return
+      }
+      const body = (await response.json()) as LoginResponse
+      onLogin(body.token, body.user)
+    } catch {
+      setError('Could not reach the server. Check the MCM service and try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] px-4 py-12 text-slate-100">
+      <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 shadow-2xl shadow-slate-950/40 backdrop-blur">
+        <div className="border-b border-white/10 pb-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Sign in</h1>
+          <p className="mt-2 text-sm text-slate-400">Authenticate with an admin user to access the Mosquitto Control Manager dashboard.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Username</span>
+            <input
+              type="text"
+              autoComplete="username"
+              required
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+            />
+          </label>
+
+          {error ? (
+            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {error}
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-400/50"
+          >
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
 }
 
 export default App
