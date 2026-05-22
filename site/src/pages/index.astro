@@ -1,0 +1,233 @@
+---
+import Layout from "../layouts/Layout.astro";
+import FeatureSection from "../components/FeatureSection.astro";
+
+const repoURL = "https://github.com/fgjcarlos/mcm";
+
+const backendFeatures = [
+  {
+    title: "Auth, RBAC, lockouts",
+    body: "JWT login, bcrypt hashing, four roles (viewer < auditor < operator < admin), and per-IP/per-username 429 lockouts.",
+  },
+  {
+    title: "ACL & schema management",
+    body: "Mosquitto ACL rules with wildcard validation, plus JSON Schema validators bound to MQTT topic filters.",
+  },
+  {
+    title: "Realtime broker stream",
+    body: "Eclipse paho.mqtt.golang client with keepalive and auto-reconnect, fanned out over an authenticated WebSocket.",
+  },
+  {
+    title: "Audit & security trail",
+    body: "Every admin action and security event persisted in SQLite, surfaced through dedicated read-only APIs.",
+  },
+  {
+    title: "Observability",
+    body: "Structured slog with request IDs, Prometheus /metrics with bounded labels, starter Grafana dashboard.",
+  },
+  {
+    title: "HTTPS / mTLS",
+    body: "Optional TLS listener with configurable minimum version and optional client certificate verification.",
+  },
+];
+
+const frontendFeatures = [
+  {
+    title: "Real login",
+    body: "Token-backed sign-in form against /api/v1/auth/login with restored-session flow.",
+  },
+  {
+    title: "Live dashboard",
+    body: "Broker status, traffic widgets, topic explorer, realtime log feed.",
+  },
+  {
+    title: "Audit & security panels",
+    body: "Browse persisted admin and security events with consistent token handling.",
+  },
+];
+
+const opsFeatures = [
+  {
+    title: "Single binary CLI",
+    body: "mcm server / doctor / status / config / backup / version — cross-compiled on every PR.",
+  },
+  {
+    title: "OpenAPI 3.1 contract",
+    body: "Every endpoint described, linted in CI, ready for client generation.",
+  },
+  {
+    title: "Docker Compose dev stack",
+    body: "Local Mosquitto broker for development and quick trials.",
+  },
+];
+
+const quickStart = [
+  {
+    label: "Clone",
+    code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm",
+  },
+  {
+    label: "Start the broker",
+    code: "docker compose up -d",
+  },
+  {
+    label: "Run MCM",
+    code: "go run ./cmd/mcm server --config ./mcm.yaml",
+  },
+];
+
+const stack = [
+  "Go 1.24",
+  "net/http + slog",
+  "SQLite (pure Go)",
+  "paho MQTT",
+  "Prometheus",
+  "OpenAPI 3.1",
+  "React 19 + Vite 8",
+  "Tailwind 4",
+];
+---
+
+<Layout
+  title="MCM — Mosquitto Control Manager"
+  description="Open source control plane for Eclipse Mosquitto. Web UI, REST API, realtime observability, RBAC, audit trail, HTTPS, and Prometheus metrics — without replacing Mosquitto as the broker."
+>
+  <main class="mx-auto w-full max-w-6xl px-6 py-16 sm:py-24">
+    <header class="flex flex-col gap-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100">Alpha</span>
+        <span class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300">Apache 2.0</span>
+        <a
+          class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+          href={`${repoURL}/actions/workflows/ci.yml`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          CI on every PR
+        </a>
+      </div>
+
+      <div class="max-w-3xl space-y-5">
+        <p class="text-sm font-semibold uppercase tracking-[0.4em] text-cyan-300">Mosquitto Control Manager</p>
+        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">
+          The operations layer Mosquitto deserves.
+        </h1>
+        <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
+          MCM is an open source control plane for Eclipse Mosquitto. Modern web UI, REST and WebSocket API,
+          realtime broker observability, RBAC, audit trail, HTTPS — without replacing Mosquitto as the broker.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-3">
+        <a
+          class="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-cyan-300"
+          href={repoURL}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          View on GitHub
+          <span aria-hidden="true">→</span>
+        </a>
+        <a
+          class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
+          href={`${repoURL}/blob/main/docs/openapi.yaml`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          OpenAPI spec
+        </a>
+        <a
+          class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
+          href={`${repoURL}/blob/main/ROADMAP.md`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          Roadmap
+        </a>
+      </div>
+    </header>
+
+    <section class="mt-20 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <article class="rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What MCM is</p>
+        <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Operations, not a broker rewrite.</h2>
+        <p class="mt-5 leading-relaxed text-slate-300">
+          Mosquitto is lightweight, reliable, and widely adopted at the edge. But day-to-day operation usually
+          means hand-editing config files, ACLs, password files, and stitching dashboards together. MCM fills
+          that gap with a clean control plane: a Go binary plus a React dashboard backed by a single SQLite
+          database.
+        </p>
+        <p class="mt-3 leading-relaxed text-slate-300">
+          MCM never tries to replace Mosquitto. It connects to your existing broker as a client, configures it
+          where appropriate, and gives operators visibility, auditability, and least-privilege access without
+          asking them to change MQTT engines.
+        </p>
+      </article>
+      <article class="rounded-3xl border border-cyan-300/20 bg-cyan-400/10 p-8 backdrop-blur">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100">Stack</p>
+        <ul class="mt-5 flex flex-wrap gap-2">
+          {stack.map((item) => (
+            <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-cyan-100">
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p class="mt-6 text-sm leading-relaxed text-cyan-50/80">
+          One static Go binary. Pure-Go SQLite driver, so cross-compiling to Linux amd64/arm64, macOS arm64,
+          and Windows works out of the box on every PR.
+        </p>
+      </article>
+    </section>
+
+    <section class="mt-20 space-y-10">
+      <div class="flex flex-col gap-3">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What works today</p>
+        <h2 class="text-3xl font-semibold tracking-tight text-white">A complete first cut, in alpha.</h2>
+        <p class="max-w-2xl text-slate-300">
+          The MVP scope is feature-complete and MCM is in a hardening phase. Every item below is shipped,
+          tested, and exercised on every pull request.
+        </p>
+      </div>
+
+      <div class="space-y-8">
+        <FeatureSection label="Backend" items={backendFeatures} />
+        <FeatureSection label="Frontend" items={frontendFeatures} />
+        <FeatureSection label="Operations" items={opsFeatures} />
+      </div>
+    </section>
+
+    <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+      <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Quick start</p>
+      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Three commands to a local control plane.</h2>
+      <ol class="mt-8 space-y-4">
+        {quickStart.map((step, idx) => (
+          <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan-300/40 bg-cyan-400/10 font-mono text-sm font-semibold text-cyan-100">
+              {String(idx + 1).padStart(2, "0")}
+            </span>
+            <div class="flex w-full flex-col gap-1">
+              <span class="text-sm uppercase tracking-[0.22em] text-slate-400">{step.label}</span>
+              <code class="block w-full overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-cyan-100">
+                {step.code}
+              </code>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p class="mt-6 text-sm text-slate-400">
+        Need TLS, mTLS, or Prometheus scraping? Each is covered in the
+        <a class="underline-offset-4 hover:underline" href={`${repoURL}#https-and-optional-mtls`}>README</a>.
+      </p>
+    </section>
+
+    <footer class="mt-20 flex flex-col items-start justify-between gap-4 border-t border-white/10 pt-8 text-sm text-slate-400 sm:flex-row sm:items-center">
+      <p>© {new Date().getFullYear()} MCM contributors · Apache 2.0</p>
+      <div class="flex flex-wrap gap-4">
+        <a class="hover:text-white" href={repoURL} rel="noopener noreferrer" target="_blank">GitHub</a>
+        <a class="hover:text-white" href={`${repoURL}/issues`} rel="noopener noreferrer" target="_blank">Issues</a>
+        <a class="hover:text-white" href={`${repoURL}/blob/main/docs/openapi.yaml`} rel="noopener noreferrer" target="_blank">API spec</a>
+        <a class="hover:text-white" href={`${repoURL}/blob/main/SECURITY.md`} rel="noopener noreferrer" target="_blank">Security</a>
+      </div>
+    </footer>
+  </main>
+</Layout>
