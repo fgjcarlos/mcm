@@ -145,6 +145,22 @@ CREATE INDEX idx_acl_rules_principal ON acl_rules(principal);
 CREATE INDEX idx_acl_rules_topic_filter ON acl_rules(topic_filter);
 `,
 	},
+	{
+		version: 7,
+		name:    "create_login_attempts",
+		sql: `
+CREATE TABLE login_attempts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL DEFAULT '',
+	source_ip TEXT NOT NULL DEFAULT '',
+	success INTEGER NOT NULL DEFAULT 0,
+	attempted_at TEXT NOT NULL
+);
+CREATE INDEX idx_login_attempts_source_ip_attempted ON login_attempts(source_ip, attempted_at);
+CREATE INDEX idx_login_attempts_username_attempted ON login_attempts(username, attempted_at);
+CREATE INDEX idx_login_attempts_attempted_at ON login_attempts(attempted_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

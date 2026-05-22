@@ -48,12 +48,19 @@ type AuthConfig struct {
 	JWTSecret      string               `yaml:"jwt_secret"`
 	TokenTTL       string               `yaml:"token_ttl"`
 	BootstrapAdmin BootstrapAdminConfig `yaml:"bootstrap_admin"`
+	LoginLockout   LoginLockoutConfig   `yaml:"login_lockout"`
 }
 
 // BootstrapAdminConfig configures one-time bootstrap admin creation.
 type BootstrapAdminConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+// LoginLockoutConfig configures admin login brute-force protection.
+type LoginLockoutConfig struct {
+	Window      string `yaml:"window"`
+	MaxAttempts int    `yaml:"max_attempts"`
 }
 
 // MosquittoConfig controls MQTT broker connectivity.
@@ -118,6 +125,10 @@ func Default() Config {
 				Username: "admin",
 				Password: "change-this-admin-password",
 			},
+			LoginLockout: LoginLockoutConfig{
+				Window:      "15m",
+				MaxAttempts: 6,
+			},
 		},
 		Mosquitto: MosquittoConfig{
 			Host: "127.0.0.1",
@@ -171,6 +182,12 @@ auth:
   bootstrap_admin:
     username: %q
     password: %q
+  # Admin login brute-force protection. When more than max_attempts failed
+  # logins are recorded for the same source IP (or username) inside window,
+  # additional attempts return HTTP 429 with a Retry-After header.
+  login_lockout:
+    window: %q
+    max_attempts: %d
 
 # Mosquitto connection settings.
 # Prefer environment overrides or secret mounts for credentials and TLS files in production.
@@ -204,7 +221,7 @@ alerting:
 # Valid levels: debug, info, warn, error.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -238,6 +255,12 @@ func Parse(data []byte) (Config, error) {
 	if cfg.Alerting.Timeout == "" {
 		cfg.Alerting.Timeout = Default().Alerting.Timeout
 	}
+	if cfg.Auth.LoginLockout.Window == "" {
+		cfg.Auth.LoginLockout.Window = Default().Auth.LoginLockout.Window
+	}
+	if cfg.Auth.LoginLockout.MaxAttempts == 0 {
+		cfg.Auth.LoginLockout.MaxAttempts = Default().Auth.LoginLockout.MaxAttempts
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -269,6 +292,14 @@ func (c Config) Validate() error {
 	}
 	if (c.Auth.BootstrapAdmin.Username == "") != (c.Auth.BootstrapAdmin.Password == "") {
 		problems = append(problems, "auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty")
+	}
+	if window, err := time.ParseDuration(c.Auth.LoginLockout.Window); err != nil {
+		problems = append(problems, fmt.Sprintf("auth.login_lockout.window must be a valid duration: %v", err))
+	} else if window <= 0 {
+		problems = append(problems, "auth.login_lockout.window must be greater than zero")
+	}
+	if c.Auth.LoginLockout.MaxAttempts < 1 {
+		problems = append(problems, "auth.login_lockout.max_attempts must be at least 1")
 	}
 
 	if strings.TrimSpace(c.Mosquitto.Host) == "" {
