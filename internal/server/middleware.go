@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/fgjcarlos/mcm/internal/metrics"
 )
 
 type requestContextKey string
@@ -27,10 +30,12 @@ func RequestIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// withRequestLogging wraps next so every request is annotated with a request ID and a
-// structured access log line is emitted at info level. Incoming X-Request-ID values
-// are preserved (and trimmed); when absent a 24-char hex token is generated.
-func withRequestLogging(next http.Handler, logger *slog.Logger) http.Handler {
+// withRequestLogging wraps next so every request is annotated with a request ID, a
+// structured access log line is emitted at info level, and Prometheus HTTP metrics
+// (mcm_http_requests_total, mcm_http_request_duration_seconds) are updated. Labels
+// use the route pattern set by ServeMux ("other" for unmatched paths) to keep label
+// cardinality bounded — never the raw URL with IDs.
+func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Registry) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -41,20 +46,32 @@ func withRequestLogging(next http.Handler, logger *slog.Logger) http.Handler {
 		}
 		w.Header().Set(RequestIDHeader, requestID)
 		ctx := context.WithValue(r.Context(), requestIDContextKey, requestID)
+		inner := r.WithContext(ctx)
 
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
-		next.ServeHTTP(recorder, r.WithContext(ctx))
+		next.ServeHTTP(recorder, inner)
 		duration := time.Since(start)
+
+		route := inner.Pattern
+		if route == "" {
+			route = "other"
+		}
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "http_request",
 			slog.String("request_id", requestID),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
+			slog.String("route", route),
 			slog.Int("status", recorder.status),
 			slog.Duration("duration", duration),
 			slog.String("remote_addr", clientIP(r)),
 		)
+
+		if reg != nil {
+			reg.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(recorder.status)).Inc()
+			reg.HTTPRequestDuration.WithLabelValues(r.Method, route).Observe(duration.Seconds())
+		}
 	})
 }
 

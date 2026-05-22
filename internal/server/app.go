@@ -17,6 +17,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -31,6 +32,7 @@ type App struct {
 	tokens             *auth.TokenManager
 	brokerEvents       *BrokerEventHub
 	alerts             *alerting.WebhookAlerter
+	metrics            *metrics.Registry
 	mosquitto          config.MosquittoConfig
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
@@ -57,8 +59,10 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		return nil, fmt.Errorf("parse auth login lockout window: %w", err)
 	}
 
+	mcmMetrics := metrics.New()
 	brokerEvents := NewBrokerEventHub()
 	brokerEvents.SetPersistence(store, metricsRetention)
+	brokerEvents.SetMetrics(mcmMetrics)
 
 	return &App{
 		store:              store,
@@ -66,6 +70,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		tokens:             auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents:       brokerEvents,
 		alerts:             alerting.NewWebhookAlerter(cfg.Alerting, logger),
+		metrics:            mcmMetrics,
 		mosquitto:          cfg.Mosquitto,
 		loginLockoutWindow: loginLockoutWindow,
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
@@ -115,6 +120,7 @@ func (a *App) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
+	mux.Handle("GET /metrics", a.metrics.Handler())
 	mux.Handle("GET /api/v1/acls", a.requireRole(auth.RoleAuditor, http.HandlerFunc(aclAPI.handleListRules)))
 	mux.Handle("POST /api/v1/acls", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleCreateRule)))
 	mux.Handle("PUT /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleUpdateRule)))
@@ -347,6 +353,13 @@ func (a *App) recordLoginAttempt(r *http.Request, username string, success bool)
 	})
 	if a.loginLockoutWindow > 0 {
 		_, _ = a.store.PruneLoginAttempts(r.Context(), now.Add(-a.loginLockoutWindow*4))
+	}
+	if a.metrics != nil {
+		result := "failure"
+		if success {
+			result = "success"
+		}
+		a.metrics.LoginAttempts.WithLabelValues(result).Inc()
 	}
 }
 
@@ -695,6 +708,13 @@ func (a *App) recordAuditFromRequest(r *http.Request, action string, resourceTyp
 		Result:       result,
 		Metadata:     payload,
 	})
+	if a.metrics != nil {
+		safeResult := strings.TrimSpace(result)
+		if safeResult == "" {
+			safeResult = "unknown"
+		}
+		a.metrics.AuditEvents.WithLabelValues(safeResult).Inc()
+	}
 }
 
 func sanitizeAuditMetadata(metadata map[string]any) map[string]any {
@@ -722,6 +742,13 @@ func (a *App) recordSecurityChange(r *http.Request, category string, reason stri
 
 func (a *App) recordSecurityEvent(r *http.Request, category string, reason string, username string) {
 	observedAt := a.now().UTC()
+	if a.metrics != nil {
+		safeCategory := strings.TrimSpace(category)
+		if safeCategory == "" {
+			safeCategory = "unknown"
+		}
+		a.metrics.SecurityEvents.WithLabelValues(safeCategory).Inc()
+	}
 	_, _ = a.store.RecordSecurityEvent(r.Context(), storage.CreateSecurityEventParams{
 		Category:   category,
 		Reason:     reason,

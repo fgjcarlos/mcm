@@ -17,7 +17,7 @@ func TestRequestIDMiddlewareGeneratesIDWhenAbsent(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := withRequestLogging(inner, discardSlogLogger())
+	handler := withRequestLogging(inner, discardSlogLogger(), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	handler.ServeHTTP(rec, req)
@@ -41,7 +41,7 @@ func TestRequestIDMiddlewareEchoesIncomingID(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := withRequestLogging(inner, discardSlogLogger())
+	handler := withRequestLogging(inner, discardSlogLogger(), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.Header.Set(RequestIDHeader, incoming)
@@ -59,7 +59,7 @@ func TestRequestIDMiddlewareSanitizesControlCharacters(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := withRequestLogging(inner, discardSlogLogger())
+	handler := withRequestLogging(inner, discardSlogLogger(), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	req.Header.Set(RequestIDHeader, "abc\r\nLine-Injected: bad")
@@ -82,7 +82,7 @@ func TestAccessLogIncludesMethodPathStatusAndRequestID(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 
-	handler := withRequestLogging(inner, logger)
+	handler := withRequestLogging(inner, logger, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/example", nil)
 	req.Header.Set(RequestIDHeader, "fixed-request-id")
