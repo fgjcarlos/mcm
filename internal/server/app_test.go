@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -681,4 +682,181 @@ func loginAsSeededUser(t *testing.T, app *App, store *storage.Store, username st
 		t.Fatalf("decode login response: %v", err)
 	}
 	return loginResp.Token
+}
+
+func seedAdminUserWithRole(t *testing.T, store *storage.Store, username string, password string, role auth.Role) storage.AdminUser {
+	t.Helper()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
+	user, err := store.CreateAdminUser(context.Background(), storage.CreateAdminUserParams{
+		Username:     username,
+		PasswordHash: hash,
+		Role:         string(role),
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser returned error: %v", err)
+	}
+	return user
+}
+
+func loginAs(t *testing.T, app *App, username string, password string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var loginResp loginResponse
+	if err := json.NewDecoder(rec.Body).Decode(&loginResp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	return loginResp.Token
+}
+
+func authedRequest(method, path, body, token string) *http.Request {
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req
+}
+
+func TestRBACBootstrapAdminGetsAdminRole(t *testing.T) {
+	cfg := config.Default()
+	cfg.Database.Path = filepath.Join(t.TempDir(), "mcm.db")
+	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
+	cfg.Auth.TokenTTL = "1h"
+	cfg.Auth.BootstrapAdmin = config.BootstrapAdminConfig{Username: "boot-admin", Password: "boot-secret"}
+
+	store, err := storage.Open(cfg.Database.Path)
+	if err != nil {
+		t.Fatalf("storage.Open returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	app, err := New(cfg, store)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	if err := app.BootstrapAdmin(context.Background(), cfg); err != nil {
+		t.Fatalf("BootstrapAdmin returned error: %v", err)
+	}
+	created, err := store.GetAdminUserByUsername(context.Background(), "boot-admin")
+	if err != nil {
+		t.Fatalf("GetAdminUserByUsername returned error: %v", err)
+	}
+	if created.Role != string(auth.RoleAdmin) {
+		t.Fatalf("bootstrap admin role = %q, want %q", created.Role, auth.RoleAdmin)
+	}
+}
+
+func TestRBACLoginResponseIncludesRole(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "ops", "secret-password", auth.RoleOperator)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"ops","password":"secret-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp loginResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	if resp.User.Role != string(auth.RoleOperator) {
+		t.Fatalf("login response role = %q, want %q", resp.User.Role, auth.RoleOperator)
+	}
+}
+
+func TestRBACViewerCannotMutateResources(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "view", "secret-password", auth.RoleViewer)
+	token := loginAs(t, app, "view", "secret-password")
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"create acl", http.MethodPost, "/api/v1/acls", `{"principal":"p","topic_filter":"t","permission":"read"}`},
+		{"create json schema", http.MethodPost, "/api/v1/json-schemas", `{"name":"x","topic_filter":"t","schema":{},"enabled":true}`},
+		{"create admin user", http.MethodPost, "/api/v1/admin-users", `{"username":"x","password":"secret-password"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			app.Handler().ServeHTTP(rec, authedRequest(tc.method, tc.path, tc.body, token))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "protected_api_access_denied",
+		Reason:   "insufficient_role",
+		Username: "view",
+		Method:   http.MethodPost,
+		Path:     "/api/v1/admin-users",
+	})
+}
+
+func TestRBACAuditorCanReadAuditAndSecurity(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "audit", "secret-password", auth.RoleAuditor)
+	token := loginAs(t, app, "audit", "secret-password")
+
+	for _, path := range []string{"/api/v1/audit-events", "/api/v1/security/events", "/api/v1/acls", "/api/v1/admin-users"} {
+		rec := httptest.NewRecorder()
+		app.Handler().ServeHTTP(rec, authedRequest(http.MethodGet, path, "", token))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want %d, body = %s", path, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	// Auditor must still be denied for mutating endpoints.
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/acls", `{"principal":"p","topic_filter":"t","permission":"read"}`, token))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("auditor POST /api/v1/acls status = %d, want %d, body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestRBACOperatorCanManageMQTTButNotAdminUsers(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "ops", "secret-password", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret-password")
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/acls", `{"principal":"sensor-writer","topic_filter":"sensors/+/temperature","permission":"write"}`, token))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("operator POST /api/v1/acls status = %d, want %d, body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	denyRec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(denyRec, authedRequest(http.MethodPost, "/api/v1/admin-users", `{"username":"extra","password":"secret-password"}`, token))
+	if denyRec.Code != http.StatusForbidden {
+		t.Fatalf("operator POST /api/v1/admin-users status = %d, want %d, body = %s", denyRec.Code, http.StatusForbidden, denyRec.Body.String())
+	}
 }

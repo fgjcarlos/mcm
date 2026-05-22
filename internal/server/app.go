@@ -88,6 +88,7 @@ func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
 	_, err = a.store.CreateAdminUser(ctx, storage.CreateAdminUserParams{
 		Username:     cfg.Auth.BootstrapAdmin.Username,
 		PasswordHash: passwordHash,
+		Role:         string(auth.RoleAdmin),
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap admin user: %w", err)
@@ -107,23 +108,23 @@ func (a *App) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
-	mux.Handle("GET /api/v1/acls", a.optionalAuth(http.HandlerFunc(aclAPI.handleListRules)))
-	mux.Handle("POST /api/v1/acls", a.optionalAuth(http.HandlerFunc(aclAPI.handleCreateRule)))
-	mux.Handle("PUT /api/v1/acls/{id}", a.optionalAuth(http.HandlerFunc(aclAPI.handleUpdateRule)))
-	mux.Handle("DELETE /api/v1/acls/{id}", a.optionalAuth(http.HandlerFunc(aclAPI.handleDeleteRule)))
+	mux.Handle("GET /api/v1/acls", a.requireRole(auth.RoleAuditor, http.HandlerFunc(aclAPI.handleListRules)))
+	mux.Handle("POST /api/v1/acls", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleCreateRule)))
+	mux.Handle("PUT /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleUpdateRule)))
+	mux.Handle("DELETE /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleDeleteRule)))
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))
-	mux.Handle("GET /api/v1/admin-users", a.requireAuth(http.HandlerFunc(a.handleListAdminUsers)))
-	mux.Handle("POST /api/v1/admin-users", a.requireAuth(http.HandlerFunc(a.handleCreateAdminUser)))
-	mux.Handle("GET /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleGetAdminUser)))
-	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateAdminUser)))
-	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteAdminUser)))
-	mux.Handle("GET /api/v1/json-schemas", a.requireAuth(http.HandlerFunc(a.handleListJSONSchemas)))
-	mux.Handle("POST /api/v1/json-schemas", a.requireAuth(http.HandlerFunc(a.handleCreateJSONSchema)))
-	mux.Handle("PUT /api/v1/json-schemas/{id}", a.requireAuth(http.HandlerFunc(a.handleUpdateJSONSchema)))
-	mux.Handle("DELETE /api/v1/json-schemas/{id}", a.requireAuth(http.HandlerFunc(a.handleDeleteJSONSchema)))
-	mux.Handle("GET /api/v1/audit-events", a.requireAuth(http.HandlerFunc(a.handleListAuditEvents)))
-	mux.Handle("GET /api/v1/security/events", a.requireAuth(http.HandlerFunc(a.handleSecurityEvents)))
+	mux.Handle("GET /api/v1/admin-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAdminUsers)))
+	mux.Handle("POST /api/v1/admin-users", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleCreateAdminUser)))
+	mux.Handle("GET /api/v1/admin-users/{id}", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleGetAdminUser)))
+	mux.Handle("PUT /api/v1/admin-users/{id}", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleUpdateAdminUser)))
+	mux.Handle("DELETE /api/v1/admin-users/{id}", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleDeleteAdminUser)))
+	mux.Handle("GET /api/v1/json-schemas", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListJSONSchemas)))
+	mux.Handle("POST /api/v1/json-schemas", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleCreateJSONSchema)))
+	mux.Handle("PUT /api/v1/json-schemas/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleUpdateJSONSchema)))
+	mux.Handle("DELETE /api/v1/json-schemas/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleDeleteJSONSchema)))
+	mux.Handle("GET /api/v1/audit-events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAuditEvents)))
+	mux.Handle("GET /api/v1/security/events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	return mux
@@ -164,6 +165,7 @@ type adminUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Disabled bool   `json:"disabled"`
+	Role     string `json:"role"`
 }
 
 type jsonSchemaRequest struct {
@@ -184,6 +186,7 @@ type adminUserResponse struct {
 	ID        int64     `json:"id"`
 	Username  string    `json:"username"`
 	Disabled  bool      `json:"disabled"`
+	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -263,7 +266,12 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := a.tokens.Issue(user.ID, user.Username, a.now().UTC())
+	userRole, err := auth.ParseRole(user.Role, auth.RoleAdmin)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	token, expiresAt, err := a.tokens.Issue(user.ID, user.Username, userRole, a.now().UTC())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
@@ -387,6 +395,7 @@ func (a *App) handleCreateAdminUser(w http.ResponseWriter, r *http.Request) {
 		Username:     req.Username,
 		PasswordHash: passwordHash,
 		Disabled:     req.Disabled,
+		Role:         strings.TrimSpace(req.Role),
 	})
 	if err != nil {
 		a.recordAuditFromRequest(r, "admin_user.create", "admin_user", "", "failure", map[string]any{"username": req.Username, "disabled": req.Disabled, "reason": err.Error()})
@@ -445,6 +454,7 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 		Username:     req.Username,
 		PasswordHash: passwordHash,
 		Disabled:     req.Disabled,
+		Role:         strings.TrimSpace(req.Role),
 	})
 	if errors.Is(err, storage.ErrUserNotFound) {
 		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": "admin user not found"})
@@ -621,6 +631,33 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// requireRole authenticates the request and verifies that the token role meets the minimum required.
+// Returns 401 when the bearer token is missing/invalid (consistent with requireAuth) and 403 when the
+// role is insufficient. Both paths record a security event so audit trails capture rejected access.
+func (a *App) requireRole(min auth.Role, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(header, "Bearer ") {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "missing_bearer_token", "")
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+			return
+		}
+		claims, err := a.tokens.VerifyAt(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), a.now().UTC())
+		if err != nil {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "invalid_bearer_token", "")
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+			return
+		}
+		if !claims.Role.AtLeast(min) {
+			a.recordSecurityFailure(r, "protected_api_access_denied", "insufficient_role", claims.Username)
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "insufficient role"})
+			return
+		}
+		ctx := context.WithValue(r.Context(), currentUserContextKey, claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func (a *App) optionalAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -747,6 +784,10 @@ func decodeAdminUserRequest(w http.ResponseWriter, r *http.Request) (adminUserRe
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "password is required"})
 		return adminUserRequest{}, false
 	}
+	if strings.TrimSpace(req.Role) != "" && !auth.Role(strings.TrimSpace(req.Role)).Valid() {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: `role must be one of "viewer", "auditor", "operator", "admin"`})
+		return adminUserRequest{}, false
+	}
 	return req, true
 }
 
@@ -764,6 +805,7 @@ func toAdminUserResponse(user storage.AdminUser) adminUserResponse {
 		ID:        user.ID,
 		Username:  user.Username,
 		Disabled:  user.Disabled,
+		Role:      user.Role,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}

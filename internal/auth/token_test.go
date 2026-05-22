@@ -9,7 +9,7 @@ func TestTokenManagerVerifyAtUsesProvidedClock(t *testing.T) {
 	issuedAt := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
 	manager := NewTokenManager("0123456789abcdef0123456789abcdef", time.Hour)
 
-	token, _, err := manager.Issue(42, "admin", issuedAt)
+	token, _, err := manager.Issue(42, "admin", RoleAdmin, issuedAt)
 	if err != nil {
 		t.Fatalf("Issue returned error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestTokenManagerVerifyAtRejectsExpiredToken(t *testing.T) {
 	issuedAt := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
 	manager := NewTokenManager("0123456789abcdef0123456789abcdef", time.Hour)
 
-	token, _, err := manager.Issue(42, "admin", issuedAt)
+	token, _, err := manager.Issue(42, "admin", RoleAdmin, issuedAt)
 	if err != nil {
 		t.Fatalf("Issue returned error: %v", err)
 	}

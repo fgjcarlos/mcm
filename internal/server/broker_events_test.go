@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -389,7 +390,7 @@ func dialTestWebSocket(t *testing.T, serverURL string, path string, protocolHead
 func openAuthorizedTestWebSocket(t *testing.T, app *App, serverURL string, path string) (net.Conn, *bufio.Reader) {
 	t.Helper()
 
-	token, _, err := app.tokens.Issue(1, "ws-test", app.now().UTC())
+	token, _, err := app.tokens.Issue(1, "ws-test", auth.RoleAdmin, app.now().UTC())
 	if err != nil {
 		t.Fatalf("Issue token returned error: %v", err)
 	}
