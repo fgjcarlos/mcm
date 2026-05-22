@@ -1,0 +1,794 @@
+openapi: 3.1.0
+info:
+  title: Mosquitto Control Manager API
+  version: 0.1.0
+  description: |
+    Operational REST and WebSocket API for MCM, the control plane for Eclipse
+    Mosquitto. All `/api/v1/*` endpoints (except `POST /api/v1/auth/login` and
+    `GET /api/v1/status`) require a Bearer JWT obtained from `POST /api/v1/auth/login`.
+
+    Endpoints are gated by role (`viewer < auditor < operator < admin`). The role
+    that owns each operation is documented in its `description`.
+
+    The broker events stream upgrades to WebSocket and authenticates via the
+    `Sec-WebSocket-Protocol` header (`mcm.v1, Bearer.<token>`) rather than the
+    `Authorization` header so tokens never appear in proxy/query logs.
+  contact:
+    name: MCM project
+    url: https://github.com/fgjcarlos/mcm
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: https://{host}
+    description: MCM HTTP API
+    variables:
+      host:
+        default: mcm.your-domain.example
+        description: The host MCM is reachable at; substitute your deployment hostname.
+tags:
+  - name: Health
+    description: Liveness and broker status probes that do not require authentication.
+  - name: Metrics
+    description: Prometheus text-format scrape target.
+  - name: Auth
+    description: Admin login and current-session endpoints.
+  - name: Admin Users
+    description: MCM admin user CRUD, gated by role.
+  - name: ACLs
+    description: Mosquitto ACL rule CRUD, gated by role.
+  - name: JSON Schemas
+    description: JSON Schema validators attached to MQTT topic filters.
+  - name: Audit
+    description: Read-only access to the persistent admin audit trail.
+  - name: Security
+    description: Read-only access to recent security events (failed logins, lockouts, denials).
+  - name: Broker
+    description: Realtime broker event stream over WebSocket.
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Returns 200 OK with a static body. Unauthenticated by design so probes can hit it without credentials.
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                required: [status]
+  /metrics:
+    get:
+      tags: [Metrics]
+      summary: Prometheus metrics
+      description: |
+        Prometheus text exposition format. See README for the metric reference.
+        Unauthenticated by design — gate at reverse proxy / network policy in production.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP mcm_broker_status 1 when the configured Mosquitto broker is connected, 0 otherwise.
+                  # TYPE mcm_broker_status gauge
+                  mcm_broker_status 1
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange admin credentials for a Bearer token
+      description: |
+        Returns a JWT carrying the user's role. Rate-limited per IP and per
+        username; six failed attempts within `auth.login_lockout.window` lock
+        out the next attempt with HTTP 429 and a `Retry-After` header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              username: admin
+              password: change-this-admin-password
+      responses:
+        "200":
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Missing username or password.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Invalid credentials, disabled user, or generic auth failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many failed login attempts.
+          headers:
+            Retry-After:
+              schema: { type: integer, minimum: 1 }
+              description: Seconds until the oldest failure ages out of the lockout window.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      description: Available to any authenticated user (viewer+).
+      responses:
+        "200":
+          description: Current user profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/status:
+    get:
+      tags: [Health]
+      summary: Broker connection snapshot
+      description: Unauthenticated; reports broker status, target address, and recent traffic metrics.
+      security: []
+      responses:
+        "200":
+          description: Broker status snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusResponse" }
+  /api/v1/admin-users:
+    get:
+      tags: [Admin Users]
+      summary: List admin users
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: Admin user list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Admin Users]
+      summary: Create admin user
+      description: Requires admin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminUserRequest" }
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "400":
+          description: Invalid request body (missing fields, invalid role, etc).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/admin-users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AdminUserID"
+    get:
+      tags: [Admin Users]
+      summary: Get admin user
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: Admin user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Admin Users]
+      summary: Update admin user
+      description: Requires admin. Password is optional on update (omit to keep current).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminUserRequest" }
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Admin Users]
+      summary: Delete admin user
+      description: Requires admin.
+      responses:
+        "204": { description: User deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/acls:
+    get:
+      tags: [ACLs]
+      summary: List ACL rules
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: ACL rule list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: "#/components/schemas/ACLRule" }
+                required: [rules]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [ACLs]
+      summary: Create ACL rule
+      description: Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ACLRuleRequest" }
+      responses:
+        "201":
+          description: Rule created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ACLRule" }
+        "400": { $ref: "#/components/responses/ACLValidation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/acls/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ACLRuleID"
+    put:
+      tags: [ACLs]
+      summary: Update ACL rule
+      description: Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ACLRuleRequest" }
+      responses:
+        "200":
+          description: Updated rule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ACLRule" }
+        "400": { $ref: "#/components/responses/ACLValidation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [ACLs]
+      summary: Delete ACL rule
+      description: Requires operator or higher.
+      responses:
+        "204": { description: Rule deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/json-schemas:
+    get:
+      tags: [JSON Schemas]
+      summary: List JSON schema validators
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: Schema definition list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schemas:
+                    type: array
+                    items: { $ref: "#/components/schemas/JSONSchemaDefinition" }
+                required: [schemas]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [JSON Schemas]
+      summary: Create JSON schema validator
+      description: Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JSONSchemaRequest" }
+      responses:
+        "201":
+          description: Schema created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JSONSchemaDefinition" }
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/json-schemas/{id}:
+    parameters:
+      - $ref: "#/components/parameters/JSONSchemaID"
+    put:
+      tags: [JSON Schemas]
+      summary: Update JSON schema validator
+      description: Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JSONSchemaRequest" }
+      responses:
+        "200":
+          description: Updated schema.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JSONSchemaDefinition" }
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [JSON Schemas]
+      summary: Delete JSON schema validator
+      description: Requires operator or higher.
+      responses:
+        "204": { description: Schema deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/audit-events:
+    get:
+      tags: [Audit]
+      summary: List recent audit events
+      description: Requires auditor or higher.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Audit event page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditEvent" }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                required: [events]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/security/events:
+    get:
+      tags: [Security]
+      summary: List recent security events
+      description: Requires auditor or higher.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Security event list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/SecurityEvent" }
+                required: [events]
+        "400":
+          description: Invalid query parameter.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/events:
+    get:
+      tags: [Broker]
+      summary: Broker events WebSocket
+      description: |
+        Upgrades to a WebSocket that streams `BrokerEvent` JSON frames as they are
+        observed. Available to any authenticated user.
+
+        **Authentication**: clients send `Sec-WebSocket-Protocol: mcm.v1, Bearer.<token>`
+        instead of `Authorization`. The handshake response confirms the negotiated
+        subprotocol with `Sec-WebSocket-Protocol: mcm.v1`. This keeps the JWT out
+        of URL query logs that intermediaries might capture.
+
+        On every connect the server replays the cached `broker_status` and the bounded
+        log buffer before live events stream.
+      parameters:
+        - in: header
+          name: Upgrade
+          required: true
+          schema: { type: string, enum: [websocket] }
+        - in: header
+          name: Sec-WebSocket-Protocol
+          required: true
+          schema:
+            type: string
+            description: Must contain `mcm.v1` and `Bearer.<token>`.
+            example: "mcm.v1, Bearer.eyJhbGciOi..."
+      responses:
+        "101":
+          description: |
+            Switching Protocols. `Sec-WebSocket-Protocol: mcm.v1`. Subsequent frames
+            are JSON-encoded `BrokerEvent` records.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerEvent" }
+        "400":
+          description: Request did not include WebSocket upgrade headers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Missing or invalid `Bearer.<token>` subprotocol.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT obtained from `POST /api/v1/auth/login`. Carries `user_id`, `username`,
+        and `role` claims. Tokens are signed with HS256 using `auth.jwt_secret`.
+  parameters:
+    AdminUserID:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer, minimum: 1 }
+    ACLRuleID:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+      description: Numeric string ID assigned at creation time.
+    JSONSchemaID:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer, minimum: 1 }
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token. The response is intentionally generic.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated, but the user's role does not meet the route's minimum.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ACLValidation:
+      description: ACL validation failure (invalid topic filter, missing principal, unknown permission).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ACLError" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    ACLError:
+      type: object
+      properties:
+        error: { type: string }
+        details:
+          type: array
+          items: { type: string }
+      required: [error]
+    LoginRequest:
+      type: object
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+      required: [username, password]
+    LoginResponse:
+      type: object
+      properties:
+        token: { type: string, format: jwt }
+        expires_at: { type: string, format: date-time }
+        user: { $ref: "#/components/schemas/AdminUser" }
+      required: [token, expires_at, user]
+    AdminUser:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        disabled: { type: boolean }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, username, disabled, role, created_at, updated_at]
+    AdminUserRequest:
+      type: object
+      properties:
+        username: { type: string }
+        password:
+          type: string
+          format: password
+          description: Required for POST; optional on PUT (omit to keep current password).
+        disabled: { type: boolean, default: false }
+        role:
+          allOf:
+            - $ref: "#/components/schemas/Role"
+          description: Defaults to `admin` when omitted.
+      required: [username]
+    Role:
+      type: string
+      enum: [viewer, auditor, operator, admin]
+      description: |
+        - `viewer`: dashboard / status / broker WebSocket only.
+        - `auditor`: viewer + read audit and security events, list ACLs/users/schemas.
+        - `operator`: auditor + CRUD on ACLs and JSON schemas.
+        - `admin`: full access (incl. admin user CRUD).
+    ACLRule:
+      type: object
+      properties:
+        id: { type: string }
+        principal: { type: string }
+        topic_filter:
+          type: string
+          description: MQTT topic filter with `+` and `#` wildcards.
+        permission: { $ref: "#/components/schemas/ACLPermission" }
+        description: { type: string }
+      required: [id, principal, topic_filter, permission]
+    ACLRuleRequest:
+      type: object
+      properties:
+        principal: { type: string }
+        topic_filter: { type: string }
+        permission: { $ref: "#/components/schemas/ACLPermission" }
+        description: { type: string }
+      required: [principal, topic_filter, permission]
+    ACLPermission:
+      type: string
+      enum: [read, write, readwrite]
+    JSONSchemaDefinition:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        topic_filter: { type: string }
+        schema:
+          description: JSON Schema document validating payloads on this topic.
+          oneOf:
+            - type: object
+            - type: array
+            - type: string
+        description: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, name, topic_filter, schema, enabled, created_at, updated_at]
+    JSONSchemaRequest:
+      type: object
+      properties:
+        name: { type: string }
+        topic_filter: { type: string }
+        schema:
+          oneOf:
+            - type: object
+            - type: array
+        description: { type: string }
+        enabled: { type: boolean, default: true }
+      required: [name, topic_filter, schema]
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        occurred_at: { type: string, format: date-time }
+        actor: { type: string }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        result: { type: string, enum: [success, failure, unknown] }
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [id, occurred_at, actor, action, resource_type, result, metadata]
+    SecurityEvent:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        category:
+          type: string
+          description: |
+            Bounded category set: `admin_login_failed`, `admin_login_rate_limited`,
+            `protected_api_access_failed`, `protected_api_access_denied`,
+            `protected_websocket_access_failed`, `acl_create_failed`,
+            `acl_update_failed`, `acl_delete_failed`, `acl_rule_created`,
+            `acl_rule_updated`, `acl_rule_deleted`.
+        reason: { type: string }
+        username: { type: string }
+        source_ip: { type: string }
+        method: { type: string }
+        path: { type: string }
+        observed_at: { type: string, format: date-time }
+      required: [id, category, reason, observed_at]
+    StatusResponse:
+      type: object
+      properties:
+        broker:
+          type: object
+          properties:
+            status: { type: string, enum: [connected, disconnected] }
+            observed_at: { type: string, format: date-time }
+            target:
+              type: object
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                address: { type: string }
+                tls_enabled: { type: boolean }
+              required: [host, port, address, tls_enabled]
+            metrics:
+              type: object
+              properties:
+                event_subscribers: { type: integer }
+                status_events: { type: integer, format: int64 }
+                topic_messages: { type: integer, format: int64 }
+                last_message_at: { type: string, format: date-time }
+                traffic: { $ref: "#/components/schemas/BrokerTrafficMetrics" }
+              required: [event_subscribers, status_events, topic_messages, traffic]
+          required: [status, observed_at, target, metrics]
+      required: [broker]
+    BrokerTrafficMetrics:
+      type: object
+      properties:
+        window_seconds: { type: integer }
+        message_count: { type: integer }
+        message_rate_per_minute: { type: number, format: double }
+        rate_points:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerRatePoint" }
+        top_topics:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerTrafficItem" }
+        top_clients:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerTrafficItem" }
+        top_clients_available: { type: boolean }
+        top_clients_note: { type: string }
+        persistence: { type: string }
+      required: [window_seconds, message_count, message_rate_per_minute, rate_points, top_topics, top_clients_available, top_clients_note, persistence]
+    BrokerRatePoint:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        count: { type: integer }
+      required: [timestamp, count]
+    BrokerTrafficItem:
+      type: object
+      properties:
+        name: { type: string }
+        count: { type: integer }
+        percentage: { type: number, format: double }
+      required: [name, count, percentage]
+    BrokerEvent:
+      type: object
+      description: |
+        Single frame emitted on the broker events WebSocket. The exact field set
+        depends on `type`:
+
+        - `broker_status` → carries `status` (`connected` / `disconnected`) and `observed_at`.
+        - `topic_message` → carries `topic`, `payload_preview`, `payload_format`,
+          `payload_bytes`, `truncated`, optional `payload_inspection`, optional
+          `schema_validation`, optional `sparkplug`, and `observed_at`.
+        - `broker_log` → carries `source`, `severity`, `message`, `observed_at`.
+      properties:
+        type: { type: string, enum: [broker_status, topic_message, broker_log] }
+        status: { type: string, enum: [connected, disconnected] }
+        topic: { type: string }
+        payload_preview: { type: string }
+        payload_format: { type: string, enum: [json, text, binary] }
+        payload_bytes: { type: integer }
+        truncated: { type: boolean }
+        payload_inspection: { $ref: "#/components/schemas/PayloadInspection" }
+        schema_validation: { $ref: "#/components/schemas/SchemaValidationResult" }
+        sparkplug: { $ref: "#/components/schemas/SparkplugMetadata" }
+        source: { type: string }
+        severity: { type: string, enum: [debug, info, warning, error] }
+        message: { type: string }
+        observed_at: { type: string, format: date-time }
+      required: [type, observed_at]
+    PayloadInspection:
+      type: object
+      properties:
+        detected_type: { type: string, enum: [json_object, json_array, json_scalar, text, binary] }
+        byte_length: { type: integer }
+        truncated: { type: boolean }
+        json_valid: { type: boolean }
+        json_top_level_keys:
+          type: array
+          items: { type: string }
+        json_element_count: { type: integer }
+        json_scalar_summary: { type: string }
+      required: [detected_type, byte_length, truncated, json_valid]
+    SchemaValidationResult:
+      type: object
+      properties:
+        schema_id: { type: integer, format: int64 }
+        schema_name: { type: string }
+        topic_filter: { type: string }
+        valid: { type: boolean }
+        errors:
+          type: array
+          items: { type: string }
+      required: [schema_id, schema_name, topic_filter, valid]
+    SparkplugMetadata:
+      type: object
+      properties:
+        namespace: { type: string }
+        group_id: { type: string }
+        message_type: { type: string }
+        edge_node_id: { type: string }
+        device_id: { type: string }
+      required: [namespace, group_id, message_type, edge_node_id]

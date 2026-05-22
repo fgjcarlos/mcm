@@ -1,0 +1,12 @@
+# Redocly OpenAPI lint configuration for MCM.
+# The two relaxed rules below are warnings by default; we silence them because:
+#   - operation-operationId: not used by any current client generator we ship.
+#   - operation-2xx-response: the broker WebSocket endpoint legitimately returns
+#     only 101 Switching Protocols and various 4xx errors.
+extends:
+  - recommended
+rules:
+  operation-operationId: off
+  operation-2xx-response: off
+  operation-4xx-response: off
+  no-server-example.com: off
