@@ -6,22 +6,30 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
 // Run initializes persistence and serves the HTTP API.
 func Run(ctx context.Context, cfg config.Config) error {
+	logger, err := logging.New(cfg.Logging, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("build logger: %w", err)
+	}
+	slog.SetDefault(logger)
+
 	store, err := storage.Open(cfg.Database.Path)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 
-	app, err := New(cfg, store)
+	app, err := New(cfg, store, logger)
 	if err != nil {
 		return err
 	}
@@ -30,7 +38,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	go app.StartBrokerMonitor(ctx, cfg.Mosquitto)
 
-	handler := app.Handler()
+	handler := withRequestLogging(app.Handler(), logger)
 	tlsConfig, err := buildHTTPTLSConfig(cfg.HTTP.TLS)
 	if err != nil {
 		return err

@@ -21,7 +21,7 @@ func TestWebhookAlerterDisabledDropsAlerts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: false, EndpointURL: server.URL, Timeout: "1s"})
+	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: false, EndpointURL: server.URL, Timeout: "1s"}, nil)
 	alerter.Enqueue(WebhookAlert{Type: "broker_status", Severity: "warning", Source: "broker", Message: "down"})
 
 	select {
@@ -65,7 +65,7 @@ func TestWebhookAlerterDeliverPayloadAndSignature(t *testing.T) {
 	}))
 	defer server.Close()
 
-	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s", SigningSecret: secret})
+	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s", SigningSecret: secret}, nil)
 	err := alerter.deliver(context.Background(), WebhookAlert{
 		ID:         "alert-1",
 		Type:       "broker_status",
@@ -106,7 +106,7 @@ func TestWebhookAlerterFailedDeliveryReturnsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s"})
+	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s"}, nil)
 	err := alerter.deliver(context.Background(), WebhookAlert{Type: "broker_status", ObservedAt: time.Now().UTC()})
 	if err == nil {
 		t.Fatal("deliver returned nil error for 500 response")

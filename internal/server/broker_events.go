@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
@@ -578,14 +579,12 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "websocket upgrade unsupported"})
-		return
-	}
-
-	conn, rw, err := hijacker.Hijack()
+	// http.NewResponseController atraviesa cualquier wrapper que el handler chain
+	// haya impuesto (por ejemplo el access-log middleware) y delega al ResponseWriter
+	// subyacente que implementa http.Hijacker.
+	conn, rw, err := http.NewResponseController(w).Hijack()
 	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "websocket upgrade unsupported"})
 		return
 	}
 	defer conn.Close()
@@ -701,11 +700,22 @@ func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig
 	address := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	client := buildMQTTClient(cfg, address, a)
 
+	a.logger.Info("broker_monitor_starting",
+		slog.String("broker_address", address),
+		slog.Bool("tls_enabled", cfg.TLS.Enabled),
+		slog.Bool("authenticated", strings.TrimSpace(cfg.Username) != ""),
+	)
+
 	if token := client.Connect(); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+		a.logger.Warn("broker_initial_connect_failed",
+			slog.String("broker_address", address),
+			slog.String("error", token.Error().Error()),
+		)
 		a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker initial connect failed: %v", token.Error()))
 	}
 
 	<-ctx.Done()
+	a.logger.Info("broker_monitor_stopping", slog.String("broker_address", address))
 	client.Disconnect(250)
 }
 
@@ -750,9 +760,14 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		// Clean session means subscriptions are lost across reconnects — resubscribe each time
 		// before announcing "connected" so subscribers can assume topic messages will follow.
 		if token := client.Subscribe("#", 0, nil); token.WaitTimeout(5*time.Second) && token.Error() != nil {
+			a.logger.Warn("broker_subscribe_failed",
+				slog.String("broker_address", address),
+				slog.String("error", token.Error().Error()),
+			)
 			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", token.Error()))
 			return
 		}
+		a.logger.Info("broker_connected", slog.String("broker_address", address))
 		a.publishBrokerStatus("connected", "info", fmt.Sprintf("Broker connected to %s", address))
 	})
 
@@ -760,6 +775,12 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		message := "Broker disconnected"
 		if err != nil {
 			message = fmt.Sprintf("Broker disconnected: %v", err)
+			a.logger.Warn("broker_disconnected",
+				slog.String("broker_address", address),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			a.logger.Warn("broker_disconnected", slog.String("broker_address", address))
 		}
 		a.publishBrokerStatus("disconnected", "warning", message)
 	})

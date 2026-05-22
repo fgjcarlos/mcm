@@ -21,6 +21,11 @@ var validLogLevels = map[string]struct{}{
 	"error": {},
 }
 
+var validLogFormats = map[string]struct{}{
+	"text": {},
+	"json": {},
+}
+
 // Config holds MCM runtime configuration loaded from YAML.
 type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
@@ -105,9 +110,10 @@ type AlertingConfig struct {
 	SigningSecret string `yaml:"signing_secret"`
 }
 
-// LoggingConfig controls log verbosity.
+// LoggingConfig controls log verbosity and output format.
 type LoggingConfig struct {
-	Level string `yaml:"level"`
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
 }
 
 // ValidationError holds all config validation failures.
@@ -161,7 +167,8 @@ func Default() Config {
 			Timeout: "5s",
 		},
 		Logging: LoggingConfig{
-			Level: "info",
+			Level:  "info",
+			Format: "json",
 		},
 	}
 }
@@ -244,9 +251,11 @@ alerting:
   signing_secret: ""
 
 # Valid levels: debug, info, warn, error.
+# Valid formats: json (default, recommended for production / SIEM ingestion) or text.
 logging:
   level: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.HTTP.TLS.Enabled, cfg.HTTP.TLS.MinVersion, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level)
+  format: %q
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.HTTP.TLS.Enabled, cfg.HTTP.TLS.MinVersion, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level, cfg.Logging.Format)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -288,6 +297,9 @@ func Parse(data []byte) (Config, error) {
 	}
 	if cfg.HTTP.TLS.MinVersion == "" {
 		cfg.HTTP.TLS.MinVersion = Default().HTTP.TLS.MinVersion
+	}
+	if cfg.Logging.Format == "" {
+		cfg.Logging.Format = Default().Logging.Format
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -391,6 +403,10 @@ func (c Config) Validate() error {
 		problems = append(problems, "logging.level is required")
 	} else if _, ok := validLogLevels[level]; !ok {
 		problems = append(problems, fmt.Sprintf("logging.level must be one of: debug, info, warn, error; got %q", c.Logging.Level))
+	}
+	format := strings.ToLower(strings.TrimSpace(c.Logging.Format))
+	if _, ok := validLogFormats[format]; !ok {
+		problems = append(problems, fmt.Sprintf(`logging.format must be one of: text, json; got %q`, c.Logging.Format))
 	}
 
 	if len(problems) > 0 {
