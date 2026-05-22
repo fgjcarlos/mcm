@@ -48,6 +48,64 @@ func (m *TokenManager) Issue(userID int64, username string, role Role, now time.
 	return signed, expiresAt, nil
 }
 
+// IssueMFAChallenge signs a short-lived JWT identifying the user for the second
+// login step. The "purpose" claim is mandatory so a challenge token can never be
+// presented as a regular access token via Verify.
+func (m *TokenManager) IssueMFAChallenge(userID int64, username string, ttl time.Duration, now time.Time) (string, error) {
+	expiresAt := now.Add(ttl)
+	claims := jwt.MapClaims{
+		"sub":      fmt.Sprintf("%d", userID),
+		"username": username,
+		"purpose":  "mfa_challenge",
+		"iat":      now.Unix(),
+		"exp":      expiresAt.Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(m.secret)
+	if err != nil {
+		return "", fmt.Errorf("sign mfa challenge: %w", err)
+	}
+	return signed, nil
+}
+
+// VerifyMFAChallenge validates a challenge token and returns the user identity.
+// Regular access tokens (which carry no purpose) are rejected.
+func (m *TokenManager) VerifyMFAChallenge(tokenString string, now time.Time) (int64, string, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method %q", token.Method.Alg())
+		}
+		return m.secret, nil
+	}, jwt.WithTimeFunc(func() time.Time { return now }))
+	if err != nil {
+		return 0, "", fmt.Errorf("parse mfa challenge: %w", err)
+	}
+	if !token.Valid {
+		return 0, "", fmt.Errorf("invalid mfa challenge")
+	}
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return 0, "", fmt.Errorf("invalid mfa challenge claims")
+	}
+	purpose, _ := mapClaims["purpose"].(string)
+	if purpose != "mfa_challenge" {
+		return 0, "", fmt.Errorf("token is not an mfa challenge")
+	}
+	sub, err := mapClaims.GetSubject()
+	if err != nil {
+		return 0, "", fmt.Errorf("read mfa challenge subject: %w", err)
+	}
+	var userID int64
+	if _, err := fmt.Sscanf(sub, "%d", &userID); err != nil {
+		return 0, "", fmt.Errorf("parse mfa challenge subject: %w", err)
+	}
+	username, _ := mapClaims["username"].(string)
+	if username == "" {
+		return 0, "", fmt.Errorf("mfa challenge username claim is required")
+	}
+	return userID, username, nil
+}
+
 // Verify validates a signed JWT and returns the user identity claims.
 func (m *TokenManager) Verify(tokenString string) (UserClaims, error) {
 	return m.VerifyAt(tokenString, time.Now())
@@ -86,6 +144,10 @@ func (m *TokenManager) VerifyAt(tokenString string, now time.Time) (UserClaims, 
 	username, _ := mapClaims["username"].(string)
 	if username == "" {
 		return UserClaims{}, fmt.Errorf("token username claim is required")
+	}
+
+	if purpose, _ := mapClaims["purpose"].(string); purpose != "" {
+		return UserClaims{}, fmt.Errorf("token has unexpected purpose %q", purpose)
 	}
 
 	roleString, _ := mapClaims["role"].(string)

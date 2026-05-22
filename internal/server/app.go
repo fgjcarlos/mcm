@@ -126,7 +126,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PUT /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleUpdateRule)))
 	mux.Handle("DELETE /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleDeleteRule)))
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/login/mfa", a.handleLoginMFA)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))
+	mux.Handle("POST /api/v1/auth/mfa/setup", a.requireAuth(http.HandlerFunc(a.handleMFASetup)))
+	mux.Handle("POST /api/v1/auth/mfa/verify", a.requireAuth(http.HandlerFunc(a.handleMFAVerify)))
+	mux.Handle("DELETE /api/v1/auth/mfa", a.requireAuth(http.HandlerFunc(a.handleMFADisable)))
 	mux.Handle("GET /api/v1/admin-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAdminUsers)))
 	mux.Handle("POST /api/v1/admin-users", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleCreateAdminUser)))
 	mux.Handle("GET /api/v1/admin-users/{id}", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleGetAdminUser)))
@@ -190,9 +194,11 @@ type jsonSchemaRequest struct {
 }
 
 type loginResponse struct {
-	Token     string            `json:"token"`
-	ExpiresAt time.Time         `json:"expires_at"`
-	User      adminUserResponse `json:"user"`
+	Token        string            `json:"token,omitempty"`
+	ExpiresAt    time.Time         `json:"expires_at,omitempty"`
+	User         adminUserResponse `json:"user,omitzero"`
+	MFARequired  bool              `json:"mfa_required,omitempty"`
+	MFAChallenge string            `json:"mfa_challenge,omitempty"`
 }
 
 type adminUserResponse struct {
@@ -279,6 +285,25 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.MFAEnabled {
+		// Password is correct but MFA is required; issue a short-lived challenge
+		// that the second-step endpoint exchanges for a real access token.
+		challenge, err := a.tokens.IssueMFAChallenge(user.ID, user.Username, mfaChallengeTTL, a.now().UTC())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+			return
+		}
+		// The password attempt itself is recorded as a success here so the IP/username
+		// brute-force counter does not punish a user mid-MFA prompt. The MFA verify
+		// step has its own audit + security events.
+		a.recordLoginAttempt(r, user.Username, true)
+		writeJSON(w, http.StatusOK, loginResponse{
+			MFARequired:  true,
+			MFAChallenge: challenge,
+		})
+		return
+	}
+
 	userRole, err := auth.ParseRole(user.Role, auth.RoleAdmin)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
@@ -297,6 +322,101 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 		User:      toAdminUserResponse(user),
 	})
+}
+
+const mfaChallengeTTL = 5 * time.Minute
+
+type loginMFARequest struct {
+	Challenge string `json:"mfa_challenge"`
+	Code      string `json:"code"`
+}
+
+func (a *App) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
+	var req loginMFARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return
+	}
+	challenge := strings.TrimSpace(req.Challenge)
+	code := strings.TrimSpace(req.Code)
+	if challenge == "" || code == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "mfa_challenge and code are required"})
+		return
+	}
+
+	userID, username, err := a.tokens.VerifyMFAChallenge(challenge, a.now().UTC())
+	if err != nil {
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_mfa_challenge", "")
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+		return
+	}
+
+	user, err := a.store.GetAdminUserByID(r.Context(), userID)
+	if errors.Is(err, storage.ErrUserNotFound) {
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_mfa_challenge", username)
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	if user.Disabled || !user.MFAEnabled {
+		a.recordSecurityFailure(r, "admin_login_failed", "mfa_not_enrolled", user.Username)
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+		return
+	}
+
+	usedRecovery := false
+	if auth.VerifyTOTP(user.MFASecret, code, a.now().UTC()) {
+		// happy path
+	} else if id, ok := a.matchRecoveryCode(r.Context(), user.ID, code); ok {
+		if err := a.store.ConsumeRecoveryCode(r.Context(), id); err != nil {
+			a.recordSecurityFailure(r, "admin_login_failed", "recovery_code_consume_failed", user.Username)
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+			return
+		}
+		usedRecovery = true
+		a.recordSecurityChange(r, "mfa_recovery_code_used", "recovery_code", user.Username)
+	} else {
+		a.recordSecurityFailure(r, "admin_login_failed", "invalid_mfa_code", user.Username)
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+		return
+	}
+
+	userRole, err := auth.ParseRole(user.Role, auth.RoleAdmin)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	token, expiresAt, err := a.tokens.Issue(user.ID, user.Username, userRole, a.now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+
+	if usedRecovery {
+		a.recordAuditFromRequest(r, "mfa.recovery_code_used", "admin_user", strconv.FormatInt(user.ID, 10), "success", map[string]any{"username": user.Username})
+	}
+
+	writeJSON(w, http.StatusOK, loginResponse{
+		Token:     token,
+		ExpiresAt: expiresAt,
+		User:      toAdminUserResponse(user),
+	})
+}
+
+func (a *App) matchRecoveryCode(ctx context.Context, userID int64, code string) (int64, bool) {
+	codes, err := a.store.UnusedRecoveryCodeHashes(ctx, userID)
+	if err != nil {
+		return 0, false
+	}
+	for _, rec := range codes {
+		if auth.MatchRecoveryCode(rec.Hash, code) {
+			return rec.ID, true
+		}
+	}
+	return 0, false
 }
 
 func (a *App) enforceLoginLockout(w http.ResponseWriter, r *http.Request, username string) bool {
