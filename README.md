@@ -269,10 +269,19 @@ It supports MQTT wildcard topic filters, validates invalid wildcard placement, a
 
 The React and Vite frontend skeleton lives under [`frontend/`](./frontend/).
 
+**Toolchain requirements:**
+
+- Node.js `^22.13.0` (LTS Jod) or `>=24.0.0` (LTS), enforced via the `engines` field in [`frontend/package.json`](./frontend/package.json).
+- npm `>=10.0.0`.
+
+A [`frontend/.nvmrc`](./frontend/.nvmrc) pins a tested LTS version — run `nvm use` from `frontend/` to switch.
+
+Reproducible installs rely on the committed `frontend/package-lock.json`. Use `npm ci` in clean environments (such as CI) to install the exact resolved tree; use `npm install` only when you intentionally want to update dependencies.
+
 ```bash
-# Install frontend dependencies
+# One-time, reproducible install (matches package-lock.json exactly)
 cd frontend
-npm install
+npm ci
 
 # Start the Vite development server
 npm run dev
