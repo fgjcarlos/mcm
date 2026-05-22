@@ -22,6 +22,7 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/schema"
 	"github.com/fgjcarlos/mcm/internal/sparkplug"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -87,6 +88,7 @@ type BrokerEventHub struct {
 	lastMessageAt *time.Time
 	store         *storage.Store
 	retention     time.Duration
+	metrics       *metrics.Registry
 }
 
 // BrokerEventSnapshot is a point-in-time, read-only view of broker stream state.
@@ -143,6 +145,14 @@ func (h *BrokerEventHub) SetPersistence(store *storage.Store, retention time.Dur
 	h.mu.Unlock()
 }
 
+// SetMetrics attaches a Prometheus registry to the hub so Publish can increment
+// broker_* counters as events are observed. Safe to call once during construction.
+func (h *BrokerEventHub) SetMetrics(reg *metrics.Registry) {
+	h.mu.Lock()
+	h.metrics = reg
+	h.mu.Unlock()
+}
+
 func (h *BrokerEventHub) Subscribe() (<-chan BrokerEvent, func()) {
 	ch := make(chan BrokerEvent, brokerEventSubscriberCapacity)
 
@@ -171,6 +181,7 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	}
 
 	h.mu.Lock()
+	previousStatus := h.status.Status
 	if event.Type == "broker_status" {
 		h.status = event
 		h.statusEvents++
@@ -188,6 +199,7 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	}
 	store := h.store
 	retention := h.retention
+	reg := h.metrics
 	for ch := range h.subscribers {
 		select {
 		case ch <- event:
@@ -195,6 +207,23 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 		}
 	}
 	h.mu.Unlock()
+
+	if reg != nil {
+		switch event.Type {
+		case "broker_status":
+			if event.Status == "connected" {
+				reg.BrokerStatus.Set(1)
+			} else {
+				reg.BrokerStatus.Set(0)
+				if previousStatus == "connected" {
+					reg.BrokerReconnects.Inc()
+				}
+			}
+		case "topic_message":
+			reg.BrokerMessages.Inc()
+			reg.BrokerPayloadBytes.Add(float64(event.PayloadBytes))
+		}
+	}
 
 	persistBrokerEvent(store, retention, event)
 }

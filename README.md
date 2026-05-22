@@ -292,6 +292,35 @@ npm run dev
 npm run build
 ```
 
+### Metrics and observability
+
+MCM exposes Prometheus metrics at `GET /metrics` (text exposition format, unauthenticated by design — gate it at your reverse proxy or via network policy in production).
+
+Exposed metric families:
+
+- `mcm_http_requests_total{method, route, status}` — HTTP request counter. `route` uses the ServeMux pattern (e.g. `GET /api/v1/admin-users/{id}`), never the raw URL, so cardinality stays bounded.
+- `mcm_http_request_duration_seconds{method, route}` — request latency histogram (default Prometheus buckets).
+- `mcm_broker_status` — 1 when Mosquitto is connected, 0 otherwise.
+- `mcm_broker_reconnects_total` — broker disconnect transitions (each triggers an auto-reconnect attempt).
+- `mcm_broker_messages_total` — MQTT topic messages observed. Topic names are intentionally **not** labels.
+- `mcm_broker_payload_bytes_total` — total observed payload bytes.
+- `mcm_login_attempts_total{result}` — admin login attempts (`success` or `failure`).
+- `mcm_audit_events_total{result}` — administrative audit events.
+- `mcm_security_events_total{category}` — security events, labeled by category (bounded set).
+
+Sample Prometheus scrape:
+
+```yaml
+scrape_configs:
+  - job_name: mcm
+    metrics_path: /metrics
+    scheme: http  # or https when http.tls.enabled is true
+    static_configs:
+      - targets: ["mcm-host:8080"]
+```
+
+A starter Grafana dashboard is committed at [`deploy/grafana/mcm-dashboard.json`](./deploy/grafana/mcm-dashboard.json) (broker status, reconnect rate, message rate, HTTP request/latency by route, login attempts, security/audit events). Import it in Grafana and pick your Prometheus datasource.
+
 ### HTTPS and optional mTLS
 
 The MCM HTTP API can serve HTTPS by populating `http.tls` in the configuration:
