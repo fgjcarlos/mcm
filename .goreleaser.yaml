@@ -1,3 +1,5 @@
+version: 2
+
 project_name: mcm
 
 before:
@@ -22,11 +24,13 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
 checksum:
   name_template: "checksums.txt"
@@ -41,7 +45,7 @@ changelog:
       - "^ci:"
       - "^chore:"
 
-dockers:
+dockers_v2:
   - id: mcm-amd64
     goos: linux
     goarch: amd64
@@ -62,7 +66,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
 
-docker_manifests:
+docker_manifests_v2:
   - name_template: "ghcr.io/fgjcarlos/mcm:{{ .Version }}"
     image_templates:
       - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-amd64"
