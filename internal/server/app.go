@@ -150,6 +150,10 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PUT /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleUpdateMQTTUser)))
 	mux.Handle("DELETE /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleDeleteMQTTUser)))
 	mux.Handle("POST /api/v1/mqtt-users/{id}/reset-password", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleResetMQTTUserPassword)))
+	edgeSiteAPI := &edgeAPI{store: a.store}
+	mux.Handle("POST /api/v1/edge/heartbeat", a.requireRole(auth.RoleOperator, http.HandlerFunc(edgeSiteAPI.handleHeartbeat)))
+	mux.Handle("GET /api/v1/edge/sites", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleListSites)))
+	mux.Handle("GET /api/v1/edge/sites/{id}", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleGetSite)))
 	return mux
 }
 
