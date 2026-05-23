@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -108,30 +107,27 @@ func TestFileApplierApply(t *testing.T) {
 	t.Run("empty PIDPath skips SIGHUP", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
+		var killed bool
 		fa := FileApplier{
 			ACLPath:    filepath.Join(dir, "acl"),
 			PasswdPath: filepath.Join(dir, "passwd"),
-			PIDPath:    "", // no PID file — skip reload
+			PIDPath:    "",
+			SignalFunc: func(_ int) error {
+				killed = true
+				return nil
+			},
 		}
-
-		var killed bool
-		orig := osKill
-		osKill = func(_ int, _ syscall.Signal) error {
-			killed = true
-			return nil
-		}
-		t.Cleanup(func() { osKill = orig })
 
 		err := fa.Apply(context.Background(), "a", "b")
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
 		if killed {
-			t.Fatal("osKill was called with empty PIDPath, want no signal sent")
+			t.Fatal("SignalFunc was called with empty PIDPath, want no signal sent")
 		}
 	})
 
-	t.Run("with PIDPath sends SIGHUP to process", func(t *testing.T) {
+	t.Run("with PIDPath sends signal to process", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		pidPath := filepath.Join(dir, "mosquitto.pid")
@@ -139,21 +135,16 @@ func TestFileApplierApply(t *testing.T) {
 			t.Fatalf("WriteFile pid: %v", err)
 		}
 
+		var gotPID int
 		fa := FileApplier{
 			ACLPath:    filepath.Join(dir, "acl"),
 			PasswdPath: filepath.Join(dir, "passwd"),
 			PIDPath:    pidPath,
+			SignalFunc: func(pid int) error {
+				gotPID = pid
+				return nil
+			},
 		}
-
-		var gotPID int
-		var gotSig syscall.Signal
-		orig := osKill
-		osKill = func(pid int, sig syscall.Signal) error {
-			gotPID = pid
-			gotSig = sig
-			return nil
-		}
-		t.Cleanup(func() { osKill = orig })
 
 		err := fa.Apply(context.Background(), "a", "b")
 		if err != nil {
@@ -161,9 +152,6 @@ func TestFileApplierApply(t *testing.T) {
 		}
 		if gotPID != 12345 {
 			t.Fatalf("kill PID = %d, want 12345", gotPID)
-		}
-		if gotSig != syscall.SIGHUP {
-			t.Fatalf("kill signal = %v, want SIGHUP", gotSig)
 		}
 	})
 

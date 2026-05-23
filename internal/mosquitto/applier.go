@@ -7,12 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 )
-
-// osKill is a package-level variable so tests can replace it without touching
-// production process state.
-var osKill = syscall.Kill
 
 // Applier writes Mosquitto ACL and password files and signals the broker to
 // reload its configuration.
@@ -25,7 +20,8 @@ type Applier interface {
 type FileApplier struct {
 	ACLPath    string
 	PasswdPath string
-	PIDPath    string // if empty, skip reload
+	PIDPath    string           // if empty, skip reload
+	SignalFunc func(int) error  // if nil, uses platform default (SIGHUP)
 }
 
 // DockerApplier writes files to paths that are volume-mounted into a Docker
@@ -95,7 +91,11 @@ func (f FileApplier) Apply(_ context.Context, aclBody string, passwdBody string)
 	if err != nil {
 		return fmt.Errorf("parse pid from %q: %w", f.PIDPath, err)
 	}
-	if err := osKill(pid, syscall.SIGHUP); err != nil {
+	sigFn := f.SignalFunc
+	if sigFn == nil {
+		sigFn = defaultSignal
+	}
+	if err := sigFn(pid); err != nil {
 		return fmt.Errorf("send SIGHUP to pid %d: %w", pid, err)
 	}
 	return nil
