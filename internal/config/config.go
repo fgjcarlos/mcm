@@ -54,9 +54,13 @@ type HTTPTLSConfig struct {
 	RequireClientCert bool   `yaml:"require_client_cert"`
 }
 
-// DatabaseConfig controls SQLite persistence.
+// DatabaseConfig controls persistence. Backend selects "sqlite" (default) or
+// "postgres". When backend is "sqlite", Path is required. When backend is
+// "postgres", DSN is required.
 type DatabaseConfig struct {
-	Path string `yaml:"path"`
+	Backend string `yaml:"backend"`
+	Path    string `yaml:"path"`
+	DSN     string `yaml:"dsn"`
 }
 
 // AuthConfig controls API authentication.
@@ -217,9 +221,11 @@ http:
     client_ca_file: ""
     require_client_cert: false
 
-# SQLite database location.
+# Database configuration. Backend: "sqlite" (default) or "postgres".
 database:
+  backend: "sqlite"
   path: %q
+  # dsn: "postgres://user:pass@host:5432/mcm?sslmode=require"
 
 # API authentication settings.
 auth:
@@ -360,8 +366,17 @@ func (c Config) Validate() error {
 	default:
 		problems = append(problems, fmt.Sprintf(`http.tls.min_version must be "1.2" or "1.3"; got %q`, c.HTTP.TLS.MinVersion))
 	}
-	if strings.TrimSpace(c.Database.Path) == "" {
-		problems = append(problems, "database.path is required")
+	switch c.Database.Backend {
+	case "", "sqlite":
+		if strings.TrimSpace(c.Database.Path) == "" {
+			problems = append(problems, "database.path is required when database.backend is \"sqlite\"")
+		}
+	case "postgres":
+		if strings.TrimSpace(c.Database.DSN) == "" {
+			problems = append(problems, "database.dsn is required when database.backend is \"postgres\"")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf(`database.backend must be "sqlite" or "postgres"; got %q`, c.Database.Backend))
 	}
 	if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
 		problems = append(problems, "auth.jwt_secret must be at least 32 characters")

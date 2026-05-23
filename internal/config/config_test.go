@@ -543,3 +543,95 @@ func TestWriteExample(t *testing.T) {
 		t.Fatalf("example config missing documentation header; got:\n%s", string(data))
 	}
 }
+
+func TestParseDatabaseBackendValidation(t *testing.T) {
+	base := `
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+metrics:
+  broker_retention: 168h
+logging:
+  level: info
+`
+
+	t.Run("sqlite default with path", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  path: /var/lib/mcm/mcm.db
+`))
+		if err != nil {
+			t.Fatalf("Parse returned error: %v", err)
+		}
+	})
+
+	t.Run("explicit sqlite with path", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  backend: sqlite
+  path: /var/lib/mcm/mcm.db
+`))
+		if err != nil {
+			t.Fatalf("Parse returned error: %v", err)
+		}
+	})
+
+	t.Run("sqlite missing path", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  backend: sqlite
+`))
+		if err == nil {
+			t.Fatal("Parse succeeded, want validation error for missing path")
+		}
+		if !strings.Contains(err.Error(), "database.path is required") {
+			t.Fatalf("error = %q, want database.path required", err)
+		}
+	})
+
+	t.Run("postgres with dsn", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  backend: postgres
+  dsn: "postgres://user:pass@localhost:5432/mcm?sslmode=require"
+`))
+		if err != nil {
+			t.Fatalf("Parse returned error: %v", err)
+		}
+	})
+
+	t.Run("postgres missing dsn", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  backend: postgres
+`))
+		if err == nil {
+			t.Fatal("Parse succeeded, want validation error for missing dsn")
+		}
+		if !strings.Contains(err.Error(), "database.dsn is required") {
+			t.Fatalf("error = %q, want database.dsn required", err)
+		}
+	})
+
+	t.Run("invalid backend", func(t *testing.T) {
+		_, err := Parse([]byte(base + `
+database:
+  backend: mysql
+`))
+		if err == nil {
+			t.Fatal("Parse succeeded, want validation error for invalid backend")
+		}
+		if !strings.Contains(err.Error(), `database.backend must be "sqlite" or "postgres"`) {
+			t.Fatalf("error = %q, want invalid backend message", err)
+		}
+	})
+}
