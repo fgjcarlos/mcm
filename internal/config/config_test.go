@@ -416,15 +416,14 @@ logging:
 			wantProblem: "mosquitto.deploy.passwd_path is required",
 		},
 		{
-			name: "deploy file mode missing pid_path fails",
+			name: "deploy file mode missing pid_path is valid (pid_path is optional)",
 			deploy: `
   deploy:
     mode: file
     acl_path: /etc/mosquitto/acl
     passwd_path: /etc/mosquitto/passwd
     pid_path: ""`,
-			wantOK:      false,
-			wantProblem: "mosquitto.deploy.pid_path is required",
+			wantOK: true,
 		},
 		{
 			name: "deploy docker mode with all fields is valid",
@@ -465,6 +464,27 @@ logging:
     container_name: mosquitto`,
 			wantOK:      false,
 			wantProblem: "acl_path and mosquitto.deploy.passwd_path must not be the same path",
+		},
+		{
+			name: "deploy valid reload_strategy sighup is valid",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    reload_strategy: sighup`,
+			wantOK: true,
+		},
+		{
+			name: "deploy invalid reload_strategy fails",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    reload_strategy: systemd`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.reload_strategy must be",
 		},
 	}
 

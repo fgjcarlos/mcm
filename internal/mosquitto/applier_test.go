@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner records the last call for test inspection.
@@ -193,7 +194,7 @@ func TestDockerApplierApply(t *testing.T) {
 		if runner.name != "docker" {
 			t.Fatalf("runner.name = %q, want %q", runner.name, "docker")
 		}
-		wantArgs := []string{"exec", "mosquitto-broker", "kill", "-SIGHUP", "1"}
+		wantArgs := []string{"exec", "mosquitto-broker", "kill", "-HUP", "1"}
 		if fmt.Sprint(runner.args) != fmt.Sprint(wantArgs) {
 			t.Fatalf("runner.args = %v, want %v", runner.args, wantArgs)
 		}
@@ -250,6 +251,90 @@ func TestDockerApplierApply(t *testing.T) {
 		}
 		if string(gotPasswd) != "my-passwd" {
 			t.Fatalf("passwd content = %q, want %q", string(gotPasswd), "my-passwd")
+		}
+	})
+
+	t.Run("empty ContainerName returns error before any I/O", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runner := &fakeRunner{}
+		da := DockerApplier{
+			ACLPath:       filepath.Join(dir, "acl"),
+			PasswdPath:    filepath.Join(dir, "passwd"),
+			ContainerName: "",
+			Runner:        runner,
+		}
+
+		err := da.Apply(context.Background(), "acl", "passwd")
+		if err == nil {
+			t.Fatal("Apply returned nil error, want error for empty ContainerName")
+		}
+		if !strings.Contains(err.Error(), "container_name") {
+			t.Fatalf("error = %q, want message containing 'container_name'", err.Error())
+		}
+		// Verify no I/O was performed — neither file should exist.
+		if _, statErr := os.Stat(da.ACLPath); statErr == nil {
+			t.Fatal("ACL file was created before container_name check; expected no I/O")
+		}
+	})
+}
+
+func TestFileApplierContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cancelled context returns error before I/O", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		// Ensure the context is already expired.
+		time.Sleep(1 * time.Millisecond)
+
+		fa := FileApplier{
+			ACLPath:    filepath.Join(dir, "acl"),
+			PasswdPath: filepath.Join(dir, "passwd"),
+		}
+
+		err := fa.Apply(ctx, "acl-content", "passwd-content")
+		if err == nil {
+			t.Fatal("Apply returned nil error, want context error")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Apply error = %v, want context.DeadlineExceeded", err)
+		}
+	})
+}
+
+func TestFileApplierInvalidPIDContent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-integer PID content returns parse error", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		pidPath := filepath.Join(dir, "mosquitto.pid")
+		if err := os.WriteFile(pidPath, []byte("not-a-pid\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile pid: %v", err)
+		}
+
+		fa := FileApplier{
+			ACLPath:    filepath.Join(dir, "acl"),
+			PasswdPath: filepath.Join(dir, "passwd"),
+			PIDPath:    pidPath,
+		}
+
+		err := fa.Apply(context.Background(), "acl-content", "passwd-content")
+		if err == nil {
+			t.Fatal("Apply returned nil error, want parse error for invalid PID content")
+		}
+		if !strings.Contains(err.Error(), "parse pid") {
+			t.Fatalf("error = %q, want message containing 'parse pid'", err.Error())
+		}
+		// Both files should be written before the PID parse attempt.
+		if _, statErr := os.Stat(filepath.Join(dir, "acl")); statErr != nil {
+			t.Fatalf("ACL file not written before PID check: %v", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "passwd")); statErr != nil {
+			t.Fatalf("passwd file not written before PID check: %v", statErr)
 		}
 	})
 }
