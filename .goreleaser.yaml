@@ -1,0 +1,81 @@
+project_name: mcm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mcm
+    main: ./cmd/mcm
+    binary: mcm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+dockers:
+  - id: mcm-amd64
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-amd64"
+      - "ghcr.io/fgjcarlos/mcm:latest-amd64"
+    dockerfile: deploy/mcm/Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/amd64"
+
+  - id: mcm-arm64
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-arm64"
+      - "ghcr.io/fgjcarlos/mcm:latest-arm64"
+    dockerfile: deploy/mcm/Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/arm64"
+
+docker_manifests:
+  - name_template: "ghcr.io/fgjcarlos/mcm:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-amd64"
+      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/fgjcarlos/mcm:latest"
+    image_templates:
+      - "ghcr.io/fgjcarlos/mcm:latest-amd64"
+      - "ghcr.io/fgjcarlos/mcm:latest-arm64"
+
+release:
+  github:
+    owner: fgjcarlos
+    name: mcm
+  prerelease: auto
+  name_template: "v{{ .Version }}"

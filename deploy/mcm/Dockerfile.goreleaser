@@ -1,0 +1,8 @@
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S mcm && adduser -S mcm -G mcm
+COPY mcm /usr/local/bin/mcm
+USER mcm
+EXPOSE 8080
+ENTRYPOINT ["mcm"]
+CMD ["server", "--config", "/etc/mcm/config.yaml"]
