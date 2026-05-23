@@ -3,16 +3,16 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -25,8 +25,7 @@ func TestBrokerEventsWebSocketRejectsMissingBearerToken(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	t.Cleanup(server.Close)
 
-	response, conn, _ := dialTestWebSocket(t, server.URL, "/api/v1/broker/events", "")
-	t.Cleanup(func() { _ = conn.Close() })
+	response := dialTestWebSocketRaw(t, server.URL, "/api/v1/broker/events", "")
 
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
@@ -47,8 +46,7 @@ func TestBrokerEventsWebSocketRejectsInvalidBearerToken(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	t.Cleanup(server.Close)
 
-	response, conn, _ := dialTestWebSocket(t, server.URL, "/api/v1/broker/events", "mcm.v1, Bearer.not-a-valid-token")
-	t.Cleanup(func() { _ = conn.Close() })
+	response := dialTestWebSocketRaw(t, server.URL, "/api/v1/broker/events", "mcm.v1, Bearer.not-a-valid-token")
 
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
@@ -93,17 +91,20 @@ func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	t.Cleanup(server.Close)
 
-	conn, reader := openAuthorizedTestWebSocket(t, app, server.URL, "/api/v1/broker/events")
-	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	initialFrame := readTestWebSocketFrame(t, reader)
+	conn := openAuthorizedTestWebSocket(t, ctx, app, server.URL, "/api/v1/broker/events")
+	defer conn.CloseNow()
+
+	initialFrame := readTestWebSocketFrame(t, ctx, conn)
 	if !strings.Contains(initialFrame, `"type":"broker_status"`) || !strings.Contains(initialFrame, `"status":"disconnected"`) {
 		t.Fatalf("initial websocket frame = %s, want disconnected broker status", initialFrame)
 	}
 
 	app.brokerEvents.Publish(TopicEvent("factory/line1/temperature", []byte(`{"temperature":21.5,"unit":"c"}`), 256))
 
-	topicFrame := readTestWebSocketFrame(t, reader)
+	topicFrame := readTestWebSocketFrame(t, ctx, conn)
 	if !strings.Contains(topicFrame, `"type":"topic_message"`) {
 		t.Fatalf("topic websocket frame = %s, want topic message event", topicFrame)
 	}
@@ -356,7 +357,10 @@ func readBrokerEvent(t *testing.T, ch <-chan BrokerEvent) BrokerEvent {
 	return BrokerEvent{}
 }
 
-func dialTestWebSocket(t *testing.T, serverURL string, path string, protocolHeader string) (*http.Response, net.Conn, *bufio.Reader) {
+// dialTestWebSocketRaw performs a raw HTTP WebSocket upgrade request and returns the
+// HTTP response without completing the WebSocket handshake. This is used for auth
+// rejection tests where the server returns a non-101 response before any upgrade.
+func dialTestWebSocketRaw(t *testing.T, serverURL string, path string, protocolHeader string) *http.Response {
 	t.Helper()
 
 	addr := strings.TrimPrefix(serverURL, "http://")
@@ -364,6 +368,7 @@ func dialTestWebSocket(t *testing.T, serverURL string, path string, protocolHead
 	if err != nil {
 		t.Fatalf("Dial returned error: %v", err)
 	}
+	defer conn.Close()
 
 	request := "GET " + path + " HTTP/1.1\r\n" +
 		"Host: " + addr + "\r\n" +
@@ -384,10 +389,13 @@ func dialTestWebSocket(t *testing.T, serverURL string, path string, protocolHead
 	if err != nil {
 		t.Fatalf("ReadResponse returned error: %v", err)
 	}
-	return response, conn, reader
+	return response
 }
 
-func openAuthorizedTestWebSocket(t *testing.T, app *App, serverURL string, path string) (net.Conn, *bufio.Reader) {
+// openAuthorizedTestWebSocket dials a WebSocket using nhooyr.io/websocket with a valid
+// bearer token in the Sec-WebSocket-Protocol header. It asserts the handshake succeeds
+// and the negotiated subprotocol matches webSocketSubprotocol.
+func openAuthorizedTestWebSocket(t *testing.T, ctx context.Context, app *App, serverURL string, path string) *websocket.Conn {
 	t.Helper()
 
 	token, _, err := app.tokens.Issue(1, "ws-test", auth.RoleAdmin, app.now().UTC())
@@ -395,50 +403,34 @@ func openAuthorizedTestWebSocket(t *testing.T, app *App, serverURL string, path 
 		t.Fatalf("Issue token returned error: %v", err)
 	}
 
-	response, conn, reader := dialTestWebSocket(t, serverURL, path, "mcm.v1, Bearer."+token)
-	if response.StatusCode != http.StatusSwitchingProtocols {
-		_ = conn.Close()
-		t.Fatalf("websocket status = %d, want %d", response.StatusCode, http.StatusSwitchingProtocols)
+	wsURL := "ws" + strings.TrimPrefix(serverURL, "http") + path
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{webSocketSubprotocol},
+		HTTPHeader: http.Header{
+			"Sec-WebSocket-Protocol": []string{"mcm.v1, Bearer." + token},
+		},
+	})
+	if err != nil {
+		t.Fatalf("websocket.Dial returned error: %v", err)
 	}
-	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != "mcm.v1" {
-		_ = conn.Close()
-		t.Fatalf("Sec-WebSocket-Protocol response = %q, want %q", got, "mcm.v1")
+	if got := conn.Subprotocol(); got != webSocketSubprotocol {
+		conn.CloseNow()
+		t.Fatalf("negotiated subprotocol = %q, want %q", got, webSocketSubprotocol)
 	}
-	return conn, reader
+	return conn
 }
 
-func readTestWebSocketFrame(t *testing.T, reader *bufio.Reader) string {
+// readTestWebSocketFrame reads a single text message from the WebSocket connection and
+// asserts it is valid JSON. It returns the payload as a string.
+func readTestWebSocketFrame(t *testing.T, ctx context.Context, conn *websocket.Conn) string {
 	t.Helper()
 
-	first, err := reader.ReadByte()
+	msgType, payload, err := conn.Read(ctx)
 	if err != nil {
-		t.Fatalf("ReadByte opcode returned error: %v", err)
+		t.Fatalf("conn.Read returned error: %v", err)
 	}
-	if first != 0x81 {
-		t.Fatalf("frame first byte = %#x, want text frame", first)
-	}
-	lengthByte, err := reader.ReadByte()
-	if err != nil {
-		t.Fatalf("ReadByte length returned error: %v", err)
-	}
-	length := int(lengthByte & 0x7f)
-	if length == 126 {
-		var value uint16
-		if err := binary.Read(reader, binary.BigEndian, &value); err != nil {
-			t.Fatalf("Read extended length returned error: %v", err)
-		}
-		length = int(value)
-	} else if length == 127 {
-		var value uint64
-		if err := binary.Read(reader, binary.BigEndian, &value); err != nil {
-			t.Fatalf("Read extended length returned error: %v", err)
-		}
-		length = int(value)
-	}
-
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		t.Fatalf("Read payload returned error: %v", err)
+	if msgType != websocket.MessageText {
+		t.Fatalf("message type = %v, want text frame", msgType)
 	}
 	if !json.Valid(payload) {
 		t.Fatalf("websocket frame payload is not JSON: %s", string(payload))

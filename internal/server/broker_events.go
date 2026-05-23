@@ -2,10 +2,7 @@ package server
 
 import (
 	"context"
-	"crypto/sha1"
 	"crypto/tls"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -19,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/backoff"
@@ -592,11 +590,7 @@ func truncateStringUTF8(value string, limit int) string {
 }
 
 func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
-	if !isWebSocketRequest(r) {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "websocket upgrade required"})
-		return
-	}
-
+	// Extract and verify bearer token from Sec-WebSocket-Protocol BEFORE upgrade
 	token, ok := extractWebSocketBearer(r.Header.Get("Sec-WebSocket-Protocol"))
 	if !ok {
 		a.recordSecurityFailure(r, "protected_websocket_access_failed", "missing_bearer_token", "")
@@ -609,62 +603,43 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// http.NewResponseController atraviesa cualquier wrapper que el handler chain
-	// haya impuesto (por ejemplo el access-log middleware) y delega al ResponseWriter
-	// subyacente que implementa http.Hijacker.
-	conn, rw, err := http.NewResponseController(w).Hijack()
+	// Accept the WebSocket upgrade, negotiating the subprotocol
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols: []string{webSocketSubprotocol},
+	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "websocket upgrade unsupported"})
-		return
+		return // nhooyr already wrote the error response
 	}
-	defer conn.Close()
-
-	accept, err := websocketAcceptKey(r.Header.Get("Sec-WebSocket-Key"))
-	if err != nil {
-		_, _ = rw.WriteString("HTTP/1.1 400 Bad Request\r\n\r\n")
-		_ = rw.Flush()
-		return
-	}
-
-	_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
-	_, _ = rw.WriteString("Upgrade: websocket\r\n")
-	_, _ = rw.WriteString("Connection: Upgrade\r\n")
-	_, _ = rw.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
-	_, _ = rw.WriteString("Sec-WebSocket-Protocol: " + webSocketSubprotocol + "\r\n\r\n")
-	if err := rw.Flush(); err != nil {
-		return
-	}
+	defer conn.CloseNow()
 
 	events, unsubscribe := a.brokerEvents.Subscribe()
 	defer unsubscribe()
 
-	ctx := r.Context()
+	ctx := conn.CloseRead(r.Context())
 	for {
 		select {
 		case <-ctx.Done():
+			conn.Close(websocket.StatusNormalClosure, "")
 			return
 		case event, ok := <-events:
 			if !ok {
+				conn.Close(websocket.StatusNormalClosure, "")
 				return
 			}
 			data, err := json.Marshal(event)
 			if err != nil {
 				continue
 			}
-			if err := writeWebSocketTextFrame(rw, data); err != nil {
+			if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
 				return
 			}
 		}
 	}
 }
 
-func isWebSocketRequest(r *http.Request) bool {
-	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
-}
-
 const (
-	webSocketSubprotocol      = "mcm.v1"
-	webSocketBearerPrefix     = "Bearer."
+	webSocketSubprotocol  = "mcm.v1"
+	webSocketBearerPrefix = "Bearer."
 )
 
 // extractWebSocketBearer reads the bearer token offered via Sec-WebSocket-Protocol.
@@ -688,38 +663,6 @@ func extractWebSocketBearer(header string) (string, bool) {
 		return token, true
 	}
 	return "", false
-}
-
-func websocketAcceptKey(key string) (string, error) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "", fmt.Errorf("missing Sec-WebSocket-Key")
-	}
-	sum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-	return base64.StdEncoding.EncodeToString(sum[:]), nil
-}
-
-func writeWebSocketTextFrame(rw interface {
-	Write([]byte) (int, error)
-	Flush() error
-}, payload []byte) error {
-	frame := []byte{0x81}
-	length := len(payload)
-	switch {
-	case length < 126:
-		frame = append(frame, byte(length))
-	case length <= 65535:
-		frame = append(frame, 126, 0, 0)
-		binary.BigEndian.PutUint16(frame[len(frame)-2:], uint16(length))
-	default:
-		frame = append(frame, 127, 0, 0, 0, 0, 0, 0, 0, 0)
-		binary.BigEndian.PutUint64(frame[len(frame)-8:], uint64(length))
-	}
-	frame = append(frame, payload...)
-	if _, err := rw.Write(frame); err != nil {
-		return err
-	}
-	return rw.Flush()
 }
 
 // StartBrokerMonitor opens an MQTT subscription to "#" and bridges every received
