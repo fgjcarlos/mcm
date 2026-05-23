@@ -193,6 +193,21 @@ CREATE TABLE admin_mfa_recovery_codes (
 CREATE INDEX idx_admin_mfa_recovery_codes_user ON admin_mfa_recovery_codes(admin_user_id, used);
 `,
 	},
+	{
+		version: 11,
+		name:    "create_mqtt_users",
+		sql: `
+CREATE TABLE mqtt_users (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	disabled INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_mqtt_users_username ON mqtt_users(username);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
@@ -223,6 +238,32 @@ type UpdateAdminUserParams struct {
 	Disabled     bool
 	Role         string
 }
+
+// MQTTUser is a stored MQTT broker credential.
+type MQTTUser struct {
+	ID           int64     `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"`
+	Disabled     bool      `json:"disabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// CreateMQTTUserParams holds fields for MQTT user creation.
+type CreateMQTTUserParams struct {
+	Username     string
+	PasswordHash string
+}
+
+// UpdateMQTTUserParams holds mutable fields for MQTT user updates.
+type UpdateMQTTUserParams struct {
+	Username     *string
+	PasswordHash *string
+	Disabled     *bool
+}
+
+// ErrMQTTUserNotFound is returned when an MQTT user does not exist.
+var ErrMQTTUserNotFound = errors.New("mqtt user not found")
 
 // BrokerMetricEvent is a persisted broker metric/event without raw payload data.
 type BrokerMetricEvent struct {
