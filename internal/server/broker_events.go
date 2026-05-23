@@ -21,6 +21,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
+	"github.com/fgjcarlos/mcm/internal/backoff"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/schema"
@@ -762,9 +763,9 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		SetPingTimeout(10 * time.Second).
 		SetConnectTimeout(5 * time.Second).
 		SetAutoReconnect(true).
-		SetMaxReconnectInterval(30 * time.Second).
+		SetMaxReconnectInterval(60 * time.Second).
 		SetConnectRetry(true).
-		SetConnectRetryInterval(5 * time.Second)
+		SetConnectRetryInterval(1 * time.Second)
 
 	if cfg.TLS.Enabled {
 		serverName := cfg.Host
@@ -785,9 +786,12 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		a.brokerEvents.Publish(a.TopicEvent(msg.Topic(), msg.Payload(), maxPayloadPreviewBytes))
 	})
 
+	reconnectBackoff := backoff.New(1*time.Second, 60*time.Second, 0.25)
+	const reconnectLogThreshold = 5
+
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		// Clean session means subscriptions are lost across reconnects — resubscribe each time
-		// before announcing "connected" so subscribers can assume topic messages will follow.
+		attempts := reconnectBackoff.Attempt()
+		reconnectBackoff.Reset()
 		if token := client.Subscribe("#", 0, nil); token.WaitTimeout(5*time.Second) && token.Error() != nil {
 			a.logger.Warn("broker_subscribe_failed",
 				slog.String("broker_address", address),
@@ -796,20 +800,35 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", token.Error()))
 			return
 		}
-		a.logger.Info("broker_connected", slog.String("broker_address", address))
+		if attempts > reconnectLogThreshold {
+			a.logger.Info("broker_reconnected",
+				slog.String("broker_address", address),
+				slog.Int("suppressed_attempts", attempts-reconnectLogThreshold),
+			)
+		} else {
+			a.logger.Info("broker_connected", slog.String("broker_address", address))
+		}
 		a.publishBrokerStatus("connected", "info", fmt.Sprintf("Broker connected to %s", address))
 	})
 
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		attempt := reconnectBackoff.Attempt()
+		nextDelay := reconnectBackoff.Next()
 		message := "Broker disconnected"
 		if err != nil {
 			message = fmt.Sprintf("Broker disconnected: %v", err)
+		}
+		if attempt < reconnectLogThreshold {
 			a.logger.Warn("broker_disconnected",
 				slog.String("broker_address", address),
-				slog.String("error", err.Error()),
+				slog.String("error", fmt.Sprint(err)),
+				slog.String("next_retry_in", nextDelay.Truncate(time.Millisecond).String()),
 			)
-		} else {
-			a.logger.Warn("broker_disconnected", slog.String("broker_address", address))
+		} else if attempt == reconnectLogThreshold {
+			a.logger.Warn("broker_reconnect_logs_suppressed",
+				slog.String("broker_address", address),
+				slog.String("reason", "repeated disconnects; further attempts logged on reconnect"),
+			)
 		}
 		a.publishBrokerStatus("disconnected", "warning", message)
 	})
