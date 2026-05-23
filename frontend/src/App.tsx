@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 
 type SparkplugMetadata = {
   namespace: string
@@ -66,6 +66,35 @@ type SecurityEvent = {
   method?: string
   path?: string
   observed_at: string
+}
+
+type ACLRule = {
+  id: string
+  principal: string
+  topic_filter: string
+  permission: 'read' | 'write' | 'readwrite'
+  description?: string
+}
+
+type MQTTUser = {
+  id: number
+  username: string
+  disabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+type Deployment = {
+  id: string
+  status: 'applied' | 'rolled_back' | 'rollback_failed' | string
+  message?: string
+  created_at: string
+}
+
+type DeployPreview = {
+  acl_diff: string
+  passwd_diff: string
+  has_changes: boolean
 }
 
 type BrokerTrafficItem = {
@@ -154,8 +183,8 @@ const navItems: NavItem[] = [
     id: 'users',
     label: 'Users',
     eyebrow: 'Identity',
-    title: 'User directory placeholder',
-    description: 'Account provisioning, credential resets, and status views for broker users land here next.',
+    title: 'MQTT user directory',
+    description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
   },
   {
     id: 'acls',
@@ -163,6 +192,13 @@ const navItems: NavItem[] = [
     eyebrow: 'Authorization',
     title: 'ACL policy workspace',
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
+  },
+  {
+    id: 'deploy',
+    label: 'Deploy',
+    eyebrow: 'Operations',
+    title: 'Mosquitto configuration deploy',
+    description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
   },
   {
     id: 'security',
@@ -465,6 +501,12 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
               <AuditPanel events={auditEvents} error={auditError} />
             ) : activeId === 'dashboard' ? (
               <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
+            ) : activeId === 'acls' ? (
+              <ACLPanel token={token} />
+            ) : activeId === 'users' ? (
+              <MQTTUsersPanel token={token} />
+            ) : activeId === 'deploy' ? (
+              <DeployPanel token={token} />
             ) : (
               <TopicsPanel topics={topics} latestTopic={latestTopic} />
             )}
@@ -860,6 +902,829 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: 'con
         )}
       </div>
     </section>
+  )
+}
+
+function ACLPanel({ token }: { token: string }) {
+  const [rules, setRules] = useState<ACLRule[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [editRule, setEditRule] = useState<ACLRule | null>(null)
+  const [formPrincipal, setFormPrincipal] = useState('')
+  const [formTopicFilter, setFormTopicFilter] = useState('')
+  const [formPermission, setFormPermission] = useState<ACLRule['permission']>('read')
+  const [formDescription, setFormDescription] = useState('')
+  const [formError, setFormError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  const fetchRules = useCallback(() => { setRefreshTick((n) => n + 1) }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/acls', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Failed to load ACL rules.')
+        return response.json() as Promise<{ rules: ACLRule[] }>
+      })
+      .then((body) => {
+        if (cancelled) return
+        setRules(body.rules ?? [])
+        setError('')
+        setLoading(false)
+      })
+      .catch((err: Error) => {
+        if (cancelled) return
+        setError(err.message)
+        setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [token, refreshTick])
+
+  const openCreate = () => {
+    setEditRule(null)
+    setFormPrincipal('')
+    setFormTopicFilter('')
+    setFormPermission('read')
+    setFormDescription('')
+    setFormError('')
+    setShowForm(true)
+  }
+
+  const openEdit = (rule: ACLRule) => {
+    setEditRule(rule)
+    setFormPrincipal(rule.principal)
+    setFormTopicFilter(rule.topic_filter)
+    setFormPermission(rule.permission)
+    setFormDescription(rule.description ?? '')
+    setFormError('')
+    setShowForm(true)
+  }
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submitting) return
+    setSubmitting(true)
+    setFormError('')
+    try {
+      const body = JSON.stringify({
+        principal: formPrincipal.trim(),
+        topic_filter: formTopicFilter.trim(),
+        permission: formPermission,
+        description: formDescription.trim(),
+      })
+      const url = editRule ? `/api/v1/acls/${editRule.id}` : '/api/v1/acls'
+      const method = editRule ? 'PUT' : 'POST'
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body,
+      })
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string; details?: string[] } | null
+        const details = errBody?.details?.join('; ')
+        setFormError(details ?? errBody?.error ?? 'Request failed.')
+        return
+      }
+      setShowForm(false)
+      fetchRules()
+    } catch {
+      setFormError('Could not reach the server.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    try {
+      const response = await fetch(`/api/v1/acls/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok && response.status !== 204) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setError(errBody?.error ?? 'Delete failed.')
+        return
+      }
+      setDeleteConfirmId(null)
+      fetchRules()
+    } catch {
+      setError('Could not reach the server.')
+    }
+  }
+
+  return (
+    <section className="mt-8 space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">ACL rules</p>
+          <p className="mt-1 text-sm text-slate-300">{rules.length} rule{rules.length !== 1 ? 's' : ''} configured</p>
+        </div>
+        <button
+          type="button"
+          onClick={openCreate}
+          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+        >
+          Add Rule
+        </button>
+      </div>
+
+      {error ? (
+        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+      ) : null}
+
+      {showForm ? (
+        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{editRule ? 'Edit rule' : 'New rule'}</p>
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Principal</span>
+              <input
+                type="text"
+                required
+                value={formPrincipal}
+                onChange={(e) => setFormPrincipal(e.target.value)}
+                placeholder="username or $client_id"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Topic filter</span>
+              <input
+                type="text"
+                required
+                value={formTopicFilter}
+                onChange={(e) => setFormTopicFilter(e.target.value)}
+                placeholder="sensors/# or device/+/status"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              />
+              <span className="mt-1 block text-xs text-slate-400">MQTT wildcards: + (single level), # (multi-level, must be last)</span>
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Permission</span>
+              <select
+                value={formPermission}
+                onChange={(e) => setFormPermission(e.target.value as ACLRule['permission'])}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              >
+                <option value="read">read</option>
+                <option value="write">write</option>
+                <option value="readwrite">readwrite</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Description (optional)</span>
+              <input
+                type="text"
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
+                placeholder="Short description for audit purposes"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              />
+            </label>
+            {formError ? (
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{formError}</div>
+            ) : null}
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              >
+                {submitting ? 'Saving…' : editRule ? 'Update rule' : 'Create rule'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60">
+        {loading ? (
+          <p className="p-6 text-sm text-slate-400">Loading rules…</p>
+        ) : rules.length === 0 ? (
+          <p className="p-6 text-sm text-slate-400">No ACL rules configured yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Principal</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Topic filter</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Permission</th>
+                <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((rule) => (
+                <tr key={rule.id} className="border-b border-white/5 last:border-0">
+                  <td className="px-4 py-3 font-mono text-sm text-slate-200">{rule.principal}</td>
+                  <td className="px-4 py-3 font-mono text-sm text-cyan-100">{rule.topic_filter}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 font-mono text-xs text-cyan-200">{rule.permission}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {deleteConfirmId === rule.id ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="text-xs text-slate-300">Delete?</span>
+                        <button
+                          type="button"
+                          onClick={() => { void handleDelete(rule.id) }}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(null)}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(rule)}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(rule.id)}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                        >
+                          Delete
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function MQTTUsersPanel({ token }: { token: string }) {
+  const [users, setUsers] = useState<MQTTUser[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [createUsername, setCreateUsername] = useState('')
+  const [createError, setCreateError] = useState('')
+  const [createSubmitting, setCreateSubmitting] = useState(false)
+  const [createdPassword, setCreatedPassword] = useState<{ userId: number; password: string } | null>(null)
+  const [resetUserId, setResetUserId] = useState<number | null>(null)
+  const [resetPassword, setResetPassword] = useState<string | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
+  const [togglingId, setTogglingId] = useState<number | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  const fetchUsers = useCallback(() => { setRefreshTick((n) => n + 1) }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/mqtt-users', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Failed to load MQTT users.')
+        return response.json() as Promise<MQTTUser[]>
+      })
+      .then((data) => {
+        if (cancelled) return
+        setUsers(data ?? [])
+        setError('')
+        setLoading(false)
+      })
+      .catch((err: Error) => {
+        if (cancelled) return
+        setError(err.message)
+        setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [token, refreshTick])
+
+  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (createSubmitting) return
+    setCreateSubmitting(true)
+    setCreateError('')
+    try {
+      const response = await fetch('/api/v1/mqtt-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username: createUsername.trim() }),
+      })
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setCreateError(errBody?.error ?? 'Create failed.')
+        return
+      }
+      const created = (await response.json()) as MQTTUser & { password: string }
+      setCreatedPassword({ userId: created.id, password: created.password })
+      setCreateUsername('')
+      setShowCreateForm(false)
+      fetchUsers()
+    } catch {
+      setCreateError('Could not reach the server.')
+    } finally {
+      setCreateSubmitting(false)
+    }
+  }
+
+  const handleToggle = async (user: MQTTUser) => {
+    setTogglingId(user.id)
+    try {
+      const response = await fetch(`/api/v1/mqtt-users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ disabled: !user.disabled }),
+      })
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setError(errBody?.error ?? 'Update failed.')
+        return
+      }
+      fetchUsers()
+    } catch {
+      setError('Could not reach the server.')
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const handleResetPassword = async (userId: number) => {
+    try {
+      const response = await fetch(`/api/v1/mqtt-users/${userId}/reset-password`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setError(errBody?.error ?? 'Reset failed.')
+        return
+      }
+      const result = (await response.json()) as MQTTUser & { password: string }
+      setResetPassword(result.password)
+      setResetUserId(userId)
+    } catch {
+      setError('Could not reach the server.')
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    try {
+      const response = await fetch(`/api/v1/mqtt-users/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok && response.status !== 204) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setError(errBody?.error ?? 'Delete failed.')
+        return
+      }
+      setDeleteConfirmId(null)
+      if (createdPassword?.userId === id) setCreatedPassword(null)
+      if (resetUserId === id) { setResetUserId(null); setResetPassword(null) }
+      fetchUsers()
+    } catch {
+      setError('Could not reach the server.')
+    }
+  }
+
+  return (
+    <section className="mt-8 space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT users</p>
+          <p className="mt-1 text-sm text-slate-300">{users.length} user{users.length !== 1 ? 's' : ''} configured</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => { setShowCreateForm(true); setCreateError(''); setCreateUsername('') }}
+          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+        >
+          Add User
+        </button>
+      </div>
+
+      {error ? (
+        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+      ) : null}
+
+      {createdPassword ? (
+        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">User created — save this password</p>
+          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
+          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{createdPassword.password}</pre>
+          <button
+            type="button"
+            onClick={() => setCreatedPassword(null)}
+            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {resetUserId !== null && resetPassword !== null ? (
+        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Password reset — save this password</p>
+          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
+          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{resetPassword}</pre>
+          <button
+            type="button"
+            onClick={() => { setResetUserId(null); setResetPassword(null) }}
+            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {showCreateForm ? (
+        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">New MQTT user</p>
+          <form onSubmit={handleCreate} className="mt-4 space-y-4">
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Username</span>
+              <input
+                type="text"
+                required
+                value={createUsername}
+                onChange={(e) => setCreateUsername(e.target.value)}
+                placeholder="device-sensor-01"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              />
+              <span className="mt-1 block text-xs text-slate-400">A secure password will be generated automatically.</span>
+            </label>
+            {createError ? (
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{createError}</div>
+            ) : null}
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={createSubmitting}
+                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              >
+                {createSubmitting ? 'Creating…' : 'Create user'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCreateForm(false)}
+                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60">
+        {loading ? (
+          <p className="p-6 text-sm text-slate-400">Loading users…</p>
+        ) : users.length === 0 ? (
+          <p className="p-6 text-sm text-slate-400">No MQTT users configured yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Username</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Status</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Created</th>
+                <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id} className="border-b border-white/5 last:border-0">
+                  <td className="px-4 py-3 font-mono text-sm text-slate-200">{user.username}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${user.disabled ? 'bg-rose-400/10 text-rose-200' : 'bg-emerald-400/10 text-emerald-200'}`}>
+                      {user.disabled ? 'disabled' : 'enabled'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-right">
+                    {deleteConfirmId === user.id ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="text-xs text-slate-300">Delete?</span>
+                        <button
+                          type="button"
+                          onClick={() => { void handleDelete(user.id) }}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(null)}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { void handleToggle(user) }}
+                          disabled={togglingId === user.id}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                        >
+                          {togglingId === user.id ? '…' : user.disabled ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void handleResetPassword(user.id) }}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(user.id)}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                        >
+                          Delete
+                        </button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function DeployPanel({ token }: { token: string }) {
+  const [preview, setPreview] = useState<DeployPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState('')
+  const [unavailable, setUnavailable] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [applyResult, setApplyResult] = useState<Deployment | null>(null)
+  const [applyError, setApplyError] = useState('')
+  const [confirmApply, setConfirmApply] = useState(false)
+  const [deployments, setDeployments] = useState<Deployment[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState('')
+  const [historyTick, setHistoryTick] = useState(0)
+
+  const fetchHistory = useCallback(() => { setHistoryTick((n) => n + 1) }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/deployments', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        if (response.status === 404 || response.status === 422) {
+          if (!cancelled) setUnavailable(true)
+          return null
+        }
+        if (!response.ok) throw new Error('Failed to load deployment history.')
+        return response.json() as Promise<{ deployments: Deployment[] }>
+      })
+      .then((body) => {
+        if (cancelled) return
+        if (body) {
+          setDeployments(body.deployments ?? [])
+          setHistoryError('')
+        }
+        setHistoryLoading(false)
+      })
+      .catch((err: Error) => {
+        if (cancelled) return
+        setHistoryError(err.message)
+        setHistoryLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [token, historyTick])
+
+  const handlePreview = async () => {
+    setPreviewLoading(true)
+    setPreviewError('')
+    setPreview(null)
+    try {
+      const response = await fetch('/api/v1/deployments/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (response.status === 404 || response.status === 422) {
+        setUnavailable(true)
+        return
+      }
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setPreviewError(errBody?.error ?? 'Preview failed.')
+        return
+      }
+      const data = (await response.json()) as DeployPreview
+      setPreview(data)
+    } catch {
+      setPreviewError('Could not reach the server.')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handleApply = async () => {
+    setApplying(true)
+    setApplyError('')
+    setApplyResult(null)
+    setConfirmApply(false)
+    try {
+      const response = await fetch('/api/v1/deployments/apply', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (response.status === 404 || response.status === 422) {
+        setUnavailable(true)
+        return
+      }
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
+        setApplyError(errBody?.error ?? 'Apply failed.')
+        return
+      }
+      const result = (await response.json()) as Deployment
+      setApplyResult(result)
+      setPreview(null)
+      fetchHistory()
+    } catch {
+      setApplyError('Could not reach the server.')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  if (unavailable) {
+    return (
+      <section className="mt-8">
+        <div className="rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-amber-200">Not configured</p>
+          <p className="mt-2 text-sm text-slate-300">Deploy functionality is not configured on this MCM instance.</p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="mt-8 space-y-6">
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Configuration preview</p>
+            <p className="mt-1 text-sm text-slate-300">Generate a diff of pending ACL and password file changes before applying.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {preview?.has_changes ? (
+              confirmApply ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-xs text-slate-300">Apply changes?</span>
+                  <button
+                    type="button"
+                    onClick={() => { void handleApply() }}
+                    disabled={applying}
+                    className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+                  >
+                    {applying ? 'Applying…' : 'Confirm Apply'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmApply(false)}
+                    className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmApply(true)}
+                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+                >
+                  Apply
+                </button>
+              )
+            ) : null}
+            <button
+              type="button"
+              onClick={() => { void handlePreview() }}
+              disabled={previewLoading}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+            >
+              {previewLoading ? 'Generating…' : 'Preview Changes'}
+            </button>
+          </div>
+        </div>
+
+        {previewError ? (
+          <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{previewError}</div>
+        ) : null}
+
+        {applyError ? (
+          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div>
+        ) : null}
+
+        {applyResult ? (
+          <div className={`mt-5 rounded-2xl border p-5 ${applyResult.status === 'applied' ? 'border-emerald-300/30 bg-emerald-400/10' : 'border-amber-300/30 bg-amber-400/10'}`}>
+            <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${applyResult.status === 'applied' ? 'text-emerald-200' : 'text-amber-200'}`}>
+              {applyResult.status}
+            </p>
+            {applyResult.message ? <p className="mt-2 text-sm text-slate-300">{applyResult.message}</p> : null}
+          </div>
+        ) : null}
+
+        {preview ? (
+          <div className="mt-5 space-y-4">
+            {!preview.has_changes ? (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No pending changes — configuration is up to date.</div>
+            ) : null}
+            {preview.acl_diff ? (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">ACL diff</p>
+                <DiffBlock content={preview.acl_diff} />
+              </div>
+            ) : null}
+            {preview.passwd_diff ? (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Password file diff</p>
+                <DiffBlock content={preview.passwd_diff} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Deployment history</p>
+
+        {historyError ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{historyError}</div>
+        ) : historyLoading ? (
+          <p className="mt-4 text-sm text-slate-400">Loading history…</p>
+        ) : deployments.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-400">No deployments recorded yet.</p>
+        ) : (
+          <table className="mt-4 w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="px-0 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">ID</th>
+                <th className="px-4 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Status</th>
+                <th className="px-4 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Message</th>
+                <th className="px-0 py-2 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deployments.map((dep) => (
+                <tr key={dep.id} className="border-b border-white/5 last:border-0">
+                  <td className="py-3 pr-4 font-mono text-xs text-slate-400">{dep.id.slice(0, 8)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${dep.status === 'applied' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-amber-400/10 text-amber-200'}`}>
+                      {dep.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-300">{dep.message ?? '—'}</td>
+                  <td className="py-3 pl-4 text-right text-xs text-slate-400">{new Date(dep.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function DiffBlock({ content }: { content: string }) {
+  return (
+    <pre className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
+      {content.split('\n').map((line, idx) => (
+        <span
+          key={idx}
+          className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-red-500/10 text-red-200' : 'text-slate-300'}`}
+        >
+          {line || ' '}
+        </span>
+      ))}
+    </pre>
   )
 }
 
