@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"io/fs"
+
 	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
@@ -36,6 +38,7 @@ type App struct {
 	mosquitto          config.MosquittoConfig
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
+	frontendFS         fs.FS
 	logger             *slog.Logger
 	now                func() time.Time
 }
@@ -154,6 +157,9 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/v1/edge/heartbeat", a.requireRole(auth.RoleOperator, http.HandlerFunc(edgeSiteAPI.handleHeartbeat)))
 	mux.Handle("GET /api/v1/edge/sites", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleListSites)))
 	mux.Handle("GET /api/v1/edge/sites/{id}", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleGetSite)))
+	if a.frontendFS != nil {
+		mux.Handle("/", spaHandler(a.frontendFS))
+	}
 	return mux
 }
 
