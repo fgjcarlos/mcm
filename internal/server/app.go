@@ -144,6 +144,12 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/security/events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
+	mux.Handle("GET /api/v1/mqtt-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListMQTTUsers)))
+	mux.Handle("POST /api/v1/mqtt-users", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleCreateMQTTUser)))
+	mux.Handle("GET /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleGetMQTTUser)))
+	mux.Handle("PUT /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleUpdateMQTTUser)))
+	mux.Handle("DELETE /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleDeleteMQTTUser)))
+	mux.Handle("POST /api/v1/mqtt-users/{id}/reset-password", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleResetMQTTUserPassword)))
 	return mux
 }
 
