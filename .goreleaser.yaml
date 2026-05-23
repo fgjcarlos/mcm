@@ -46,36 +46,22 @@ changelog:
       - "^chore:"
 
 dockers_v2:
-  - id: mcm-amd64
-    goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-amd64"
-      - "ghcr.io/fgjcarlos/mcm:latest-amd64"
+  - id: mcm
     dockerfile: deploy/mcm/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/amd64"
-
-  - id: mcm-arm64
-    goos: linux
-    goarch: arm64
-    image_templates:
-      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-arm64"
-      - "ghcr.io/fgjcarlos/mcm:latest-arm64"
-    dockerfile: deploy/mcm/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/arm64"
-
-docker_manifests_v2:
-  - name_template: "ghcr.io/fgjcarlos/mcm:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-amd64"
-      - "ghcr.io/fgjcarlos/mcm:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/fgjcarlos/mcm:latest"
-    image_templates:
-      - "ghcr.io/fgjcarlos/mcm:latest-amd64"
-      - "ghcr.io/fgjcarlos/mcm:latest-arm64"
+    ids:
+      - mcm
+    images:
+      - ghcr.io/fgjcarlos/mcm
+    tags:
+      - "{{ .Version }}"
+      - '{{ if not .Prerelease }}latest{{ end }}'
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      "org.opencontainers.image.source": "https://github.com/fgjcarlos/mcm"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
 
 release:
   github:
