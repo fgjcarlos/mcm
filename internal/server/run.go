@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/fgjcarlos/mcm/frontend"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -32,6 +33,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 	app, err := New(cfg, store, logger)
 	if err != nil {
 		return err
+	}
+	if dist, fErr := frontend.DistFS(); fErr == nil {
+		app.frontendFS = dist
 	}
 	if err := app.BootstrapAdmin(ctx, cfg); err != nil {
 		return err

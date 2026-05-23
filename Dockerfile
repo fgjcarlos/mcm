@@ -21,6 +21,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S mcm && adduser -S mcm -G mcm
 COPY --from=backend /mcm /usr/local/bin/mcm
+RUN mkdir -p /var/lib/mcm && chown mcm:mcm /var/lib/mcm
 USER mcm
 EXPOSE 8080
 ENTRYPOINT ["mcm"]
