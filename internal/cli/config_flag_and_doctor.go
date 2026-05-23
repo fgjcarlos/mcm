@@ -29,18 +29,37 @@ func newDoctorCommand() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
 
-			result := diagnostics.CheckMQTTConnectivity(ctx, cfg.Mosquitto)
 			out := cmd.OutOrStdout()
-			if result.OK {
-				_, err := fmt.Fprintf(out, "OK: %s\n", result.Message)
-				return err
+			failed := false
+
+			mqttResult := diagnostics.CheckMQTTConnectivity(ctx, cfg.Mosquitto)
+			if mqttResult.OK {
+				if _, err := fmt.Fprintf(out, "OK: %s\n", mqttResult.Message); err != nil {
+					return err
+				}
+			} else {
+				if _, err := fmt.Fprintf(out, "FAIL: %s\n", mqttResult.Message); err != nil {
+					return err
+				}
+				failed = true
 			}
 
-			_, writeErr := fmt.Fprintf(out, "FAIL: %s\n", result.Message)
-			if writeErr != nil {
-				return writeErr
+			deployResult := diagnostics.CheckDeployConfig(cfg.Mosquitto.Deploy)
+			if deployResult.OK {
+				if _, err := fmt.Fprintf(out, "OK: %s\n", deployResult.Message); err != nil {
+					return err
+				}
+			} else {
+				if _, err := fmt.Fprintf(out, "FAIL: %s\n", deployResult.Message); err != nil {
+					return err
+				}
+				failed = true
 			}
-			return fmt.Errorf("Mosquitto connectivity check failed")
+
+			if failed {
+				return fmt.Errorf("one or more doctor checks failed")
+			}
+			return nil
 		},
 	}
 
