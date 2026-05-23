@@ -40,4 +40,5 @@ require (
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
+	nhooyr.io/websocket v1.8.17 // indirect
 )
