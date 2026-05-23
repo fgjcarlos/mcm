@@ -93,11 +93,12 @@ type MosquittoConfig struct {
 // signals the broker to reload. Mode "file" writes files on the local
 // filesystem; mode "docker" writes files and signals via docker exec.
 type DeployConfig struct {
-	Mode          string `yaml:"mode"`
-	ACLPath       string `yaml:"acl_path"`
-	PasswdPath    string `yaml:"passwd_path"`
-	PIDPath       string `yaml:"pid_path"`
-	ContainerName string `yaml:"container_name"`
+	Mode           string `yaml:"mode"`
+	ACLPath        string `yaml:"acl_path"`
+	PasswdPath     string `yaml:"passwd_path"`
+	PIDPath        string `yaml:"pid_path"`
+	ContainerName  string `yaml:"container_name"`
+	ReloadStrategy string `yaml:"reload_strategy"`
 }
 
 // MosquittoTLSConfig controls MQTT TLS connectivity.
@@ -409,9 +410,6 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.Mosquitto.Deploy.PasswdPath) == "" {
 			problems = append(problems, "mosquitto.deploy.passwd_path is required when mosquitto.deploy.mode is \"file\"")
 		}
-		if strings.TrimSpace(c.Mosquitto.Deploy.PIDPath) == "" {
-			problems = append(problems, "mosquitto.deploy.pid_path is required when mosquitto.deploy.mode is \"file\"")
-		}
 	case "docker":
 		if strings.TrimSpace(c.Mosquitto.Deploy.ACLPath) == "" {
 			problems = append(problems, "mosquitto.deploy.acl_path is required when mosquitto.deploy.mode is \"docker\"")
@@ -424,6 +422,9 @@ func (c Config) Validate() error {
 		}
 	default:
 		problems = append(problems, fmt.Sprintf(`mosquitto.deploy.mode must be "", "file", or "docker"; got %q`, c.Mosquitto.Deploy.Mode))
+	}
+	if rs := strings.TrimSpace(c.Mosquitto.Deploy.ReloadStrategy); rs != "" && rs != "sighup" {
+		problems = append(problems, fmt.Sprintf(`mosquitto.deploy.reload_strategy must be "" or "sighup"; got %q`, rs))
 	}
 	aclPath := strings.TrimSpace(c.Mosquitto.Deploy.ACLPath)
 	passwdPath := strings.TrimSpace(c.Mosquitto.Deploy.PasswdPath)
