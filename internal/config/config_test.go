@@ -339,6 +339,160 @@ logging:
 	}
 }
 
+func TestParseDeployConfigValidation(t *testing.T) {
+	validBase := `
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: admin
+    password: change-this-admin-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  username: ""
+  password: ""
+  tls:
+    enabled: false
+metrics:
+  broker_retention: 168h
+logging:
+  level: info
+`
+
+	tests := []struct {
+		name        string
+		deploy      string
+		wantOK      bool
+		wantProblem string
+	}{
+		{
+			name:   "no deploy section is valid",
+			deploy: "",
+			wantOK: true,
+		},
+		{
+			name: "deploy mode empty is valid",
+			deploy: `
+  deploy:
+    mode: ""`,
+			wantOK: true,
+		},
+		{
+			name: "deploy file mode with all fields is valid",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    pid_path: /var/run/mosquitto.pid`,
+			wantOK: true,
+		},
+		{
+			name: "deploy file mode missing acl_path fails",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: ""
+    passwd_path: /etc/mosquitto/passwd
+    pid_path: /var/run/mosquitto.pid`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.acl_path is required",
+		},
+		{
+			name: "deploy file mode missing passwd_path fails",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: /etc/mosquitto/acl
+    passwd_path: ""
+    pid_path: /var/run/mosquitto.pid`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.passwd_path is required",
+		},
+		{
+			name: "deploy file mode missing pid_path fails",
+			deploy: `
+  deploy:
+    mode: file
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    pid_path: ""`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.pid_path is required",
+		},
+		{
+			name: "deploy docker mode with all fields is valid",
+			deploy: `
+  deploy:
+    mode: docker
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    container_name: mosquitto`,
+			wantOK: true,
+		},
+		{
+			name: "deploy docker mode missing container_name fails",
+			deploy: `
+  deploy:
+    mode: docker
+    acl_path: /etc/mosquitto/acl
+    passwd_path: /etc/mosquitto/passwd
+    container_name: ""`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.container_name is required",
+		},
+		{
+			name: "deploy invalid mode fails",
+			deploy: `
+  deploy:
+    mode: kubernetes`,
+			wantOK:      false,
+			wantProblem: "mosquitto.deploy.mode must be",
+		},
+		{
+			name: "deploy acl_path equals passwd_path fails",
+			deploy: `
+  deploy:
+    mode: docker
+    acl_path: /same/path
+    passwd_path: /same/path
+    container_name: mosquitto`,
+			wantOK:      false,
+			wantProblem: "acl_path and mosquitto.deploy.passwd_path must not be the same path",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := validBase
+			if tc.deploy != "" {
+				// Insert deploy block under the mosquitto section by appending before metrics
+				yaml = strings.Replace(validBase, "metrics:", tc.deploy+"\nmetrics:", 1)
+			}
+			cfg, err := Parse([]byte(yaml))
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("Parse returned error: %v", err)
+				}
+				_ = cfg
+			} else {
+				if err == nil {
+					t.Fatal("Parse succeeded, want validation error")
+				}
+				if tc.wantProblem != "" && !strings.Contains(err.Error(), tc.wantProblem) {
+					t.Fatalf("validation error missing %q; got %v", tc.wantProblem, err)
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultPath(t *testing.T) {
 	temp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", temp)

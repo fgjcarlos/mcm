@@ -86,6 +86,18 @@ type MosquittoConfig struct {
 	Username string             `yaml:"username"`
 	Password string             `yaml:"password"`
 	TLS      MosquittoTLSConfig `yaml:"tls"`
+	Deploy   DeployConfig       `yaml:"deploy"`
+}
+
+// DeployConfig controls how MCM writes Mosquitto ACL and password files and
+// signals the broker to reload. Mode "file" writes files on the local
+// filesystem; mode "docker" writes files and signals via docker exec.
+type DeployConfig struct {
+	Mode          string `yaml:"mode"`
+	ACLPath       string `yaml:"acl_path"`
+	PasswdPath    string `yaml:"passwd_path"`
+	PIDPath       string `yaml:"pid_path"`
+	ContainerName string `yaml:"container_name"`
 }
 
 // MosquittoTLSConfig controls MQTT TLS connectivity.
@@ -237,6 +249,14 @@ mosquitto:
     client_key_file: ""
     # Development-only escape hatch for self-signed testing; never enable in production.
     insecure_skip_verify: %t
+  # deploy controls how MCM writes ACL/password files and signals the broker.
+  # mode: "" (disabled), "file" (local filesystem + SIGHUP), "docker" (docker exec).
+  # deploy:
+  #   mode: file
+  #   acl_path: /etc/mosquitto/acl
+  #   passwd_path: /etc/mosquitto/passwd
+  #   pid_path: /var/run/mosquitto/mosquitto.pid
+  #   container_name: ""   # only required for docker mode
 
 # Broker metric/event persistence. Raw message payloads are not stored.
 metrics:
@@ -377,6 +397,38 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.Mosquitto.TLS.ClientKeyFile) == "" {
 			problems = append(problems, "mosquitto.tls.client_key_file is required when mosquitto.tls.enabled is true")
 		}
+	}
+
+	switch strings.TrimSpace(c.Mosquitto.Deploy.Mode) {
+	case "":
+		// deploy disabled — no further validation required
+	case "file":
+		if strings.TrimSpace(c.Mosquitto.Deploy.ACLPath) == "" {
+			problems = append(problems, "mosquitto.deploy.acl_path is required when mosquitto.deploy.mode is \"file\"")
+		}
+		if strings.TrimSpace(c.Mosquitto.Deploy.PasswdPath) == "" {
+			problems = append(problems, "mosquitto.deploy.passwd_path is required when mosquitto.deploy.mode is \"file\"")
+		}
+		if strings.TrimSpace(c.Mosquitto.Deploy.PIDPath) == "" {
+			problems = append(problems, "mosquitto.deploy.pid_path is required when mosquitto.deploy.mode is \"file\"")
+		}
+	case "docker":
+		if strings.TrimSpace(c.Mosquitto.Deploy.ACLPath) == "" {
+			problems = append(problems, "mosquitto.deploy.acl_path is required when mosquitto.deploy.mode is \"docker\"")
+		}
+		if strings.TrimSpace(c.Mosquitto.Deploy.PasswdPath) == "" {
+			problems = append(problems, "mosquitto.deploy.passwd_path is required when mosquitto.deploy.mode is \"docker\"")
+		}
+		if strings.TrimSpace(c.Mosquitto.Deploy.ContainerName) == "" {
+			problems = append(problems, "mosquitto.deploy.container_name is required when mosquitto.deploy.mode is \"docker\"")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf(`mosquitto.deploy.mode must be "", "file", or "docker"; got %q`, c.Mosquitto.Deploy.Mode))
+	}
+	aclPath := strings.TrimSpace(c.Mosquitto.Deploy.ACLPath)
+	passwdPath := strings.TrimSpace(c.Mosquitto.Deploy.PasswdPath)
+	if aclPath != "" && passwdPath != "" && aclPath == passwdPath {
+		problems = append(problems, "mosquitto.deploy.acl_path and mosquitto.deploy.passwd_path must not be the same path")
 	}
 
 	if strings.TrimSpace(c.Metrics.BrokerRetention) == "" {
