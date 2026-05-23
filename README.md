@@ -46,6 +46,7 @@ Reference docs:
 - [docs/json-schemas.md](./docs/json-schemas.md) — JSON Schema validators bound to MQTT topic filters.
 - [docs/sparkplug.md](./docs/sparkplug.md) — Sparkplug B topic awareness.
 - [docs/webhook-alerting.md](./docs/webhook-alerting.md) — outbound operational webhooks.
+- [docs/integrations/node-red.md](./docs/integrations/node-red.md) — Node-RED integration examples.
 
 ---
 
