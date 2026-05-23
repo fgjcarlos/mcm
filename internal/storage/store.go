@@ -208,6 +208,26 @@ CREATE TABLE mqtt_users (
 CREATE INDEX idx_mqtt_users_username ON mqtt_users(username);
 `,
 	},
+	{
+		version: 12,
+		name:    "create_deployments",
+		sql: `
+CREATE TABLE deployments (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	actor TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'pending',
+	acl_snapshot TEXT NOT NULL DEFAULT '',
+	passwd_snapshot TEXT NOT NULL DEFAULT '',
+	acl_rendered TEXT NOT NULL DEFAULT '',
+	passwd_rendered TEXT NOT NULL DEFAULT '',
+	message TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_deployments_status ON deployments(status);
+CREATE INDEX idx_deployments_created_at ON deployments(created_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

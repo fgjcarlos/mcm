@@ -93,12 +93,13 @@ type MosquittoConfig struct {
 // signals the broker to reload. Mode "file" writes files on the local
 // filesystem; mode "docker" writes files and signals via docker exec.
 type DeployConfig struct {
-	Mode           string `yaml:"mode"`
-	ACLPath        string `yaml:"acl_path"`
-	PasswdPath     string `yaml:"passwd_path"`
-	PIDPath        string `yaml:"pid_path"`
-	ContainerName  string `yaml:"container_name"`
-	ReloadStrategy string `yaml:"reload_strategy"`
+	Mode                string        `yaml:"mode"`
+	ACLPath             string        `yaml:"acl_path"`
+	PasswdPath          string        `yaml:"passwd_path"`
+	PIDPath             string        `yaml:"pid_path"`
+	ContainerName       string        `yaml:"container_name"`
+	ReloadStrategy      string        `yaml:"reload_strategy"`
+	HealthcheckTimeout  time.Duration `yaml:"healthcheck_timeout"`
 }
 
 // MosquittoTLSConfig controls MQTT TLS connectivity.
@@ -306,6 +307,9 @@ func Parse(data []byte) (Config, error) {
 
 	if cfg.Metrics.BrokerRetention == "" {
 		cfg.Metrics.BrokerRetention = Default().Metrics.BrokerRetention
+	}
+	if cfg.Mosquitto.Deploy.HealthcheckTimeout == 0 {
+		cfg.Mosquitto.Deploy.HealthcheckTimeout = 5 * time.Second
 	}
 	if cfg.Alerting.Timeout == "" {
 		cfg.Alerting.Timeout = Default().Alerting.Timeout
