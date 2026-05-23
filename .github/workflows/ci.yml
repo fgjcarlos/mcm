@@ -75,6 +75,16 @@ jobs:
       - name: npm run build
         run: npm run build
 
+  goreleaser-check:
+    name: GoReleaser config check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
+
   openapi:
     name: OpenAPI spec lint
     runs-on: ubuntu-latest
