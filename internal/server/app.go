@@ -17,7 +17,10 @@ import (
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/deploy"
+	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/fgjcarlos/mcm/internal/metrics"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -38,6 +41,7 @@ type App struct {
 	loginMaxAttempts   int
 	logger             *slog.Logger
 	now                func() time.Time
+	deploySvc          *deploy.Service
 }
 
 // New creates an HTTP app configured for the auth MVP. logger may be nil; the
@@ -64,6 +68,47 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 	brokerEvents.SetPersistence(store, metricsRetention)
 	brokerEvents.SetMetrics(mcmMetrics)
 
+	// Build the Mosquitto applier based on the deploy mode.
+	var applier mosquitto.Applier
+	switch cfg.Mosquitto.Deploy.Mode {
+	case "file":
+		applier = mosquitto.FileApplier{
+			ACLPath:    cfg.Mosquitto.Deploy.ACLPath,
+			PasswdPath: cfg.Mosquitto.Deploy.PasswdPath,
+			PIDPath:    cfg.Mosquitto.Deploy.PIDPath,
+		}
+	case "docker":
+		applier = mosquitto.DockerApplier{
+			ACLPath:       cfg.Mosquitto.Deploy.ACLPath,
+			PasswdPath:    cfg.Mosquitto.Deploy.PasswdPath,
+			ContainerName: cfg.Mosquitto.Deploy.ContainerName,
+			Runner:        mosquitto.ExecRunner{},
+		}
+	}
+
+	// Construct the deploy service. Even when applier is nil (disabled mode) the
+	// service is created so that handlers can return the correct 422 response.
+	deploySvc := deploy.NewService(
+		applier,
+		store.ACLStore(),
+		store,
+		store,
+		diagnostics.CheckMQTTConnectivity,
+		cfg.Mosquitto,
+		cfg.Mosquitto.Deploy,
+		func(ctx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte) {
+			_, _ = store.RecordAuditEvent(ctx, storage.CreateAuditEventParams{
+				OccurredAt:   time.Now().UTC(),
+				Actor:        actor,
+				Action:       action,
+				ResourceType: resourceType,
+				ResourceID:   resourceID,
+				Result:       result,
+				Metadata:     metadata,
+			})
+		},
+	)
+
 	return &App{
 		store:              store,
 		aclStore:           store.ACLStore(),
@@ -76,6 +121,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
 		logger:             logger,
 		now:                time.Now,
+		deploySvc:          deploySvc,
 	}, nil
 }
 
@@ -117,6 +163,7 @@ func (a *App) Handler() http.Handler {
 		recordSecurityFailure: a.recordSecurityFailure,
 		recordSecurityChange:  a.recordSecurityChange,
 	}
+	deployAPI := &deployAPI{svc: a.deploySvc}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
@@ -150,6 +197,9 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("PUT /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleUpdateMQTTUser)))
 	mux.Handle("DELETE /api/v1/mqtt-users/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleDeleteMQTTUser)))
 	mux.Handle("POST /api/v1/mqtt-users/{id}/reset-password", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleResetMQTTUserPassword)))
+	mux.Handle("POST /api/v1/deployments/preview", a.requireRole(auth.RoleViewer, http.HandlerFunc(deployAPI.handleDeployPreview)))
+	mux.Handle("POST /api/v1/deployments/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(deployAPI.handleDeployApply)))
+	mux.Handle("GET /api/v1/deployments", a.requireRole(auth.RoleViewer, http.HandlerFunc(deployAPI.handleListDeployments)))
 	return mux
 }
 
