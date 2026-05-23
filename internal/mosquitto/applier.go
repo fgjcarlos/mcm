@@ -20,8 +20,8 @@ type Applier interface {
 type FileApplier struct {
 	ACLPath    string
 	PasswdPath string
-	PIDPath    string           // if empty, skip reload
-	SignalFunc func(int) error  // if nil, uses platform default (SIGHUP)
+	PIDPath    string          // if empty, skip reload
+	SignalFunc func(int) error // if nil, uses platform default (SIGHUP)
 }
 
 // DockerApplier writes files to paths that are volume-mounted into a Docker
@@ -72,7 +72,10 @@ func atomicWrite(path, content string, perm os.FileMode) error {
 
 // Apply atomically writes the ACL and password files, then sends SIGHUP to
 // the broker process if PIDPath is non-empty.
-func (f FileApplier) Apply(_ context.Context, aclBody string, passwdBody string) error {
+func (f FileApplier) Apply(ctx context.Context, aclBody string, passwdBody string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := atomicWrite(f.ACLPath, aclBody, 0o600); err != nil {
 		return err
 	}
@@ -104,13 +107,16 @@ func (f FileApplier) Apply(_ context.Context, aclBody string, passwdBody string)
 // Apply atomically writes the ACL and password files, then reloads the broker
 // by sending SIGHUP to PID 1 inside the named Docker container.
 func (d DockerApplier) Apply(ctx context.Context, aclBody string, passwdBody string) error {
+	if d.ContainerName == "" {
+		return fmt.Errorf("docker applier: container_name must not be empty")
+	}
 	if err := atomicWrite(d.ACLPath, aclBody, 0o600); err != nil {
 		return err
 	}
 	if err := atomicWrite(d.PasswdPath, passwdBody, 0o600); err != nil {
 		return err
 	}
-	if _, err := d.Runner.Run(ctx, "docker", "exec", d.ContainerName, "kill", "-SIGHUP", "1"); err != nil {
+	if _, err := d.Runner.Run(ctx, "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
 		return err
 	}
 	return nil
