@@ -17,6 +17,30 @@ services:
       retries: 5
       start_period: 5s
 
+  mcm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcm-server
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./deploy/mcm/config.yaml:/etc/mcm/config.yaml:ro
+      - mcm_data:/var/lib/mcm
+    environment:
+      MCM_LOG_FORMAT: json
+    healthcheck:
+      test: ["CMD", "mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   mosquitto_data:
   mosquitto_logs:
+  mcm_data:

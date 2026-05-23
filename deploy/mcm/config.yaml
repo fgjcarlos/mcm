@@ -1,0 +1,30 @@
+# MCM local development configuration for Docker Compose.
+# Do not use these credentials in production.
+
+http:
+  bind_address: "0.0.0.0"
+  port: 8080
+
+database:
+  path: "/var/lib/mcm/mcm.db"
+
+auth:
+  jwt_secret: "mcm-dev-secret-change-in-production"
+  token_ttl: "24h"
+  bootstrap_admin:
+    username: "admin"
+    password: "admin"
+  login_lockout:
+    window: "15m"
+    max_attempts: 10
+
+mosquitto:
+  host: "mosquitto"
+  port: 1883
+
+metrics:
+  broker_retention: "1h"
+
+logging:
+  level: "info"
+  format: "json"
