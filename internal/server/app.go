@@ -36,6 +36,8 @@ type App struct {
 	alerts             *alerting.WebhookAlerter
 	metrics            *metrics.Registry
 	mosquitto          config.MosquittoConfig
+	cfg                config.Config
+	deploySvc          deployServicer
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
 	frontendFS         fs.FS
@@ -75,6 +77,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		alerts:             alerting.NewWebhookAlerter(cfg.Alerting, logger),
 		metrics:            mcmMetrics,
 		mosquitto:          cfg.Mosquitto,
+		cfg:                cfg,
 		loginLockoutWindow: loginLockoutWindow,
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
 		logger:             logger,
@@ -157,6 +160,13 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/v1/edge/heartbeat", a.requireRole(auth.RoleOperator, http.HandlerFunc(edgeSiteAPI.handleHeartbeat)))
 	mux.Handle("GET /api/v1/edge/sites", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleListSites)))
 	mux.Handle("GET /api/v1/edge/sites/{id}", a.requireRole(auth.RoleViewer, http.HandlerFunc(edgeSiteAPI.handleGetSite)))
+	if a.deploySvc != nil {
+		dAPI := &deployAPI{svc: a.deploySvc}
+		mux.Handle("GET /api/v1/deployments", a.requireRole(auth.RoleAuditor, http.HandlerFunc(dAPI.handleList)))
+		mux.Handle("POST /api/v1/deployments/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(dAPI.handlePreview)))
+		mux.Handle("POST /api/v1/deployments/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dAPI.handleApply)))
+	}
+	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {
 		mux.Handle("/", spaHandler(a.frontendFS))
 	}
