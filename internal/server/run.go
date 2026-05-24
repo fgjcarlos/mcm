@@ -4,17 +4,47 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/fgjcarlos/mcm/frontend"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/deploy"
+	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/fgjcarlos/mcm/internal/logging"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
+
+// buildApplier constructs the appropriate mosquitto.Applier for the given deploy config.
+// When deploy mode is empty (disabled), a no-op applier is returned so the service
+// can still be constructed — it will reject calls via ErrDeployDisabled.
+func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
+	switch cfg.Mode {
+	case "docker":
+		return mosquitto.DockerApplier{
+			ACLPath:       cfg.ACLPath,
+			PasswdPath:    cfg.PasswdPath,
+			ContainerName: cfg.ContainerName,
+			Runner:        mosquitto.ExecRunner{},
+		}
+	case "file":
+		return mosquitto.FileApplier{
+			ACLPath:    cfg.ACLPath,
+			PasswdPath: cfg.PasswdPath,
+			PIDPath:    cfg.PIDPath,
+		}
+	default:
+		// Deploy disabled or unknown — return a no-op applier.
+		// The service guards via ErrDeployDisabled before calling Apply.
+		return mosquitto.FileApplier{}
+	}
+}
 
 // Run initializes persistence and serves the HTTP API.
 func Run(ctx context.Context, cfg config.Config) error {
@@ -34,6 +64,37 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+
+	// Wire the deploy service. It is always constructed; when deploy mode is
+	// empty the service returns ErrDeployDisabled on all operations.
+	deployAuditFn := func(auditCtx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte) {
+		payload := metadata
+		if payload == nil {
+			payload = []byte(`{}`)
+		}
+		_, _ = store.RecordAuditEvent(auditCtx, storage.CreateAuditEventParams{
+			OccurredAt:   time.Now().UTC(),
+			Actor:        actor,
+			Action:       action,
+			ResourceType: resourceType,
+			ResourceID:   resourceID,
+			Result:       result,
+			Metadata:     json.RawMessage(payload),
+		})
+	}
+	deployCfg := cfg.Mosquitto.Deploy
+	applier := buildApplier(deployCfg)
+	app.deploySvc = deploy.NewService(
+		applier,
+		store.ACLStore(),
+		store,
+		store,
+		diagnostics.CheckMQTTConnectivity,
+		cfg.Mosquitto,
+		deployCfg,
+		deployAuditFn,
+	)
+
 	if dist, fErr := frontend.DistFS(); fErr == nil {
 		app.frontendFS = dist
 	}
