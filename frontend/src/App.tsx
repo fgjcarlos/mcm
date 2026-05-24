@@ -8,6 +8,22 @@ type SparkplugMetadata = {
   device_id?: string
 }
 
+type SparkplugDecodedMetric = {
+  name: string
+  alias?: number
+  datatype: string
+  value: unknown
+  timestamp?: number
+  is_null?: boolean
+}
+
+type SparkplugDecodedPayload = {
+  timestamp: number
+  seq: number
+  metrics: SparkplugDecodedMetric[]
+  truncated: boolean
+}
+
 type BrokerEvent = {
   type: 'broker_status' | 'topic_message' | 'broker_log'
   status?: 'connected' | 'disconnected'
@@ -19,6 +35,7 @@ type BrokerEvent = {
   payload_inspection?: PayloadInspection
   schema_validation?: SchemaValidation
   sparkplug?: SparkplugMetadata
+  sparkplug_metrics?: SparkplugDecodedPayload
   source?: string
   severity?: 'debug' | 'info' | 'warning' | 'error'
   message?: string
@@ -554,7 +571,7 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
         <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Latest activity</p>
           <p className="mt-3 text-sm text-slate-300">{latestTopic ? latestTopic.topic : topics.length === 0 ? 'Waiting for topic traffic.' : `${topics.length} recent messages loaded.`}</p>
-          {latestTopic?.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} compact /> : null}
+          {latestTopic?.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} compact /> : null}
         </article>
       </div>
     </section>
@@ -620,7 +637,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
           <>
             <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
             {latestTopic.schema_validation ? <SchemaValidationDetails validation={latestTopic.schema_validation} /> : null}
-            {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} /> : null}
+            {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} /> : null}
             <PayloadMetadata event={latestTopic} />
             <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
           </>
@@ -645,7 +662,7 @@ function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTo
                   </div>
                   <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
                 </div>
-                {topic.sparkplug ? <SparkplugDetails metadata={topic.sparkplug} compact /> : null}
+                {topic.sparkplug ? <SparkplugDetails metadata={topic.sparkplug} sparkplugMetrics={topic.sparkplug_metrics} compact /> : null}
                 <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
                 <PayloadSummary event={topic} />
               </div>
@@ -729,7 +746,15 @@ function SparkplugBadge({ metadata }: { metadata: SparkplugMetadata }) {
   )
 }
 
-function SparkplugDetails({ metadata, compact = false }: { metadata: SparkplugMetadata; compact?: boolean }) {
+function SparkplugDetails({
+  metadata,
+  sparkplugMetrics,
+  compact = false,
+}: {
+  metadata: SparkplugMetadata
+  sparkplugMetrics?: SparkplugDecodedPayload
+  compact?: boolean
+}) {
   const items = [
     ['Group', metadata.group_id],
     ['Message', metadata.message_type],
@@ -751,6 +776,45 @@ function SparkplugDetails({ metadata, compact = false }: { metadata: SparkplugMe
           </div>
         ))}
       </dl>
+      {sparkplugMetrics && sparkplugMetrics.metrics.length > 0 ? (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-100/70">
+            Decoded metrics
+            {sparkplugMetrics.truncated ? ` (showing ${sparkplugMetrics.metrics.length} of more)` : ` (${sparkplugMetrics.metrics.length})`}
+          </p>
+          <div className="mt-2 overflow-x-auto rounded-xl border border-orange-300/20 bg-slate-950/40">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-orange-300/20">
+                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Name</th>
+                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Type</th>
+                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sparkplugMetrics.metrics.map((metric, index) => (
+                  <tr key={`${metric.name}-${index}`} className="border-b border-orange-300/10 last:border-0">
+                    <td className="break-all px-3 py-2 font-mono text-orange-50">{metric.name || <span className="text-slate-400 italic">unnamed</span>}</td>
+                    <td className="px-3 py-2 text-orange-100/80">{metric.datatype}</td>
+                    <td className="break-all px-3 py-2 font-mono text-slate-200">
+                      {metric.is_null ? (
+                        <span className="text-slate-400 italic">null</span>
+                      ) : (
+                        String(metric.value ?? '')
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {sparkplugMetrics.truncated ? (
+            <p className="mt-1.5 text-xs text-orange-100/50">
+              Showing {sparkplugMetrics.metrics.length} metric{sparkplugMetrics.metrics.length !== 1 ? 's' : ''}. More were received but omitted to stay within the configured limit.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
