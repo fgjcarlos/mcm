@@ -1,0 +1,4 @@
+paths-ignore:
+  - "**/*_test.go"
+  - "**/config.example.yaml"
+  - "**/testdata/**"
