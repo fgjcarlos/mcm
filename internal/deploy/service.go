@@ -23,6 +23,9 @@ import (
 // ErrDeployDisabled is returned when the deploy mode is not configured.
 var ErrDeployDisabled = errors.New("deploy mode is not configured")
 
+// ErrDeployInProgress is returned when a deploy is already running.
+var ErrDeployInProgress = errors.New("deploy already in progress")
+
 // maxDiffLines is the maximum number of lines in a returned unified diff.
 const maxDiffLines = 500
 
@@ -283,7 +286,11 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 }
 
 // List returns deployment records ordered newest first.
+// Returns ErrDeployDisabled when the deploy mode is not configured.
 func (s *Service) List(ctx context.Context, limit, offset int) ([]storage.Deployment, error) {
+	if s.deployCfg.Mode == "" {
+		return nil, ErrDeployDisabled
+	}
 	return s.deployStore.ListDeployments(ctx, limit, offset)
 }
 
