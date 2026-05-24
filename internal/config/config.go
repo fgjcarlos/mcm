@@ -85,12 +85,14 @@ type LoginLockoutConfig struct {
 
 // MosquittoConfig controls MQTT broker connectivity.
 type MosquittoConfig struct {
-	Host     string             `yaml:"host"`
-	Port     int                `yaml:"port"`
-	Username string             `yaml:"username"`
-	Password string             `yaml:"password"`
-	TLS      MosquittoTLSConfig `yaml:"tls"`
-	Deploy   DeployConfig       `yaml:"deploy"`
+	Host                  string             `yaml:"host"`
+	Port                  int                `yaml:"port"`
+	Username              string             `yaml:"username"`
+	Password              string             `yaml:"password"`
+	TLS                   MosquittoTLSConfig `yaml:"tls"`
+	Deploy                DeployConfig       `yaml:"deploy"`
+	SparkplugPayloadDecode bool              `yaml:"sparkplug_payload_decode"`
+	SparkplugMaxMetrics   int                `yaml:"sparkplug_max_metrics"`
 }
 
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and
@@ -316,6 +318,9 @@ func Parse(data []byte) (Config, error) {
 	}
 	if cfg.Mosquitto.Deploy.HealthcheckTimeout == 0 {
 		cfg.Mosquitto.Deploy.HealthcheckTimeout = 5 * time.Second
+	}
+	if cfg.Mosquitto.SparkplugMaxMetrics <= 0 {
+		cfg.Mosquitto.SparkplugMaxMetrics = 50
 	}
 	if cfg.Alerting.Timeout == "" {
 		cfg.Alerting.Timeout = Default().Alerting.Timeout
