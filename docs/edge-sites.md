@@ -92,6 +92,64 @@ Response `200 OK` — same shape as the object in the list above.
 
 Response `404 Not Found` when the ID does not exist.
 
+## Deploying the MCM Edge Agent
+
+The `mcm-agent` binary runs on each edge device and automatically sends heartbeats to the central MCM server.
+
+### Installation
+
+Download the pre-built binary for your platform from the [releases page](https://github.com/fgjcarlos/mcm/releases) and place it in `/usr/local/bin/mcm-agent`.
+
+### Configuration
+
+Copy the example config and fill in your site details:
+
+```bash
+cp /usr/local/share/mcm-agent/config.example.yaml /etc/mcm-agent/config.yaml
+```
+
+Minimum required fields:
+
+```yaml
+server:
+  url: "https://mcm.example.com"
+  token: "<your-bearer-token>"   # or use username/password
+
+site:
+  id: "factory-floor-gw-01"
+  name: "Factory Floor Gateway"
+```
+
+Full field reference: see `deploy/mcm-agent/config.example.yaml`.
+
+### Running with systemd
+
+```ini
+# /etc/systemd/system/mcm-agent.service
+[Unit]
+Description=MCM Edge Agent
+After=network.target mosquitto.service
+
+[Service]
+ExecStart=/usr/local/bin/mcm-agent -config /etc/mcm-agent/config.yaml
+Restart=on-failure
+RestartSec=10s
+# Sensitive values can be passed as environment variables instead of
+# storing credentials in the config file.
+# EnvironmentFile=/etc/mcm-agent/env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now mcm-agent
+journalctl -u mcm-agent -f
+```
+
 ## curl Examples
 
 Send a heartbeat:
