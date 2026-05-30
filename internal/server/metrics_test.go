@@ -44,7 +44,7 @@ func TestHTTPRequestsCounterIncrementsOnAccess(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	// Drive a request through the access-log middleware so the counter increments.
-	handler := withRequestLogging(app.Handler(), logging.Discard(), app.metrics)
+	handler := withRequestLogging(app.Handler(), logging.Discard(), app.metrics, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	handler.ServeHTTP(rec, req)

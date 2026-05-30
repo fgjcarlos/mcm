@@ -4,6 +4,10 @@
 http:
   bind_address: "0.0.0.0"
   port: 8080
+  # If MCM runs behind a reverse proxy, list the proxy IPs/CIDRs here so its
+  # X-Forwarded-For header is honored for client IPs (rate-limit lockout, audit).
+  # Empty = trust no headers and use the direct peer address (safe default).
+  trusted_proxies: []
 
 database:
   path: "/var/lib/mcm/mcm.db"
