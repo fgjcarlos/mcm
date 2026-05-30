@@ -46,6 +46,23 @@ func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
 	}
 }
 
+// openConfiguredStorage opens the persistence backend selected in the config.
+//
+// The "postgres" backend shape is accepted by config validation for
+// forward-compatibility (see ADR-0008), but no Postgres implementation exists
+// yet. Rather than silently falling back to SQLite, boot fails loudly so the
+// operator knows their selection is not honored.
+func openConfiguredStorage(cfg config.DatabaseConfig) (*storage.Store, error) {
+	switch cfg.Backend {
+	case "", "sqlite":
+		return storage.Open(cfg.Path)
+	case "postgres":
+		return nil, fmt.Errorf("database.backend %q is configured but not yet implemented; use \"sqlite\"", cfg.Backend)
+	default:
+		return nil, fmt.Errorf("database.backend %q is not supported; use \"sqlite\"", cfg.Backend)
+	}
+}
+
 // Run initializes persistence and serves the HTTP API.
 func Run(ctx context.Context, cfg config.Config) error {
 	logger, err := logging.New(cfg.Logging, os.Stderr)
@@ -54,7 +71,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	slog.SetDefault(logger)
 
-	store, err := storage.Open(cfg.Database.Path)
+	store, err := openConfiguredStorage(cfg.Database)
 	if err != nil {
 		return err
 	}
