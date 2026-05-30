@@ -1,0 +1,52 @@
+# MCM Edge Agent — example configuration
+# Copy this file to config.yaml and fill in the values for your site.
+# Environment variable overrides (all optional):
+#   MCM_AGENT_SERVER_URL  — overrides server.url
+#   MCM_AGENT_TOKEN       — overrides server.token (static bearer token)
+#   MCM_AGENT_USERNAME    — overrides server.username
+#   MCM_AGENT_PASSWORD    — overrides server.password
+#   MCM_AGENT_SITE_ID     — overrides site.id
+
+server:
+  # URL of the central MCM instance (no trailing slash).
+  url: "https://mcm.example.com"
+
+  # --- Authentication (choose one of the two options below) ---
+
+  # Option A: static bearer token (recommended for automated/systemd deployments).
+  # Obtain a token via `POST /api/v1/auth/login` and paste it here, or pass it
+  # via the MCM_AGENT_TOKEN environment variable.
+  token: ""
+
+  # Option B: username/password credentials.
+  # The agent will call POST /api/v1/auth/login at startup to obtain a token,
+  # and will re-authenticate automatically on 401 responses.
+  # Leave blank if using a static token above.
+  username: ""
+  password: ""
+
+site:
+  # Stable unique identifier for this edge installation.
+  # Use a hostname, UUID, or any non-empty string that won't change.
+  id: "factory-floor-gw-01"
+
+  # Human-readable label shown in the MCM UI.
+  name: "Factory Floor Gateway"
+
+mosquitto:
+  # Hostname or IP of the local Mosquitto broker to monitor.
+  # Defaults to 127.0.0.1 if omitted.
+  host: "127.0.0.1"
+
+  # MQTT port. Defaults to 1883 if omitted.
+  port: 1883
+
+heartbeat:
+  # How often to probe the broker and send a heartbeat to MCM.
+  # Valid Go duration strings: 30s, 1m, 5m, etc.
+  # Defaults to 60s if omitted.
+  interval: "60s"
+
+  # Timeout for both the MQTT probe connection and the HTTP request to MCM.
+  # Defaults to 5s if omitted.
+  timeout: "5s"
