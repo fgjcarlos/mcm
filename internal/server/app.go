@@ -33,6 +33,7 @@ type App struct {
 	aclStore           acl.Store
 	tokens             *auth.TokenManager
 	brokerEvents       *BrokerEventHub
+	schemaCache        *jsonSchemaCache
 	alerts             *alerting.WebhookAlerter
 	metrics            *metrics.Registry
 	mosquitto          config.MosquittoConfig
@@ -74,6 +75,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		aclStore:           store.ACLStore(),
 		tokens:             auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents:       brokerEvents,
+		schemaCache:        &jsonSchemaCache{},
 		alerts:             alerting.NewWebhookAlerter(cfg.Alerting, logger),
 		metrics:            mcmMetrics,
 		mosquitto:          cfg.Mosquitto,
@@ -683,6 +685,7 @@ func (a *App) handleCreateJSONSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
+	a.schemaCache.invalidate()
 	a.recordAuditFromRequest(r, "json_schema.create", "json_schema", strconv.FormatInt(definition.ID, 10), "success", map[string]any{"name": definition.Name, "topic_filter": definition.TopicFilter, "enabled": definition.Enabled})
 	writeJSON(w, http.StatusCreated, definition)
 }
@@ -714,6 +717,7 @@ func (a *App) handleUpdateJSONSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
+	a.schemaCache.invalidate()
 	a.recordAuditFromRequest(r, "json_schema.update", "json_schema", strconv.FormatInt(definition.ID, 10), "success", map[string]any{"name": definition.Name, "topic_filter": definition.TopicFilter, "enabled": definition.Enabled})
 	writeJSON(w, http.StatusOK, definition)
 }
@@ -731,6 +735,7 @@ func (a *App) handleDeleteJSONSchema(w http.ResponseWriter, r *http.Request) {
 		a.recordAuditFromRequest(r, "json_schema.delete", "json_schema", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 	} else {
+		a.schemaCache.invalidate()
 		a.recordAuditFromRequest(r, "json_schema.delete", "json_schema", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}

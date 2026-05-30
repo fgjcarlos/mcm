@@ -229,22 +229,31 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 }
 
 func (h *BrokerEventHub) Snapshot() BrokerEventSnapshot {
+	// Copy in-memory state under the read lock, then release it BEFORE touching
+	// the store. The traffic metrics query can block on SQLite, and holding the
+	// lock during it would stall Publish (which needs the write lock) on the
+	// hot message path.
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
+	status := h.status
+	subscribers := len(h.subscribers)
+	statusEvents := h.statusEvents
+	topicMessages := h.topicMessages
 	var lastMessageAt *time.Time
 	if h.lastMessageAt != nil {
 		value := *h.lastMessageAt
 		lastMessageAt = &value
 	}
+	events := append([]BrokerEvent(nil), h.trafficEvents...)
+	store := h.store
+	h.mu.RUnlock()
 
 	return BrokerEventSnapshot{
-		Status:           h.status,
-		EventSubscribers: len(h.subscribers),
-		StatusEvents:     h.statusEvents,
-		TopicMessages:    h.topicMessages,
+		Status:           status,
+		EventSubscribers: subscribers,
+		StatusEvents:     statusEvents,
+		TopicMessages:    topicMessages,
 		LastMessageAt:    lastMessageAt,
-		Traffic:          h.trafficMetricsLocked(time.Now().UTC()),
+		Traffic:          trafficMetrics(events, store, time.Now().UTC()),
 	}
 }
 
@@ -262,9 +271,12 @@ func (h *BrokerEventHub) pruneTrafficEventsLocked(now time.Time) {
 	}
 }
 
-func (h *BrokerEventHub) trafficMetricsLocked(now time.Time) BrokerTrafficMetrics {
-	events := append([]BrokerEvent(nil), h.trafficEvents...)
-	store := h.store
+// trafficMetrics computes traffic metrics from the supplied in-memory events,
+// preferring persisted broker metric events when a store is available. Callers
+// MUST pass an already-copied events slice and the store pointer captured under
+// the lock, and MUST NOT hold h.mu: the store query can block and is run here,
+// outside any lock, to keep the message-publish path unblocked.
+func trafficMetrics(events []BrokerEvent, store *storage.Store, now time.Time) BrokerTrafficMetrics {
 	if store != nil {
 		persisted, err := store.ListBrokerMetricEvents(context.Background(), storage.BrokerMetricQuery{
 			Since: now.Add(-brokerTrafficWindow),
@@ -456,7 +468,7 @@ func (a *App) TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 	if event.PayloadFormat != "json" || a.store == nil {
 		return event
 	}
-	schemas, err := a.store.ListJSONSchemas(context.Background())
+	schemas, err := a.schemaCache.get(context.Background(), a.store)
 	if err != nil {
 		return event
 	}
