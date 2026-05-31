@@ -26,8 +26,25 @@ var expectedMetricNames = []string{
 	"mcm_security_events_total",
 }
 
-func TestNew_RegistersExpectedMetricFamilies(t *testing.T) {
+// recordOnce touches every metric so each family is observable. *Vec families
+// (CounterVec, HistogramVec) are absent from Gather()/exposition until at least
+// one labeled series has been recorded — only plain Counters/Gauges emit a zero
+// series on their own — so the contract assertions below must prime them first.
+func recordOnce(reg *metrics.Registry) {
+	reg.HTTPRequests.WithLabelValues("GET", "/api/clients", "200").Inc()
+	reg.HTTPRequestDuration.WithLabelValues("GET", "/api/clients").Observe(0.42)
+	reg.BrokerStatus.Set(1)
+	reg.BrokerReconnects.Inc()
+	reg.BrokerMessages.Add(3)
+	reg.BrokerPayloadBytes.Add(128)
+	reg.LoginAttempts.WithLabelValues("failure").Inc()
+	reg.AuditEvents.WithLabelValues("success").Inc()
+	reg.SecurityEvents.WithLabelValues("login_lockout").Inc()
+}
+
+func TestRegistry_AllMetricFamiliesExposed(t *testing.T) {
 	reg := metrics.New()
+	recordOnce(reg)
 
 	families, err := reg.Gatherer().Gather()
 	if err != nil {
@@ -41,7 +58,7 @@ func TestNew_RegistersExpectedMetricFamilies(t *testing.T) {
 
 	for _, name := range expectedMetricNames {
 		if !got[name] {
-			t.Errorf("metric %q not registered; dashboards depending on it would break", name)
+			t.Errorf("metric %q not exposed; dashboards depending on it would break", name)
 		}
 	}
 }
@@ -100,7 +117,7 @@ func TestRegistry_RecordedValuesAreObservable(t *testing.T) {
 
 func TestHandler_ServesPrometheusExposition(t *testing.T) {
 	reg := metrics.New()
-	reg.BrokerMessages.Add(5)
+	recordOnce(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -109,6 +126,9 @@ func TestHandler_ServesPrometheusExposition(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
 
 	body := rec.Body.String()
 	for _, name := range expectedMetricNames {
@@ -116,7 +136,7 @@ func TestHandler_ServesPrometheusExposition(t *testing.T) {
 			t.Errorf("exposition output missing %q", name)
 		}
 	}
-	if !strings.Contains(body, "mcm_broker_messages_total 5") {
+	if !strings.Contains(body, "mcm_broker_messages_total 3") {
 		t.Errorf("expected recorded value in exposition, got:\n%s", body)
 	}
 }
