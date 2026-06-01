@@ -278,6 +278,8 @@ make test
 make build
 ```
 
+`make build` and `make test` treat the embedded frontend as part of the Go build contract: they build `frontend/dist` first, then compile or test the Go code. If you call `go build`, `go test`, or `go run` directly, build `frontend/dist` yourself first with `npm --prefix frontend run build`.
+
 ## ACL API
 
 The initial ACL model and REST API are documented in [`docs/acl.md`](./docs/acl.md).
@@ -315,6 +317,8 @@ npm run dev
 # Create a production build
 npm run build
 ```
+
+The production Go binary embeds `frontend/dist/index.html` and the rest of `frontend/dist`. That means the frontend build must exist before any direct `go build`, `go test`, or `go run` of the embedded application.
 
 ### API specification
 
