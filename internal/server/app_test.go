@@ -610,6 +610,9 @@ func newTestApp(t *testing.T) (*App, *storage.Store) {
 	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
 	cfg.Auth.TokenTTL = "1h"
 	cfg.Auth.BootstrapAdmin = config.BootstrapAdminConfig{}
+	// Tests model MCM behind a reverse proxy: trust the default httptest peer
+	// (192.0.2.1) so X-Forwarded-For client IPs are honored in test requests.
+	cfg.HTTP.TrustedProxies = []string{"192.0.2.1"}
 
 	store, err := storage.Open(cfg.Database.Path)
 	if err != nil {

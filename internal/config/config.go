@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,10 @@ type HTTPConfig struct {
 	BindAddress string        `yaml:"bind_address"`
 	Port        int           `yaml:"port"`
 	TLS         HTTPTLSConfig `yaml:"tls"`
+	// TrustedProxies lists IP/CIDR entries whose X-Forwarded-For / X-Real-IP
+	// headers are honored when determining the client IP. Empty (default) means
+	// no proxy is trusted and the direct peer address is always used.
+	TrustedProxies []string `yaml:"trusted_proxies"`
 }
 
 // HTTPTLSConfig controls HTTPS and optional mTLS for the MCM API.
@@ -214,6 +219,10 @@ func ExampleYAML() string {
 http:
   bind_address: %q
   port: %d
+  # Trusted reverse-proxy IPs/CIDRs. When the direct peer matches one of these,
+  # X-Forwarded-For / X-Real-IP is used to determine the client IP (for rate-limit
+  # lockout and audit). Empty = trust no headers and always use the peer address.
+  trusted_proxies: []
   tls:
     enabled: %t
     cert_file: ""
@@ -354,6 +363,18 @@ func (c Config) Validate() error {
 	}
 	if err := validatePort("http.port", c.HTTP.Port); err != nil {
 		problems = append(problems, err.Error())
+	}
+	for _, entry := range c.HTTP.TrustedProxies {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(trimmed); err == nil {
+			continue
+		}
+		if net.ParseIP(trimmed) == nil {
+			problems = append(problems, fmt.Sprintf("http.trusted_proxies entry %q must be an IP address or CIDR", trimmed))
+		}
 	}
 	if c.HTTP.TLS.Enabled {
 		if strings.TrimSpace(c.HTTP.TLS.CertFile) == "" {
