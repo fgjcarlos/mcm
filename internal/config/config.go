@@ -272,7 +272,7 @@ auth:
     max_attempts: %d
 
 # Mosquitto connection settings.
-# Prefer environment overrides or secret mounts for credentials and TLS files in production.
+# Prefer secret mounts, generated config, or deployment templating for credentials and TLS files in production.
 # For production TLS, use a TLS listener (often port 8883), mount CA/client cert/key
 # files read-only, and keep insecure_skip_verify false.
 mosquitto:

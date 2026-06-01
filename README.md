@@ -188,7 +188,7 @@ mcm backup restore   # Restore local state from a SQLite backup artifact
 mcm version          # Print version/build information
 ```
 
-Every command takes a global `--config` flag pointing at the YAML file documented in [docs/openapi.yaml](./docs/openapi.yaml) and the [`config init` template](./internal/config/).
+Every command takes a global `--config` flag pointing at the YAML file documented in [docs/openapi.yaml](./docs/openapi.yaml) and the [`config init` template](./internal/config/). The main `mcm` server reads runtime configuration from that YAML file; `MCM_*` server overrides are not currently supported.
 
 ### Backup and restore
 

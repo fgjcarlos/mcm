@@ -1,4 +1,4 @@
-# ADR-0007: Use a YAML configuration file with environment overrides
+# ADR-0007: Use a YAML configuration file for server runtime configuration
 
 ## Status
 
@@ -10,20 +10,19 @@ MCM needs configuration for HTTP server settings, database paths, Mosquitto conn
 
 The configuration format should be easy for operators to read and edit, suitable for Docker Compose examples, and friendly to industrial/edge deployments where configuration may be managed manually or through provisioning scripts.
 
-Secrets such as Mosquitto passwords should not be forced into plain text files when environment variables or secret mounts are available.
+The main `mcm` server currently loads configuration from YAML passed through `--config`. The separate `mcm-agent` process supports a small set of `MCM_AGENT_*` environment overrides, but that behavior is not implemented for the main server.
 
 ## Decision
 
-Use a YAML configuration file as the primary configuration format, with environment variable overrides for deployment-specific values and secrets.
+Use a YAML configuration file as the runtime configuration source for the main `mcm` server, selected explicitly with `--config`.
 
 The initial CLI should support:
 
 - `mcm config init` to generate an example YAML config
 - `mcm config validate` to validate syntax and required values
 - Explicit config path selection through a flag such as `--config`
-- Environment overrides using a documented prefix such as `MCM_`
 
-Sensitive values should be documented with environment-variable alternatives.
+For container deployments, operators can still inject secrets through mounted files, generated YAML, or deployment templating, but those mechanisms happen outside the main server runtime loader.
 
 ## Consequences
 
@@ -31,14 +30,13 @@ Positive:
 
 - YAML is readable for operators.
 - Docker Compose examples can mount or generate a clear config file.
-- Environment overrides work well for containers and secret management.
 - The same configuration can support CLI diagnostics and server startup.
 
 Negative:
 
 - YAML parsing and validation must be strict enough to catch mistakes early.
-- Environment override precedence must be clearly documented.
 - Secrets in config files remain a risk if operators choose that path.
+- Deployments that prefer environment-variable-driven config must template or generate YAML before startup.
 
 ## Alternatives considered
 
@@ -52,7 +50,7 @@ Viable but not chosen. TOML is readable, but YAML is more common in Docker/Kuber
 
 ### Environment variables only
 
-Rejected. Environment-only configuration becomes hard to inspect and document as the number of settings grows.
+Rejected for the main server runtime. Environment-only configuration becomes hard to inspect and document as the number of settings grows.
 
 ### Database-only settings
 
