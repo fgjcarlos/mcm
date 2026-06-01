@@ -38,6 +38,7 @@ The MCM container:
 - Runs as a non-root user (`mcm`).
 - Stores the SQLite database at `/var/lib/mcm/mcm.db` (persisted via the `mcm_data` Docker volume).
 - Reads config from `/etc/mcm/config.yaml` (bind-mounted read-only from `deploy/mcm/config.yaml`).
+- Does not apply `MCM_*` environment overrides at runtime; update the mounted YAML file instead.
 - Exposes port `8080` for the HTTP API.
 - Includes a healthcheck via `mcm doctor`.
 
