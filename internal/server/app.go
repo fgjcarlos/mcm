@@ -361,6 +361,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.recordLoginAttempt(r, user.Username, true)
+	a.resetFailedLoginAttempts(r, user.Username)
 
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token:     token,
@@ -443,6 +444,7 @@ func (a *App) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 	if usedRecovery {
 		a.recordAuditFromRequest(r, "mfa.recovery_code_used", "admin_user", strconv.FormatInt(user.ID, 10), "success", map[string]any{"username": user.Username})
 	}
+	a.resetFailedLoginAttempts(r, user.Username)
 
 	writeJSON(w, http.StatusOK, loginResponse{
 		Token:     token,
@@ -526,6 +528,10 @@ func (a *App) recordLoginAttempt(r *http.Request, username string, success bool)
 		}
 		a.metrics.LoginAttempts.WithLabelValues(result).Inc()
 	}
+}
+
+func (a *App) resetFailedLoginAttempts(r *http.Request, username string) {
+	_, _ = a.store.ResetFailedLoginAttempts(r.Context(), username, clientIP(r, a.trustedProxies))
 }
 
 func (a *App) handleCurrentUser(w http.ResponseWriter, r *http.Request) {

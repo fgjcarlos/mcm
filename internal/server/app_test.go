@@ -634,6 +634,49 @@ func TestLoginSucceedsUnderRateLimitThreshold(t *testing.T) {
 	}
 }
 
+func TestSuccessfulLoginResetsFailedAttempts(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+
+	for i := 0; i < app.loginMaxAttempts-1; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong-password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", "198.51.100.20")
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", i+1, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	successRec := httptest.NewRecorder()
+	successReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	successReq.Header.Set("Content-Type", "application/json")
+	successReq.Header.Set("X-Forwarded-For", "198.51.100.20")
+	app.Handler().ServeHTTP(successRec, successReq)
+	if successRec.Code != http.StatusOK {
+		t.Fatalf("success status = %d, want %d, body = %s", successRec.Code, http.StatusOK, successRec.Body.String())
+	}
+
+	statsByIP, err := store.CountFailedLoginAttemptsByIP(context.Background(), "198.51.100.20", app.now().Add(-app.loginLockoutWindow))
+	if err != nil {
+		t.Fatalf("CountFailedLoginAttemptsByIP: %v", err)
+	}
+	if statsByIP.Count != 0 {
+		t.Fatalf("failed attempts by IP after success = %d, want 0", statsByIP.Count)
+	}
+
+	statsByUser, err := store.CountFailedLoginAttemptsByUsername(context.Background(), "admin", app.now().Add(-app.loginLockoutWindow))
+	if err != nil {
+		t.Fatalf("CountFailedLoginAttemptsByUsername: %v", err)
+	}
+	if statsByUser.Count != 0 {
+		t.Fatalf("failed attempts by username after success = %d, want 0", statsByUser.Count)
+	}
+}
+
 func newTestApp(t *testing.T) (*App, *storage.Store) {
 	t.Helper()
 
