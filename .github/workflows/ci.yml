@@ -90,6 +90,8 @@ jobs:
         run: npm ci
       - name: npm run lint
         run: npm run lint
+      - name: npm run test:run
+        run: npm run test:run
       - name: npm run build
         run: npm run build
 
