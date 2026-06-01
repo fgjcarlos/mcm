@@ -177,6 +177,80 @@ func TestLoginMFACompletesWithValidTOTP(t *testing.T) {
 	}
 }
 
+func TestLoginMFACompletionResetsFailedAttempts(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+	secret, _ := enrollAndEnableMFA(t, app, "secret-password", "admin")
+
+	for i := 0; i < app.loginMaxAttempts-1; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong-password"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", "203.0.113.44")
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", i+1, rec.Code, http.StatusUnauthorized)
+		}
+	}
+
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("X-Forwarded-For", "203.0.113.44")
+	app.Handler().ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("first-step login status = %d, want %d, body = %s", loginRec.Code, http.StatusOK, loginRec.Body.String())
+	}
+
+	var firstStep loginResponse
+	if err := json.NewDecoder(loginRec.Body).Decode(&firstStep); err != nil {
+		t.Fatalf("decode first-step login: %v", err)
+	}
+	if !firstStep.MFARequired || firstStep.MFAChallenge == "" {
+		t.Fatalf("expected MFA challenge, got %#v", firstStep)
+	}
+
+	statsBefore, err := store.CountFailedLoginAttemptsByUsername(context.Background(), "admin", app.now().Add(-app.loginLockoutWindow))
+	if err != nil {
+		t.Fatalf("CountFailedLoginAttemptsByUsername before MFA completion: %v", err)
+	}
+	if statsBefore.Count != app.loginMaxAttempts-1 {
+		t.Fatalf("failed attempts before MFA completion = %d, want %d", statsBefore.Count, app.loginMaxAttempts-1)
+	}
+
+	code, err := totp.GenerateCode(secret, app.now().UTC())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	body, _ := json.Marshal(loginMFARequest{Challenge: firstStep.MFAChallenge, Code: code})
+	mfaRec := httptest.NewRecorder()
+	mfaReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/mfa", strings.NewReader(string(body)))
+	mfaReq.Header.Set("Content-Type", "application/json")
+	mfaReq.Header.Set("X-Forwarded-For", "203.0.113.44")
+	app.Handler().ServeHTTP(mfaRec, mfaReq)
+	if mfaRec.Code != http.StatusOK {
+		t.Fatalf("mfa login status = %d, want %d, body = %s", mfaRec.Code, http.StatusOK, mfaRec.Body.String())
+	}
+
+	statsByIP, err := store.CountFailedLoginAttemptsByIP(context.Background(), "203.0.113.44", app.now().Add(-app.loginLockoutWindow))
+	if err != nil {
+		t.Fatalf("CountFailedLoginAttemptsByIP: %v", err)
+	}
+	if statsByIP.Count != 0 {
+		t.Fatalf("failed attempts by IP after MFA completion = %d, want 0", statsByIP.Count)
+	}
+
+	statsByUser, err := store.CountFailedLoginAttemptsByUsername(context.Background(), "admin", app.now().Add(-app.loginLockoutWindow))
+	if err != nil {
+		t.Fatalf("CountFailedLoginAttemptsByUsername: %v", err)
+	}
+	if statsByUser.Count != 0 {
+		t.Fatalf("failed attempts by username after MFA completion = %d, want 0", statsByUser.Count)
+	}
+}
+
 func TestLoginMFAAcceptsRecoveryCodeOnce(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
