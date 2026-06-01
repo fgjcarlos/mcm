@@ -21,6 +21,14 @@ import (
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 30 * time.Second
+	httpIdleTimeout       = 60 * time.Second
+	httpMaxHeaderBytes    = 16 << 10
+)
+
 // buildApplier constructs the appropriate mosquitto.Applier for the given deploy config.
 // When deploy mode is empty (disabled), a no-op applier is returned so the service
 // can still be constructed — it will reject calls via ErrDeployDisabled.
@@ -129,11 +137,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		handler = withHSTS(handler)
 	}
 
-	server := &http.Server{
-		Addr:      fmt.Sprintf("%s:%d", cfg.HTTP.BindAddress, cfg.HTTP.Port),
-		Handler:   handler,
-		TLSConfig: tlsConfig,
-	}
+	server := newHTTPServer(cfg, handler, tlsConfig)
 
 	go func() {
 		<-ctx.Done()
@@ -152,6 +156,19 @@ func Run(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("listen and serve: %w", err)
 	}
 	return nil
+}
+
+func newHTTPServer(cfg config.Config, handler http.Handler, tlsConfig *tls.Config) *http.Server {
+	return &http.Server{
+		Addr:              fmt.Sprintf("%s:%d", cfg.HTTP.BindAddress, cfg.HTTP.Port),
+		Handler:           handler,
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
+	}
 }
 
 // buildHTTPTLSConfig returns a tls.Config when TLS is enabled, or nil otherwise.
