@@ -120,7 +120,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 	go app.StartBrokerMonitor(ctx, cfg.Mosquitto)
 
-	handler := withRequestLogging(app.Handler(), logger, app.metrics)
+	handler := withRequestLogging(app.Handler(), logger, app.metrics, app.trustedProxies)
 	tlsConfig, err := buildHTTPTLSConfig(cfg.HTTP.TLS)
 	if err != nil {
 		return err

@@ -41,6 +41,7 @@ type App struct {
 	deploySvc          deployServicer
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
+	trustedProxies     []*net.IPNet
 	frontendFS         fs.FS
 	logger             *slog.Logger
 	now                func() time.Time
@@ -64,6 +65,10 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, fmt.Errorf("parse auth login lockout window: %w", err)
 	}
+	trustedProxies, err := parseTrustedProxies(cfg.HTTP.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("parse http trusted proxies: %w", err)
+	}
 
 	mcmMetrics := metrics.New()
 	brokerEvents := NewBrokerEventHub()
@@ -82,6 +87,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		cfg:                cfg,
 		loginLockoutWindow: loginLockoutWindow,
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
+		trustedProxies:     trustedProxies,
 		logger:             logger,
 		now:                time.Now,
 	}, nil
@@ -454,7 +460,7 @@ func (a *App) enforceLoginLockout(w http.ResponseWriter, r *http.Request, userna
 
 	now := a.now().UTC()
 	windowStart := now.Add(-a.loginLockoutWindow)
-	sourceIP := clientIP(r)
+	sourceIP := clientIP(r, a.trustedProxies)
 
 	if sourceIP != "" {
 		if stats, err := a.store.CountFailedLoginAttemptsByIP(r.Context(), sourceIP, windowStart); err == nil && stats.Count >= a.loginMaxAttempts {
@@ -495,7 +501,7 @@ func (a *App) recordLoginAttempt(r *http.Request, username string, success bool)
 	now := a.now().UTC()
 	_ = a.store.RecordLoginAttempt(r.Context(), storage.LoginAttemptParams{
 		Username:    username,
-		SourceIP:    clientIP(r),
+		SourceIP:    clientIP(r, a.trustedProxies),
 		Success:     success,
 		AttemptedAt: now,
 	})
@@ -904,7 +910,7 @@ func (a *App) recordSecurityEvent(r *http.Request, category string, reason strin
 		Category:   category,
 		Reason:     reason,
 		Username:   username,
-		SourceIP:   clientIP(r),
+		SourceIP:   clientIP(r, a.trustedProxies),
 		Method:     r.Method,
 		Path:       r.URL.Path,
 		ObservedAt: observedAt,
@@ -919,36 +925,13 @@ func (a *App) recordSecurityEvent(r *http.Request, category string, reason strin
 			"category":  category,
 			"reason":    reason,
 			"username":  username,
-			"source_ip": clientIP(r),
+			"source_ip": clientIP(r, a.trustedProxies),
 			"method":    r.Method,
 			"path":      r.URL.Path,
 		},
 	})
 }
 
-func clientIP(r *http.Request) string {
-	if forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwardedFor != "" {
-		first := strings.TrimSpace(strings.Split(forwardedFor, ",")[0])
-		if parsed := net.ParseIP(first); parsed != nil {
-			return parsed.String()
-		}
-	}
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
-		if parsed := net.ParseIP(realIP); parsed != nil {
-			return parsed.String()
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		if parsed := net.ParseIP(host); parsed != nil {
-			return parsed.String()
-		}
-	}
-	if parsed := net.ParseIP(r.RemoteAddr); parsed != nil {
-		return parsed.String()
-	}
-	return ""
-}
 
 func currentUserFromContext(ctx context.Context) (auth.UserClaims, bool) {
 	claims, ok := ctx.Value(currentUserContextKey).(auth.UserClaims)

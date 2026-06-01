@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,7 +36,7 @@ func RequestIDFromContext(ctx context.Context) string {
 // (mcm_http_requests_total, mcm_http_request_duration_seconds) are updated. Labels
 // use the route pattern set by ServeMux ("other" for unmatched paths) to keep label
 // cardinality bounded — never the raw URL with IDs.
-func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Registry) http.Handler {
+func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Registry, trustedProxies []*net.IPNet) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -65,7 +66,7 @@ func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Reg
 			slog.String("route", route),
 			slog.Int("status", recorder.status),
 			slog.Duration("duration", duration),
-			slog.String("remote_addr", clientIP(r)),
+			slog.String("remote_addr", clientIP(r, trustedProxies)),
 		)
 
 		if reg != nil {
