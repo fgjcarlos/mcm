@@ -8,7 +8,34 @@ import (
 )
 
 func TestParseValidConfig(t *testing.T) {
-	cfg, err := Parse([]byte(ExampleYAML()))
+	cfg, err := Parse([]byte(`
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+database:
+  path: var/lib/mcm/mcm.db
+auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+  bootstrap_admin:
+    username: bootstrap-admin
+    password: bootstrap-secret-password
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+  username: ""
+  password: ""
+  tls:
+    enabled: false
+metrics:
+  broker_retention: 168h
+alerting:
+  enabled: false
+  timeout: 5s
+logging:
+  level: info
+  format: json
+`))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -27,6 +54,12 @@ func TestParseValidConfig(t *testing.T) {
 	}
 	if cfg.Alerting.Timeout != "5s" || cfg.Alerting.Enabled {
 		t.Fatalf("unexpected alerting defaults: %+v", cfg.Alerting)
+	}
+}
+
+func TestExampleYAMLParses(t *testing.T) {
+	if _, err := Parse([]byte(ExampleYAML())); err != nil {
+		t.Fatalf("Parse returned error for ExampleYAML: %v", err)
 	}
 }
 
@@ -84,7 +117,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 70000
@@ -123,7 +156,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -154,7 +187,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -187,7 +220,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -225,7 +258,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -274,7 +307,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -317,7 +350,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -351,7 +384,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
@@ -542,6 +575,9 @@ func TestWriteExample(t *testing.T) {
 	if !strings.Contains(string(data), "# MCM configuration") {
 		t.Fatalf("example config missing documentation header; got:\n%s", string(data))
 	}
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("generated init config should be valid, got error: %v", err)
+	}
 }
 
 func TestParseDatabaseBackendValidation(t *testing.T) {
@@ -554,7 +590,7 @@ auth:
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: 1883
