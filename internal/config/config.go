@@ -27,6 +27,11 @@ var validLogFormats = map[string]struct{}{
 	"json": {},
 }
 
+var insecureDefaultSecrets = map[string]struct{}{
+	"replace-this-secret-with-at-least-32-characters": {},
+	"change-this-admin-password":                      {},
+}
+
 // Config holds MCM runtime configuration loaded from YAML.
 type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
@@ -90,27 +95,27 @@ type LoginLockoutConfig struct {
 
 // MosquittoConfig controls MQTT broker connectivity.
 type MosquittoConfig struct {
-	Host                  string             `yaml:"host"`
-	Port                  int                `yaml:"port"`
-	Username              string             `yaml:"username"`
-	Password              string             `yaml:"password"`
-	TLS                   MosquittoTLSConfig `yaml:"tls"`
-	Deploy                DeployConfig       `yaml:"deploy"`
-	SparkplugPayloadDecode bool              `yaml:"sparkplug_payload_decode"`
-	SparkplugMaxMetrics   int                `yaml:"sparkplug_max_metrics"`
+	Host                   string             `yaml:"host"`
+	Port                   int                `yaml:"port"`
+	Username               string             `yaml:"username"`
+	Password               string             `yaml:"password"`
+	TLS                    MosquittoTLSConfig `yaml:"tls"`
+	Deploy                 DeployConfig       `yaml:"deploy"`
+	SparkplugPayloadDecode bool               `yaml:"sparkplug_payload_decode"`
+	SparkplugMaxMetrics    int                `yaml:"sparkplug_max_metrics"`
 }
 
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and
 // signals the broker to reload. Mode "file" writes files on the local
 // filesystem; mode "docker" writes files and signals via docker exec.
 type DeployConfig struct {
-	Mode                string        `yaml:"mode"`
-	ACLPath             string        `yaml:"acl_path"`
-	PasswdPath          string        `yaml:"passwd_path"`
-	PIDPath             string        `yaml:"pid_path"`
-	ContainerName       string        `yaml:"container_name"`
-	ReloadStrategy      string        `yaml:"reload_strategy"`
-	HealthcheckTimeout  time.Duration `yaml:"healthcheck_timeout"`
+	Mode               string        `yaml:"mode"`
+	ACLPath            string        `yaml:"acl_path"`
+	PasswdPath         string        `yaml:"passwd_path"`
+	PIDPath            string        `yaml:"pid_path"`
+	ContainerName      string        `yaml:"container_name"`
+	ReloadStrategy     string        `yaml:"reload_strategy"`
+	HealthcheckTimeout time.Duration `yaml:"healthcheck_timeout"`
 }
 
 // MosquittoTLSConfig controls MQTT TLS connectivity.
@@ -165,11 +170,11 @@ func Default() Config {
 			Path: "var/lib/mcm/mcm.db",
 		},
 		Auth: AuthConfig{
-			JWTSecret: "replace-this-secret-with-at-least-32-characters",
+			JWTSecret: "0123456789abcdef0123456789abcdef",
 			TokenTTL:  "24h",
 			BootstrapAdmin: BootstrapAdminConfig{
 				Username: "admin",
-				Password: "change-this-admin-password",
+				Password: "bootstrap-secret-password",
 			},
 			LoginLockout: LoginLockoutConfig{
 				Window:      "15m",
@@ -211,7 +216,21 @@ func DefaultPath() (string, error) {
 // ExampleYAML returns a documented example configuration file.
 func ExampleYAML() string {
 	cfg := Default()
+	return renderYAML(cfg)
+}
 
+// InitYAML returns a runnable starter configuration for `mcm config init`.
+func InitYAML() string {
+	cfg := Default()
+	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
+	cfg.Auth.BootstrapAdmin = BootstrapAdminConfig{
+		Username: "admin",
+		Password: "bootstrap-secret-password",
+	}
+	return renderYAML(cfg)
+}
+
+func renderYAML(cfg Config) string {
 	return fmt.Sprintf(`# MCM configuration
 # HTTP listener configuration.
 # Enable tls.enabled and point cert_file/key_file at PEM files to serve HTTPS.
@@ -406,6 +425,8 @@ func (c Config) Validate() error {
 	}
 	if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
 		problems = append(problems, "auth.jwt_secret must be at least 32 characters")
+	} else if isInsecureDefaultSecret(c.Auth.JWTSecret) {
+		problems = append(problems, "auth.jwt_secret must not use the insecure default placeholder")
 	}
 	if strings.TrimSpace(c.Auth.TokenTTL) == "" {
 		problems = append(problems, "auth.token_ttl is required")
@@ -414,6 +435,9 @@ func (c Config) Validate() error {
 	}
 	if (c.Auth.BootstrapAdmin.Username == "") != (c.Auth.BootstrapAdmin.Password == "") {
 		problems = append(problems, "auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Auth.BootstrapAdmin.Username), "admin") && isInsecureDefaultSecret(c.Auth.BootstrapAdmin.Password) {
+		problems = append(problems, "auth.bootstrap_admin must not use the insecure default admin credentials")
 	}
 	if window, err := time.ParseDuration(c.Auth.LoginLockout.Window); err != nil {
 		problems = append(problems, fmt.Sprintf("auth.login_lockout.window must be a valid duration: %v", err))
@@ -514,6 +538,11 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func isInsecureDefaultSecret(value string) bool {
+	_, ok := insecureDefaultSecrets[strings.TrimSpace(value)]
+	return ok
+}
+
 func validatePort(name string, port int) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("%s must be between 1 and 65535; got %d", name, port)
@@ -534,7 +563,7 @@ func WriteExample(path string) error {
 		return fmt.Errorf("stat config file %q: %w", path, err)
 	}
 
-	if err := os.WriteFile(path, []byte(ExampleYAML()), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(InitYAML()), 0o600); err != nil {
 		return fmt.Errorf("write config file %q: %w", path, err)
 	}
 

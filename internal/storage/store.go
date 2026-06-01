@@ -19,6 +19,8 @@ import (
 var (
 	// ErrUserNotFound is returned when an admin user does not exist.
 	ErrUserNotFound = errors.New("admin user not found")
+	// ErrLastActiveAdmin is returned when mutating the last active admin would lock out the system.
+	ErrLastActiveAdmin = errors.New("cannot disable or delete the last active admin")
 )
 
 type migration struct {
@@ -520,6 +522,15 @@ func (s *Store) CountAdminUsers(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// CountActiveAdminUsers returns the number of enabled users with the admin role.
+func (s *Store) CountActiveAdminUsers(ctx context.Context) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admin_users WHERE disabled = 0 AND role = 'admin'`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active admin users: %w", err)
+	}
+	return count, nil
+}
+
 // CreateAdminUser creates a new admin user.
 func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParams) (AdminUser, error) {
 	role := strings.TrimSpace(params.Role)
@@ -650,6 +661,15 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id int64, params UpdateAdmi
 	if role == "" {
 		role = current.Role
 	}
+	if current.Role == "admin" && !current.Disabled && (params.Disabled || role != current.Role) {
+		activeAdmins, err := s.CountActiveAdminUsers(ctx)
+		if err != nil {
+			return AdminUser{}, err
+		}
+		if activeAdmins <= 1 {
+			return AdminUser{}, ErrLastActiveAdmin
+		}
+	}
 
 	if _, err := s.db.ExecContext(
 		ctx,
@@ -669,6 +689,20 @@ func (s *Store) UpdateAdminUser(ctx context.Context, id int64, params UpdateAdmi
 
 // DeleteAdminUser removes an admin user.
 func (s *Store) DeleteAdminUser(ctx context.Context, id int64) error {
+	current, err := s.GetAdminUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if current.Role == "admin" && !current.Disabled {
+		activeAdmins, err := s.CountActiveAdminUsers(ctx)
+		if err != nil {
+			return err
+		}
+		if activeAdmins <= 1 {
+			return ErrLastActiveAdmin
+		}
+	}
+
 	result, err := s.db.ExecContext(ctx, `DELETE FROM admin_users WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete admin user: %w", err)

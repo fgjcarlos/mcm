@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -218,6 +219,50 @@ func TestJSONSchemaRejectsMalformedSchemaAndInvalidTopicFilter(t *testing.T) {
 		Enabled:     true,
 	}); err == nil {
 		t.Fatal("CreateJSONSchema accepted malformed JSON schema")
+	}
+}
+
+func TestUpdateAdminUserRejectsDisablingLastActiveAdmin(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	user, err := store.CreateAdminUser(ctx, CreateAdminUserParams{
+		Username:     "admin",
+		PasswordHash: "hash",
+		Role:         "admin",
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser returned error: %v", err)
+	}
+
+	_, err = store.UpdateAdminUser(ctx, user.ID, UpdateAdminUserParams{
+		Username: user.Username,
+		Disabled: true,
+		Role:     user.Role,
+	})
+	if !errors.Is(err, ErrLastActiveAdmin) {
+		t.Fatalf("UpdateAdminUser error = %v, want %v", err, ErrLastActiveAdmin)
+	}
+}
+
+func TestDeleteAdminUserRejectsDeletingLastActiveAdmin(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	user, err := store.CreateAdminUser(ctx, CreateAdminUserParams{
+		Username:     "admin",
+		PasswordHash: "hash",
+		Role:         "admin",
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser returned error: %v", err)
+	}
+
+	err = store.DeleteAdminUser(ctx, user.ID)
+	if !errors.Is(err, ErrLastActiveAdmin) {
+		t.Fatalf("DeleteAdminUser error = %v, want %v", err, ErrLastActiveAdmin)
 	}
 }
 

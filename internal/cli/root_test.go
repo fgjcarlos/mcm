@@ -230,11 +230,11 @@ func writeCLIConfig(t *testing.T, mosquittoPort int) string {
 database:
   path: var/lib/mcm/mcm.db
 auth:
-  jwt_secret: replace-this-secret-with-at-least-32-characters
+  jwt_secret: 0123456789abcdef0123456789abcdef
   token_ttl: 24h
   bootstrap_admin:
     username: admin
-    password: change-this-admin-password
+    password: bootstrap-secret-password
 mosquitto:
   host: 127.0.0.1
   port: %d
