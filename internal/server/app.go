@@ -95,7 +95,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 
 // BootstrapAdmin creates the configured bootstrap admin if no admin users exist yet.
 func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
-	count, err := a.store.CountAdminUsers(ctx)
+	count, err := a.store.CountActiveAdminUsers(ctx)
 	if err != nil {
 		return err
 	}
@@ -121,6 +121,17 @@ func (a *App) BootstrapAdmin(ctx context.Context, cfg config.Config) error {
 	}
 
 	return nil
+}
+
+func (a *App) loadCurrentUser(ctx context.Context, claims auth.UserClaims) (storage.AdminUser, error) {
+	user, err := a.store.GetAdminUserByID(ctx, claims.UserID)
+	if err != nil {
+		return storage.AdminUser{}, err
+	}
+	if user.Disabled {
+		return storage.AdminUser{}, storage.ErrUserNotFound
+	}
+	return user, nil
 }
 
 // Handler returns the configured HTTP handler tree.
@@ -635,6 +646,11 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "admin user not found"})
 		return
 	}
+	if errors.Is(err, storage.ErrLastActiveAdmin) {
+		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"reason": err.Error()})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
 	if err != nil {
 		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"username": req.Username, "disabled": req.Disabled, "password_changed": passwordChanged, "reason": err.Error()})
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
@@ -655,6 +671,9 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.DeleteAdminUser(r.Context(), id); errors.Is(err, storage.ErrUserNotFound) {
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": "admin user not found"})
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "admin user not found"})
+	} else if errors.Is(err, storage.ErrLastActiveAdmin) {
+		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 	} else if err != nil {
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
@@ -802,6 +821,18 @@ func (a *App) requireAuth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 			return
 		}
+		user, err := a.loadCurrentUser(r.Context(), claims)
+		if errors.Is(err, storage.ErrUserNotFound) {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "inactive_user", claims.Username)
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+			return
+		}
+		claims.Username = user.Username
+		claims.Role = auth.Role(user.Role)
 
 		ctx := context.WithValue(r.Context(), currentUserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -825,6 +856,18 @@ func (a *App) requireRole(min auth.Role, next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 			return
 		}
+		user, err := a.loadCurrentUser(r.Context(), claims)
+		if errors.Is(err, storage.ErrUserNotFound) {
+			a.recordSecurityFailure(r, "protected_api_access_failed", "inactive_user", claims.Username)
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+			return
+		}
+		claims.Username = user.Username
+		claims.Role = auth.Role(user.Role)
 		if !claims.Role.AtLeast(min) {
 			a.recordSecurityFailure(r, "protected_api_access_denied", "insufficient_role", claims.Username)
 			writeJSON(w, http.StatusForbidden, errorResponse{Error: "insufficient role"})
@@ -931,7 +974,6 @@ func (a *App) recordSecurityEvent(r *http.Request, category string, reason strin
 		},
 	})
 }
-
 
 func currentUserFromContext(ctx context.Context) (auth.UserClaims, bool) {
 	claims, ok := ctx.Value(currentUserContextKey).(auth.UserClaims)

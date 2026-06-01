@@ -300,6 +300,38 @@ func TestProtectedEndpointsRejectUnauthenticatedRequests(t *testing.T) {
 	}
 }
 
+func TestProtectedEndpointsRejectDisabledUserWithExistingToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	user := seedAdminUser(t, store, "admin", "secret-password", false)
+	seedAdminUser(t, store, "admin-2", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	_, err := store.UpdateAdminUser(context.Background(), user.ID, storage.UpdateAdminUserParams{
+		Username: user.Username,
+		Disabled: true,
+		Role:     user.Role,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAdminUser returned error: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodGet, "/api/v1/auth/me", "", token))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	assertLatestSecurityEvent(t, store, storage.SecurityEvent{
+		Category: "protected_api_access_failed",
+		Reason:   "inactive_user",
+		Username: "admin",
+		Method:   http.MethodGet,
+		Path:     "/api/v1/auth/me",
+	})
+}
+
 func TestCreateAdminUserStoresPasswordHash(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
@@ -762,6 +794,73 @@ func TestRBACBootstrapAdminGetsAdminRole(t *testing.T) {
 	}
 	if created.Role != string(auth.RoleAdmin) {
 		t.Fatalf("bootstrap admin role = %q, want %q", created.Role, auth.RoleAdmin)
+	}
+}
+
+func TestBootstrapAdminCreatesWhenOnlyDisabledAdminsExist(t *testing.T) {
+	cfg := config.Default()
+	cfg.Database.Path = filepath.Join(t.TempDir(), "mcm.db")
+	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
+	cfg.Auth.TokenTTL = "1h"
+	cfg.Auth.BootstrapAdmin = config.BootstrapAdminConfig{Username: "boot-admin", Password: "boot-secret"}
+
+	store, err := storage.Open(cfg.Database.Path)
+	if err != nil {
+		t.Fatalf("storage.Open returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "disabled-admin", "secret-password", true)
+
+	app, err := New(cfg, store, logging.Discard())
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+	if err := app.BootstrapAdmin(context.Background(), cfg); err != nil {
+		t.Fatalf("BootstrapAdmin returned error: %v", err)
+	}
+
+	created, err := store.GetAdminUserByUsername(context.Background(), "boot-admin")
+	if err != nil {
+		t.Fatalf("GetAdminUserByUsername returned error: %v", err)
+	}
+	if created.Disabled {
+		t.Fatal("bootstrap admin should be active")
+	}
+}
+
+func TestAdminEndpointsRejectDisablingLastActiveAdmin(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	admin := seedAdminUser(t, store, "admin", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	rec := httptest.NewRecorder()
+	body := `{"username":"admin","disabled":true,"role":"admin"}`
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPut, "/api/v1/admin-users/"+strconv.FormatInt(admin.ID, 10), body, token))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), storage.ErrLastActiveAdmin.Error()) {
+		t.Fatalf("response body = %s, want %q", rec.Body.String(), storage.ErrLastActiveAdmin.Error())
+	}
+}
+
+func TestAdminEndpointsRejectDeletingLastActiveAdmin(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	admin := seedAdminUser(t, store, "admin", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodDelete, "/api/v1/admin-users/"+strconv.FormatInt(admin.ID, 10), "", token))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), storage.ErrLastActiveAdmin.Error()) {
+		t.Fatalf("response body = %s, want %q", rec.Body.String(), storage.ErrLastActiveAdmin.Error())
 	}
 }
 
