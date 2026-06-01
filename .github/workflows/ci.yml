@@ -14,10 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: npm ci
+        run: npm --prefix frontend ci
+      - name: npm run build
+        run: npm --prefix frontend run build
       - name: go vet
         run: go vet ./...
       - name: go test
@@ -44,10 +53,19 @@ jobs:
             goarch: amd64
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: npm ci
+        run: npm --prefix frontend ci
+      - name: npm run build
+        run: npm --prefix frontend run build
       - name: go build
         env:
           GOOS: ${{ matrix.goos }}

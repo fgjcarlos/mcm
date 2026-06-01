@@ -44,8 +44,10 @@ Pull requests should:
 For the current Go backend, run:
 
 ```bash
-go test ./...
+make test
 ```
+
+`make test` and `make build` generate `frontend/dist` before invoking the Go toolchain, which keeps the embedded frontend contract explicit in local development and CI. If you use `go test`, `go build`, or `go run` directly, run `npm --prefix frontend run build` first.
 
 ## Review and merge policy
 
