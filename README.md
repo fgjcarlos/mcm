@@ -337,14 +337,20 @@ npx -y @redocly/cli@latest preview-docs docs/openapi.yaml
 
 The spec is linted on every PR via `npx @redocly/cli lint` in CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml), `openapi` job), with rule overrides documented in [`redocly.yaml`](./redocly.yaml).
 
-### Metrics and observability
+### Health, readiness, and observability
+
+MCM exposes unauthenticated probe endpoints for operators and orchestrators:
+
+- `GET /healthz` — liveness only. It returns `{"status":"ok"}` when the HTTP process is running and should be used for restart decisions.
+- `GET /readyz` — readiness. It verifies required serving dependencies (currently SQLite) and returns `{"status":"ready"}` with HTTP 200 when the instance should receive traffic, or HTTP 503 with `{"status":"not_ready"}` while unavailable.
+- `GET /api/v1/status` — operational status snapshot for dashboards and humans, including broker connectivity and event metrics. Do not use it as a liveness probe; broker disconnects are reported here without implying the MCM process should be restarted.
 
 MCM exposes Prometheus metrics at `GET /metrics` (text exposition format, unauthenticated by design — gate it at your reverse proxy or via network policy in production).
 
 Exposed metric families:
 
-- `mcm_http_requests_total{method, route, status}` — HTTP request counter. `route` uses the ServeMux pattern (e.g. `GET /api/v1/admin-users/{id}`), never the raw URL, so cardinality stays bounded.
-- `mcm_http_request_duration_seconds{method, route}` — request latency histogram (default Prometheus buckets).
+- `mcm_http_requests_total{method, route, status}` — HTTP request counter. `method` is the request method, `route` is the ServeMux path pattern without the method prefix (for example `/api/v1/admin-users/{id}`), and `status` is the three-digit response status code. Unmatched requests use `route="unmatched"`; raw URLs and IDs are never labels, so cardinality stays bounded.
+- `mcm_http_request_duration_seconds{method, route}` — request latency histogram (default Prometheus buckets) using the same `method` and bounded `route` label contract.
 - `mcm_broker_status` — 1 when Mosquitto is connected, 0 otherwise.
 - `mcm_broker_reconnects_total` — broker disconnect transitions (each triggers an auto-reconnect attempt).
 - `mcm_broker_messages_total` — MQTT topic messages observed. Topic names are intentionally **not** labels.

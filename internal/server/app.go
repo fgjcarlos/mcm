@@ -145,6 +145,7 @@ func (a *App) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
+	mux.HandleFunc("GET /readyz", a.handleReadyz)
 	mux.Handle("GET /metrics", a.metrics.Handler())
 	mux.Handle("GET /api/v1/acls", a.requireRole(auth.RoleAuditor, http.HandlerFunc(aclAPI.handleListRules)))
 	mux.Handle("POST /api/v1/acls", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleCreateRule)))
@@ -282,6 +283,18 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	})
+}
+
+func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if err := a.store.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "not_ready",
+			"error":  "database unavailable",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {

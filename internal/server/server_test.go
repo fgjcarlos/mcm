@@ -57,6 +57,23 @@ func TestACLAPI_CreateAndListRules(t *testing.T) {
 	}
 }
 
+func TestACLAPI_Readyz(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(acl.NewMemoryStore())
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if !bytes.Contains(resp.Body.Bytes(), []byte(`"status":"ready"`)) {
+		t.Fatalf("response missing ready status; body=%s", resp.Body.String())
+	}
+}
+
 func TestACLAPI_RejectsInvalidTopicFilter(t *testing.T) {
 	t.Parallel()
 
