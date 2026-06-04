@@ -54,8 +54,41 @@ func TestHTTPRequestsCounterIncrementsOnAccess(t *testing.T) {
 	app.Handler().ServeHTTP(metricsRec, metricsReq)
 	body := metricsRec.Body.String()
 
-	if !strings.Contains(body, `mcm_http_requests_total{method="GET",route="GET /healthz",status="200"}`) {
+	if !strings.Contains(body, `mcm_http_requests_total{method="GET",route="/healthz",status="200"}`) {
 		t.Fatalf("metrics output missing healthz counter; body=%s", body)
+	}
+}
+
+func TestHTTPMetricsUseBoundedRouteLabels(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	handler := withRequestLogging(app.Handler(), logging.Discard(), app.metrics, nil)
+	for _, path := range []string{
+		"/api/v1/admin-users/123",
+		"/not-a-real-route/with/id/123",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		handler.ServeHTTP(rec, req)
+	}
+
+	metricsRec := httptest.NewRecorder()
+	metricsReq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	app.Handler().ServeHTTP(metricsRec, metricsReq)
+	body := metricsRec.Body.String()
+
+	for _, want := range []string{
+		`mcm_http_requests_total{method="GET",route="/api/v1/admin-users/{id}",status="401"}`,
+		`mcm_http_requests_total{method="GET",route="unmatched",status="404"}`,
+		`mcm_http_request_duration_seconds_count{method="GET",route="/api/v1/admin-users/{id}"}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics output missing %q; body=%s", want, body)
+		}
+	}
+	if strings.Contains(body, "/api/v1/admin-users/123") || strings.Contains(body, "/not-a-real-route/with/id/123") {
+		t.Fatalf("metrics output contains raw request path; body=%s", body)
 	}
 }
 

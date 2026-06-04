@@ -468,6 +468,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Ping verifies that the database connection is available.
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 // Init applies database migrations.
 func (s *Store) Init(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)

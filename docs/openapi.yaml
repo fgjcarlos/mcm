@@ -52,7 +52,7 @@ paths:
     get:
       tags: [Health]
       summary: Liveness probe
-      description: Returns 200 OK with a static body. Unauthenticated by design so probes can hit it without credentials.
+      description: Returns 200 OK with a static body. Use this for process liveness and restart decisions. Unauthenticated by design so probes can hit it without credentials.
       security: []
       responses:
         "200":
@@ -66,12 +66,47 @@ paths:
                     type: string
                     example: ok
                 required: [status]
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Checks required serving dependencies (currently SQLite). Use this for load-balancer or orchestrator readiness gates; use `/api/v1/status` for broker/operator status instead.
+      security: []
+      responses:
+        "200":
+          description: Service is ready to receive traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                required: [status]
+        "503":
+          description: Service is temporarily not ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: not_ready
+                  error:
+                    type: string
+                    example: database unavailable
+                required: [status]
   /metrics:
     get:
       tags: [Metrics]
       summary: Prometheus metrics
       description: |
         Prometheus text exposition format. See README for the metric reference.
+        HTTP metric labels are bounded: `route` is the ServeMux path pattern
+        without the method prefix (for example `/api/v1/admin-users/{id}`),
+        unmatched requests use `route="unmatched"`, and raw URLs are never used.
         Unauthenticated by design — gate at reverse proxy / network policy in production.
       security: []
       responses:
@@ -232,7 +267,7 @@ paths:
     get:
       tags: [Health]
       summary: Broker connection snapshot
-      description: Unauthenticated; reports broker status, target address, and recent traffic metrics.
+      description: Unauthenticated operator/dashboard snapshot; reports broker status, target address, and recent traffic metrics. This is not a liveness probe; use `/healthz` for liveness and `/readyz` for traffic readiness.
       security: []
       responses:
         "200":

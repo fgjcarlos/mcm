@@ -677,6 +677,33 @@ func TestSuccessfulLoginResetsFailedAttempts(t *testing.T) {
 	}
 }
 
+func TestAppReadyzChecksDatabase(t *testing.T) {
+	app, store := newTestApp(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"ready"`)) {
+		t.Fatalf("ready response missing status; body=%s", rec.Body.String())
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close returned error: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("not-ready status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"not_ready"`)) {
+		t.Fatalf("not-ready response missing status; body=%s", rec.Body.String())
+	}
+}
+
 func newTestApp(t *testing.T) (*App, *storage.Store) {
 	t.Helper()
 
