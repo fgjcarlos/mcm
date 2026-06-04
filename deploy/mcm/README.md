@@ -61,17 +61,17 @@ docker run --rm -p 8080:8080 \
 After starting the stack:
 
 ```bash
-# Check MCM health
-curl -s http://localhost:8080/api/v1/health | jq .
+# Check MCM liveness and readiness
+curl -s http://localhost:8080/healthz | jq .
+curl -s http://localhost:8080/readyz | jq .
 
 # Login
 curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin"}' | jq .
 
-# Check broker status (use the token from login)
-curl -s http://localhost:8080/api/v1/broker/status \
-  -H 'Authorization: Bearer <token>' | jq .
+# Check broker/MCM operational status
+curl -s http://localhost:8080/api/v1/status | jq .
 ```
 
 ## Security note

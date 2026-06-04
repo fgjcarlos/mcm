@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/metrics"
@@ -34,8 +35,8 @@ func RequestIDFromContext(ctx context.Context) string {
 // withRequestLogging wraps next so every request is annotated with a request ID, a
 // structured access log line is emitted at info level, and Prometheus HTTP metrics
 // (mcm_http_requests_total, mcm_http_request_duration_seconds) are updated. Labels
-// use the route pattern set by ServeMux ("other" for unmatched paths) to keep label
-// cardinality bounded — never the raw URL with IDs.
+// use the route path pattern set by ServeMux ("unmatched" for unmatched paths) to
+// keep label cardinality bounded — never the raw URL with IDs.
 func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Registry, trustedProxies []*net.IPNet) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -54,10 +55,7 @@ func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Reg
 		next.ServeHTTP(recorder, inner)
 		duration := time.Since(start)
 
-		route := inner.Pattern
-		if route == "" {
-			route = "other"
-		}
+		route := routeLabel(inner)
 
 		logger.LogAttrs(ctx, slog.LevelInfo, "http_request",
 			slog.String("request_id", requestID),
@@ -74,6 +72,17 @@ func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Reg
 			reg.HTTPRequestDuration.WithLabelValues(r.Method, route).Observe(duration.Seconds())
 		}
 	})
+}
+
+func routeLabel(r *http.Request) string {
+	if r.Pattern == "" {
+		return "unmatched"
+	}
+	prefix := r.Method + " "
+	if strings.HasPrefix(r.Pattern, prefix) {
+		return strings.TrimPrefix(r.Pattern, prefix)
+	}
+	return r.Pattern
 }
 
 func newRequestID() string {
@@ -122,4 +131,3 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	}
 	return s.ResponseWriter.Write(b)
 }
-

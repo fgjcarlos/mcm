@@ -1,5 +1,5 @@
 // Package metrics defines and registers the Prometheus metrics exposed by MCM at
-// /metrics. Labels are kept low-cardinality on purpose: HTTP path uses the route
+// /metrics. Labels are kept low-cardinality on purpose: HTTP route uses the path
 // pattern set by ServeMux (never the raw URL) and topic/payload data is never used
 // as a label.
 package metrics
@@ -40,11 +40,11 @@ func New() *Registry {
 		reg: reg,
 		HTTPRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "mcm_http_requests_total",
-			Help: "HTTP requests handled by MCM, labeled by method, route pattern, and status class.",
+			Help: "HTTP requests handled by MCM, labeled by method, route path pattern, and three-digit status code.",
 		}, []string{"method", "route", "status"}),
 		HTTPRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "mcm_http_request_duration_seconds",
-			Help:    "HTTP request duration in seconds, labeled by method and route pattern.",
+			Help:    "HTTP request duration in seconds, labeled by method and route path pattern.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"method", "route"}),
 		BrokerStatus: prometheus.NewGauge(prometheus.GaugeOpts{
