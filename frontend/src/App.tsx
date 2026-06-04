@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
+import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 
 type SparkplugMetadata = {
   namespace: string
@@ -139,16 +140,6 @@ type StatusResponse = {
   }
 }
 
-type AdminUser = {
-  id: number
-  username: string
-  disabled: boolean
-  role: 'viewer' | 'auditor' | 'operator' | 'admin' | string
-  mfa_enabled?: boolean
-  created_at: string
-  updated_at: string
-}
-
 type LoginResponse = {
   token?: string
   expires_at?: string
@@ -156,8 +147,6 @@ type LoginResponse = {
   mfa_required?: boolean
   mfa_challenge?: string
 }
-
-const tokenStorageKey = 'mcm_admin_token'
 
 type NavItem = {
   id: string
@@ -249,50 +238,7 @@ const emptyTrafficMetrics: BrokerTrafficMetrics = {
 }
 
 function App() {
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window !== 'undefined' ? window.localStorage.getItem(tokenStorageKey) : null,
-  )
-  const [currentUser, setCurrentUser] = useState<AdminUser | null>(null)
-
-  const handleLogin = (newToken: string, user: AdminUser) => {
-    window.localStorage.setItem(tokenStorageKey, newToken)
-    setCurrentUser(user)
-    setToken(newToken)
-  }
-
-  const handleLogout = () => {
-    window.localStorage.removeItem(tokenStorageKey)
-    setCurrentUser(null)
-    setToken(null)
-  }
-
-  useEffect(() => {
-    if (!token) return
-
-    let cancelled = false
-    fetch('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (response) => {
-        if (cancelled) return
-        if (response.status === 401) {
-          handleLogout()
-          return
-        }
-        if (!response.ok) {
-          throw new Error('Failed to verify session.')
-        }
-        const user = (await response.json()) as AdminUser
-        if (!cancelled) {
-          setCurrentUser(user)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) handleLogout()
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [token])
+  const { token, currentUser, handleLogin, handleLogout } = useAuthSession()
 
   if (!token) {
     return <LoginScreen onLogin={handleLogin} />
