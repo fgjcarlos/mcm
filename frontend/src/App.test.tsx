@@ -110,6 +110,42 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
   })
 }
 
+function authenticatedRoutes(token: string): Record<string, RouteHandler> {
+  return {
+    'GET /api/v1/auth/me': (init) => {
+      expect(init?.headers).toEqual(expect.objectContaining({ Authorization: `Bearer ${token}` }))
+
+      return jsonResponse({
+        id: 9,
+        username: 'restored-operator',
+        disabled: false,
+        role: 'operator',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      })
+    },
+    'GET /api/v1/status': () =>
+      jsonResponse({
+        broker: {
+          status: 'connected',
+          metrics: {
+            traffic: {
+              window_seconds: 300,
+              message_count: 1,
+              message_rate_per_minute: 0.2,
+              rate_points: [],
+              top_topics: [],
+              top_clients: [],
+              top_clients_available: false,
+              top_clients_note: 'Unavailable in tests.',
+              persistence: 'In-memory',
+            },
+          },
+        },
+      }),
+  }
+}
+
 describe('App', () => {
   const localStorageMock = new LocalStorageMock()
 
@@ -212,34 +248,7 @@ describe('App', () => {
     window.localStorage.setItem('mcm_admin_token', 'restored-token')
 
     const fetchMock = installFetchMock({
-      'GET /api/v1/auth/me': () =>
-        jsonResponse({
-          id: 9,
-          username: 'restored-operator',
-          disabled: false,
-          role: 'operator',
-          created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z',
-        }),
-      'GET /api/v1/status': () =>
-        jsonResponse({
-          broker: {
-            status: 'connected',
-            metrics: {
-              traffic: {
-                window_seconds: 300,
-                message_count: 1,
-                message_rate_per_minute: 0.2,
-                rate_points: [],
-                top_topics: [],
-                top_clients: [],
-                top_clients_available: false,
-                top_clients_note: 'Unavailable in tests.',
-                persistence: 'In-memory',
-              },
-            },
-          },
-        }),
+      ...authenticatedRoutes('restored-token'),
       'GET /api/v1/mqtt-users': (init) => {
         expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer restored-token' }))
 
@@ -259,7 +268,6 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText('Signed in')
-
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /users/i }))
 
@@ -270,6 +278,131 @@ describe('App', () => {
         '/api/v1/mqtt-users',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer restored-token' }),
+        }),
+      )
+    })
+  })
+
+  it('restores an operator session and loads the ACL policy workspace', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'acl-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('acl-token'),
+      'GET /api/v1/acls': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer acl-token' }))
+
+        return jsonResponse({
+          rules: [
+            {
+              id: 'rule-1',
+              principal: 'device-writer',
+              topic_filter: 'factory/line-1/#',
+              permission: 'write',
+              description: 'Line 1 telemetry writer',
+            },
+          ],
+        })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /acls/i }))
+
+    await screen.findByRole('heading', { name: 'ACL policy workspace' })
+    expect(await screen.findByText('device-writer')).toBeInTheDocument()
+    expect(screen.getByText('factory/line-1/#')).toBeInTheDocument()
+    expect(screen.getByText('write')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/acls',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer acl-token' }),
+        }),
+      )
+    })
+  })
+
+  it('shows the deploy not-configured state when deployment APIs are unavailable', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'deploy-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('deploy-token'),
+      'GET /api/v1/deployments': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer deploy-token' }))
+
+        return jsonResponse({ error: 'deploy service not configured' }, { status: 422 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /deploy/i }))
+
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    expect(await screen.findByText('Not configured')).toBeInTheDocument()
+    expect(screen.getByText('Deploy functionality is not configured on this MCM instance.')).toBeInTheDocument()
+  })
+
+  it('navigates across ACL and deploy panels in an authenticated session', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'multi-panel-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('multi-panel-token'),
+      'GET /api/v1/acls': () =>
+        jsonResponse({
+          rules: [
+            {
+              id: 'rule-2',
+              principal: 'analytics-reader',
+              topic_filter: 'analytics/+/state',
+              permission: 'read',
+            },
+          ],
+        }),
+      'GET /api/v1/deployments': () =>
+        jsonResponse({
+          deployments: [
+            {
+              id: 'dep-2026-01-01',
+              status: 'applied',
+              message: 'Configuration applied successfully.',
+              created_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /acls/i }))
+    expect(await screen.findByText('analytics-reader')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /deploy/i }))
+    expect(await screen.findByText('Configuration preview')).toBeInTheDocument()
+    expect(await screen.findByText('Configuration applied successfully.')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/acls',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer multi-panel-token' }),
+        }),
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/deployments',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer multi-panel-token' }),
         }),
       )
     })
