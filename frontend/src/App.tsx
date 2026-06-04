@@ -1,69 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
-
-type SparkplugMetadata = {
-  namespace: string
-  group_id: string
-  message_type: string
-  edge_node_id: string
-  device_id?: string
-}
-
-type SparkplugDecodedMetric = {
-  name: string
-  alias?: number
-  datatype: string
-  value: unknown
-  timestamp?: number
-  is_null?: boolean
-}
-
-type SparkplugDecodedPayload = {
-  timestamp: number
-  seq: number
-  metrics: SparkplugDecodedMetric[]
-  truncated: boolean
-}
-
-type BrokerEvent = {
-  type: 'broker_status' | 'topic_message' | 'broker_log'
-  status?: 'connected' | 'disconnected'
-  topic?: string
-  payload_preview?: string
-  payload_format?: 'json' | 'text' | 'binary'
-  payload_bytes?: number
-  truncated?: boolean
-  payload_inspection?: PayloadInspection
-  schema_validation?: SchemaValidation
-  sparkplug?: SparkplugMetadata
-  sparkplug_metrics?: SparkplugDecodedPayload
-  source?: string
-  severity?: 'debug' | 'info' | 'warning' | 'error'
-  message?: string
-  observed_at: string
-}
-
-type PayloadInspection = {
-  detected_type: 'json_object' | 'json_array' | 'json_scalar' | 'text' | 'binary' | string
-  byte_length: number
-  truncated: boolean
-  json_valid: boolean
-  json_top_level_keys?: string[]
-  json_element_count?: number
-  json_scalar_summary?: string
-}
-
-type SchemaValidation = {
-  schema_id: number
-  schema_name: string
-  topic_filter: string
-  valid: boolean
-  errors?: string[]
-}
-
-type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
-type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
+import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
+import {
+  defaultClientNote,
+  useBrokerStream,
+  type BrokerLog,
+  type BrokerRatePoint,
+  type BrokerTrafficItem,
+  type BrokerTrafficMetrics,
+  type BrokerStreamState,
+  type SchemaValidation,
+  type SparkplugDecodedPayload,
+  type SparkplugMetadata,
+  type TopicMessage,
+} from './features/broker/useBrokerStream'
 
 type AuditEvent = {
   id: number
@@ -108,52 +59,12 @@ type DeployPreview = {
   has_changes: boolean
 }
 
-type BrokerTrafficItem = {
-  name: string
-  count: number
-  percentage: number
-}
-
-type BrokerRatePoint = {
-  timestamp: string
-  count: number
-}
-
-type BrokerTrafficMetrics = {
-  window_seconds: number
-  message_count: number
-  message_rate_per_minute: number
-  rate_points: BrokerRatePoint[]
-  top_topics: BrokerTrafficItem[]
-  top_clients: BrokerTrafficItem[]
-  top_clients_available: boolean
-  top_clients_note: string
-  persistence: string
-}
-
-type StatusResponse = {
-  broker: {
-    status: 'connected' | 'disconnected'
-    metrics: {
-      traffic: BrokerTrafficMetrics
-    }
-  }
-}
-
 type LoginResponse = {
   token?: string
   expires_at?: string
   user?: AdminUser
   mfa_required?: boolean
   mfa_challenge?: string
-}
-
-type NavItem = {
-  id: string
-  label: string
-  eyebrow: string
-  title: string
-  description: string
 }
 
 const navItems: NavItem[] = [
@@ -222,21 +133,6 @@ const navItems: NavItem[] = [
   },
 ]
 
-const trafficWindowSeconds = 300
-const defaultClientNote = 'Client identity is not included in MQTT application messages observed via wildcard subscriptions. Enable broker-side client metrics or log ingestion to populate this widget in a future release.'
-
-const emptyTrafficMetrics: BrokerTrafficMetrics = {
-  window_seconds: trafficWindowSeconds,
-  message_count: 0,
-  message_rate_per_minute: 0,
-  rate_points: [],
-  top_topics: [],
-  top_clients: [],
-  top_clients_available: false,
-  top_clients_note: defaultClientNote,
-  persistence: 'Waiting for broker metrics.',
-}
-
 function App() {
   const { token, currentUser, handleLogin, handleLogout } = useAuthSession()
 
@@ -257,67 +153,20 @@ function App() {
 
 function Dashboard({ token, currentUser, onLogout }: { token: string; currentUser: AdminUser; onLogout: () => void }) {
   const [activeId, setActiveId] = useState<string>(navItems[0].id)
-  const [brokerStatus, setBrokerStatus] = useState<'connected' | 'disconnected'>('disconnected')
-  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
-  const [topics, setTopics] = useState<TopicMessage[]>([])
-  const [trafficEvents, setTrafficEvents] = useState<TopicMessage[]>([])
-  const [trafficMetrics, setTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
-  const [logs, setLogs] = useState<BrokerLog[]>([])
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [securityError, setSecurityError] = useState<string>('')
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditError, setAuditError] = useState<string>('')
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/v1/status')
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error('status request failed'))))
-      .then((status: StatusResponse) => {
-        if (cancelled) return
-        setBrokerStatus(status.broker.status)
-        setTrafficMetrics(status.broker.metrics.traffic ?? emptyTrafficMetrics)
-      })
-      .catch(() => {
-        if (!cancelled) setTrafficMetrics(emptyTrafficMetrics)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(
-      `${protocol}//${window.location.host}/api/v1/broker/events`,
-      ['mcm.v1', `Bearer.${token}`],
-    )
-
-    socket.addEventListener('open', () => setStreamState('connected'))
-    socket.addEventListener('close', () => setStreamState('disconnected'))
-    socket.addEventListener('error', () => setStreamState('disconnected'))
-    socket.addEventListener('message', (message) => {
-      try {
-        const event = JSON.parse(message.data) as BrokerEvent
-        if (event.type === 'broker_status' && event.status) {
-          setBrokerStatus(event.status)
-        }
-        if (event.type === 'topic_message' && event.topic) {
-          const topicEvent = event as TopicMessage
-          setTopics((current) => [topicEvent, ...current].slice(0, 20))
-          setTrafficEvents((current) => pruneTrafficEvents([topicEvent, ...current]))
-        }
-        if (event.type === 'broker_log' && event.source && event.severity && event.message) {
-          setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
-        }
-      } catch {
-        setStreamState('disconnected')
-      }
-    })
-
-    return () => socket.close()
-  }, [token])
+  const {
+    brokerStatus,
+    streamState,
+    topics,
+    latestTopic,
+    logs,
+    uniqueTopicCount,
+    liveTrafficMetrics,
+  } = useBrokerStream(token)
 
   useEffect(() => {
     if (activeId !== 'security') return
@@ -363,113 +212,37 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
       .catch((error: Error) => setAuditError(error.message))
   }, [activeId, token, onLogout])
 
-  const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
-  const liveTrafficMetrics = useMemo(
-    () => (trafficEvents.length > 0 ? buildTrafficMetrics(trafficEvents, trafficMetrics) : trafficMetrics),
-    [trafficEvents, trafficMetrics],
-  )
-  const latestTopic = topics[0]
-
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-8">
-        <aside className="mb-4 w-full rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur lg:mb-0 lg:w-80 lg:p-6">
-          <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Control Manager</h1>
-            </div>
-            <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">Alpha</div>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Broker</span>
-              <span className={`h-3 w-3 rounded-full ${brokerStatus === 'connected' ? 'bg-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.9)]' : 'bg-rose-400'}`} />
-            </div>
-            <p className="mt-2 text-lg font-semibold capitalize text-white">{brokerStatus}</p>
-            <p className="mt-1 text-xs text-slate-400">Event stream: {streamState}</p>
-          </div>
-
-          <nav className="mt-8 space-y-2" aria-label="Primary navigation">
-            {navItems.map((item, index) => {
-              const isActive = item.id === activeItem.id
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveId(item.id)}
-                  className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
-                    isActive
-                      ? 'border-cyan-300/40 bg-cyan-300/12 text-white shadow-lg shadow-cyan-950/30'
-                      : 'border-white/5 bg-white/[0.03] text-slate-300 hover:border-white/15 hover:bg-white/[0.06] hover:text-white'
-                  }`}
-                >
-                  <span>
-                    <span className="block text-sm font-semibold">{item.label}</span>
-                    <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
-                  </span>
-                  <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
-                </button>
-              )
-            })}
-          </nav>
-
-          <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Signed in</p>
-                <p className="mt-1 truncate text-sm font-semibold text-white">{currentUser.username}</p>
-                <p className="mt-1 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100">{currentUser.role}</p>
-              </div>
-              <button
-                type="button"
-                onClick={onLogout}
-                className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-rose-100 transition hover:border-rose-300/60 hover:bg-rose-400/20"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </aside>
-
-        <main className="flex-1 lg:pl-6">
-          <div className="rounded-[2rem] border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-slate-950/40 backdrop-blur sm:p-8">
-            <div className="flex flex-col gap-6 border-b border-white/10 pb-8 xl:flex-row xl:items-end xl:justify-between">
-              <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">{activeItem.eyebrow}</p>
-                <h2 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">{activeItem.title}</h2>
-                <p className="mt-4 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">{activeItem.description}</p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 sm:min-w-[24rem]">
-                <Metric label="Status" value={brokerStatus} />
-                <Metric label="Topics" value={String(uniqueTopicCount).padStart(2, '0')} />
-                <Metric label="Logs" value={String(logs.length).padStart(2, '0')} />
-              </div>
-            </div>
-
-            {activeId === 'logs' ? (
-              <LogsPanel logs={logs} streamState={streamState} />
-            ) : activeId === 'security' ? (
-              <SecurityPanel events={securityEvents} error={securityError} />
-            ) : activeId === 'audit' ? (
-              <AuditPanel events={auditEvents} error={auditError} />
-            ) : activeId === 'dashboard' ? (
-              <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
-            ) : activeId === 'acls' ? (
-              <ACLPanel token={token} />
-            ) : activeId === 'users' ? (
-              <MQTTUsersPanel token={token} />
-            ) : activeId === 'deploy' ? (
-              <DeployPanel token={token} />
-            ) : (
-              <TopicsPanel topics={topics} latestTopic={latestTopic} />
-            )}
-          </div>
-        </main>
-      </div>
-    </div>
+    <DashboardFrame
+      navItems={navItems}
+      activeItem={activeItem}
+      activeId={activeId}
+      brokerStatus={brokerStatus}
+      streamState={streamState}
+      uniqueTopicCount={uniqueTopicCount}
+      logCount={logs.length}
+      currentUser={currentUser}
+      onSelectNav={setActiveId}
+      onLogout={onLogout}
+    >
+      {activeId === 'logs' ? (
+        <LogsPanel logs={logs} streamState={streamState} />
+      ) : activeId === 'security' ? (
+        <SecurityPanel events={securityEvents} error={securityError} />
+      ) : activeId === 'audit' ? (
+        <AuditPanel events={auditEvents} error={auditError} />
+      ) : activeId === 'dashboard' ? (
+        <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
+      ) : activeId === 'acls' ? (
+        <ACLPanel token={token} />
+      ) : activeId === 'users' ? (
+        <MQTTUsersPanel token={token} />
+      ) : activeId === 'deploy' ? (
+        <DeployPanel token={token} />
+      ) : (
+        <TopicsPanel topics={topics} latestTopic={latestTopic} />
+      )}
+    </DashboardFrame>
   )
 }
 
@@ -871,7 +644,7 @@ function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) 
   )
 }
 
-function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: 'connecting' | 'connected' | 'disconnected' }) {
+function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: BrokerStreamState }) {
   return (
     <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1444,62 +1217,6 @@ function SeverityBadge({ severity }: { severity: BrokerLog['severity'] }) {
   }[severity]
 
   return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${className}`}>{severity}</span>
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
-      <div className="font-mono text-2xl font-semibold capitalize text-white">{value}</div>
-      <div className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">{label}</div>
-    </div>
-  )
-}
-
-function pruneTrafficEvents(events: TopicMessage[]) {
-  const cutoff = Date.now() - trafficWindowSeconds * 1000
-  return events.filter((event) => new Date(event.observed_at).getTime() >= cutoff).slice(0, 5000)
-}
-
-function buildTrafficMetrics(events: TopicMessage[], base: BrokerTrafficMetrics): BrokerTrafficMetrics {
-  const pruned = pruneTrafficEvents(events)
-  const topicCounts = new Map<string, number>()
-  const bucketCounts = new Map<number, number>()
-  let messageCount = base.message_count
-
-  base.top_topics.forEach((item) => topicCounts.set(item.name, item.count))
-  base.rate_points.forEach((point) => bucketCounts.set(new Date(point.timestamp).getTime(), point.count))
-
-  pruned.forEach((event) => {
-    messageCount += 1
-    topicCounts.set(event.topic, (topicCounts.get(event.topic) ?? 0) + 1)
-    const observedAt = new Date(event.observed_at)
-    observedAt.setSeconds(0, 0)
-    bucketCounts.set(observedAt.getTime(), (bucketCounts.get(observedAt.getTime()) ?? 0) + 1)
-  })
-
-  const now = new Date()
-  now.setSeconds(0, 0)
-  const ratePoints: BrokerRatePoint[] = []
-  for (let offset = Math.floor(trafficWindowSeconds / 60); offset >= 0; offset -= 1) {
-    const timestamp = new Date(now.getTime() - offset * 60_000)
-    ratePoints.push({ timestamp: timestamp.toISOString(), count: bucketCounts.get(timestamp.getTime()) ?? 0 })
-  }
-
-  const topTopics = [...topicCounts.entries()]
-    .map(([name, count]) => ({ name, count, percentage: messageCount === 0 ? 0 : (count * 100) / messageCount }))
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
-    .slice(0, 5)
-
-  return {
-    ...base,
-    window_seconds: trafficWindowSeconds,
-    message_count: messageCount,
-    message_rate_per_minute: messageCount / (trafficWindowSeconds / 60),
-    rate_points: ratePoints,
-    top_topics: topTopics,
-    top_clients_available: false,
-    top_clients_note: base.top_clients_note || defaultClientNote,
-  }
 }
 
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {
