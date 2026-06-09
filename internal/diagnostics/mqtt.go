@@ -3,16 +3,15 @@ package diagnostics
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/tlsutil"
 )
 
 const defaultMQTTDialTimeout = 5 * time.Second
@@ -106,7 +105,7 @@ func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.D
 	defer conn.Close()
 
 	if cfg.TLS.Enabled {
-		tlsConfig, err := buildTLSConfig(cfg)
+		tlsConfig, err := tlsutil.BuildMosquittoTLSConfig(cfg)
 		if err != nil {
 			return diagnosticError(mqttStageConfig, "%w", err)
 		}
@@ -149,42 +148,6 @@ func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.D
 	return nil
 }
 
-func buildTLSConfig(cfg config.MosquittoConfig) (*tls.Config, error) {
-	serverName := strings.TrimSpace(cfg.Host)
-
-	tlsConfig := &tls.Config{ //nolint:gosec // User-controlled diagnostic option for local/self-signed brokers.
-		MinVersion:         tls.VersionTLS12,
-		ServerName:         serverName,
-		InsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
-	}
-
-	if strings.TrimSpace(cfg.TLS.CACertFile) != "" {
-		caPEM, err := os.ReadFile(cfg.TLS.CACertFile)
-		if err != nil {
-			return nil, fmt.Errorf("read mosquitto.tls.ca_cert_file %q: %w", cfg.TLS.CACertFile, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("mosquitto.tls.ca_cert_file %q does not contain a valid PEM CA certificate", cfg.TLS.CACertFile)
-		}
-		tlsConfig.RootCAs = pool
-	}
-
-	clientCertFile := strings.TrimSpace(cfg.TLS.ClientCertFile)
-	clientKeyFile := strings.TrimSpace(cfg.TLS.ClientKeyFile)
-	if clientCertFile != "" || clientKeyFile != "" {
-		if clientCertFile == "" || clientKeyFile == "" {
-			return nil, fmt.Errorf("mosquitto.tls.client_cert_file and mosquitto.tls.client_key_file must both be set for client certificate authentication")
-		}
-		cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("load Mosquitto client certificate/key pair: %w", err)
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-
-	return tlsConfig, nil
-}
 
 func mqttConnackReturnCode(code byte) string {
 	switch code {

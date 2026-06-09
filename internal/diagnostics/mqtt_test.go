@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/tlsutil"
 )
 
 func TestCheckMQTTConnectivityReportsReachableBroker(t *testing.T) {
@@ -86,12 +87,26 @@ func TestBuildTLSConfigReportsMissingClientKeyPairFile(t *testing.T) {
 	cfg.TLS.Enabled = true
 	cfg.TLS.ClientCertFile = "client.crt"
 
-	_, err := buildTLSConfig(cfg)
+	_, err := tlsutil.BuildMosquittoTLSConfig(cfg)
 	if err == nil {
-		t.Fatal("buildTLSConfig returned nil error, want missing key pair error")
+		t.Fatal("BuildMosquittoTLSConfig returned nil error, want missing key pair error")
 	}
 	if !strings.Contains(err.Error(), "client_cert_file") || !strings.Contains(err.Error(), "client_key_file") {
 		t.Fatalf("error = %q, want actionable client cert/key message", err.Error())
+	}
+}
+
+func TestBuildTLSConfigIPHostYieldsEmptyServerName(t *testing.T) {
+	cfg := config.Default().Mosquitto
+	cfg.Host = "127.0.0.1"
+	cfg.TLS.Enabled = true
+
+	tlsCfg, err := tlsutil.BuildMosquittoTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildMosquittoTLSConfig returned error: %v", err)
+	}
+	if tlsCfg.ServerName != "" {
+		t.Fatalf("ServerName = %q, want empty string for IP host", tlsCfg.ServerName)
 	}
 }
 
