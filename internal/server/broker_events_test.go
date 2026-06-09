@@ -116,6 +116,31 @@ func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
 	}
 }
 
+func TestBrokerEventsWebSocketSendsRecentTopicBacklogOnConnect(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	app.brokerEvents.Publish(TopicEvent("factory/line1/temperature", []byte(`{"temperature":21.5}`), 256))
+
+	server := httptest.NewServer(app.Handler())
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn := openAuthorizedTestWebSocket(t, ctx, app, server.URL, "/api/v1/broker/events")
+	defer conn.CloseNow()
+
+	initialFrame := readTestWebSocketFrame(t, ctx, conn)
+	if !strings.Contains(initialFrame, `"type":"broker_status"`) {
+		t.Fatalf("initial websocket frame = %s, want broker status", initialFrame)
+	}
+
+	topicFrame := readTestWebSocketFrame(t, ctx, conn)
+	if !strings.Contains(topicFrame, `"type":"topic_message"`) || !strings.Contains(topicFrame, `"topic":"factory/line1/temperature"`) {
+		t.Fatalf("topic backlog frame = %s, want recent topic event", topicFrame)
+	}
+}
+
 func TestTopicEventTruncatesLargePayloads(t *testing.T) {
 	event := TopicEvent("factory/large", []byte("1234567890"), 6)
 	if !event.Truncated {

@@ -30,7 +30,8 @@ import (
 const (
 	maxPayloadPreviewBytes        = 1024
 	maxBrokerLogBuffer            = 100
-	brokerEventSubscriberCapacity = maxBrokerLogBuffer + 16
+	maxBrokerInitialTopicEvents   = 20
+	brokerEventSubscriberCapacity = maxBrokerLogBuffer + maxBrokerInitialTopicEvents + 16
 	brokerTrafficWindow           = 5 * time.Minute
 	maxBrokerTrafficEvents        = 5000
 )
@@ -159,6 +160,13 @@ func (h *BrokerEventHub) Subscribe() (<-chan BrokerEvent, func()) {
 	h.mu.Lock()
 	ch <- h.status
 	for _, event := range h.logs {
+		ch <- event
+	}
+	trafficStart := len(h.trafficEvents) - maxBrokerInitialTopicEvents
+	if trafficStart < 0 {
+		trafficStart = 0
+	}
+	for _, event := range h.trafficEvents[trafficStart:] {
 		ch <- event
 	}
 	h.subscribers[ch] = struct{}{}
