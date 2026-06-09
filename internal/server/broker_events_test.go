@@ -18,6 +18,87 @@ import (
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
+// TestBrokerEventsWebSocketSurvivesServerWriteTimeout verifies that a long-lived
+// WebSocket subscriber is NOT forcibly closed by the http.Server WriteTimeout.
+//
+// Empirical finding (issue #161): the WebSocket connection survives the server
+// WriteTimeout because http.Hijacker.Hijack() clears connection deadlines via an
+// internal SetDeadline(time.Time{}) call (see net/http/server.go hijackLocked).
+// No production code change is required — this test exists to guard that contract
+// for future Go / library upgrades and middleware changes that might reintroduce
+// a deadline on the hijacked connection.
+//
+// This test uses a real http.Server with a short WriteTimeout (not httptest.NewServer
+// whose WriteTimeout is 0) and asserts the WebSocket connection stays alive for
+// > 3× that WriteTimeout.
+func TestBrokerEventsWebSocketSurvivesServerWriteTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: test requires real timing (not short)")
+	}
+
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Very short WriteTimeout makes the problem manifest quickly.
+	// Production uses 30 s; we shrink it here so the test runs in < 2 s.
+	const writeTimeout = 300 * time.Millisecond
+	// Hold the connection for > 3× the WriteTimeout to prove no server-side
+	// deadline is ending the connection prematurely.
+	const holdDuration = 3 * writeTimeout
+
+	// Use a real http.Server (not httptest.NewServer whose WriteTimeout is 0).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen returned error: %v", err)
+	}
+	srv := &http.Server{
+		Handler:      app.Handler(),
+		WriteTimeout: writeTimeout,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	serverURL := "http://" + ln.Addr().String()
+
+	ctx, cancel := context.WithTimeout(context.Background(), holdDuration+2*time.Second)
+	defer cancel()
+
+	conn := openAuthorizedTestWebSocket(t, ctx, app, serverURL, "/api/v1/broker/events")
+	defer conn.CloseNow()
+
+	// Read the initial broker_status frame (always sent on subscribe).
+	initialFrame := readTestWebSocketFrame(t, ctx, conn)
+	if !strings.Contains(initialFrame, `"type":"broker_status"`) {
+		t.Fatalf("initial websocket frame = %s, want broker_status", initialFrame)
+	}
+
+	// Publish events and read them continuously for holdDuration (> 3× WriteTimeout).
+	// If the server's WriteTimeout deadline were still active on the hijacked
+	// connection, writes would fail and the server would close the conn.
+	deadline := time.Now().Add(holdDuration)
+	for time.Now().Before(deadline) {
+		app.brokerEvents.Publish(TopicEvent("test/heartbeat", []byte(`"ping"`), 64))
+		readCtx, readCancel := context.WithTimeout(ctx, writeTimeout+100*time.Millisecond)
+		_, _, readErr := conn.Read(readCtx)
+		readCancel()
+		if readErr != nil {
+			t.Fatalf(
+				"WebSocket connection dropped after %s hold (WriteTimeout=%s): %v",
+				time.Since(deadline.Add(-holdDuration)), writeTimeout, readErr,
+			)
+		}
+	}
+
+	// One final event to confirm the connection is still healthy at the end.
+	app.brokerEvents.Publish(TopicEvent("test/final", []byte(`"done"`), 64))
+	finalCtx, finalCancel := context.WithTimeout(ctx, writeTimeout+100*time.Millisecond)
+	defer finalCancel()
+	_, _, finalErr := conn.Read(finalCtx)
+	if finalErr != nil {
+		t.Fatalf("WebSocket connection not alive after %s hold: %v", holdDuration, finalErr)
+	}
+}
+
 func TestBrokerEventsWebSocketRejectsMissingBearerToken(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
