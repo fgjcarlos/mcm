@@ -244,6 +244,71 @@ describe('App', () => {
     expect(MockWebSocket.instances).toHaveLength(0)
   })
 
+  it('renders populated dashboard traffic widgets and latest broker activity', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'dashboard-token')
+
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/me': () =>
+        jsonResponse({
+          id: 8,
+          username: 'dashboard-operator',
+          disabled: false,
+          role: 'operator',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+      'GET /api/v1/status': () =>
+        jsonResponse({
+          broker: {
+            status: 'connected',
+            metrics: {
+              traffic: {
+                window_seconds: 300,
+                message_count: 6,
+                message_rate_per_minute: 1.2,
+                rate_points: [
+                  { timestamp: '2026-01-01T00:00:00Z', count: 2 },
+                  { timestamp: '2026-01-01T00:01:00Z', count: 4 },
+                ],
+                top_topics: [{ name: 'factory/line-1/temperature', count: 4, percentage: 67 }],
+                top_clients: [{ name: 'edge-client-01', count: 6, percentage: 100 }],
+                top_clients_available: true,
+                top_clients_note: '',
+                persistence: 'persisted broker metric events are used when available',
+              },
+            },
+          },
+        }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    expect(await screen.findByText('1.2')).toBeInTheDocument()
+    expect(screen.getByLabelText(/4 messages at/i)).toBeInTheDocument()
+    expect(screen.getByText('edge-client-01')).toBeInTheDocument()
+    expect(screen.getByText('persisted broker metric events are used when available')).toBeInTheDocument()
+
+    MockWebSocket.instances[0]?.emit(
+      'message',
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'topic_message',
+          topic: 'factory/line-1/temperature',
+          payload_preview: '{"temperature":21.5}',
+          payload_format: 'json',
+          payload_bytes: 20,
+          observed_at: '2026-01-01T00:02:00Z',
+        }),
+      }),
+    )
+
+    expect(await screen.findByText('{"temperature":21.5}')).toBeInTheDocument()
+    expect(screen.getByText('json')).toBeInTheDocument()
+    expect(screen.getByText('20')).toBeInTheDocument()
+  })
+
   it('restores an operator session and loads the MQTT users view', async () => {
     window.localStorage.setItem('mcm_admin_token', 'restored-token')
 

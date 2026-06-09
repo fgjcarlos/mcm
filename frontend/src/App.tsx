@@ -247,6 +247,8 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
 }
 
 function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTrafficMetrics; topics: TopicMessage[]; latestTopic?: TopicMessage }) {
+  const hasRateSamples = metrics.rate_points.some((point) => point.count > 0)
+
   return (
     <section className="mt-8 space-y-4">
       <div className="grid gap-4 lg:grid-cols-3">
@@ -258,6 +260,7 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
           </div>
           <p className="mt-2 text-sm text-slate-300">{metrics.message_count} messages in the last {Math.round(metrics.window_seconds / 60)} minutes.</p>
           <RateChart points={metrics.rate_points} />
+          {!hasRateSamples ? <p className="mt-3 text-xs uppercase tracking-[0.18em] text-cyan-100/70">Waiting for the first rate sample</p> : null}
         </article>
 
         <HotspotCard title="Top topics" empty="No topic activity in the recent window." items={metrics.top_topics} />
@@ -267,9 +270,13 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
           {metrics.top_clients_available && metrics.top_clients.length > 0 ? (
             <TrafficBars items={metrics.top_clients} />
           ) : (
-            <div className="mt-4 rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50">
-              <p className="font-semibold">Not available from subscribed messages</p>
-              <p className="mt-2 text-amber-50/80">{metrics.top_clients_note || defaultClientNote}</p>
+            <div className="mt-4 space-y-3 rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50">
+              <p className="font-semibold">Client IDs unavailable</p>
+              <p className="text-amber-50/80">{metrics.top_clients_note || defaultClientNote}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <WidgetFact label="Observed messages" value={String(metrics.message_count)} />
+                <WidgetFact label="Topic hotspots" value={String(metrics.top_topics.length)} />
+              </div>
             </div>
           )}
         </article>
@@ -278,15 +285,45 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
       <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
         <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Metric source</p>
-          <p className="mt-3 text-sm leading-6 text-slate-300">{metrics.persistence || 'Recent traffic is held in memory for this browser session.'}</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <WidgetFact label="Source" value={metrics.persistence || 'Browser memory'} />
+            <WidgetFact label="Window" value={`${Math.round(metrics.window_seconds / 60)} min`} />
+            <WidgetFact label="Samples" value={String(metrics.rate_points.length)} />
+          </div>
         </article>
         <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Latest activity</p>
-          <p className="mt-3 text-sm text-slate-300">{latestTopic ? latestTopic.topic : topics.length === 0 ? 'Waiting for topic traffic.' : `${topics.length} recent messages loaded.`}</p>
-          {latestTopic?.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} compact /> : null}
+          {latestTopic ? (
+            <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <p className="break-all font-mono text-sm text-cyan-50">{latestTopic.topic}</p>
+                <span className="shrink-0 text-xs text-cyan-100/70">{new Date(latestTopic.observed_at).toLocaleTimeString()}</span>
+              </div>
+              <p className="mt-3 line-clamp-2 break-all text-sm text-slate-200">{latestTopic.payload_preview || 'Payload preview unavailable.'}</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <WidgetFact label="Format" value={latestTopic.payload_format ?? 'unknown'} />
+                <WidgetFact label="Bytes" value={String(latestTopic.payload_bytes ?? 0)} />
+                <WidgetFact label="Recent list" value={`${topics.length} messages`} />
+              </div>
+              {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} compact /> : null}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-slate-950/30 p-4 text-sm text-slate-300">
+              Waiting for topic traffic from the broker stream.
+            </div>
+          )}
         </article>
       </div>
     </section>
+  )
+}
+
+function WidgetFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
+      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-1 break-words font-mono text-sm text-white">{value}</p>
+    </div>
   )
 }
 
@@ -329,12 +366,15 @@ function RateChart({ points }: { points: BrokerRatePoint[] }) {
       {visiblePoints.length === 0 ? (
         <span className="self-center text-sm text-slate-300">No rate samples yet.</span>
       ) : (
-        visiblePoints.map((point) => (
-          <div key={point.timestamp} className="flex flex-1 flex-col items-center justify-end gap-1">
-            <div className="w-full rounded-t bg-cyan-300/80" style={{ height: `${Math.max(8, (point.count / maxCount) * 100)}%` }} title={`${point.count} messages`} />
-            <span className="text-[0.6rem] text-slate-400">{new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}</span>
-          </div>
-        ))
+        visiblePoints.map((point) => {
+          const label = `${point.count} messages at ${new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}`
+          return (
+            <div key={point.timestamp} className="flex flex-1 flex-col items-center justify-end gap-1">
+              <div className="w-full rounded-t bg-cyan-300/80" style={{ height: `${Math.max(8, (point.count / maxCount) * 100)}%` }} title={label} aria-label={label} />
+              <span className="text-[0.6rem] text-slate-400">{new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}</span>
+            </div>
+          )
+        })
       )}
     </div>
   )
