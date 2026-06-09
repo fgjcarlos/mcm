@@ -28,6 +28,10 @@ type heartbeatRequest struct {
 func (e *edgeAPI) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var req heartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}

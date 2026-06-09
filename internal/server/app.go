@@ -135,6 +135,12 @@ func (a *App) loadCurrentUser(ctx context.Context, claims auth.UserClaims) (stor
 }
 
 // Handler returns the configured HTTP handler tree.
+//
+// Body-size limiting: the entire mux is wrapped with withBodyLimit so every route —
+// including pre-auth endpoints such as POST /api/v1/auth/login — enforces the 1 MiB
+// cap. Routes that carry no body (GET /healthz, GET /metrics, GET /api/v1/broker/events
+// WebSocket upgrade) are unaffected because http.MaxBytesReader is a no-op when
+// nothing is read from the body.
 func (a *App) Handler() http.Handler {
 	aclAPI := &aclAPI{
 		store:                 a.aclStore,
@@ -190,7 +196,7 @@ func (a *App) Handler() http.Handler {
 	if a.frontendFS != nil {
 		mux.Handle("/", spaHandler(a.frontendFS))
 	}
-	return mux
+	return withBodyLimit(mux, apiBodyLimitBytes)
 }
 
 type statusResponse struct {
@@ -300,6 +306,10 @@ func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
@@ -393,6 +403,10 @@ type loginMFARequest struct {
 func (a *App) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 	var req loginMFARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
@@ -790,6 +804,10 @@ func decodeJSONSchemaRequest(w http.ResponseWriter, r *http.Request) (jsonSchema
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return req, false
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return req, false
 	}
@@ -1002,6 +1020,10 @@ func currentUserFromContext(ctx context.Context) (auth.UserClaims, bool) {
 func decodeAdminUserRequest(w http.ResponseWriter, r *http.Request) (adminUserRequest, bool) {
 	var req adminUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return adminUserRequest{}, false
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return adminUserRequest{}, false
 	}

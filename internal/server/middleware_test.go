@@ -10,6 +10,69 @@ import (
 	"testing"
 )
 
+// TestRequestBodyLimitLoginReturns413 verifies that an oversized body sent to the
+// pre-auth POST /api/v1/auth/login endpoint returns HTTP 413, not 400 or 401.
+// This test fails on main (no MaxBytesReader applied) and must pass after the fix.
+func TestRequestBodyLimitLoginReturns413(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Build a body that exceeds apiBodyLimitBytes (1 MiB).
+	oversized := bytes.Repeat([]byte("a"), int(apiBodyLimitBytes)+1)
+	body := append([]byte(`{"username":"admin","password":"`), oversized...)
+	body = append(body, '"', '}')
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+// TestRequestBodyLimitMutationRouteReturns413 verifies that an oversized body on an
+// authenticated mutation route (POST /api/v1/admin-users) also returns HTTP 413.
+func TestRequestBodyLimitMutationRouteReturns413(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	token := loginAsSeededUser(t, app, store, "admin", "secret-password")
+
+	oversized := bytes.Repeat([]byte("x"), int(apiBodyLimitBytes)+1)
+	body := append([]byte(`{"username":"`), oversized...)
+	body = append(body, '"', '}')
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin-users", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+// TestRequestBodyLimitNormalRequestSucceeds verifies that a normal-sized login
+// request is not rejected by the body limit middleware.
+func TestRequestBodyLimitNormalRequestSucceeds(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestRequestIDMiddlewareGeneratesIDWhenAbsent(t *testing.T) {
 	var capturedID string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
