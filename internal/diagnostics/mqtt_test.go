@@ -96,6 +96,20 @@ func TestBuildTLSConfigReportsMissingClientKeyPairFile(t *testing.T) {
 	}
 }
 
+func TestBuildTLSConfigIPHostYieldsEmptyServerName(t *testing.T) {
+	cfg := config.Default().Mosquitto
+	cfg.Host = "127.0.0.1"
+	cfg.TLS.Enabled = true
+
+	tlsCfg, err := tlsutil.BuildMosquittoTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildMosquittoTLSConfig returned error: %v", err)
+	}
+	if tlsCfg.ServerName != "" {
+		t.Fatalf("ServerName = %q, want empty string for IP host", tlsCfg.ServerName)
+	}
+}
+
 func TestBuildMQTTConnectPacketIncludesCredentials(t *testing.T) {
 	cfg := config.Default().Mosquitto
 	cfg.Username = "admin"
