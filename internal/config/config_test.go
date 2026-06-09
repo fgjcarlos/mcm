@@ -580,6 +580,178 @@ func TestWriteExample(t *testing.T) {
 	}
 }
 
+// validBaseConfig is a minimal syntactically-valid config used across table
+// tests that only want to vary one or two fields.
+const validBaseConfig = `
+http:
+  bind_address: 127.0.0.1
+  port: 8080
+database:
+  path: var/lib/mcm/mcm.db
+mosquitto:
+  host: 127.0.0.1
+  port: 1883
+metrics:
+  broker_retention: 168h
+logging:
+  level: info
+`
+
+func TestParseRejectsInsecureBootstrapAdminPassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		username    string
+		password    string
+		wantOK      bool
+		wantProblem string
+	}{
+		{
+			name:        "trivial password admin rejected",
+			username:    "operator",
+			password:    "admin",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "trivial password password rejected",
+			username:    "operator",
+			password:    "password",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "trivial password changeme rejected",
+			username:    "operator",
+			password:    "changeme",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "trivial password change-this-admin-password rejected (insecure default secret)",
+			username:    "operator",
+			password:    "change-this-admin-password",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "trivial password 12345678 rejected",
+			username:    "operator",
+			password:    "12345678",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "short password rejected",
+			username:    "operator",
+			password:    "short",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "password equals username rejected (case-insensitive)",
+			username:    "Operator",
+			password:    "operator",
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:     "strong password accepted",
+			username: "operator",
+			password: "Str0ng-P@ssw0rd-2024!",
+			wantOK:   true,
+		},
+		{
+			name:     "exactly 8 characters non-trivial accepted",
+			username: "operator",
+			password: "Ab3!xY9z",
+			wantOK:   true,
+		},
+		{
+			name:   "empty bootstrap admin is valid (optional feature)",
+			wantOK: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var bootstrapBlock string
+			if tc.username != "" || tc.password != "" {
+				bootstrapBlock = "  bootstrap_admin:\n    username: " + tc.username + "\n    password: " + tc.password + "\n"
+			}
+			yaml := validBaseConfig + `auth:
+  jwt_secret: 0123456789abcdef0123456789abcdef
+  token_ttl: 24h
+` + bootstrapBlock
+
+			_, err := Parse([]byte(yaml))
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("Parse returned unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("Parse succeeded, want validation error")
+				}
+				if tc.wantProblem != "" && !strings.Contains(err.Error(), tc.wantProblem) {
+					t.Fatalf("validation error missing %q; got %v", tc.wantProblem, err)
+				}
+			}
+		})
+	}
+}
+
+func TestParseRejectsKnownTemplateJWTSecret(t *testing.T) {
+	tests := []struct {
+		name        string
+		jwtSecret   string
+		wantOK      bool
+		wantProblem string
+	}{
+		{
+			name:        "dev template secret mcm-dev-secret-change-in-production rejected",
+			jwtSecret:   "mcm-dev-secret-change-in-production",
+			wantOK:      false,
+			wantProblem: "auth.jwt_secret must not use the insecure default placeholder",
+		},
+		{
+			name:        "known placeholder replace-this-secret rejected",
+			jwtSecret:   "replace-this-secret-with-at-least-32-characters",
+			wantOK:      false,
+			wantProblem: "auth.jwt_secret must not use the insecure default placeholder",
+		},
+		{
+			name:      "strong secret accepted",
+			jwtSecret: "a-very-long-random-jwt-secret-that-is-definitely-secure",
+			wantOK:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			yaml := validBaseConfig + `auth:
+  jwt_secret: ` + tc.jwtSecret + `
+  token_ttl: 24h
+  bootstrap_admin:
+    username: operator
+    password: Str0ng-P@ssw0rd-2024!
+`
+			_, err := Parse([]byte(yaml))
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("Parse returned unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("Parse succeeded, want validation error")
+				}
+				if tc.wantProblem != "" && !strings.Contains(err.Error(), tc.wantProblem) {
+					t.Fatalf("validation error missing %q; got %v", tc.wantProblem, err)
+				}
+			}
+		})
+	}
+}
+
 func TestParseDatabaseBackendValidation(t *testing.T) {
 	base := `
 http:

@@ -30,6 +30,17 @@ var validLogFormats = map[string]struct{}{
 var insecureDefaultSecrets = map[string]struct{}{
 	"replace-this-secret-with-at-least-32-characters": {},
 	"change-this-admin-password":                      {},
+	"mcm-dev-secret-change-in-production":             {},
+}
+
+// trivialPasswords is a blocklist of passwords that are too common or guessable
+// to be accepted as bootstrap admin credentials.
+var trivialPasswords = map[string]struct{}{
+	"admin":                      {},
+	"password":                   {},
+	"changeme":                   {},
+	"change-this-admin-password": {},
+	"12345678":                   {},
 }
 
 // Config holds MCM runtime configuration loaded from YAML.
@@ -436,8 +447,19 @@ func (c Config) Validate() error {
 	if (c.Auth.BootstrapAdmin.Username == "") != (c.Auth.BootstrapAdmin.Password == "") {
 		problems = append(problems, "auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty")
 	}
-	if strings.EqualFold(strings.TrimSpace(c.Auth.BootstrapAdmin.Username), "admin") && isInsecureDefaultSecret(c.Auth.BootstrapAdmin.Password) {
-		problems = append(problems, "auth.bootstrap_admin must not use the insecure default admin credentials")
+	if c.Auth.BootstrapAdmin.Username != "" && c.Auth.BootstrapAdmin.Password != "" {
+		pw := c.Auth.BootstrapAdmin.Password
+		user := strings.TrimSpace(c.Auth.BootstrapAdmin.Username)
+		switch {
+		case isInsecureDefaultSecret(pw):
+			problems = append(problems, "auth.bootstrap_admin.password must not use the insecure default placeholder")
+		case isTrivialPassword(pw):
+			problems = append(problems, "auth.bootstrap_admin.password is too common; choose a stronger password")
+		case len(pw) < 8:
+			problems = append(problems, "auth.bootstrap_admin.password must be at least 8 characters")
+		case strings.EqualFold(pw, user):
+			problems = append(problems, "auth.bootstrap_admin.password must not equal the username")
+		}
 	}
 	if window, err := time.ParseDuration(c.Auth.LoginLockout.Window); err != nil {
 		problems = append(problems, fmt.Sprintf("auth.login_lockout.window must be a valid duration: %v", err))
@@ -540,6 +562,11 @@ func (c Config) Validate() error {
 
 func isInsecureDefaultSecret(value string) bool {
 	_, ok := insecureDefaultSecrets[strings.TrimSpace(value)]
+	return ok
+}
+
+func isTrivialPassword(value string) bool {
+	_, ok := trivialPasswords[strings.ToLower(strings.TrimSpace(value))]
 	return ok
 }
 
