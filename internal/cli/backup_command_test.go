@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -111,6 +113,58 @@ func TestBackupRestoreRequiresForceToOverwrite(t *testing.T) {
 	}
 	if !strings.Contains(forceOutput, "Backup restored") {
 		t.Fatalf("backup restore --force output missing success message; got:\n%s", forceOutput)
+	}
+}
+
+// TestBackupCreateSucceedsWhileStoreIsWriting verifies that backup create does
+// not fail with SQLITE_BUSY when the server store connection is actively writing.
+// This requires the backup connection to carry a busy_timeout pragma so that
+// VACUUM INTO retries instead of returning SQLITE_BUSY immediately.
+func TestBackupCreateSucceedsWhileStoreIsWriting(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mcm.db")
+	createTestDatabase(t, dbPath)
+
+	store, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open store returned error: %v", err)
+	}
+	defer store.Close()
+
+	// Continuously write to the store in the background to hold write contention.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				_, _ = store.RecordBrokerMetricEvent(ctx, storage.CreateBrokerMetricEventParams{
+					Type:       "topic_message",
+					Topic:      "test/backup-busy",
+					ObservedAt: time.Now(),
+				})
+			}
+		}
+	}()
+
+	configPath := writeBackupConfig(t, dbPath)
+	backupPath := filepath.Join(dir, "backup.db")
+
+	output, err := executeForTest("backup", "create", "--config", configPath, "--output", backupPath)
+	cancel()
+	wg.Wait()
+
+	if err != nil {
+		t.Fatalf("backup create returned error while store is writing: %v\noutput:\n%s", err, output)
+	}
+	if _, statErr := os.Stat(backupPath); os.IsNotExist(statErr) {
+		t.Fatalf("backup file does not exist after successful create")
 	}
 }
 
