@@ -8,6 +8,7 @@ export type NavItem = {
   eyebrow: string
   title: string
   description: string
+  path: string
 }
 
 type DashboardFrameProps = {
@@ -19,7 +20,7 @@ type DashboardFrameProps = {
   uniqueTopicCount: number
   logCount: number
   currentUser: AdminUser
-  onSelectNav: (id: string) => void
+  onSelectNav: (item: NavItem) => void
   onLogout: () => void
   children: ReactNode
 }
@@ -62,10 +63,14 @@ export function DashboardFrame({
             {navItems.map((item, index) => {
               const isActive = item.id === activeId
               return (
-                <button
+                <a
                   key={item.id}
-                  type="button"
-                  onClick={() => onSelectNav(item.id)}
+                  href={item.path}
+                  aria-current={isActive ? 'page' : undefined}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    onSelectNav(item)
+                  }}
                   className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
                     isActive
                       ? 'border-cyan-300/40 bg-cyan-300/12 text-white shadow-lg shadow-cyan-950/30'
@@ -77,7 +82,7 @@ export function DashboardFrame({
                     <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
                   </span>
                   <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
-                </button>
+                </a>
               )
             })}
           </nav>

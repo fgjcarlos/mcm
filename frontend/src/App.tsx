@@ -71,6 +71,7 @@ const navItems: NavItem[] = [
   {
     id: 'dashboard',
     label: 'Dashboard',
+    path: '/dashboard',
     eyebrow: 'Broker overview',
     title: 'Live broker snapshot',
     description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
@@ -78,6 +79,7 @@ const navItems: NavItem[] = [
   {
     id: 'topics',
     label: 'Topics',
+    path: '/topics',
     eyebrow: 'Traffic',
     title: 'Topic explorer',
     description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
@@ -85,6 +87,7 @@ const navItems: NavItem[] = [
   {
     id: 'logs',
     label: 'Logs',
+    path: '/logs',
     eyebrow: 'Operations',
     title: 'Realtime broker logs',
     description: 'Monitor connection transitions and MCM broker operational events as they are ingested.',
@@ -92,6 +95,7 @@ const navItems: NavItem[] = [
   {
     id: 'users',
     label: 'Users',
+    path: '/users',
     eyebrow: 'Identity',
     title: 'MQTT user directory',
     description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
@@ -99,6 +103,7 @@ const navItems: NavItem[] = [
   {
     id: 'acls',
     label: 'ACLs',
+    path: '/acls',
     eyebrow: 'Authorization',
     title: 'ACL policy workspace',
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
@@ -106,6 +111,7 @@ const navItems: NavItem[] = [
   {
     id: 'deploy',
     label: 'Deploy',
+    path: '/deploy',
     eyebrow: 'Operations',
     title: 'Mosquitto configuration deploy',
     description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
@@ -113,6 +119,7 @@ const navItems: NavItem[] = [
   {
     id: 'security',
     label: 'Security',
+    path: '/security',
     eyebrow: 'Audit',
     title: 'Recent security events',
     description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
@@ -120,6 +127,7 @@ const navItems: NavItem[] = [
   {
     id: 'audit',
     label: 'Audit',
+    path: '/audit',
     eyebrow: 'Security',
     title: 'Administrative audit log',
     description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
@@ -127,11 +135,17 @@ const navItems: NavItem[] = [
   {
     id: 'settings',
     label: 'Settings',
+    path: '/settings',
     eyebrow: 'System',
     title: 'Platform settings placeholder',
     description: 'Global defaults, integration configuration, and broker-level safety controls.',
   },
 ]
+
+function navIdFromPath(pathname: string) {
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/dashboard'
+  return navItems.find((item) => item.path === normalizedPath)?.id ?? navItems[0].id
+}
 
 function App() {
   const { token, currentUser, handleLogin, handleLogout } = useAuthSession()
@@ -152,7 +166,7 @@ function App() {
 }
 
 function Dashboard({ token, currentUser, onLogout }: { token: string; currentUser: AdminUser; onLogout: () => void }) {
-  const [activeId, setActiveId] = useState<string>(navItems[0].id)
+  const [activeId, setActiveId] = useState<string>(() => navIdFromPath(window.location.pathname))
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [securityError, setSecurityError] = useState<string>('')
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
@@ -167,6 +181,19 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
     uniqueTopicCount,
     liveTrafficMetrics,
   } = useBrokerStream(token)
+
+  const handleSelectNav = useCallback((item: NavItem) => {
+    if (window.location.pathname !== item.path) {
+      window.history.pushState(null, '', item.path)
+    }
+    setActiveId(item.id)
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => setActiveId(navIdFromPath(window.location.pathname))
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => {
     if (activeId !== 'security') return
@@ -222,7 +249,7 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
       uniqueTopicCount={uniqueTopicCount}
       logCount={logs.length}
       currentUser={currentUser}
-      onSelectNav={setActiveId}
+      onSelectNav={handleSelectNav}
       onLogout={onLogout}
     >
       {activeId === 'logs' ? (
