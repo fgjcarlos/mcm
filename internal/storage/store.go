@@ -439,6 +439,25 @@ type Store struct {
 	db *sql.DB
 }
 
+// sqliteDSN builds a driver DSN that enables WAL journal mode, a 5-second
+// busy timeout, and foreign-key enforcement for every connection.
+//
+// WAL allows concurrent readers while a writer holds the lock, which eliminates
+// the SQLITE_BUSY errors that occur when MQTT persistence writes race with HTTP
+// handler reads. busy_timeout instructs SQLite to retry for up to 5 s before
+// returning SQLITE_BUSY, providing a safety net. SetMaxOpenConns(1) serialises
+// all writes through a single connection so concurrent goroutines never compete
+// for the write lock.
+//
+// modernc.org/sqlite DSN format: the _pragma query parameter is executed as
+// "PRAGMA <value>" on every new connection. Multiple pragmas are passed as
+// separate _pragma= terms. The driver strips the query string before opening
+// the file when the path is not prefixed with "file:", so the plain path form
+// is safe and works correctly.
+func sqliteDSN(path string) string {
+	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+}
+
 // Open opens a SQLite database and ensures the schema is initialized.
 func Open(path string) (*Store, error) {
 	if path == "" {
@@ -449,10 +468,17 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
+
+	// Serialise all writes through a single connection. WAL mode allows
+	// concurrent reads from additional connections, but having more than one
+	// writer causes SQLITE_BUSY under load. A single connection also removes
+	// the "cannot start a transaction within a transaction" error that occurs
+	// when database/sql re-uses a connection that still has an open transaction.
+	db.SetMaxOpenConns(1)
 
 	store := &Store{db: db}
 	if err := store.Init(context.Background()); err != nil {
