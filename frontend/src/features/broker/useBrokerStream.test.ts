@@ -8,6 +8,7 @@
  *   (d) ignore malformed frames without changing stream state
  *   (e) cancel pending reconnect timers on unmount
  *   (+) treat an error event the same as a close (schedule reconnect, not permanent disconnect)
+ *   (+) error followed by close schedules exactly ONE reconnect (double-schedule guard)
  */
 
 import { renderHook, act } from '@testing-library/react'
@@ -30,6 +31,16 @@ class MockWebSocket {
     Set<(event: Event | MessageEvent | CloseEvent) => void>
   >()
 
+  /**
+   * Tracks the wrapped callback for each EventListenerObject so that
+   * removeEventListener can delete the exact same reference that was stored
+   * by addEventListener — not a new wrapper that would always be a no-op.
+   */
+  private listenerWrappers = new WeakMap<
+    EventListenerObject,
+    (event: Event | MessageEvent | CloseEvent) => void
+  >()
+
   constructor(url: string, protocols?: string | string[]) {
     this.url = url
     this.protocols = protocols
@@ -40,10 +51,19 @@ class MockWebSocket {
     type: string,
     listener: EventListenerOrEventListenerObject,
   ) {
-    const cb =
-      typeof listener === 'function'
-        ? listener
-        : (e: Event | MessageEvent | CloseEvent) => listener.handleEvent(e)
+    let cb: (event: Event | MessageEvent | CloseEvent) => void
+    if (typeof listener === 'function') {
+      cb = listener
+    } else {
+      // Reuse the same wrapper if addEventListener is called multiple times
+      // with the same object reference (idempotency mirrors the browser spec).
+      let wrapper = this.listenerWrappers.get(listener)
+      if (!wrapper) {
+        wrapper = (e: Event | MessageEvent | CloseEvent) => listener.handleEvent(e)
+        this.listenerWrappers.set(listener, wrapper)
+      }
+      cb = wrapper
+    }
     const set =
       this.listeners.get(type) ??
       new Set<(event: Event | MessageEvent | CloseEvent) => void>()
@@ -57,11 +77,12 @@ class MockWebSocket {
   ) {
     const set = this.listeners.get(type)
     if (!set) return
+    // Resolve the same reference that was stored during addEventListener.
     const cb =
       typeof listener === 'function'
         ? listener
-        : (e: Event | MessageEvent | CloseEvent) => listener.handleEvent(e)
-    set.delete(cb)
+        : this.listenerWrappers.get(listener)
+    if (cb) set.delete(cb)
   }
 
   close() {
@@ -104,10 +125,18 @@ class MockWebSocket {
     this.emit('close', new Event('close'))
   }
 
-  /** Simulate a network-level error (readyState goes to CLOSED) */
+  /**
+   * Simulate a network-level error followed by a close event.
+   *
+   * Real browser WebSockets always fire 'close' after 'error'. The mock
+   * replicates this so the double-schedule guard in the hook is exercised:
+   * the error handler schedules a reconnect timer, and the subsequent close
+   * event must NOT schedule a second one.
+   */
   errorEvent() {
     this.readyState = 3
     this.emit('error', new Event('error'))
+    this.emit('close', new Event('close'))
   }
 }
 
@@ -329,7 +358,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
 
     expect(result.current.streamState).toBe('connected')
 
-    // Simulate a network error
+    // Simulate a network error (fires error then close, as a real browser does)
     await act(async () => {
       MockWebSocket.instances[0]!.errorEvent()
     })
@@ -343,6 +372,36 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
     })
 
     // A new WebSocket must have been constructed
+    expect(MockWebSocket.instances).toHaveLength(2)
+  })
+
+  // -------------------------------------------------------------------------
+  // double-schedule guard: error + close must schedule exactly ONE reconnect
+  // -------------------------------------------------------------------------
+  it('schedules exactly one reconnect when error is followed by close', async () => {
+    const { result } = renderHook(() => useBrokerStream('tok'))
+
+    await act(async () => {
+      MockWebSocket.instances[0]!.open()
+    })
+
+    expect(result.current.streamState).toBe('connected')
+
+    // errorEvent() fires both 'error' and then 'close' synchronously.
+    // The hook's scheduleReconnect guard (reconnectTimer !== null) must
+    // prevent the close handler from scheduling a second timer.
+    await act(async () => {
+      MockWebSocket.instances[0]!.errorEvent()
+    })
+
+    expect(result.current.streamState).toBe('reconnecting')
+
+    // Advance well past the backoff window — only ONE new socket should appear
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    // Exactly two sockets total: the original + one reconnect (not two)
     expect(MockWebSocket.instances).toHaveLength(2)
   })
 })
