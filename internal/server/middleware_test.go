@@ -30,6 +30,18 @@ func TestRequestBodyLimitLoginReturns413(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
 	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
 }
 
 // TestRequestBodyLimitMutationRouteReturns413 verifies that an oversized body on an
@@ -52,6 +64,131 @@ func TestRequestBodyLimitMutationRouteReturns413(t *testing.T) {
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
+}
+
+// TestRequestBodyLimitMFAVerifyReturns413 verifies that an oversized body on the
+// authenticated POST /api/v1/auth/mfa/verify endpoint returns HTTP 413, not 400.
+func TestRequestBodyLimitMFAVerifyReturns413(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// MFA verify requires a valid session token; seed a user and log in.
+	seedAdminUser(t, store, "admin", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	oversized := bytes.Repeat([]byte("x"), int(apiBodyLimitBytes)+1)
+	body := append([]byte(`{"code":"`), oversized...)
+	body = append(body, '"', '}')
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/mfa/verify", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
+}
+
+// TestRequestBodyLimitMFADisableReturns413 verifies that an oversized body on the
+// authenticated DELETE /api/v1/auth/mfa endpoint returns HTTP 413, not 400.
+func TestRequestBodyLimitMFADisableReturns413(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	oversized := bytes.Repeat([]byte("x"), int(apiBodyLimitBytes)+1)
+	body := append([]byte(`{"password":"`), oversized...)
+	body = append(body, '"', '}')
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/mfa", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
+}
+
+// TestRequestBodyLimitACLCreateReturns413 verifies that an oversized body on
+// POST /api/v1/acls (backed by decodeRuleRequest → writeAPIError) returns HTTP 413,
+// not 400, and does not leak the internal error string.
+func TestRequestBodyLimitACLCreateReturns413(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	token := loginAsSeededUser(t, app, store, "admin", "secret-password")
+
+	oversized := bytes.Repeat([]byte("x"), int(apiBodyLimitBytes)+1)
+	body := append([]byte(`{"principal":"`), oversized...)
+	body = append(body, '"', '}')
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/acls", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d (413); body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
+	// The internal error string must not be leaked to the client.
+	if strings.Contains(errResp.Error, "http: request body too large") {
+		t.Fatalf("response leaks internal error string: %s", errResp.Error)
 	}
 }
 
