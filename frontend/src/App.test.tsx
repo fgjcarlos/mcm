@@ -286,6 +286,39 @@ describe('App', () => {
     })
   })
 
+  it('updates the topic explorer when a broker event arrives without a page refresh', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'topic-live-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('topic-live-token'),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /topics/i }))
+
+    expect(screen.getByText('No topic activity received yet.')).toBeInTheDocument()
+    MockWebSocket.instances[0]?.emit(
+      'message',
+      new MessageEvent('message', {
+        data: JSON.stringify({
+          type: 'topic_message',
+          topic: 'factory/line-1/temperature',
+          payload_preview: '{"temperature":21.5}',
+          payload_format: 'json',
+          payload_bytes: 20,
+          observed_at: '2026-01-01T00:00:00Z',
+        }),
+      }),
+    )
+
+    expect(await screen.findAllByText('factory/line-1/temperature')).toHaveLength(2)
+    expect(window.location.pathname).toBe('/')
+  })
+
   it('restores an operator session and loads the ACL policy workspace', async () => {
     window.localStorage.setItem('mcm_admin_token', 'acl-token')
 
