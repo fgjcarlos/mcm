@@ -1,18 +1,26 @@
 # MCM Docker deployment
 
-This directory contains the local MCM configuration used by the Docker Compose stack.
+This directory contains the MCM configuration used by the Docker Compose stack.
 
 ## Files
 
-- `config.yaml`: local development configuration for the MCM container.
+- `config.yaml`: configuration template for the MCM container.
 
 ## Quick start
 
 From the repository root:
 
+1. Edit `deploy/mcm/config.yaml` and replace the placeholder values:
+   - `auth.jwt_secret` — set a random string of at least 32 characters.
+   - `auth.bootstrap_admin.password` — set a strong password (at least 8 characters, not `admin` or other common values).
+
+2. Start the stack:
+
 ```bash
 docker compose up --build
 ```
+
+MCM will not start if either placeholder is left unchanged — the config validator rejects known template secrets.
 
 This starts both Mosquitto and MCM. The MCM service waits for Mosquitto to be healthy before starting.
 
@@ -21,15 +29,6 @@ This starts both Mosquitto and MCM. The MCM service waits for Mosquitto to be he
 - MCM API: `http://localhost:8080`
 - Mosquitto MQTT: `localhost:1883`
 - Mosquitto WebSocket: `localhost:9001`
-
-## Default credentials
-
-The development config bootstraps an admin user:
-
-- Username: `admin`
-- Password: `admin`
-
-Do not use these credentials in production.
 
 ## Container details
 
@@ -65,10 +64,10 @@ After starting the stack:
 curl -s http://localhost:8080/healthz | jq .
 curl -s http://localhost:8080/readyz | jq .
 
-# Login
+# Login — use the password you set in config.yaml
 curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin"}' | jq .
+  -d '{"username":"admin","password":"<your-password>"}' | jq .
 
 # Check broker/MCM operational status
 curl -s http://localhost:8080/api/v1/status | jq .
@@ -76,4 +75,4 @@ curl -s http://localhost:8080/api/v1/status | jq .
 
 ## Security note
 
-The development configuration uses weak credentials and no TLS. Production deployments must use strong secrets, HTTPS, and follow the [production TLS checklist](../mosquitto/README.md#production-tls-checklist).
+This template ships with placeholder credentials that the config validator rejects — MCM will not start until you replace them. Production deployments must also use strong secrets, HTTPS, and follow the [production TLS checklist](../mosquitto/README.md#production-tls-checklist).
