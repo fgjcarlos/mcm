@@ -63,7 +63,7 @@ export type BrokerEvent = {
 export type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
 export type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
 export type BrokerConnectionStatus = 'connected' | 'disconnected'
-export type BrokerStreamState = 'connecting' | 'connected' | 'disconnected'
+export type BrokerStreamState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
 export type BrokerTrafficItem = {
   name: string
@@ -139,35 +139,93 @@ export function useBrokerStream(token: string) {
   }, [])
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(
-      `${protocol}//${window.location.host}/api/v1/broker/events`,
-      ['mcm.v1', `Bearer.${token}`],
-    )
+    // Exponential backoff constants
+    const BASE_DELAY_MS = 1000
+    const MAX_DELAY_MS = 30_000
 
-    socket.addEventListener('open', () => setStreamState('connected'))
-    socket.addEventListener('close', () => setStreamState('disconnected'))
-    socket.addEventListener('error', () => setStreamState('disconnected'))
-    socket.addEventListener('message', (message) => {
-      try {
-        const event = JSON.parse(message.data) as BrokerEvent
-        if (event.type === 'broker_status' && event.status) {
-          setBrokerStatus(event.status)
-        }
-        if (event.type === 'topic_message' && event.topic) {
-          const topicEvent = event as TopicMessage
-          setTopics((current) => [topicEvent, ...current].slice(0, 20))
-          setTrafficEvents((current) => pruneTrafficEvents([topicEvent, ...current]))
-        }
-        if (event.type === 'broker_log' && event.source && event.severity && event.message) {
-          setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
-        }
-      } catch {
-        setStreamState('disconnected')
+    let destroyed = false
+    let currentSocket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let backoffMs = BASE_DELAY_MS
+
+    function connect() {
+      if (destroyed) return
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const socket = new WebSocket(
+        `${protocol}//${window.location.host}/api/v1/broker/events`,
+        ['mcm.v1', `Bearer.${token}`],
+      )
+      currentSocket = socket
+
+      socket.addEventListener('open', () => {
+        if (destroyed || socket !== currentSocket) return
+        // Reset backoff on a successful connection
+        backoffMs = BASE_DELAY_MS
+        setStreamState('connected')
+      })
+
+      function scheduleReconnect() {
+        if (destroyed || reconnectTimer !== null) return
+        setStreamState('reconnecting')
+        // Apply jitter: ±10% of the current delay
+        const jitter = (Math.random() * 0.2 - 0.1) * backoffMs
+        const delay = Math.min(backoffMs + jitter, MAX_DELAY_MS)
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, delay)
+        // Double the backoff for the next failure, capped at MAX_DELAY_MS
+        backoffMs = Math.min(backoffMs * 2, MAX_DELAY_MS)
       }
-    })
 
-    return () => socket.close()
+      socket.addEventListener('close', () => {
+        if (destroyed || socket !== currentSocket) return
+        scheduleReconnect()
+      })
+
+      socket.addEventListener('error', () => {
+        if (destroyed || socket !== currentSocket) return
+        // 'error' is followed by 'close' in the browser WebSocket spec.
+        // Guard with reconnectTimer !== null check in scheduleReconnect so
+        // the close handler does not schedule a second timer.
+        scheduleReconnect()
+      })
+
+      socket.addEventListener('message', (message) => {
+        if (destroyed || socket !== currentSocket) return
+        try {
+          const event = JSON.parse((message as MessageEvent).data) as BrokerEvent
+          if (event.type === 'broker_status' && event.status) {
+            setBrokerStatus(event.status)
+          }
+          if (event.type === 'topic_message' && event.topic) {
+            const topicEvent = event as TopicMessage
+            setTopics((current) => [topicEvent, ...current].slice(0, 20))
+            setTrafficEvents((current) => pruneTrafficEvents([topicEvent, ...current]))
+          }
+          if (event.type === 'broker_log' && event.source && event.severity && event.message) {
+            setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
+          }
+        } catch {
+          // Malformed frame — log and skip. Do NOT change stream state;
+          // the WebSocket connection is still alive.
+          console.warn('[useBrokerStream] Could not parse broker event frame; skipping.')
+        }
+      })
+    }
+
+    connect()
+
+    return () => {
+      destroyed = true
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      currentSocket?.close()
+      currentSocket = null
+    }
   }, [token])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])

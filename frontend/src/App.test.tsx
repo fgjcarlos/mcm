@@ -363,7 +363,7 @@ describe('App', () => {
 
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /topics/i }))
+    await user.click(screen.getByRole('link', { name: /topics/i }))
 
     expect(screen.getByText('No topic activity received yet.')).toBeInTheDocument()
     MockWebSocket.instances[0]?.emit(
@@ -381,7 +381,7 @@ describe('App', () => {
     )
 
     expect(await screen.findAllByText('factory/line-1/temperature')).toHaveLength(2)
-    expect(window.location.pathname).toBe('/')
+    expect(window.location.pathname).toBe('/topics')
   })
 
   it('restores an operator session and loads the ACL policy workspace', async () => {
