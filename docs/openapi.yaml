@@ -137,7 +137,7 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
             example:
               username: admin
-              password: change-this-admin-password
+              password: s3cure-Adm1n-pass!
       responses:
         "200":
           description: Login successful.
