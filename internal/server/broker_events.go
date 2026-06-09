@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -25,6 +24,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/schema"
 	"github.com/fgjcarlos/mcm/internal/sparkplug"
 	"github.com/fgjcarlos/mcm/internal/storage"
+	"github.com/fgjcarlos/mcm/internal/tlsutil"
 )
 
 const (
@@ -700,7 +700,15 @@ func extractWebSocketBearer(header string) (string, bool) {
 // and runs until ctx is cancelled.
 func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig) {
 	address := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	client := buildMQTTClient(cfg, address, a)
+	client, err := buildMQTTClient(cfg, address, a)
+	if err != nil {
+		a.logger.Error("broker_monitor_tls_config_failed",
+			slog.String("broker_address", address),
+			slog.String("error", err.Error()),
+		)
+		a.publishBrokerStatus("disconnected", "error", fmt.Sprintf("Broker TLS configuration failed: %v", err))
+		return
+	}
 
 	a.logger.Info("broker_monitor_starting",
 		slog.String("broker_address", address),
@@ -721,7 +729,7 @@ func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig
 	client.Disconnect(250)
 }
 
-func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Client {
+func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.Client, error) {
 	scheme := "tcp"
 	if cfg.TLS.Enabled {
 		scheme = "ssl"
@@ -740,14 +748,11 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		SetConnectRetryInterval(1 * time.Second)
 
 	if cfg.TLS.Enabled {
-		serverName := cfg.Host
-		if net.ParseIP(serverName) != nil {
-			serverName = ""
+		tlsConfig, err := tlsutil.BuildMosquittoTLSConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build broker monitor TLS config: %w", err)
 		}
-		opts.SetTLSConfig(&tls.Config{ //nolint:gosec // MCM honors the user-controlled Mosquitto TLS diagnostic option.
-			ServerName:         serverName,
-			InsecureSkipVerify: cfg.TLS.InsecureSkipVerify,
-		})
+		opts.SetTLSConfig(tlsConfig)
 	}
 	if strings.TrimSpace(cfg.Username) != "" {
 		opts.SetUsername(strings.TrimSpace(cfg.Username))
@@ -805,5 +810,5 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) mqtt.Cl
 		a.publishBrokerStatus("disconnected", "warning", message)
 	})
 
-	return mqtt.NewClient(opts)
+	return mqtt.NewClient(opts), nil
 }
