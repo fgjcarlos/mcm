@@ -695,9 +695,10 @@ func extractWebSocketBearer(header string) (string, bool) {
 }
 
 // StartBrokerMonitor opens an MQTT subscription to "#" and bridges every received
-// message into the broker event hub. The paho client handles reconnect, keepalive,
-// and TLS; this function only translates its callbacks into BrokerEvent publishes
-// and runs until ctx is cancelled.
+// message into the broker event hub. On a TLS configuration error (unreadable or
+// invalid cert files) the monitor does NOT start and does not retry — a config
+// error cannot self-heal and requires a restart. Dial/handshake failures still
+// retry automatically via paho's auto-reconnect. Runs until ctx is cancelled.
 func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig) {
 	address := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	client, err := buildMQTTClient(cfg, address, a)
