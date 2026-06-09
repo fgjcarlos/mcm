@@ -627,11 +627,11 @@ func TestParseRejectsInsecureBootstrapAdminPassword(t *testing.T) {
 			wantProblem: "auth.bootstrap_admin.password",
 		},
 		{
-			name:        "trivial password change-this-admin-password rejected (insecure default secret)",
+			name:        "insecure default secret change-this-admin-password rejected",
 			username:    "operator",
 			password:    "change-this-admin-password",
 			wantOK:      false,
-			wantProblem: "auth.bootstrap_admin.password",
+			wantProblem: "auth.bootstrap_admin.password must not use the insecure default placeholder",
 		},
 		{
 			name:        "trivial password 12345678 rejected",
@@ -653,6 +653,13 @@ func TestParseRejectsInsecureBootstrapAdminPassword(t *testing.T) {
 			password:    "operator",
 			wantOK:      false,
 			wantProblem: "auth.bootstrap_admin.password",
+		},
+		{
+			name:        "password 8+ bytes but short after trim rejected",
+			username:    "operator",
+			password:    `"  abc12  "`, // YAML-quoted to preserve surrounding whitespace
+			wantOK:      false,
+			wantProblem: "auth.bootstrap_admin.password must be at least 8 characters",
 		},
 		{
 			name:     "strong password accepted",
@@ -716,6 +723,12 @@ func TestParseRejectsKnownTemplateJWTSecret(t *testing.T) {
 		{
 			name:        "known placeholder replace-this-secret rejected",
 			jwtSecret:   "replace-this-secret-with-at-least-32-characters",
+			wantOK:      false,
+			wantProblem: "auth.jwt_secret must not use the insecure default placeholder",
+		},
+		{
+			name:        "mixed-case template secret MCM-DEV-SECRET-CHANGE-IN-PRODUCTION rejected",
+			jwtSecret:   "MCM-DEV-SECRET-CHANGE-IN-PRODUCTION",
 			wantOK:      false,
 			wantProblem: "auth.jwt_secret must not use the insecure default placeholder",
 		},

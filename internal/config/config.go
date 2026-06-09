@@ -36,11 +36,10 @@ var insecureDefaultSecrets = map[string]struct{}{
 // trivialPasswords is a blocklist of passwords that are too common or guessable
 // to be accepted as bootstrap admin credentials.
 var trivialPasswords = map[string]struct{}{
-	"admin":                      {},
-	"password":                   {},
-	"changeme":                   {},
-	"change-this-admin-password": {},
-	"12345678":                   {},
+	"admin":    {},
+	"password": {},
+	"changeme": {},
+	"12345678": {},
 }
 
 // Config holds MCM runtime configuration loaded from YAML.
@@ -448,7 +447,7 @@ func (c Config) Validate() error {
 		problems = append(problems, "auth.bootstrap_admin.username and auth.bootstrap_admin.password must both be set or both be empty")
 	}
 	if c.Auth.BootstrapAdmin.Username != "" && c.Auth.BootstrapAdmin.Password != "" {
-		pw := c.Auth.BootstrapAdmin.Password
+		pw := strings.TrimSpace(c.Auth.BootstrapAdmin.Password)
 		user := strings.TrimSpace(c.Auth.BootstrapAdmin.Username)
 		switch {
 		case isInsecureDefaultSecret(pw):
@@ -561,7 +560,7 @@ func (c Config) Validate() error {
 }
 
 func isInsecureDefaultSecret(value string) bool {
-	_, ok := insecureDefaultSecrets[strings.TrimSpace(value)]
+	_, ok := insecureDefaultSecrets[strings.ToLower(strings.TrimSpace(value))]
 	return ok
 }
 
