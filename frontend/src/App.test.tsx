@@ -156,6 +156,7 @@ describe('App', () => {
       configurable: true,
     })
     MockWebSocket.instances = []
+    window.history.replaceState(null, '', '/')
     vi.stubGlobal('WebSocket', MockWebSocket)
   })
 
@@ -269,8 +270,10 @@ describe('App', () => {
 
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /users/i }))
+    await user.click(screen.getByRole('link', { name: /users/i }))
 
+    expect(window.location.pathname).toBe('/users')
+    expect(screen.getByRole('link', { name: /users/i })).toHaveAttribute('aria-current', 'page')
     await screen.findByText('device-sensor-01')
 
     await waitFor(() => {
@@ -310,7 +313,7 @@ describe('App', () => {
 
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /acls/i }))
+    await user.click(screen.getByRole('link', { name: /acls/i }))
 
     await screen.findByRole('heading', { name: 'ACL policy workspace' })
     expect(await screen.findByText('device-writer')).toBeInTheDocument()
@@ -344,11 +347,28 @@ describe('App', () => {
 
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /deploy/i }))
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
 
     await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
     expect(await screen.findByText('Not configured')).toBeInTheDocument()
     expect(screen.getByText('Deploy functionality is not configured on this MCM instance.')).toBeInTheDocument()
+  })
+
+  it('opens the routed topics page on a direct browser load', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'topics-token')
+    window.history.replaceState(null, '', '/topics')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('topics-token'),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Topic explorer' })
+    expect(window.location.pathname).toBe('/topics')
+    expect(screen.getByRole('link', { name: /topics/i })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: /dashboard/i })).toHaveAttribute('href', '/dashboard')
   })
 
   it('navigates across ACL and deploy panels in an authenticated session', async () => {
@@ -385,10 +405,11 @@ describe('App', () => {
 
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /acls/i }))
+    await user.click(screen.getByRole('link', { name: /acls/i }))
     expect(await screen.findByText('analytics-reader')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /deploy/i }))
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    expect(window.location.pathname).toBe('/deploy')
     expect(await screen.findByText('Configuration preview')).toBeInTheDocument()
     expect(await screen.findByText('Configuration applied successfully.')).toBeInTheDocument()
 
