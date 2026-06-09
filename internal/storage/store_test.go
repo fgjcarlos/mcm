@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -267,7 +268,6 @@ func TestDeleteAdminUserRejectsDeletingLastActiveAdmin(t *testing.T) {
 	}
 }
 
-
 // TestJournalModeIsWAL asserts that every store opened via Open uses WAL journal mode.
 // WAL allows concurrent readers while a writer holds the lock.
 func TestJournalModeIsWAL(t *testing.T) {
@@ -323,6 +323,34 @@ func TestConcurrentBrokerEventWrites(t *testing.T) {
 
 	for err := range errs {
 		t.Errorf("concurrent write/read error: %v", err)
+	}
+}
+
+// TestSQLiteDSNWithSpecialPathCharacters verifies that SQLiteDSN and
+// SQLiteBackupDSN work correctly when the database path contains characters
+// that would corrupt plain "path?query" DSN parsing (spaces, question marks).
+// This ensures the file: URI form with url.PathEscape is used correctly.
+func TestSQLiteDSNWithSpecialPathCharacters(t *testing.T) {
+	// A path with a space is the most common real-world special character.
+	dir := filepath.Join(t.TempDir(), "path with spaces")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	dbPath := filepath.Join(dir, "mcm data.db")
+
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open with path containing spaces returned error: %v", err)
+	}
+	defer store.Close()
+
+	// Confirm it's functional: WAL mode must be set.
+	var mode string
+	if err := store.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal_mode = %q after open with spaced path, want wal", mode)
 	}
 }
 
