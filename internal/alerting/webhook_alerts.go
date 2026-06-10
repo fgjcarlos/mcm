@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
@@ -36,6 +37,9 @@ type WebhookAlerter struct {
 	client        *http.Client
 	queue         chan WebhookAlert
 	logger        *slog.Logger
+	mu            sync.Mutex
+	closed        bool
+	done          chan struct{}
 }
 
 func NewWebhookAlerter(cfg config.AlertingConfig, logger *slog.Logger) *WebhookAlerter {
@@ -55,6 +59,7 @@ func NewWebhookAlerter(cfg config.AlertingConfig, logger *slog.Logger) *WebhookA
 		client:        &http.Client{Timeout: timeout},
 		queue:         make(chan WebhookAlert, webhookAlertQueueSize),
 		logger:        logger.With(slog.String("component", "webhook_alerter")),
+		done:          make(chan struct{}),
 	}
 	if a.enabled {
 		go a.run()
@@ -72,6 +77,11 @@ func (a *WebhookAlerter) Enqueue(alert WebhookAlert) {
 	if alert.ID == "" {
 		alert.ID = fmt.Sprintf("%s-%d", sanitizeAlertIDPart(alert.Type), alert.ObservedAt.UnixNano())
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
 	select {
 	case a.queue <- alert:
 	default:
@@ -82,7 +92,31 @@ func (a *WebhookAlerter) Enqueue(alert WebhookAlert) {
 	}
 }
 
+func (a *WebhookAlerter) Shutdown(ctx context.Context) error {
+	if a == nil || !a.enabled {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	a.mu.Lock()
+	if !a.closed {
+		a.closed = true
+		close(a.queue)
+	}
+	a.mu.Unlock()
+
+	select {
+	case <-a.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (a *WebhookAlerter) run() {
+	defer close(a.done)
 	for alert := range a.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), a.timeout)
 		err := a.deliver(ctx, alert)
