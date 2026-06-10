@@ -489,8 +489,17 @@ func (a *App) handleLoginMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	usedRecovery := false
-	if auth.VerifyTOTP(user.MFASecret, code, a.now().UTC()) {
-		// happy path
+	if totpStep, ok := auth.MatchTOTPStep(user.MFASecret, code, a.now().UTC()); ok {
+		if err := a.store.ConsumeTOTPTimeStep(r.Context(), user.ID, totpStep); err != nil {
+			if !errors.Is(err, storage.ErrTOTPCodeReused) {
+				a.recordSecurityFailure(r, "admin_login_failed", "totp_code_consume_failed", user.Username)
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+				return
+			}
+			a.recordSecurityFailure(r, "admin_login_failed", "totp_code_reused", user.Username)
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid credentials"})
+			return
+		}
 	} else if id, ok := a.matchRecoveryCode(r.Context(), user.ID, code); ok {
 		if err := a.store.ConsumeRecoveryCode(r.Context(), id); err != nil {
 			a.recordSecurityFailure(r, "admin_login_failed", "recovery_code_consume_failed", user.Username)
