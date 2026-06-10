@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
 
 type MQTTUser = {
   id: number
@@ -8,7 +9,7 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token }: { token: string }) {
+function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [users, setUsers] = useState<MQTTUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -29,7 +30,7 @@ function MQTTUsersPanel({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/v1/mqtt-users', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/mqtt-users', { token, onUnauthorized: onLogout })
       .then(async (response) => {
         if (!response.ok) throw new Error('Failed to load MQTT users.')
         return response.json() as Promise<MQTTUser[]>
@@ -42,6 +43,7 @@ function MQTTUsersPanel({ token }: { token: string }) {
       })
       .catch((err: Error) => {
         if (cancelled) return
+        if (isUnauthorizedResponseError(err)) return
         setError(err.message)
         setLoading(false)
       })
@@ -49,7 +51,7 @@ function MQTTUsersPanel({ token }: { token: string }) {
     return () => {
       cancelled = true
     }
-  }, [token, refreshTick])
+  }, [token, refreshTick, onLogout])
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -57,9 +59,11 @@ function MQTTUsersPanel({ token }: { token: string }) {
     setCreateSubmitting(true)
     setCreateError('')
     try {
-      const response = await fetch('/api/v1/mqtt-users', {
+      const response = await authenticatedFetch('/api/v1/mqtt-users', {
+        token,
+        onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: createUsername.trim() }),
       })
       if (!response.ok) {
@@ -72,7 +76,8 @@ function MQTTUsersPanel({ token }: { token: string }) {
       setCreateUsername('')
       setShowCreateForm(false)
       fetchUsers()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setCreateError('Could not reach the server.')
     } finally {
       setCreateSubmitting(false)
@@ -82,9 +87,11 @@ function MQTTUsersPanel({ token }: { token: string }) {
   const handleToggle = async (user: MQTTUser) => {
     setTogglingId(user.id)
     try {
-      const response = await fetch(`/api/v1/mqtt-users/${user.id}`, {
+      const response = await authenticatedFetch(`/api/v1/mqtt-users/${user.id}`, {
+        token,
+        onUnauthorized: onLogout,
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ disabled: !user.disabled }),
       })
       if (!response.ok) {
@@ -93,7 +100,8 @@ function MQTTUsersPanel({ token }: { token: string }) {
         return
       }
       fetchUsers()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setError('Could not reach the server.')
     } finally {
       setTogglingId(null)
@@ -102,9 +110,10 @@ function MQTTUsersPanel({ token }: { token: string }) {
 
   const handleResetPassword = async (userId: number) => {
     try {
-      const response = await fetch(`/api/v1/mqtt-users/${userId}/reset-password`, {
+      const response = await authenticatedFetch(`/api/v1/mqtt-users/${userId}/reset-password`, {
+        token,
+        onUnauthorized: onLogout,
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
       if (!response.ok) {
         const errBody = (await response.json().catch(() => null)) as { error?: string } | null
@@ -114,16 +123,18 @@ function MQTTUsersPanel({ token }: { token: string }) {
       const result = (await response.json()) as MQTTUser & { password: string }
       setResetPassword(result.password)
       setResetUserId(userId)
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setError('Could not reach the server.')
     }
   }
 
   const handleDelete = async (id: number) => {
     try {
-      const response = await fetch(`/api/v1/mqtt-users/${id}`, {
+      const response = await authenticatedFetch(`/api/v1/mqtt-users/${id}`, {
+        token,
+        onUnauthorized: onLogout,
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       })
       if (!response.ok && response.status !== 204) {
         const errBody = (await response.json().catch(() => null)) as { error?: string } | null
@@ -137,7 +148,8 @@ function MQTTUsersPanel({ token }: { token: string }) {
         setResetPassword(null)
       }
       fetchUsers()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setError('Could not reach the server.')
     }
   }
