@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/storage"
 	"github.com/spf13/cobra"
 	_ "modernc.org/sqlite"
 )
@@ -136,7 +137,14 @@ func createSQLiteBackup(ctx context.Context, sourcePath string, outputPath strin
 		return fmt.Errorf("create backup output directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", sourcePath)
+	// Open the source database with busy_timeout so that VACUUM INTO retries
+	// under write pressure from a concurrently running server process instead
+	// of returning SQLITE_BUSY immediately. journal_mode is intentionally
+	// omitted here: the server's store connection already owns WAL mode on the
+	// live database, and re-asserting it on a short-lived backup connection is
+	// unnecessary. VACUUM INTO always produces a clean DELETE-mode artifact
+	// regardless of the source journal mode.
+	db, err := sql.Open("sqlite", storage.SQLiteBackupDSN(sourcePath))
 	if err != nil {
 		return fmt.Errorf("open database %q: %w", sourcePath, err)
 	}
@@ -228,7 +236,13 @@ func restoreSQLiteBackup(ctx context.Context, inputPath string, targetPath strin
 }
 
 func validateSQLiteBackup(ctx context.Context, path string) error {
-	db, err := sql.Open("sqlite", path)
+	// Open the backup artifact with busy_timeout only. Deliberately omitting
+	// journal_mode(WAL): SQLite persists journal_mode in the database file, so
+	// opening a DELETE-mode backup artifact with journal_mode(WAL) would
+	// permanently convert it to WAL and leave behind a -shm/-wal sidecar, which
+	// is an unwanted and hard-to-detect side-effect on a file the user intends
+	// to keep as a portable backup.
+	db, err := sql.Open("sqlite", storage.SQLiteBackupDSN(path))
 	if err != nil {
 		return fmt.Errorf("open backup input %q: %w", path, err)
 	}
