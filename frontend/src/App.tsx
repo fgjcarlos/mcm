@@ -719,7 +719,7 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: Brok
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Log feed</p>
           <p className="mt-2 text-sm text-slate-300">WebSocket state: <span className="capitalize text-white">{streamState}</span></p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${streamState === 'connected' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-rose-400/10 text-rose-200'}`}>
+        <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${streamState === 'connected' ? 'bg-emerald-400/10 text-emerald-200' : streamState === 'reconnecting' ? 'bg-amber-400/10 text-amber-200' : 'bg-rose-400/10 text-rose-200'}`}>
           {streamState === 'connected' ? 'Live' : streamState}
         </span>
       </div>
