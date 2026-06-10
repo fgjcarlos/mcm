@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { authenticatedFetch } from '../api/client'
 
 export type SparkplugMetadata = {
   namespace: string
@@ -112,7 +113,7 @@ export const emptyTrafficMetrics: BrokerTrafficMetrics = {
   persistence: 'Waiting for broker metrics.',
 }
 
-export function useBrokerStream(token: string) {
+export function useBrokerStream(token: string, onLogout: () => void) {
   const [brokerStatus, setBrokerStatus] = useState<BrokerConnectionStatus>('disconnected')
   const [streamState, setStreamState] = useState<BrokerStreamState>('connecting')
   const [topics, setTopics] = useState<TopicMessage[]>([])
@@ -122,7 +123,7 @@ export function useBrokerStream(token: string) {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/v1/status')
+    authenticatedFetch('/api/v1/status', { token, onUnauthorized: onLogout })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error('status request failed'))))
       .then((status: StatusResponse) => {
         if (cancelled) return
@@ -136,7 +137,7 @@ export function useBrokerStream(token: string) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [token, onLogout])
 
   useEffect(() => {
     // Exponential backoff constants
