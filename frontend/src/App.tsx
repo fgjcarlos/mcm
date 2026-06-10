@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
+import { authenticatedFetch, isUnauthorizedResponseError } from './features/api/client'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
 import {
   defaultClientNote,
@@ -180,7 +181,7 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
     logs,
     uniqueTopicCount,
     liveTrafficMetrics,
-  } = useBrokerStream(token)
+  } = useBrokerStream(token, onLogout)
 
   const handleSelectNav = useCallback((item: NavItem) => {
     if (window.location.pathname !== item.path) {
@@ -198,12 +199,8 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
   useEffect(() => {
     if (activeId !== 'security') return
 
-    fetch('/api/v1/security/events?limit=50', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/security/events?limit=50', { token, onUnauthorized: onLogout })
       .then(async (response) => {
-        if (response.status === 401) {
-          onLogout()
-          return null
-        }
         if (!response.ok) {
           throw new Error('Unable to load security events.')
         }
@@ -214,18 +211,17 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
         setSecurityEvents(body.events ?? [])
         setSecurityError('')
       })
-      .catch((error: Error) => setSecurityError(error.message))
+      .catch((error: Error) => {
+        if (isUnauthorizedResponseError(error)) return
+        setSecurityError(error.message)
+      })
   }, [activeId, token, onLogout])
 
   useEffect(() => {
     if (activeId !== 'audit') return
 
-    fetch('/api/v1/audit-events?limit=25', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/audit-events?limit=25', { token, onUnauthorized: onLogout })
       .then(async (response) => {
-        if (response.status === 401) {
-          onLogout()
-          return null
-        }
         if (!response.ok) {
           throw new Error('Failed to load audit events.')
         }
@@ -236,7 +232,10 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
         setAuditEvents(body.events ?? [])
         setAuditError('')
       })
-      .catch((error: Error) => setAuditError(error.message))
+      .catch((error: Error) => {
+        if (isUnauthorizedResponseError(error)) return
+        setAuditError(error.message)
+      })
   }, [activeId, token, onLogout])
 
   return (
@@ -261,11 +260,11 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
       ) : activeId === 'dashboard' ? (
         <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
       ) : activeId === 'acls' ? (
-        <ACLPanel token={token} />
+        <ACLPanel token={token} onLogout={onLogout} />
       ) : activeId === 'users' ? (
-        <MQTTUsersPanel token={token} />
+        <MQTTUsersPanel token={token} onLogout={onLogout} />
       ) : activeId === 'deploy' ? (
-        <DeployPanel token={token} />
+        <DeployPanel token={token} onLogout={onLogout} />
       ) : (
         <TopicsPanel topics={topics} latestTopic={latestTopic} />
       )}
@@ -748,7 +747,7 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: Brok
   )
 }
 
-function ACLPanel({ token }: { token: string }) {
+function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [rules, setRules] = useState<ACLRule[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -767,7 +766,7 @@ function ACLPanel({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/v1/acls', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/acls', { token, onUnauthorized: onLogout })
       .then(async (response) => {
         if (!response.ok) throw new Error('Failed to load ACL rules.')
         return response.json() as Promise<{ rules: ACLRule[] }>
@@ -780,11 +779,12 @@ function ACLPanel({ token }: { token: string }) {
       })
       .catch((err: Error) => {
         if (cancelled) return
+        if (isUnauthorizedResponseError(err)) return
         setError(err.message)
         setLoading(false)
       })
     return () => { cancelled = true }
-  }, [token, refreshTick])
+  }, [token, refreshTick, onLogout])
 
   const openCreate = () => {
     setEditRule(null)
@@ -820,9 +820,11 @@ function ACLPanel({ token }: { token: string }) {
       })
       const url = editRule ? `/api/v1/acls/${editRule.id}` : '/api/v1/acls'
       const method = editRule ? 'PUT' : 'POST'
-      const response = await fetch(url, {
+      const response = await authenticatedFetch(url, {
+        token,
+        onUnauthorized: onLogout,
         method,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body,
       })
       if (!response.ok) {
@@ -833,7 +835,8 @@ function ACLPanel({ token }: { token: string }) {
       }
       setShowForm(false)
       fetchRules()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setFormError('Could not reach the server.')
     } finally {
       setSubmitting(false)
@@ -842,9 +845,10 @@ function ACLPanel({ token }: { token: string }) {
 
   const handleDelete = async (id: string) => {
     try {
-      const response = await fetch(`/api/v1/acls/${id}`, {
+      const response = await authenticatedFetch(`/api/v1/acls/${id}`, {
+        token,
+        onUnauthorized: onLogout,
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       })
       if (!response.ok && response.status !== 204) {
         const errBody = (await response.json().catch(() => null)) as { error?: string } | null
@@ -853,7 +857,8 @@ function ACLPanel({ token }: { token: string }) {
       }
       setDeleteConfirmId(null)
       fetchRules()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setError('Could not reach the server.')
     }
   }
@@ -1021,7 +1026,7 @@ function ACLPanel({ token }: { token: string }) {
   )
 }
 
-function DeployPanel({ token }: { token: string }) {
+function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [preview, setPreview] = useState<DeployPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
@@ -1039,7 +1044,7 @@ function DeployPanel({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/v1/deployments', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/deployments', { token, onUnauthorized: onLogout })
       .then(async (response) => {
         if (response.status === 404 || response.status === 422) {
           if (!cancelled) setUnavailable(true)
@@ -1058,20 +1063,22 @@ function DeployPanel({ token }: { token: string }) {
       })
       .catch((err: Error) => {
         if (cancelled) return
+        if (isUnauthorizedResponseError(err)) return
         setHistoryError(err.message)
         setHistoryLoading(false)
       })
     return () => { cancelled = true }
-  }, [token, historyTick])
+  }, [token, historyTick, onLogout])
 
   const handlePreview = async () => {
     setPreviewLoading(true)
     setPreviewError('')
     setPreview(null)
     try {
-      const response = await fetch('/api/v1/deployments/preview', {
+      const response = await authenticatedFetch('/api/v1/deployments/preview', {
+        token,
+        onUnauthorized: onLogout,
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
       if (response.status === 404 || response.status === 422) {
         setUnavailable(true)
@@ -1084,7 +1091,8 @@ function DeployPanel({ token }: { token: string }) {
       }
       const data = (await response.json()) as DeployPreview
       setPreview(data)
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setPreviewError('Could not reach the server.')
     } finally {
       setPreviewLoading(false)
@@ -1097,9 +1105,10 @@ function DeployPanel({ token }: { token: string }) {
     setApplyResult(null)
     setConfirmApply(false)
     try {
-      const response = await fetch('/api/v1/deployments/apply', {
+      const response = await authenticatedFetch('/api/v1/deployments/apply', {
+        token,
+        onUnauthorized: onLogout,
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
       })
       if (response.status === 404 || response.status === 422) {
         setUnavailable(true)
@@ -1114,7 +1123,8 @@ function DeployPanel({ token }: { token: string }) {
       setApplyResult(result)
       setPreview(null)
       fetchHistory()
-    } catch {
+    } catch (err) {
+      if (isUnauthorizedResponseError(err)) return
       setApplyError('Could not reach the server.')
     } finally {
       setApplying(false)
