@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -439,6 +440,50 @@ type Store struct {
 	db *sql.DB
 }
 
+// sqliteDSNBase returns the "file:" URI form of path with the given query
+// params appended. Using the "file:" URI scheme is required for correctness:
+// the plain "path?..." form works only when path contains no "?" character;
+// any "?" in the path would corrupt DSN parsing in the modernc.org/sqlite
+// driver. The "file:" form with url.PathEscape is unambiguous for all paths
+// including those with spaces, question marks, or other special characters.
+//
+// The driver passes SQLITE_OPEN_URI to sqlite3_open_v2 so the "file:" URI is
+// handled natively by SQLite. Relative paths remain relative; absolute paths
+// (both Unix and Windows) are preserved exactly by PathEscape which encodes
+// only characters that are not valid in a URI path segment.
+func sqliteDSNBase(path string) string {
+	return "file:" + url.PathEscape(path)
+}
+
+// SQLiteDSN builds the canonical DSN for the server store. It enables WAL
+// journal mode, a 5-second busy timeout, NORMAL synchronous mode, and
+// foreign-key enforcement on every connection.
+//
+// Design notes:
+//   - SetMaxOpenConns(1) + SetMaxIdleConns(1) serialise all writes through a
+//     single connection, eliminating SQLITE_BUSY from internal goroutines.
+//     WAL's reader concurrency only matters for external processes (e.g. the
+//     backup CLI); busy_timeout covers that case.
+//   - foreign_keys is a per-connection pragma (not persisted), so it must be
+//     applied on every new connection via _pragma=.
+//   - modernc.org/sqlite automatically runs busy_timeout before other pragmas
+//     (gitlab.com/cznic/sqlite issue #198), so declaration order here does not
+//     matter.
+func SQLiteDSN(path string) string {
+	return sqliteDSNBase(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
+}
+
+// SQLiteBackupDSN builds a read-intent DSN for use by the backup command when
+// opening either the source database (for VACUUM INTO) or a backup artifact
+// (for validation). It intentionally omits journal_mode(WAL): setting
+// journal_mode on the backup artifact would convert it from DELETE mode to WAL,
+// which is an unwanted and irreversible side-effect on the artifact file. Only
+// busy_timeout is applied so that VACUUM INTO retries under write pressure from
+// the server process instead of returning SQLITE_BUSY immediately.
+func SQLiteBackupDSN(path string) string {
+	return sqliteDSNBase(path) + "?_pragma=busy_timeout(5000)"
+}
+
 // Open opens a SQLite database and ensures the schema is initialized.
 func Open(path string) (*Store, error) {
 	if path == "" {
@@ -449,10 +494,20 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", SQLiteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
+
+	// Serialise all writes through a single connection. WAL mode allows
+	// concurrent reads from additional connections, but having more than one
+	// writer causes SQLITE_BUSY under load. A single connection also removes
+	// the "cannot start a transaction within a transaction" error that occurs
+	// when database/sql re-uses a connection that still has an open transaction.
+	// SetMaxIdleConns(1) matches SetMaxOpenConns(1) so that database/sql does
+	// not retain more idle connections than the pool can ever open.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	store := &Store{db: db}
 	if err := store.Init(context.Background()); err != nil {
