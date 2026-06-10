@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,32 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/metrics"
 )
+
+// apiBodyLimitBytes is the maximum number of bytes read from any API request body.
+// Requests that exceed this limit receive a 413 Request Entity Too Large response.
+// 1 MiB is generous for all current JSON payloads (largest is JSON schema upload).
+const apiBodyLimitBytes int64 = 1 << 20 // 1 MiB
+
+// withBodyLimit wraps handler so that every request body is capped at limit bytes.
+// When the body is oversized the JSON decoder returns an *http.MaxBytesError; callers
+// must check for that error type and respond with HTTP 413.
+//
+// NOTE: this middleware only limits the body — it does NOT write the 413 response
+// itself; that is done by the decodeBodyJSON helper used inside each handler. This
+// keeps the error shape consistent with the server's standard JSON error envelope.
+func withBodyLimit(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isMaxBytesError reports whether err (or any error in its chain) was caused by an
+// http.MaxBytesReader truncation.
+func isMaxBytesError(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
+}
 
 type requestContextKey string
 

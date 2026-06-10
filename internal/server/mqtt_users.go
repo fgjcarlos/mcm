@@ -65,6 +65,10 @@ func generateMQTTPassword() (string, error) {
 func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	var req createMQTTUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
@@ -149,6 +153,10 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 
 	var req updateMQTTUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}

@@ -167,6 +167,8 @@ func decodeRuleRequest(r *http.Request) (acl.Rule, error) {
 func writeAPIError(w http.ResponseWriter, err error) {
 	var validationErr *acl.ValidationError
 	switch {
+	case isMaxBytesError(err):
+		writeJSON(w, http.StatusRequestEntityTooLarge, aclErrorResponse{Error: "request body too large"})
 	case errors.As(err, &validationErr):
 		writeJSON(w, http.StatusBadRequest, aclErrorResponse{
 			Error:   "acl validation failed",
