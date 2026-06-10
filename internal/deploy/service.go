@@ -53,11 +53,11 @@ type AuditFunc func(ctx context.Context, actor, action, resourceType, resourceID
 
 // PreviewResult contains the diff output and rendered content for a deploy preview.
 type PreviewResult struct {
-	ACLDiff     string `json:"acl_diff"`
-	PasswdDiff  string `json:"passwd_diff"`
-	ACLBody     string `json:"acl_body"`
-	PasswdBody  string `json:"passwd_body"`
-	HasChanges  bool   `json:"has_changes"`
+	ACLDiff    string `json:"acl_diff"`
+	PasswdDiff string `json:"passwd_diff"`
+	ACLBody    string `json:"acl_body"`
+	PasswdBody string `json:"passwd_body"`
+	HasChanges bool   `json:"has_changes"`
 }
 
 // Service orchestrates deploy preview, apply, and history.
@@ -209,13 +209,15 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 }
 
 // Apply applies the current rendered configuration, runs a healthcheck, and rolls back on failure.
-// Apply serializes concurrent calls via a mutex.
+// Apply rejects concurrent calls instead of blocking behind an in-flight deployment.
 func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, error) {
 	if s.deployCfg.Mode == "" {
 		return storage.Deployment{}, ErrDeployDisabled
 	}
 
-	s.mu.Lock()
+	if !s.mu.TryLock() {
+		return storage.Deployment{}, ErrDeployInProgress
+	}
 	defer s.mu.Unlock()
 
 	// Snapshot current on-disk files.
