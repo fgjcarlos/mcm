@@ -451,68 +451,71 @@ func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _ string) error {
 	return errors.New("rollback applier: write failed")
 }
 
-func TestApply_ConcurrentSerialisation(t *testing.T) {
+func TestApply_ConcurrentApplyReturnsInProgress(t *testing.T) {
 	t.Parallel()
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "")
 	writeFile(t, passwdPath, "")
 
-	var order []int
-	var orderMu sync.Mutex
-
-	// Applier records call order.
-	slowApplier := &orderedApplier{
-		fn: func(n int) {
-			orderMu.Lock()
-			order = append(order, n)
-			orderMu.Unlock()
-		},
-	}
-
+	applier := newBlockingApplier()
 	store := newFakeDeploymentStore()
-	svc := newTestService(slowApplier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg)
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg)
 
-	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _ = svc.Apply(context.Background(), "goroutine")
-		}()
-	}
-	wg.Wait()
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.Apply(context.Background(), "first")
+		done <- err
+	}()
+	<-applier.started
 
-	// Each goroutine should produce exactly 1 deployment record.
-	if store.count() != 3 {
-		t.Errorf("want 3 deployment records (one per goroutine), got %d", store.count())
+	_, err := svc.Apply(context.Background(), "second")
+	if !errors.Is(err, ErrDeployInProgress) {
+		t.Fatalf("concurrent Apply error = %v, want ErrDeployInProgress", err)
 	}
-	// The applier should have been called exactly 3 times (no interleaving).
-	if slowApplier.called() != 3 {
-		t.Errorf("applier called %d times, want 3", slowApplier.called())
+	if store.count() != 1 {
+		t.Fatalf("deployment records while first apply is running = %d, want 1", store.count())
+	}
+	if applier.called() != 1 {
+		t.Fatalf("applier calls after rejected concurrent apply = %d, want 1", applier.called())
+	}
+
+	applier.release()
+	if err := <-done; err != nil {
+		t.Fatalf("first Apply returned error: %v", err)
+	}
+	if store.count() != 1 {
+		t.Fatalf("deployment records after first apply completes = %d, want 1", store.count())
 	}
 }
 
-// orderedApplier calls fn with its call number.
-type orderedApplier struct {
-	mu    sync.Mutex
-	count int
-	fn    func(int)
+type blockingApplier struct {
+	started   chan struct{}
+	releaseCh chan struct{}
+	once      sync.Once
+	mu        sync.Mutex
+	count     int
 }
 
-func (o *orderedApplier) Apply(_ context.Context, _, _ string) error {
-	o.mu.Lock()
-	o.count++
-	n := o.count
-	o.mu.Unlock()
-	o.fn(n)
+func newBlockingApplier() *blockingApplier {
+	return &blockingApplier{started: make(chan struct{}), releaseCh: make(chan struct{})}
+}
+
+func (b *blockingApplier) Apply(_ context.Context, _, _ string) error {
+	b.mu.Lock()
+	b.count++
+	b.mu.Unlock()
+	b.once.Do(func() { close(b.started) })
+	<-b.releaseCh
 	return nil
 }
 
-func (o *orderedApplier) called() int {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.count
+func (b *blockingApplier) release() { close(b.releaseCh) }
+
+func (b *blockingApplier) called() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.count
 }
 
 func TestPreview_DiffTruncation(t *testing.T) {
