@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	mfaIssuer        = "MCM"
+	mfaIssuer         = "MCM"
 	recoveryCodeCount = 10
 )
 
@@ -127,13 +127,18 @@ func (a *App) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "mfa setup is required before verification"})
 		return
 	}
-	if !auth.VerifyTOTP(user.MFASecret, code, a.now().UTC()) {
+	totpStep, ok := auth.MatchTOTPStep(user.MFASecret, code, a.now().UTC())
+	if !ok {
 		a.recordAuditFromRequest(r, "mfa.setup", "admin_user", strconv.FormatInt(user.ID, 10), "failure", map[string]any{"username": user.Username, "reason": "invalid_code"})
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid mfa code"})
 		return
 	}
 
 	if err := a.store.SetAdminUserMFA(r.Context(), user.ID, user.MFASecret, true); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	if err := a.store.ConsumeTOTPTimeStep(r.Context(), user.ID, totpStep); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}

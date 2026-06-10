@@ -12,18 +12,46 @@ import (
 // ErrRecoveryCodeNotFound is returned when a recovery code lookup fails (unknown or already used).
 var ErrRecoveryCodeNotFound = errors.New("recovery code not found")
 
+// ErrTOTPCodeReused is returned when a TOTP time-step has already been accepted for the user.
+var ErrTOTPCodeReused = errors.New("totp code already used")
+
 // SetAdminUserMFA replaces the MFA secret and enabled flag for a user. Used both
 // when enrolling (enabled=true) and when disabling (secret="" enabled=false).
 func (s *Store) SetAdminUserMFA(ctx context.Context, userID int64, secret string, enabled bool) error {
-	if _, err := s.db.ExecContext(
-		ctx,
-		`UPDATE admin_users SET mfa_secret = ?, mfa_enabled = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(secret),
-		boolToInt(enabled),
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	query := `UPDATE admin_users SET mfa_secret = ?, mfa_enabled = ?, updated_at = ? WHERE id = ?`
+	args := []any{strings.TrimSpace(secret), boolToInt(enabled), now, userID}
+	if !enabled {
+		query = `UPDATE admin_users SET mfa_secret = ?, mfa_enabled = ?, mfa_last_totp_step = -1, updated_at = ? WHERE id = ?`
+	}
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("set admin user mfa: %w", err)
+	}
+	return nil
+}
+
+// ConsumeTOTPTimeStep records an accepted TOTP time-step for the user.
+// The update is monotonic and race-safe: replaying the same or an older step is rejected.
+func (s *Store) ConsumeTOTPTimeStep(ctx context.Context, userID int64, step int64) error {
+	if userID < 1 || step < 0 {
+		return ErrTOTPCodeReused
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE admin_users SET mfa_last_totp_step = ?, updated_at = ? WHERE id = ? AND mfa_last_totp_step < ?`,
+		step,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		userID,
-	); err != nil {
-		return fmt.Errorf("set admin user mfa: %w", err)
+		step,
+	)
+	if err != nil {
+		return fmt.Errorf("consume totp time step: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("totp time step row count: %w", err)
+	}
+	if affected == 0 {
+		return ErrTOTPCodeReused
 	}
 	return nil
 }

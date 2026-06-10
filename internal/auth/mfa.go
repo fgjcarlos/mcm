@@ -34,16 +34,32 @@ func NewMFAEnrollment(issuer, username string) (MFAEnrollment, error) {
 // VerifyTOTP checks code against secret at the given instant. Allows a one-step
 // skew so a code that was valid 30s ago still works for slow networks.
 func VerifyTOTP(secret, code string, now time.Time) bool {
-	if strings.TrimSpace(secret) == "" || strings.TrimSpace(code) == "" {
-		return false
-	}
-	ok, _ := totp.ValidateCustom(code, secret, now, totp.ValidateOpts{
-		Period:    30,
-		Skew:      1,
-		Digits:    6,
-		Algorithm: 0, // SHA1, matches the default Google Authenticator profile.
-	})
+	_, ok := MatchTOTPStep(secret, code, now)
 	return ok
+}
+
+// MatchTOTPStep returns the accepted TOTP time-step counter for code. The step is
+// persisted by callers to reject replay of a previously accepted TOTP window.
+func MatchTOTPStep(secret, code string, now time.Time) (int64, bool) {
+	if strings.TrimSpace(secret) == "" || strings.TrimSpace(code) == "" {
+		return 0, false
+	}
+	const period = int64(30)
+	currentStep := now.UTC().Unix() / period
+	for _, step := range []int64{currentStep, currentStep + 1, currentStep - 1} {
+		if step < 0 {
+			continue
+		}
+		candidate, err := totp.GenerateCodeCustom(secret, time.Unix(step*period, 0).UTC(), totp.ValidateOpts{
+			Period:    uint(period),
+			Digits:    6,
+			Algorithm: 0, // SHA1, matches the default Google Authenticator profile.
+		})
+		if err == nil && candidate == strings.TrimSpace(code) {
+			return step, true
+		}
+	}
+	return 0, false
 }
 
 // GenerateRecoveryCodes returns count random recovery codes in groups of four hex
