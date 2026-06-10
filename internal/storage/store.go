@@ -1083,6 +1083,32 @@ func (s *Store) PruneBrokerMetrics(ctx context.Context, cutoff time.Time) (int64
 	return eventsDeleted, samplesDeleted, nil
 }
 
+// PruneAuditEvents deletes audit events older than cutoff and returns the number of rows removed.
+func (s *Store) PruneAuditEvents(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM audit_events WHERE occurred_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("prune audit events: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned audit events: %w", err)
+	}
+	return affected, nil
+}
+
+// PruneSecurityEvents deletes security events older than cutoff and returns the number of rows removed.
+func (s *Store) PruneSecurityEvents(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM security_events WHERE observed_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("prune security events: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned security events: %w", err)
+	}
+	return affected, nil
+}
+
 // RecordAuditEvent stores a sanitized audit event.
 func (s *Store) RecordAuditEvent(ctx context.Context, params CreateAuditEventParams) (AuditEvent, error) {
 	occurredAt := params.OccurredAt.UTC()

@@ -41,6 +41,8 @@ type App struct {
 	deploySvc          deployServicer
 	loginLockoutWindow time.Duration
 	loginMaxAttempts   int
+	auditRetention     time.Duration
+	securityRetention  time.Duration
 	trustedProxies     []*net.IPNet
 	frontendFS         fs.FS
 	logger             *slog.Logger
@@ -60,6 +62,14 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 	metricsRetention, err := time.ParseDuration(cfg.Metrics.BrokerRetention)
 	if err != nil {
 		return nil, fmt.Errorf("parse broker metrics retention: %w", err)
+	}
+	auditRetention, err := time.ParseDuration(cfg.Metrics.AuditRetention)
+	if err != nil {
+		return nil, fmt.Errorf("parse audit event retention: %w", err)
+	}
+	securityRetention, err := time.ParseDuration(cfg.Metrics.SecurityRetention)
+	if err != nil {
+		return nil, fmt.Errorf("parse security event retention: %w", err)
 	}
 	loginLockoutWindow, err := time.ParseDuration(cfg.Auth.LoginLockout.Window)
 	if err != nil {
@@ -87,6 +97,8 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		cfg:                cfg,
 		loginLockoutWindow: loginLockoutWindow,
 		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
+		auditRetention:     auditRetention,
+		securityRetention:  securityRetention,
 		trustedProxies:     trustedProxies,
 		logger:             logger,
 		now:                time.Now,
@@ -132,6 +144,42 @@ func (a *App) loadCurrentUser(ctx context.Context, claims auth.UserClaims) (stor
 		return storage.AdminUser{}, storage.ErrUserNotFound
 	}
 	return user, nil
+}
+
+// StartEventRetentionPruner periodically enforces bounded retention for durable audit and security event tables.
+func (a *App) StartEventRetentionPruner(ctx context.Context) {
+	if a.store == nil {
+		return
+	}
+	a.pruneEventRetention(ctx)
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.pruneEventRetention(ctx)
+		}
+	}
+}
+
+func (a *App) pruneEventRetention(ctx context.Context) {
+	now := a.now().UTC()
+	if a.auditRetention > 0 {
+		if deleted, err := a.store.PruneAuditEvents(ctx, now.Add(-a.auditRetention)); err != nil {
+			a.logger.Warn("prune audit events failed", "err", err)
+		} else if deleted > 0 {
+			a.logger.Info("pruned audit events", "deleted", deleted)
+		}
+	}
+	if a.securityRetention > 0 {
+		if deleted, err := a.store.PruneSecurityEvents(ctx, now.Add(-a.securityRetention)); err != nil {
+			a.logger.Warn("prune security events failed", "err", err)
+		} else if deleted > 0 {
+			a.logger.Info("pruned security events", "deleted", deleted)
+		}
+	}
 }
 
 // Handler returns the configured HTTP handler tree.
@@ -936,8 +984,9 @@ func (a *App) recordAuditFromRequest(r *http.Request, action string, resourceTyp
 	if err != nil {
 		payload = []byte(`{}`)
 	}
+	now := a.now().UTC()
 	_, _ = a.store.RecordAuditEvent(r.Context(), storage.CreateAuditEventParams{
-		OccurredAt:   a.now().UTC(),
+		OccurredAt:   now,
 		Actor:        actor,
 		Action:       action,
 		ResourceType: resourceType,
@@ -945,6 +994,9 @@ func (a *App) recordAuditFromRequest(r *http.Request, action string, resourceTyp
 		Result:       result,
 		Metadata:     payload,
 	})
+	if a.auditRetention > 0 {
+		_, _ = a.store.PruneAuditEvents(r.Context(), now.Add(-a.auditRetention))
+	}
 	if a.metrics != nil {
 		safeResult := strings.TrimSpace(result)
 		if safeResult == "" {
@@ -995,6 +1047,9 @@ func (a *App) recordSecurityEvent(r *http.Request, category string, reason strin
 		Path:       r.URL.Path,
 		ObservedAt: observedAt,
 	})
+	if a.securityRetention > 0 {
+		_, _ = a.store.PruneSecurityEvents(r.Context(), observedAt.Add(-a.securityRetention))
+	}
 	a.alerts.Enqueue(alerting.WebhookAlert{
 		Type:       "security_event",
 		Severity:   "warning",
