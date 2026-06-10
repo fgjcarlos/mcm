@@ -147,6 +147,60 @@ func TestPruneBrokerMetrics(t *testing.T) {
 	}
 }
 
+func TestPruneAuditAndSecurityEvents(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+	oldTime := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	for _, occurredAt := range []time.Time{oldTime, newTime} {
+		if _, err := store.RecordAuditEvent(ctx, CreateAuditEventParams{
+			OccurredAt:   occurredAt,
+			Actor:        "admin",
+			Action:       "acl.update",
+			ResourceType: "acl_rule",
+			Result:       "success",
+		}); err != nil {
+			t.Fatalf("RecordAuditEvent returned error: %v", err)
+		}
+		if _, err := store.RecordSecurityEvent(ctx, CreateSecurityEventParams{
+			Category:   "protected_api_access_failed",
+			Reason:     "missing_token",
+			ObservedAt: occurredAt,
+		}); err != nil {
+			t.Fatalf("RecordSecurityEvent returned error: %v", err)
+		}
+	}
+
+	auditDeleted, err := store.PruneAuditEvents(ctx, time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PruneAuditEvents returned error: %v", err)
+	}
+	securityDeleted, err := store.PruneSecurityEvents(ctx, time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("PruneSecurityEvents returned error: %v", err)
+	}
+	if auditDeleted != 1 || securityDeleted != 1 {
+		t.Fatalf("deleted audit/security events = %d/%d, want 1/1", auditDeleted, securityDeleted)
+	}
+
+	auditEvents, err := store.ListAuditEvents(ctx, AuditEventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAuditEvents returned error: %v", err)
+	}
+	if len(auditEvents) != 1 || !auditEvents[0].OccurredAt.Equal(newTime) {
+		t.Fatalf("unexpected remaining audit events: %#v", auditEvents)
+	}
+	securityEvents, err := store.ListSecurityEvents(ctx, SecurityEventQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSecurityEvents returned error: %v", err)
+	}
+	if len(securityEvents) != 1 || !securityEvents[0].ObservedAt.Equal(newTime) {
+		t.Fatalf("unexpected remaining security events: %#v", securityEvents)
+	}
+}
+
 func TestJSONSchemaDefinitionCRUD(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()

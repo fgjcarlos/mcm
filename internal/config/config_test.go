@@ -52,6 +52,9 @@ logging:
 	if cfg.Metrics.BrokerRetention != "168h" {
 		t.Fatalf("unexpected broker metrics retention: %q", cfg.Metrics.BrokerRetention)
 	}
+	if cfg.Metrics.AuditRetention != Default().Metrics.AuditRetention || cfg.Metrics.SecurityRetention != Default().Metrics.SecurityRetention {
+		t.Fatalf("unexpected audit/security retention defaults: %+v", cfg.Metrics)
+	}
 	if cfg.Alerting.Timeout != "5s" || cfg.Alerting.Enabled {
 		t.Fatalf("unexpected alerting defaults: %+v", cfg.Alerting)
 	}
@@ -172,6 +175,9 @@ logging:
 	}
 	if cfg.Metrics.BrokerRetention != Default().Metrics.BrokerRetention {
 		t.Fatalf("broker retention = %q, want default %q", cfg.Metrics.BrokerRetention, Default().Metrics.BrokerRetention)
+	}
+	if cfg.Metrics.AuditRetention != Default().Metrics.AuditRetention || cfg.Metrics.SecurityRetention != Default().Metrics.SecurityRetention {
+		t.Fatalf("audit/security retention defaults = %+v, want %+v", cfg.Metrics, Default().Metrics)
 	}
 }
 

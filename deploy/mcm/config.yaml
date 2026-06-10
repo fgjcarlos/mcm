@@ -30,6 +30,8 @@ mosquitto:
 
 metrics:
   broker_retention: "1h"
+  audit_retention: "2160h"
+  security_retention: "2160h"
 
 logging:
   level: "info"
