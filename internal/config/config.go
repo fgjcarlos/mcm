@@ -137,9 +137,11 @@ type MosquittoTLSConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
-// MetricsConfig controls persisted broker metrics.
+// MetricsConfig controls persisted operational event retention.
 type MetricsConfig struct {
-	BrokerRetention string `yaml:"broker_retention"`
+	BrokerRetention   string `yaml:"broker_retention"`
+	AuditRetention    string `yaml:"audit_retention"`
+	SecurityRetention string `yaml:"security_retention"`
 }
 
 // AlertingConfig controls outbound operational webhook alerts.
@@ -200,7 +202,9 @@ func Default() Config {
 			},
 		},
 		Metrics: MetricsConfig{
-			BrokerRetention: "168h",
+			BrokerRetention:   "168h",
+			AuditRetention:    "2160h",
+			SecurityRetention: "2160h",
 		},
 		Alerting: AlertingConfig{
 			Enabled: false,
@@ -307,8 +311,11 @@ mosquitto:
   #   container_name: ""   # only required for docker mode
 
 # Broker metric/event persistence. Raw message payloads are not stored.
+# Audit and security event retention defaults to 90 days.
 metrics:
   broker_retention: %q
+  audit_retention: %q
+  security_retention: %q
 
 # Optional outbound webhook alerts for operational events.
 # signing_secret enables the X-MCM-Signature HMAC-SHA256 header.
@@ -323,7 +330,7 @@ alerting:
 logging:
   level: %q
   format: %q
-`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.HTTP.TLS.Enabled, cfg.HTTP.TLS.MinVersion, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level, cfg.Logging.Format)
+`, cfg.HTTP.BindAddress, cfg.HTTP.Port, cfg.HTTP.TLS.Enabled, cfg.HTTP.TLS.MinVersion, cfg.Database.Path, cfg.Auth.JWTSecret, cfg.Auth.TokenTTL, cfg.Auth.BootstrapAdmin.Username, cfg.Auth.BootstrapAdmin.Password, cfg.Auth.LoginLockout.Window, cfg.Auth.LoginLockout.MaxAttempts, cfg.Mosquitto.Host, cfg.Mosquitto.Port, cfg.Mosquitto.TLS.Enabled, cfg.Mosquitto.TLS.InsecureSkipVerify, cfg.Metrics.BrokerRetention, cfg.Metrics.AuditRetention, cfg.Metrics.SecurityRetention, cfg.Alerting.Enabled, cfg.Alerting.Timeout, cfg.Logging.Level, cfg.Logging.Format)
 }
 
 // Load reads and validates a configuration file from disk.
@@ -353,6 +360,12 @@ func Parse(data []byte) (Config, error) {
 
 	if cfg.Metrics.BrokerRetention == "" {
 		cfg.Metrics.BrokerRetention = Default().Metrics.BrokerRetention
+	}
+	if cfg.Metrics.AuditRetention == "" {
+		cfg.Metrics.AuditRetention = Default().Metrics.AuditRetention
+	}
+	if cfg.Metrics.SecurityRetention == "" {
+		cfg.Metrics.SecurityRetention = Default().Metrics.SecurityRetention
 	}
 	if cfg.Mosquitto.Deploy.HealthcheckTimeout == 0 {
 		cfg.Mosquitto.Deploy.HealthcheckTimeout = 5 * time.Second
@@ -522,13 +535,18 @@ func (c Config) Validate() error {
 		problems = append(problems, "mosquitto.deploy.acl_path and mosquitto.deploy.passwd_path must not be the same path")
 	}
 
-	if strings.TrimSpace(c.Metrics.BrokerRetention) == "" {
-		problems = append(problems, "metrics.broker_retention is required")
-	} else if retention, err := time.ParseDuration(c.Metrics.BrokerRetention); err != nil {
-		problems = append(problems, fmt.Sprintf("metrics.broker_retention must be a valid duration: %v", err))
-	} else if retention <= 0 {
-		problems = append(problems, "metrics.broker_retention must be greater than zero")
+	validatePositiveDuration := func(name string, value string) {
+		if strings.TrimSpace(value) == "" {
+			problems = append(problems, fmt.Sprintf("%s is required", name))
+		} else if retention, err := time.ParseDuration(value); err != nil {
+			problems = append(problems, fmt.Sprintf("%s must be a valid duration: %v", name, err))
+		} else if retention <= 0 {
+			problems = append(problems, fmt.Sprintf("%s must be greater than zero", name))
+		}
 	}
+	validatePositiveDuration("metrics.broker_retention", c.Metrics.BrokerRetention)
+	validatePositiveDuration("metrics.audit_retention", c.Metrics.AuditRetention)
+	validatePositiveDuration("metrics.security_retention", c.Metrics.SecurityRetention)
 
 	if c.Alerting.Enabled && strings.TrimSpace(c.Alerting.EndpointURL) == "" {
 		problems = append(problems, "alerting.endpoint_url is required when alerting.enabled is true")

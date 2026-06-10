@@ -97,8 +97,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 		if payload == nil {
 			payload = []byte(`{}`)
 		}
+		now := time.Now().UTC()
 		_, _ = store.RecordAuditEvent(auditCtx, storage.CreateAuditEventParams{
-			OccurredAt:   time.Now().UTC(),
+			OccurredAt:   now,
 			Actor:        actor,
 			Action:       action,
 			ResourceType: resourceType,
@@ -106,7 +107,11 @@ func Run(ctx context.Context, cfg config.Config) error {
 			Result:       result,
 			Metadata:     json.RawMessage(payload),
 		})
+		if app.auditRetention > 0 {
+			_, _ = store.PruneAuditEvents(auditCtx, now.Add(-app.auditRetention))
+		}
 	}
+	go app.StartEventRetentionPruner(ctx)
 	deployCfg := cfg.Mosquitto.Deploy
 	applier := buildApplier(deployCfg)
 	app.deploySvc = deploy.NewService(
