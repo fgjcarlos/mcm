@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	httpReadHeaderTimeout = 5 * time.Second
-	httpReadTimeout       = 30 * time.Second
-	httpWriteTimeout      = 30 * time.Second
-	httpIdleTimeout       = 60 * time.Second
-	httpMaxHeaderBytes    = 16 << 10
+	httpReadHeaderTimeout   = 5 * time.Second
+	httpReadTimeout         = 30 * time.Second
+	httpWriteTimeout        = 30 * time.Second
+	httpIdleTimeout         = 60 * time.Second
+	httpMaxHeaderBytes      = 16 << 10
+	gracefulShutdownTimeout = 15 * time.Second
 )
 
 // buildApplier constructs the appropriate mosquitto.Applier for the given deploy config.
@@ -143,10 +144,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	}
 
 	server := newHTTPServer(cfg, handler, tlsConfig)
+	shutdownDone := make(chan struct{})
 
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
-		_ = server.Shutdown(context.Background())
+		shutdownHTTPServerAndAlerts(server.Shutdown, app.alerts.Shutdown, gracefulShutdownTimeout, logger)
 	}()
 
 	if tlsConfig != nil {
@@ -154,13 +157,32 @@ func Run(ctx context.Context, cfg config.Config) error {
 		if err := server.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen and serve tls: %w", err)
 		}
+		<-shutdownDone
 		return nil
 	}
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("listen and serve: %w", err)
 	}
+	<-shutdownDone
 	return nil
+}
+
+func shutdownHTTPServerAndAlerts(shutdownHTTP func(context.Context) error, shutdownAlerts func(context.Context) error, timeout time.Duration, logger *slog.Logger) {
+	shutdownHTTPServer(shutdownHTTP, timeout, logger)
+	alertCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := shutdownAlerts(alertCtx); err != nil {
+		logger.Error("webhook alerter shutdown failed", slog.String("error", err.Error()))
+	}
+}
+
+func shutdownHTTPServer(shutdown func(context.Context) error, timeout time.Duration, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		logger.Error("http server shutdown failed", slog.String("error", err.Error()))
+	}
 }
 
 func newHTTPServer(cfg config.Config, handler http.Handler, tlsConfig *tls.Config) *http.Server {
