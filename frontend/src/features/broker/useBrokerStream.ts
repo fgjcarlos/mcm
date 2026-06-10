@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { authenticatedFetch } from '../api/client'
 
 export type SparkplugMetadata = {
@@ -78,6 +78,7 @@ export type BrokerRatePoint = {
 }
 
 export type BrokerTrafficMetrics = {
+  snapshot_at?: string
   window_seconds: number
   message_count: number
   message_rate_per_minute: number
@@ -117,9 +118,9 @@ export function useBrokerStream(token: string, onLogout: () => void) {
   const [brokerStatus, setBrokerStatus] = useState<BrokerConnectionStatus>('disconnected')
   const [streamState, setStreamState] = useState<BrokerStreamState>('connecting')
   const [topics, setTopics] = useState<TopicMessage[]>([])
-  const [trafficEvents, setTrafficEvents] = useState<TopicMessage[]>([])
-  const [trafficMetrics, setTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
+  const [liveTrafficMetrics, setLiveTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
   const [logs, setLogs] = useState<BrokerLog[]>([])
+  const liveTrafficEvents = useRef<TopicMessage[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -127,11 +128,14 @@ export function useBrokerStream(token: string, onLogout: () => void) {
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error('status request failed'))))
       .then((status: StatusResponse) => {
         if (cancelled) return
+        const traffic = withSnapshotAt(status.broker.metrics.traffic ?? emptyTrafficMetrics)
         setBrokerStatus(status.broker.status)
-        setTrafficMetrics(status.broker.metrics.traffic ?? emptyTrafficMetrics)
+        setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, traffic) : traffic)
       })
       .catch(() => {
-        if (!cancelled) setTrafficMetrics(emptyTrafficMetrics)
+        if (!cancelled) {
+          setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
+        }
       })
 
     return () => {
@@ -202,8 +206,9 @@ export function useBrokerStream(token: string, onLogout: () => void) {
           }
           if (event.type === 'topic_message' && event.topic) {
             const topicEvent = event as TopicMessage
+            liveTrafficEvents.current = pruneTrafficEvents([topicEvent, ...liveTrafficEvents.current])
             setTopics((current) => [topicEvent, ...current].slice(0, 20))
-            setTrafficEvents((current) => pruneTrafficEvents([topicEvent, ...current]))
+            setLiveTrafficMetrics((current) => addTopicEventToTrafficMetrics(current, topicEvent))
           }
           if (event.type === 'broker_log' && event.source && event.severity && event.message) {
             setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
@@ -230,10 +235,6 @@ export function useBrokerStream(token: string, onLogout: () => void) {
   }, [token])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
-  const liveTrafficMetrics = useMemo(
-    () => (trafficEvents.length > 0 ? buildTrafficMetrics(trafficEvents, trafficMetrics) : trafficMetrics),
-    [trafficEvents, trafficMetrics],
-  )
 
   return {
     brokerStatus,
@@ -261,6 +262,7 @@ export function buildTrafficMetrics(events: TopicMessage[], base: BrokerTrafficM
   base.rate_points.forEach((point) => bucketCounts.set(new Date(point.timestamp).getTime(), point.count))
 
   pruned.forEach((event) => {
+    if (!isAfterSnapshot(event, base)) return
     messageCount += 1
     topicCounts.set(event.topic, (topicCounts.get(event.topic) ?? 0) + 1)
     const observedAt = new Date(event.observed_at)
@@ -291,4 +293,54 @@ export function buildTrafficMetrics(events: TopicMessage[], base: BrokerTrafficM
     top_clients_available: false,
     top_clients_note: base.top_clients_note || defaultClientNote,
   }
+}
+
+function withSnapshotAt(metrics: BrokerTrafficMetrics): BrokerTrafficMetrics {
+  return metrics.snapshot_at ? metrics : { ...metrics, snapshot_at: new Date().toISOString() }
+}
+
+export function addTopicEventToTrafficMetrics(base: BrokerTrafficMetrics, event: TopicMessage): BrokerTrafficMetrics {
+  if (!isAfterSnapshot(event, base)) return base
+
+  const observedAt = new Date(event.observed_at)
+  const observedMs = observedAt.getTime()
+  if (!Number.isFinite(observedMs)) return base
+
+  const messageCount = base.message_count + 1
+  const topicCounts = new Map<string, number>()
+  base.top_topics.forEach((item) => topicCounts.set(item.name, item.count))
+  topicCounts.set(event.topic, (topicCounts.get(event.topic) ?? 0) + 1)
+
+  observedAt.setSeconds(0, 0)
+  const bucketCounts = new Map<number, number>()
+  base.rate_points.forEach((point) => bucketCounts.set(new Date(point.timestamp).getTime(), point.count))
+  bucketCounts.set(observedAt.getTime(), (bucketCounts.get(observedAt.getTime()) ?? 0) + 1)
+
+  const ratePoints: BrokerRatePoint[] = []
+  for (let offset = Math.floor(trafficWindowSeconds / 60); offset >= 0; offset -= 1) {
+    const timestamp = new Date(observedAt.getTime() - offset * 60_000)
+    ratePoints.push({ timestamp: timestamp.toISOString(), count: bucketCounts.get(timestamp.getTime()) ?? 0 })
+  }
+
+  const topTopics = [...topicCounts.entries()]
+    .map(([name, count]) => ({ name, count, percentage: messageCount === 0 ? 0 : (count * 100) / messageCount }))
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
+    .slice(0, 5)
+
+  return {
+    ...base,
+    window_seconds: trafficWindowSeconds,
+    message_count: messageCount,
+    message_rate_per_minute: messageCount / (trafficWindowSeconds / 60),
+    rate_points: ratePoints,
+    top_topics: topTopics,
+    top_clients_available: false,
+    top_clients_note: base.top_clients_note || defaultClientNote,
+  }
+}
+
+function isAfterSnapshot(event: TopicMessage, base: BrokerTrafficMetrics) {
+  const snapshotMs = base.snapshot_at ? new Date(base.snapshot_at).getTime() : Number.NEGATIVE_INFINITY
+  const observedMs = new Date(event.observed_at).getTime()
+  return Number.isFinite(observedMs) && (!Number.isFinite(snapshotMs) || observedMs > snapshotMs)
 }
