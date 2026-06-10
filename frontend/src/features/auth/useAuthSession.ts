@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { authenticatedFetch } from '../api/client'
 
 export type AdminUser = {
   id: number
@@ -34,13 +35,9 @@ export function useAuthSession() {
     if (!token) return
 
     let cancelled = false
-    fetch('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+    authenticatedFetch('/api/v1/auth/me', { token, onUnauthorized: handleLogout })
       .then(async (response) => {
         if (cancelled) return
-        if (response.status === 401) {
-          handleLogout()
-          return
-        }
         if (!response.ok) {
           throw new Error('Failed to verify session.')
         }

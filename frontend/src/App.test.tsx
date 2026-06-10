@@ -353,6 +353,56 @@ describe('App', () => {
     })
   })
 
+  it('logs out when the initial authenticated status request is unauthorized', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'expired-status-token')
+
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/me': () =>
+        jsonResponse({
+          id: 10,
+          username: 'status-operator',
+          disabled: false,
+          role: 'operator',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+      'GET /api/v1/status': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer expired-status-token' }))
+
+        return new Response(null, { status: 401 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(window.localStorage.getItem('mcm_admin_token')).toBeNull()
+  })
+
+  it('logs out when the ACL panel receives an unauthorized response', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'expired-acl-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('expired-acl-token'),
+      'GET /api/v1/acls': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer expired-acl-token' }))
+
+        return new Response(null, { status: 401 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /acls/i }))
+
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(window.localStorage.getItem('mcm_admin_token')).toBeNull()
+  })
+
   it('updates the topic explorer when a broker event arrives without a page refresh', async () => {
     window.localStorage.setItem('mcm_admin_token', 'topic-live-token')
 
@@ -452,6 +502,52 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
     expect(await screen.findByText('Not configured')).toBeInTheDocument()
     expect(screen.getByText('Deploy functionality is not configured on this MCM instance.')).toBeInTheDocument()
+  })
+
+  it('logs out when the deploy panel receives an unauthorized response', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'expired-deploy-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('expired-deploy-token'),
+      'GET /api/v1/deployments': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer expired-deploy-token' }))
+
+        return new Response(null, { status: 401 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(window.localStorage.getItem('mcm_admin_token')).toBeNull()
+  })
+
+  it('logs out when the MQTT users panel receives an unauthorized response', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'expired-users-token')
+
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('expired-users-token'),
+      'GET /api/v1/mqtt-users': (init) => {
+        expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer expired-users-token' }))
+
+        return new Response(null, { status: 401 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /users/i }))
+
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(window.localStorage.getItem('mcm_admin_token')).toBeNull()
   })
 
   it('opens the routed topics page on a direct browser load', async () => {

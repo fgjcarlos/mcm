@@ -66,6 +66,7 @@ func TestWebhookAlerterDeliverPayloadAndSignature(t *testing.T) {
 	defer server.Close()
 
 	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s", SigningSecret: secret}, nil)
+	t.Cleanup(func() { _ = alerter.Shutdown(context.Background()) })
 	err := alerter.deliver(context.Background(), WebhookAlert{
 		ID:         "alert-1",
 		Type:       "broker_status",
@@ -107,10 +108,72 @@ func TestWebhookAlerterFailedDeliveryReturnsError(t *testing.T) {
 	defer server.Close()
 
 	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s"}, nil)
+	t.Cleanup(func() { _ = alerter.Shutdown(context.Background()) })
 	err := alerter.deliver(context.Background(), WebhookAlert{Type: "broker_status", ObservedAt: time.Now().UTC()})
 	if err == nil {
 		t.Fatal("deliver returned nil error for 500 response")
 	}
+}
+
+func TestWebhookAlerterShutdownDrainsQueuedAlerts(t *testing.T) {
+	received := make(chan WebhookAlert, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload WebhookAlert
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received <- payload
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "1s"}, nil)
+	for i := 0; i < cap(received); i++ {
+		alerter.Enqueue(WebhookAlert{Type: "broker_status", Severity: "warning", Source: "broker", Message: "queued"})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := alerter.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+
+	for i := 0; i < cap(received); i++ {
+		select {
+		case <-received:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for delivered alert %d", i+1)
+		}
+	}
+
+	alerter.Enqueue(WebhookAlert{Type: "broker_status"})
+}
+
+func TestWebhookAlerterShutdownHonorsContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+	}))
+	defer server.Close()
+
+	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: true, EndpointURL: server.URL, Timeout: "100ms"}, nil)
+	alerter.Enqueue(WebhookAlert{Type: "broker_status", Severity: "warning", Source: "broker", Message: "queued"})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for webhook delivery to start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := alerter.Shutdown(ctx); err == nil {
+		t.Fatal("Shutdown returned nil error after context deadline")
+	}
+	close(release)
 }
 
 func TestSignWebhookPayload(t *testing.T) {

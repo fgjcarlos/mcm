@@ -154,7 +154,24 @@ function stubFetchUnused() {
   vi.stubGlobal(
     'fetch',
     vi.fn(() =>
-      Promise.reject(new Error('fetch must not be called in these tests')),
+      Promise.resolve(new Response(JSON.stringify({
+        broker: {
+          status: 'connected',
+          metrics: {
+            traffic: {
+              window_seconds: 300,
+              message_count: 0,
+              message_rate_per_minute: 0,
+              rate_points: [],
+              top_topics: [],
+              top_clients: [],
+              top_clients_available: false,
+              top_clients_note: '',
+              persistence: 'test',
+            },
+          },
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })),
     ),
   )
 }
@@ -249,6 +266,8 @@ describe('traffic metric accumulation (issue #170)', () => {
   })
 })
 
+const noopLogout = () => {}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -274,7 +293,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
       ),
     )
 
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     await act(async () => {})
     expect(result.current.liveTrafficMetrics.message_count).toBe(6)
@@ -302,7 +321,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
     })
     vi.stubGlobal('fetch', vi.fn(() => statusPromise))
 
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     await act(async () => {
       MockWebSocket.instances[0]!.open()
@@ -329,7 +348,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // (a) close → a new WebSocket is constructed after backoff
   // -------------------------------------------------------------------------
   it('(a) reconnects by constructing a new WebSocket after a close event', async () => {
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     // First socket opens successfully
     await act(async () => {
@@ -368,7 +387,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // (b) backoff grows between consecutive failures
   // -------------------------------------------------------------------------
   it('(b) doubles the backoff delay on consecutive connection failures', async () => {
-    renderHook(() => useBrokerStream('tok'))
+    renderHook(() => useBrokerStream('tok', noopLogout))
 
     // First socket — fail immediately without opening (first failure)
     await act(async () => {
@@ -408,7 +427,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // (c) successful open resets backoff to base delay
   // -------------------------------------------------------------------------
   it('(c) resets backoff to the base delay after a successful connection', async () => {
-    renderHook(() => useBrokerStream('tok'))
+    renderHook(() => useBrokerStream('tok', noopLogout))
 
     // Fail once
     await act(async () => {
@@ -448,7 +467,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
 
     // We'll observe side-effects via the hook's returned brokerStatus.
     // Use a wrapper to track calls to setBrokerStatus indirectly.
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     await act(async () => {
       MockWebSocket.instances[0]!.open()
@@ -482,7 +501,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // (e) unmount cancels pending reconnect timers
   // -------------------------------------------------------------------------
   it('(e) does not reconnect after the component unmounts', async () => {
-    const { unmount } = renderHook(() => useBrokerStream('tok'))
+    const { unmount } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     // Trigger a close — would schedule a reconnect timer
     await act(async () => {
@@ -505,7 +524,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // error event → reconnect, not permanent disconnection
   // -------------------------------------------------------------------------
   it('schedules a reconnect on an error event instead of staying permanently disconnected', async () => {
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     await act(async () => {
       MockWebSocket.instances[0]!.open()
@@ -534,7 +553,7 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   // double-schedule guard: error + close must schedule exactly ONE reconnect
   // -------------------------------------------------------------------------
   it('schedules exactly one reconnect when error is followed by close', async () => {
-    const { result } = renderHook(() => useBrokerStream('tok'))
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
 
     await act(async () => {
       MockWebSocket.instances[0]!.open()
