@@ -244,7 +244,7 @@ func (a *App) Handler() http.Handler {
 	if a.frontendFS != nil {
 		mux.Handle("/", spaHandler(a.frontendFS))
 	}
-	return withBodyLimit(mux, apiBodyLimitBytes)
+	return withSecurityHeaders(withCORS(withBodyLimit(mux, apiBodyLimitBytes), a.cfg.HTTP.CORS.AllowedOrigins))
 }
 
 type statusResponse struct {

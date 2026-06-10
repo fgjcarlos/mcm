@@ -53,6 +53,15 @@ type Config struct {
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
+// CORSConfig controls cross-origin resource sharing for the API.
+// AllowedOrigins is a list of exact origin values (scheme + host + optional port)
+// that are permitted to make cross-origin requests. An empty list (the default)
+// means no cross-origin requests are allowed — strict same-origin policy.
+// Never use wildcard origins ("*") here; credentials require an exact match.
+type CORSConfig struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
+}
+
 // HTTPConfig controls the HTTP listener.
 type HTTPConfig struct {
 	BindAddress string        `yaml:"bind_address"`
@@ -61,7 +70,8 @@ type HTTPConfig struct {
 	// TrustedProxies lists IP/CIDR entries whose X-Forwarded-For / X-Real-IP
 	// headers are honored when determining the client IP. Empty (default) means
 	// no proxy is trusted and the direct peer address is always used.
-	TrustedProxies []string `yaml:"trusted_proxies"`
+	TrustedProxies []string   `yaml:"trusted_proxies"`
+	CORS           CORSConfig `yaml:"cors"`
 }
 
 // HTTPTLSConfig controls HTTPS and optional mTLS for the MCM API.
