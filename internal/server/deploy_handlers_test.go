@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -304,16 +303,50 @@ func TestHandleDeployApply(t *testing.T) {
 		}
 	})
 
-	t.Run("returns 409 when in-progress (concurrent apply via mutex)", func(t *testing.T) {
-		// This tests that the HTTP layer maps a locked deploy correctly.
-		// We simulate by directly testing handler error path with a locked service.
+	t.Run("returns rolled_back deployment body when healthcheck fails", func(t *testing.T) {
+		app, store := newTestApp(t)
+		t.Cleanup(func() { _ = store.Close() })
+		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+		token := loginAs(t, app, "admin", "secret")
+
+		dir := t.TempDir()
+		app.deploySvc = deploy.NewService(
+			&fakeDeployApplier{},
+			&fakeDeployACLStore{},
+			&fakeDeployMQTTStore{},
+			newFakeDeployStore(),
+			func(_ context.Context, _ config.MosquittoConfig) diagnostics.MQTTResult {
+				return diagnostics.MQTTResult{OK: false, Message: "broker unreachable"}
+			},
+			config.MosquittoConfig{Host: "localhost", Port: 1883},
+			config.DeployConfig{Mode: "file", ACLPath: dir + "/acl", PasswdPath: dir + "/passwd"},
+			func(_ context.Context, _, _, _, _, _ string, _ []byte) {},
+		)
+
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		var resp storage.Deployment
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Status != "rolled_back" {
+			t.Fatalf("deployment status = %q, want rolled_back; body = %s", resp.Status, rec.Body.String())
+		}
+		if resp.Message == "" {
+			t.Fatalf("rolled_back response must include a message; body = %s", rec.Body.String())
+		}
+	})
+
+	t.Run("returns 409 when in-progress", func(t *testing.T) {
 		app, store, _ := newTestAppWithDeploy(t, true)
 		t.Cleanup(func() { _ = store.Close() })
 
 		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
 		token := loginAs(t, app, "admin", "secret")
-
-		// Inject a service whose apply is locked (deploy in progress).
 		app.deploySvc = &lockedDeployService{}
 
 		rec := httptest.NewRecorder()
@@ -323,8 +356,12 @@ func TestHandleDeployApply(t *testing.T) {
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "deploy") {
-			t.Errorf("response body missing 'deploy' context: %s", rec.Body.String())
+		var resp errorResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Error != "deploy already in progress" {
+			t.Fatalf("error response = %q, want deploy already in progress", resp.Error)
 		}
 	})
 }
