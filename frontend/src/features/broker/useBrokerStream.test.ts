@@ -13,7 +13,13 @@
 
 import { renderHook, act } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBrokerStream } from './useBrokerStream'
+import {
+  addTopicEventToTrafficMetrics,
+  buildTrafficMetrics,
+  type BrokerTrafficMetrics,
+  type TopicMessage,
+  useBrokerStream,
+} from './useBrokerStream'
 
 // ---------------------------------------------------------------------------
 // MockWebSocket — does NOT auto-open; tests call .open() explicitly
@@ -153,6 +159,96 @@ function stubFetchUnused() {
   )
 }
 
+function baseTrafficMetrics(): BrokerTrafficMetrics {
+  return {
+    snapshot_at: '2026-01-01T00:02:00.000Z',
+    window_seconds: 300,
+    message_count: 6,
+    message_rate_per_minute: 1.2,
+    rate_points: [
+      { timestamp: '2026-01-01T00:01:00.000Z', count: 2 },
+      { timestamp: '2026-01-01T00:02:00.000Z', count: 4 },
+    ],
+    top_topics: [{ name: 'factory/line-1/temperature', count: 4, percentage: 67 }],
+    top_clients: [],
+    top_clients_available: false,
+    top_clients_note: '',
+    persistence: 'persisted broker metric events are used when available',
+  }
+}
+
+function topicMessage(topic: string, observedAt: string): TopicMessage {
+  return {
+    type: 'topic_message',
+    topic,
+    payload_preview: '{}',
+    payload_format: 'json',
+    payload_bytes: 2,
+    observed_at: observedAt,
+  }
+}
+
+function statusResponse(traffic: BrokerTrafficMetrics) {
+  return new Response(
+    JSON.stringify({
+      broker: {
+        status: 'connected',
+        metrics: { traffic },
+      },
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  )
+}
+
+describe('traffic metric accumulation (issue #170)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:03:00.000Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('does not count live events that overlap the status snapshot', () => {
+    const metrics = buildTrafficMetrics(
+      [
+        topicMessage('factory/line-1/temperature', '2026-01-01T00:01:30.000Z'),
+        topicMessage('factory/line-1/temperature', '2026-01-01T00:02:00.000Z'),
+        topicMessage('factory/line-2/pressure', '2026-01-01T00:02:01.000Z'),
+      ],
+      baseTrafficMetrics(),
+    )
+
+    expect(metrics.message_count).toBe(7)
+    expect(metrics.message_rate_per_minute).toBe(1.4)
+    expect(metrics.top_topics).toEqual([
+      { name: 'factory/line-1/temperature', count: 4, percentage: (4 * 100) / 7 },
+      { name: 'factory/line-2/pressure', count: 1, percentage: (1 * 100) / 7 },
+    ])
+    expect(metrics.rate_points.find((point) => point.timestamp === '2026-01-01T00:02:00.000Z')?.count).toBe(5)
+  })
+
+  it('increments a baseline snapshot one live event at a time', () => {
+    const overlapped = addTopicEventToTrafficMetrics(
+      baseTrafficMetrics(),
+      topicMessage('factory/line-1/temperature', '2026-01-01T00:02:00.000Z'),
+    )
+    const metrics = addTopicEventToTrafficMetrics(
+      overlapped,
+      topicMessage('factory/line-1/temperature', '2026-01-01T00:02:01.000Z'),
+    )
+
+    expect(metrics.message_count).toBe(7)
+    expect(metrics.message_rate_per_minute).toBe(1.4)
+    expect(metrics.top_topics[0]).toEqual({
+      name: 'factory/line-1/temperature',
+      count: 5,
+      percentage: (5 * 100) / 7,
+    })
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -168,6 +264,65 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('seeds dashboard traffic from status and only increments non-overlapping live events', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(statusResponse(baseTrafficMetrics())),
+      ),
+    )
+
+    const { result } = renderHook(() => useBrokerStream('tok'))
+
+    await act(async () => {})
+    expect(result.current.liveTrafficMetrics.message_count).toBe(6)
+
+    await act(async () => {
+      MockWebSocket.instances[0]!.open()
+      MockWebSocket.instances[0]!.message(topicMessage('factory/line-1/temperature', '2026-01-01T00:02:00.000Z'))
+      MockWebSocket.instances[0]!.message(topicMessage('factory/line-1/temperature', '2026-01-01T00:02:01.000Z'))
+    })
+
+    expect(result.current.liveTrafficMetrics.message_count).toBe(7)
+    expect(result.current.liveTrafficMetrics.message_rate_per_minute).toBe(1.4)
+    expect(result.current.liveTrafficMetrics.top_topics[0]).toEqual({
+      name: 'factory/line-1/temperature',
+      count: 5,
+      percentage: (5 * 100) / 7,
+    })
+  })
+
+  it('keeps live traffic metrics when a topic arrives before the status snapshot resolves', async () => {
+    vi.setSystemTime(new Date('2026-01-01T00:03:00.000Z'))
+    let resolveStatus!: (response: Response) => void
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn(() => statusPromise))
+
+    const { result } = renderHook(() => useBrokerStream('tok'))
+
+    await act(async () => {
+      MockWebSocket.instances[0]!.open()
+      MockWebSocket.instances[0]!.message(topicMessage('factory/line-2/pressure', '2026-01-01T00:02:30.000Z'))
+    })
+
+    expect(result.current.liveTrafficMetrics.message_count).toBe(1)
+
+    await act(async () => {
+      resolveStatus(statusResponse(baseTrafficMetrics()))
+      await statusPromise
+    })
+
+    expect(result.current.liveTrafficMetrics.message_count).toBe(7)
+    expect(result.current.liveTrafficMetrics.message_rate_per_minute).toBe(1.4)
+    expect(result.current.liveTrafficMetrics.top_topics).toEqual([
+      { name: 'factory/line-1/temperature', count: 4, percentage: (4 * 100) / 7 },
+      { name: 'factory/line-2/pressure', count: 1, percentage: (1 * 100) / 7 },
+    ])
+    expect(result.current.liveTrafficMetrics.rate_points.find((point) => point.timestamp === '2026-01-01T00:02:00.000Z')?.count).toBe(5)
   })
 
   // -------------------------------------------------------------------------

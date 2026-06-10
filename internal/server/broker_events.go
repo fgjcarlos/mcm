@@ -104,6 +104,7 @@ type BrokerEventSnapshot struct {
 
 // BrokerTrafficMetrics summarizes recent topic activity for operator dashboards.
 type BrokerTrafficMetrics struct {
+	SnapshotAt            time.Time           `json:"snapshot_at"`
 	WindowSeconds        int                 `json:"window_seconds"`
 	MessageCount         int                 `json:"message_count"`
 	MessageRatePerMinute float64             `json:"message_rate_per_minute"`
@@ -348,6 +349,7 @@ func computeBrokerTrafficMetrics(events []BrokerEvent, now time.Time, window tim
 	}
 
 	metrics := BrokerTrafficMetrics{
+		SnapshotAt:            now.UTC(),
 		WindowSeconds:        int(window.Seconds()),
 		MessageCount:         messageCount,
 		MessageRatePerMinute: float64(messageCount) / window.Minutes(),

@@ -264,6 +264,7 @@ describe('App', () => {
             status: 'connected',
             metrics: {
               traffic: {
+                snapshot_at: '2026-01-01T00:01:00Z',
                 window_seconds: 300,
                 message_count: 6,
                 message_rate_per_minute: 1.2,
@@ -306,6 +307,7 @@ describe('App', () => {
     )
 
     expect(await screen.findByText('{"temperature":21.5}')).toBeInTheDocument()
+    expect(screen.getByText('7 messages in the last 5 minutes.')).toBeInTheDocument()
     expect(screen.getByText('json')).toBeInTheDocument()
     expect(screen.getByText('20')).toBeInTheDocument()
   })
