@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pquerna/otp/totp"
 )
@@ -47,6 +48,11 @@ func enrollAndEnableMFA(t *testing.T, app *App, password, username string) (secr
 	if verifyRec.Code != http.StatusNoContent {
 		t.Fatalf("mfa verify status = %d, body = %s", verifyRec.Code, verifyRec.Body.String())
 	}
+
+	// Enrollment consumes the current TOTP step so it cannot be replayed for login.
+	// Advance the deterministic test clock to the next step for callers that log in.
+	verifiedAt := app.now().UTC()
+	app.now = func() time.Time { return verifiedAt.Add(30 * time.Second) }
 
 	return setupResp.Secret, setupResp.RecoveryCodes
 }
@@ -174,6 +180,46 @@ func TestLoginMFACompletesWithValidTOTP(t *testing.T) {
 	}
 	if finalResp.Token == "" {
 		t.Fatal("mfa login did not issue an access token")
+	}
+}
+
+func TestLoginMFARejectsReplayedTOTPWithinWindow(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "secret-password", false)
+	secret, _ := enrollAndEnableMFA(t, app, "secret-password", "admin")
+	code, err := totp.GenerateCode(secret, app.now().UTC())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+
+	tryTOTPLogin := func() int {
+		loginRec := httptest.NewRecorder()
+		loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+		loginReq.Header.Set("Content-Type", "application/json")
+		app.Handler().ServeHTTP(loginRec, loginReq)
+		if loginRec.Code != http.StatusOK {
+			t.Fatalf("first-step login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+		}
+		var firstStep loginResponse
+		if err := json.NewDecoder(loginRec.Body).Decode(&firstStep); err != nil {
+			t.Fatalf("decode first-step login: %v", err)
+		}
+
+		body, _ := json.Marshal(loginMFARequest{Challenge: firstStep.MFAChallenge, Code: code})
+		mfaRec := httptest.NewRecorder()
+		mfaReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/mfa", strings.NewReader(string(body)))
+		mfaReq.Header.Set("Content-Type", "application/json")
+		app.Handler().ServeHTTP(mfaRec, mfaReq)
+		return mfaRec.Code
+	}
+
+	if status := tryTOTPLogin(); status != http.StatusOK {
+		t.Fatalf("first TOTP use status = %d, want 200", status)
+	}
+	if status := tryTOTPLogin(); status != http.StatusUnauthorized {
+		t.Fatalf("replayed TOTP status = %d, want 401", status)
 	}
 }
 
