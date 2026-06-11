@@ -65,6 +65,43 @@ For Docker deployments, `docker pull` automatically selects the correct architec
 sha256sum -c checksums.txt
 ```
 
+## Verifying release signatures
+
+All releases are signed with [cosign](https://docs.sigstore.dev/cosign/overview/) using **keyless signing** (Sigstore OIDC). No long-lived key material is stored.
+
+### Verify the checksum file
+
+```bash
+cosign verify-blob \
+  --certificate checksums.txt-keyless.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp "https://github.com/fgjcarlos/mcm/.github/workflows/release.yml" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+```
+
+### Verify the container image
+
+```bash
+cosign verify \
+  --certificate-identity-regexp "https://github.com/fgjcarlos/mcm/.github/workflows/release.yml" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/fgjcarlos/mcm:0.1.0
+```
+
+### Inspect the SBOM
+
+Each release archive ships with a companion SPDX SBOM (e.g. `mcm_0.1.0_linux_amd64.tar.gz.spdx.json`).
+To inspect it:
+
+```bash
+# Using syft
+syft convert mcm_0.1.0_linux_amd64.tar.gz.spdx.json -o table
+
+# Using grype for vulnerability scanning against the SBOM
+grype sbom:mcm_0.1.0_linux_amd64.tar.gz.spdx.json
+```
+
 ## Local dry run
 
 To test the release pipeline locally without publishing:
