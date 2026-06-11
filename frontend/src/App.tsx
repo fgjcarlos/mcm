@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
-import { authenticatedFetch, isUnauthorizedResponseError } from './features/api/client'
+import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
+import { can, permissionTitle } from './features/auth/permissions'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
 import {
   defaultClientNote,
@@ -260,11 +261,11 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
       ) : activeId === 'dashboard' ? (
         <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
       ) : activeId === 'acls' ? (
-        <ACLPanel token={token} onLogout={onLogout} />
+        <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'users' ? (
-        <MQTTUsersPanel token={token} onLogout={onLogout} />
+        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'deploy' ? (
-        <DeployPanel token={token} onLogout={onLogout} />
+        <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : (
         <TopicsPanel topics={topics} latestTopic={latestTopic} />
       )}
@@ -747,7 +748,8 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: Brok
   )
 }
 
-function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
+function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+  const canWrite = can(role, 'acl.write')
   const [rules, setRules] = useState<ACLRule[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -837,6 +839,7 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setFormError((err as Error).message); return }
       setFormError('Could not reach the server.')
     } finally {
       setSubmitting(false)
@@ -859,6 +862,7 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
       setError('Could not reach the server.')
     }
   }
@@ -873,7 +877,9 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
         <button
           type="button"
           onClick={openCreate}
-          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+          disabled={!canWrite}
+          title={!canWrite ? permissionTitle('acl.write') : undefined}
+          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
         >
           Add Rule
         </button>
@@ -938,7 +944,8 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !canWrite}
+                title={!canWrite ? permissionTitle('acl.write') : undefined}
                 className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
               >
                 {submitting ? 'Saving…' : editRule ? 'Update rule' : 'Create rule'}
@@ -1002,14 +1009,18 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
                         <button
                           type="button"
                           onClick={() => openEdit(rule)}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                          disabled={!canWrite}
+                          title={!canWrite ? permissionTitle('acl.write') : undefined}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
                         >
                           Edit
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeleteConfirmId(rule.id)}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                          disabled={!canWrite}
+                          title={!canWrite ? permissionTitle('acl.write') : undefined}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30 disabled:opacity-50"
                         >
                           Delete
                         </button>
@@ -1026,7 +1037,9 @@ function ACLPanel({ token, onLogout }: { token: string; onLogout: () => void }) 
   )
 }
 
-function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
+function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+  const canPreview = can(role, 'deploy.preview')
+  const canApply = can(role, 'deploy.apply')
   const [preview, setPreview] = useState<DeployPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
@@ -1093,6 +1106,7 @@ function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void 
       setPreview(data)
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setPreviewError((err as Error).message); return }
       setPreviewError('Could not reach the server.')
     } finally {
       setPreviewLoading(false)
@@ -1125,6 +1139,7 @@ function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void 
       fetchHistory()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setApplyError((err as Error).message); return }
       setApplyError('Could not reach the server.')
     } finally {
       setApplying(false)
@@ -1158,7 +1173,8 @@ function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void 
                   <button
                     type="button"
                     onClick={() => { void handleApply() }}
-                    disabled={applying}
+                    disabled={applying || !canApply}
+                    title={!canApply ? permissionTitle('deploy.apply') : undefined}
                     className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                   >
                     {applying ? 'Applying…' : 'Confirm Apply'}
@@ -1175,7 +1191,9 @@ function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void 
                 <button
                   type="button"
                   onClick={() => setConfirmApply(true)}
-                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+                  disabled={!canApply}
+                  title={!canApply ? permissionTitle('deploy.apply') : undefined}
+                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                 >
                   Apply
                 </button>
@@ -1184,7 +1202,8 @@ function DeployPanel({ token, onLogout }: { token: string; onLogout: () => void 
             <button
               type="button"
               onClick={() => { void handlePreview() }}
-              disabled={previewLoading}
+              disabled={previewLoading || !canPreview}
+              title={!canPreview ? permissionTitle('deploy.preview') : undefined}
               className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
             >
               {previewLoading ? 'Generating…' : 'Preview Changes'}

@@ -624,4 +624,345 @@ describe('App', () => {
       )
     })
   })
+
+  describe('role-aware ACL panel', () => {
+    function aclRoutes(_token: string, role: string): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({
+            id: 1,
+            username: 'test-user',
+            disabled: false,
+            role,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
+        'GET /api/v1/status': () =>
+          jsonResponse({
+            broker: {
+              status: 'connected',
+              metrics: {
+                traffic: {
+                  window_seconds: 300,
+                  message_count: 0,
+                  message_rate_per_minute: 0,
+                  rate_points: [],
+                  top_topics: [],
+                  top_clients: [],
+                  top_clients_available: false,
+                  top_clients_note: '',
+                  persistence: 'In-memory',
+                },
+              },
+            },
+          }),
+        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      }
+    }
+
+    it('viewer: Add Rule button is disabled with a requires-role title', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'viewer-acl-token')
+      vi.stubGlobal('fetch', installFetchMock(aclRoutes('viewer-acl-token', 'viewer')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+
+      const addBtn = await screen.findByRole('button', { name: 'Add Rule' })
+      expect(addBtn).toBeDisabled()
+      expect(addBtn).toHaveAttribute('title', 'Requires operator role or higher')
+    })
+
+    it('operator: Add Rule button is enabled', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'operator-acl-token')
+      vi.stubGlobal('fetch', installFetchMock(aclRoutes('operator-acl-token', 'operator')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+
+      const addBtn = await screen.findByRole('button', { name: 'Add Rule' })
+      expect(addBtn).toBeEnabled()
+      expect(addBtn).not.toHaveAttribute('title')
+    })
+
+    it('admin: Add Rule button is enabled', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'admin-acl-token')
+      vi.stubGlobal('fetch', installFetchMock(aclRoutes('admin-acl-token', 'admin')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+
+      const addBtn = await screen.findByRole('button', { name: 'Add Rule' })
+      expect(addBtn).toBeEnabled()
+    })
+  })
+
+  describe('role-aware Deploy panel', () => {
+    function deployRoutes(_token: string, role: string): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({
+            id: 2,
+            username: 'test-deploy-user',
+            disabled: false,
+            role,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
+        'GET /api/v1/status': () =>
+          jsonResponse({
+            broker: {
+              status: 'connected',
+              metrics: {
+                traffic: {
+                  window_seconds: 300,
+                  message_count: 0,
+                  message_rate_per_minute: 0,
+                  rate_points: [],
+                  top_topics: [],
+                  top_clients: [],
+                  top_clients_available: false,
+                  top_clients_note: '',
+                  persistence: 'In-memory',
+                },
+              },
+            },
+          }),
+        'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      }
+    }
+
+    it('viewer: Preview Changes button is disabled with a requires-role title', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'viewer-deploy-token')
+      vi.stubGlobal('fetch', installFetchMock(deployRoutes('viewer-deploy-token', 'viewer')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+
+      const previewBtn = await screen.findByRole('button', { name: 'Preview Changes' })
+      expect(previewBtn).toBeDisabled()
+      expect(previewBtn).toHaveAttribute('title', 'Requires operator role or higher')
+    })
+
+    it('operator: Preview Changes button is enabled, but Apply is not shown until preview has changes', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'operator-deploy-token')
+      vi.stubGlobal('fetch', installFetchMock(deployRoutes('operator-deploy-token', 'operator')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+
+      const previewBtn = await screen.findByRole('button', { name: 'Preview Changes' })
+      expect(previewBtn).toBeEnabled()
+    })
+
+    it('admin: Preview Changes button is enabled', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'admin-deploy-token')
+      vi.stubGlobal('fetch', installFetchMock(deployRoutes('admin-deploy-token', 'admin')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+
+      const previewBtn = await screen.findByRole('button', { name: 'Preview Changes' })
+      expect(previewBtn).toBeEnabled()
+    })
+
+    // FIX 4: auditor mirrors viewer in Deploy panel
+    it('auditor: Preview Changes button is disabled with a requires-role title', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'auditor-deploy-token')
+      vi.stubGlobal('fetch', installFetchMock(deployRoutes('auditor-deploy-token', 'auditor')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+
+      const previewBtn = await screen.findByRole('button', { name: 'Preview Changes' })
+      expect(previewBtn).toBeDisabled()
+      expect(previewBtn).toHaveAttribute('title', 'Requires operator role or higher')
+    })
+  })
+
+  // FIX 4: auditor mirrors viewer in ACL panel
+  describe('role-aware ACL panel — auditor', () => {
+    function aclRoutesAuditor(): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({
+            id: 3,
+            username: 'auditor-user',
+            disabled: false,
+            role: 'auditor',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
+        'GET /api/v1/status': () =>
+          jsonResponse({
+            broker: {
+              status: 'connected',
+              metrics: {
+                traffic: {
+                  window_seconds: 300,
+                  message_count: 0,
+                  message_rate_per_minute: 0,
+                  rate_points: [],
+                  top_topics: [],
+                  top_clients: [],
+                  top_clients_available: false,
+                  top_clients_note: '',
+                  persistence: 'In-memory',
+                },
+              },
+            },
+          }),
+        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      }
+    }
+
+    it('auditor: Add Rule button is disabled with a requires-role title', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'auditor-acl-token')
+      vi.stubGlobal('fetch', installFetchMock(aclRoutesAuditor()))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+
+      const addBtn = await screen.findByRole('button', { name: 'Add Rule' })
+      expect(addBtn).toBeDisabled()
+      expect(addBtn).toHaveAttribute('title', 'Requires operator role or higher')
+    })
+  })
+
+  // FIX 2: ACL panel shows friendly 403 message, does not log out
+  describe('ACL panel 403 forbidden handling', () => {
+    function aclRoutesWithForbiddenSubmit(): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({
+            id: 4,
+            username: 'operator-acl',
+            disabled: false,
+            role: 'operator',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
+        'GET /api/v1/status': () =>
+          jsonResponse({
+            broker: {
+              status: 'connected',
+              metrics: {
+                traffic: {
+                  window_seconds: 300,
+                  message_count: 0,
+                  message_rate_per_minute: 0,
+                  rate_points: [],
+                  top_topics: [],
+                  top_clients: [],
+                  top_clients_available: false,
+                  top_clients_note: '',
+                  persistence: 'In-memory',
+                },
+              },
+            },
+          }),
+        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+        'POST /api/v1/acls': () => jsonResponse({ error: 'insufficient role' }, { status: 403 }),
+      }
+    }
+
+    it('shows the friendly forbidden message when ACL create returns 403 and does not log out', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'operator-acl-forbidden-token')
+      vi.stubGlobal('fetch', installFetchMock(aclRoutesWithForbiddenSubmit()))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+
+      // Open the create form
+      const addBtn = await screen.findByRole('button', { name: 'Add Rule' })
+      await userEvent.setup().click(addBtn)
+
+      // Fill in required fields and submit
+      const user = userEvent.setup()
+      await user.type(screen.getByPlaceholderText('username or $client_id'), 'test-client')
+      await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'sensors/#')
+      await user.click(screen.getByRole('button', { name: 'Create rule' }))
+
+      // Panel must show friendly 403 message
+      expect(await screen.findByText("You don't have permission to perform this action.")).toBeInTheDocument()
+
+      // Must still be signed in (not logged out)
+      expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
+    })
+  })
+
+  // FIX 2: Deploy panel shows friendly 403 message, does not log out
+  describe('Deploy panel 403 forbidden handling', () => {
+    function deployRoutesWithForbiddenPreview(): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({
+            id: 5,
+            username: 'operator-deploy',
+            disabled: false,
+            role: 'operator',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          }),
+        'GET /api/v1/status': () =>
+          jsonResponse({
+            broker: {
+              status: 'connected',
+              metrics: {
+                traffic: {
+                  window_seconds: 300,
+                  message_count: 0,
+                  message_rate_per_minute: 0,
+                  rate_points: [],
+                  top_topics: [],
+                  top_clients: [],
+                  top_clients_available: false,
+                  top_clients_note: '',
+                  persistence: 'In-memory',
+                },
+              },
+            },
+          }),
+        'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+        'POST /api/v1/deployments/preview': () =>
+          jsonResponse({ error: 'insufficient role' }, { status: 403 }),
+      }
+    }
+
+    it('shows the friendly forbidden message when Preview returns 403 and does not log out', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'operator-deploy-forbidden-token')
+      vi.stubGlobal('fetch', installFetchMock(deployRoutesWithForbiddenPreview()))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+      await userEvent.setup().click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+
+      const previewBtn = await screen.findByRole('button', { name: 'Preview Changes' })
+      await userEvent.setup().click(previewBtn)
+
+      // Panel must show friendly 403 message
+      expect(await screen.findByText("You don't have permission to perform this action.")).toBeInTheDocument()
+
+      // Must still be signed in (not logged out)
+      expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
+    })
+  })
 })

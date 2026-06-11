@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
+import { can, permissionTitle } from '../auth/permissions'
 
 type MQTTUser = {
   id: number
@@ -9,7 +10,8 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
+function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+  const canWrite = can(role, 'mqttUser.write')
   const [users, setUsers] = useState<MQTTUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -78,6 +80,7 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setCreateError((err as Error).message); return }
       setCreateError('Could not reach the server.')
     } finally {
       setCreateSubmitting(false)
@@ -102,6 +105,7 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
       setError('Could not reach the server.')
     } finally {
       setTogglingId(null)
@@ -125,6 +129,7 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
       setResetUserId(userId)
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
       setError('Could not reach the server.')
     }
   }
@@ -150,6 +155,7 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
       setError('Could not reach the server.')
     }
   }
@@ -168,7 +174,9 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
             setCreateError('')
             setCreateUsername('')
           }}
-          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400"
+          disabled={!canWrite}
+          title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
+          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
         >
           Add User
         </button>
@@ -233,7 +241,8 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={createSubmitting}
+                disabled={createSubmitting || !canWrite}
+                title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
                 className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
               >
                 {createSubmitting ? 'Creating…' : 'Create user'}
@@ -303,7 +312,8 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
                           onClick={() => {
                             void handleToggle(user)
                           }}
-                          disabled={togglingId === user.id}
+                          disabled={togglingId === user.id || !canWrite}
+                          title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
                           className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
                         >
                           {togglingId === user.id ? '…' : user.disabled ? 'Enable' : 'Disable'}
@@ -313,14 +323,18 @@ function MQTTUsersPanel({ token, onLogout }: { token: string; onLogout: () => vo
                           onClick={() => {
                             void handleResetPassword(user.id)
                           }}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+                          disabled={!canWrite}
+                          title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
                         >
                           Reset password
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeleteConfirmId(user.id)}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                          disabled={!canWrite}
+                          title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
+                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30 disabled:opacity-50"
                         >
                           Delete
                         </button>
