@@ -649,7 +649,7 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // nhooyr already wrote the error response
 	}
-	defer conn.CloseNow()
+	defer conn.CloseNow() //nolint:errcheck
 
 	events, unsubscribe := a.brokerEvents.Subscribe()
 	defer unsubscribe()

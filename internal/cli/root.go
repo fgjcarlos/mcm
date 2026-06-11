@@ -91,17 +91,6 @@ func newVersionCommand(version VersionInfo) *cobra.Command {
 	}
 }
 
-func placeholderCommand(use string, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: not implemented yet\n", cmd.CommandPath())
-			return err
-		},
-	}
-}
-
 func printVersion(out io.Writer, version VersionInfo) {
 	fmt.Fprintf(out, "MCM\n")
 	fmt.Fprintf(out, "version: %s\n", defaultValue(version.Version, "dev"))

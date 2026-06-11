@@ -1,0 +1,67 @@
+# MCM golangci-lint configuration.
+# Enabled linters match the set described in issue #177: errcheck, staticcheck,
+# gosec, ineffassign, and the default enabled set.
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - gosec
+    - ineffassign
+    - gosimple
+    - unused
+
+linters-settings:
+  errcheck:
+    # Ignore common patterns where the return value is intentionally discarded.
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - fmt.Fprint
+      - (net/http.ResponseWriter).Write
+  gosec:
+    excludes:
+      # G115: integer overflow conversion — not a practical risk in MCM's numeric
+      # range (port numbers, row counts, durations that fit in int64/int32).
+      - G115
+      # G404: math/rand used only for jitter in exponential backoff, not for
+      # cryptographic purposes.
+      - G404
+
+issues:
+  exclude-rules:
+    # SA1019: the nhooyr.io/websocket library deprecated its own API when it was
+    # forked to github.com/coder/websocket. The deprecation warnings are in our
+    # call-sites for the old import path; suppressing them here until we migrate.
+    - linters: [staticcheck]
+      text: "SA1019"
+      path: "internal/server/broker_events"
+
+    # G402: InsecureSkipVerify set to true — only in test helpers that test
+    # TLS handshakes against self-signed certs.
+    - linters: [gosec]
+      text: "G402"
+      path: "_test\\.go"
+
+    # G112: ReadHeaderTimeout — test-only http.Server stubs, not production code.
+    - linters: [gosec]
+      text: "G112"
+      path: "_test\\.go"
+
+    # G202: SQL string concatenation — the WHERE clause fragments are built from
+    # boolean flags and integer IDs only; no user-controlled strings are injected.
+    - linters: [gosec]
+      text: "G202"
+      path: "internal/storage/store\\.go"
+
+    # G402: TLS MinVersion — the configured minimum is set at caller side and
+    # enforced by validation; the config struct itself cannot carry the logic.
+    - linters: [gosec]
+      text: "G402"
+      path: "internal/server/run\\.go"
+
+    # G402: InsecureSkipVerify in tlsutil — this is user-controlled via config and
+    # guarded by validation warnings; the field is necessary for dev/test setups.
+    - linters: [gosec]
+      text: "G402"
+      path: "internal/tlsutil"

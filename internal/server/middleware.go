@@ -48,7 +48,7 @@ const (
 	RequestIDHeader = "X-Request-ID"
 
 	requestIDContextKey requestContextKey = "request_id"
-	requestIDByteLen                      = 12
+	requestIDByteLen    int               = 12
 )
 
 // RequestIDFromContext returns the request ID associated with ctx, or "" when missing.

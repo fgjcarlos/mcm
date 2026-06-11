@@ -981,18 +981,6 @@ func (a *App) requireRole(min auth.Role, next http.Handler) http.Handler {
 	})
 }
 
-func (a *App) optionalAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := strings.TrimSpace(r.Header.Get("Authorization"))
-		if strings.HasPrefix(header, "Bearer ") {
-			if claims, err := a.tokens.VerifyAt(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")), a.now().UTC()); err == nil {
-				r = r.WithContext(context.WithValue(r.Context(), currentUserContextKey, claims))
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (a *App) recordAuditFromRequest(r *http.Request, action string, resourceType string, resourceID string, result string, metadata map[string]any) {
 	actor := "anonymous"
 	if claims, ok := currentUserFromContext(r.Context()); ok && strings.TrimSpace(claims.Username) != "" {
