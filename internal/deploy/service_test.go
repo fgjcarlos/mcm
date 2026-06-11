@@ -124,16 +124,6 @@ func (f *fakeDeploymentStore) count() int {
 	return len(f.deployments)
 }
 
-func (f *fakeDeploymentStore) getByID(id int64) (storage.Deployment, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	d, ok := f.deployments[id]
-	if !ok {
-		return storage.Deployment{}, false
-	}
-	return *d, true
-}
-
 // fakeACLStore is an in-memory acl.Store.
 type fakeACLStore struct {
 	rules []acl.Rule

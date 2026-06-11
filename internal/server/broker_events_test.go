@@ -64,7 +64,7 @@ func TestBrokerEventsWebSocketSurvivesServerWriteTimeout(t *testing.T) {
 	defer cancel()
 
 	conn := openAuthorizedTestWebSocket(t, ctx, app, serverURL, "/api/v1/broker/events")
-	defer conn.CloseNow()
+	defer conn.CloseNow() //nolint:errcheck
 
 	// Read the initial broker_status frame (always sent on subscribe).
 	initialFrame := readTestWebSocketFrame(t, ctx, conn)
@@ -176,7 +176,7 @@ func TestBrokerEventsWebSocketSendsStatusAndTopicEvents(t *testing.T) {
 	defer cancel()
 
 	conn := openAuthorizedTestWebSocket(t, ctx, app, server.URL, "/api/v1/broker/events")
-	defer conn.CloseNow()
+	defer conn.CloseNow() //nolint:errcheck
 
 	initialFrame := readTestWebSocketFrame(t, ctx, conn)
 	if !strings.Contains(initialFrame, `"type":"broker_status"`) || !strings.Contains(initialFrame, `"status":"disconnected"`) {
@@ -209,7 +209,7 @@ func TestBrokerEventsWebSocketSendsRecentTopicBacklogOnConnect(t *testing.T) {
 	defer cancel()
 
 	conn := openAuthorizedTestWebSocket(t, ctx, app, server.URL, "/api/v1/broker/events")
-	defer conn.CloseNow()
+	defer conn.CloseNow() //nolint:errcheck
 
 	initialFrame := readTestWebSocketFrame(t, ctx, conn)
 	if !strings.Contains(initialFrame, `"type":"broker_status"`) {
@@ -520,7 +520,7 @@ func openAuthorizedTestWebSocket(t *testing.T, ctx context.Context, app *App, se
 		t.Fatalf("websocket.Dial returned error: %v", err)
 	}
 	if got := conn.Subprotocol(); got != webSocketSubprotocol {
-		conn.CloseNow()
+		conn.CloseNow() //nolint:errcheck
 		t.Fatalf("negotiated subprotocol = %q, want %q", got, webSocketSubprotocol)
 	}
 	return conn
