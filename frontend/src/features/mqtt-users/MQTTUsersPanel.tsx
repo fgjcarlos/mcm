@@ -222,7 +222,7 @@ function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogou
       {showCreateForm ? (
         <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">New MQTT user</p>
-          <form onSubmit={handleCreate} className="mt-4 space-y-4">
+          <form onSubmit={(e) => { void handleCreate(e) }} className="mt-4 space-y-4">
             <label className="block">
               <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Username</span>
               <input
