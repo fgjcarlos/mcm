@@ -257,7 +257,7 @@ func TestCheckDirWritable(t *testing.T) {
 		if err := os.Chmod(dir, 0o444); err != nil {
 			t.Fatalf("Chmod: %v", err)
 		}
-		t.Cleanup(func() { os.Chmod(dir, 0o755) })
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 		err := checkDirWritable(filepath.Join(dir, "file.txt"))
 		if err == nil {
 			t.Fatal("checkDirWritable returned nil for read-only directory")
