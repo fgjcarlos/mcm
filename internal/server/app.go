@@ -200,7 +200,11 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
 	mux.HandleFunc("GET /readyz", a.handleReadyz)
-	mux.Handle("GET /metrics", a.metrics.Handler())
+	if a.cfg.Metrics.RequireAuth {
+		mux.Handle("GET /metrics", a.requireRole(auth.RoleAuditor, a.metrics.Handler()))
+	} else {
+		mux.Handle("GET /metrics", a.metrics.Handler())
+	}
 	mux.Handle("GET /api/v1/acls", a.requireRole(auth.RoleAuditor, http.HandlerFunc(aclAPI.handleListRules)))
 	mux.Handle("POST /api/v1/acls", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleCreateRule)))
 	mux.Handle("PUT /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleUpdateRule)))
@@ -222,7 +226,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/json-schemas/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleDeleteJSONSchema)))
 	mux.Handle("GET /api/v1/audit-events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAuditEvents)))
 	mux.Handle("GET /api/v1/security/events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleSecurityEvents)))
-	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
+	if a.cfg.Status.RequireAuth {
+		mux.Handle("GET /api/v1/status", a.requireRole(auth.RoleViewer, http.HandlerFunc(a.handleStatus)))
+	} else {
+		mux.HandleFunc("GET /api/v1/status", a.handleStatus)
+	}
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	mux.Handle("GET /api/v1/mqtt-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListMQTTUsers)))
 	mux.Handle("POST /api/v1/mqtt-users", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleCreateMQTTUser)))

@@ -32,6 +32,16 @@ metrics:
   broker_retention: "1h"
   audit_retention: "2160h"
   security_retention: "2160h"
+  # require_auth gates GET /metrics behind a valid admin JWT (auditor role or higher).
+  # Configure Prometheus with bearer_token: <jwt> in your scrape_config.
+  # Set to false only when a trusted reverse proxy handles scrape authentication.
+  require_auth: true
+
+status:
+  # require_auth gates GET /api/v1/status behind a valid admin JWT (viewer role or higher).
+  # The dashboard always sends its session token, so this is transparent to UI users.
+  # Set to false only for unauthenticated external health monitoring.
+  require_auth: true
 
 logging:
   level: "info"
