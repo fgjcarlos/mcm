@@ -49,6 +49,7 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth"`
 	Mosquitto MosquittoConfig `yaml:"mosquitto"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
+	Status    StatusConfig    `yaml:"status"`
 	Alerting  AlertingConfig  `yaml:"alerting"`
 	Logging   LoggingConfig   `yaml:"logging"`
 }
@@ -147,11 +148,24 @@ type MosquittoTLSConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
-// MetricsConfig controls persisted operational event retention.
+// MetricsConfig controls persisted operational event retention and access control.
 type MetricsConfig struct {
 	BrokerRetention   string `yaml:"broker_retention"`
 	AuditRetention    string `yaml:"audit_retention"`
 	SecurityRetention string `yaml:"security_retention"`
+	// RequireAuth gates GET /metrics behind a valid admin JWT.
+	// Set to false only when a dedicated scraping proxy handles authentication.
+	// Defaults to true.
+	RequireAuth bool `yaml:"require_auth"`
+}
+
+// StatusConfig controls access to GET /api/v1/status.
+type StatusConfig struct {
+	// RequireAuth gates GET /api/v1/status behind a valid admin JWT.
+	// The dashboard always sends its session token so this is transparent
+	// to frontend users. Set to false only for unauthenticated monitoring.
+	// Defaults to true.
+	RequireAuth bool `yaml:"require_auth"`
 }
 
 // AlertingConfig controls outbound operational webhook alerts.
@@ -215,6 +229,10 @@ func Default() Config {
 			BrokerRetention:   "168h",
 			AuditRetention:    "2160h",
 			SecurityRetention: "2160h",
+			RequireAuth:       true,
+		},
+		Status: StatusConfig{
+			RequireAuth: true,
 		},
 		Alerting: AlertingConfig{
 			Enabled: false,
