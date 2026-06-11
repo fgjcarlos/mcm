@@ -60,13 +60,15 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
 
-  const fetchUsers = useCallback(() => setRefreshTick((n) => n + 1), [])
+  const fetchUsers = useCallback(() => {
+    setLoading(true)
+    setRefreshTick((n) => n + 1)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     authenticatedFetch('/api/v1/admin-users', { token, onUnauthorized: onLogout })
-      .then(async (res) => {
+      .then((res) => {
         if (!res.ok) throw new Error('Failed to load admin users.')
         return res.json() as Promise<AdminUser[]>
       })

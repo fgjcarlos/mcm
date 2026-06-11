@@ -26,7 +26,7 @@ type AuditEvent = {
   action: string
   resource_type: string
   resource_id?: string
-  result: 'success' | 'failure' | string
+  result: string
   metadata?: Record<string, unknown>
 }
 
@@ -51,7 +51,7 @@ type ACLRule = {
 
 type Deployment = {
   id: string
-  status: 'applied' | 'rolled_back' | 'rollback_failed' | string
+  status: string
   message?: string
   created_at: string
 }
@@ -535,6 +535,14 @@ function PayloadMetadata({ event }: { event: TopicMessage }) {
   )
 }
 
+function displayMetricValue(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') return JSON.stringify(v) ?? ''
+  // v is now string | number | boolean | bigint | symbol — all safe for String()
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  return String(v)
+}
+
 function SparkplugBadge({ metadata }: { metadata: SparkplugMetadata }) {
   return (
     <span className="rounded-full bg-orange-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-orange-200">
@@ -597,7 +605,7 @@ function SparkplugDetails({
                       {metric.is_null ? (
                         <span className="text-slate-400 italic">null</span>
                       ) : (
-                        String(metric.value ?? '')
+                        displayMetricValue(metric.value)
                       )}
                     </td>
                   </tr>
@@ -910,7 +918,7 @@ function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () 
       {showForm ? (
         <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{editRule ? 'Edit rule' : 'New rule'}</p>
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <form onSubmit={(e) => { void handleSubmit(e) }} className="mt-4 space-y-4">
             <label className="block">
               <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Principal</span>
               <input
@@ -1431,7 +1439,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         </div>
 
         {mfaChallenge ? (
-          <form onSubmit={handleMFASubmit} className="mt-6 space-y-4">
+          <form onSubmit={(e) => { void handleMFASubmit(e) }} className="mt-6 space-y-4">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Code</span>
               <input
@@ -1472,7 +1480,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
             </button>
           </form>
         ) : (
-          <form onSubmit={handlePasswordSubmit} className="mt-6 space-y-4">
+          <form onSubmit={(e) => { void handlePasswordSubmit(e) }} className="mt-6 space-y-4">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Username</span>
               <input
