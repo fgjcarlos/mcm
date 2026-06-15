@@ -9,6 +9,8 @@ export type NavItem = {
   title: string
   description: string
   path: string
+  /** Minimum role required to see this nav item. Hidden from lower roles. */
+  minRole?: string
 }
 
 type DashboardFrameProps = {
