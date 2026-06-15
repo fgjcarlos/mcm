@@ -1,4 +1,6 @@
-paths-ignore:
-  - "**/*_test.go"
-  - "**/config.example.yaml"
-  - "**/testdata/**"
+version: 2
+secret:
+  ignored-paths:
+    - "**/*_test.go"
+    - "**/config.example.yaml"
+    - "**/testdata/**"

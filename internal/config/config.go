@@ -399,11 +399,28 @@ func Parse(data []byte) (Config, error) {
 		cfg.Logging.Format = Default().Logging.Format
 	}
 
+	applyEnvOverrides(&cfg)
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+// applyEnvOverrides overrides sensitive config fields from environment
+// variables when set, so secrets can be injected at runtime instead of
+// being baked into the mounted YAML.
+func applyEnvOverrides(cfg *Config) {
+	if v := os.Getenv("MCM_AUTH_JWT_SECRET"); v != "" {
+		cfg.Auth.JWTSecret = v
+	}
+	if v := os.Getenv("MCM_BOOTSTRAP_ADMIN_USERNAME"); v != "" {
+		cfg.Auth.BootstrapAdmin.Username = v
+	}
+	if v := os.Getenv("MCM_BOOTSTRAP_ADMIN_PASSWORD"); v != "" {
+		cfg.Auth.BootstrapAdmin.Password = v
+	}
 }
 
 // Validate checks whether the configuration is complete and internally consistent.
