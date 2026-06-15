@@ -9,6 +9,17 @@ export function isUnauthorizedResponseError(error: unknown): boolean {
   return error instanceof UnauthorizedResponseError
 }
 
+export class ForbiddenResponseError extends Error {
+  constructor(message = "You don't have permission to perform this action.") {
+    super(message)
+    this.name = 'ForbiddenResponseError'
+  }
+}
+
+export function isForbiddenResponseError(error: unknown): boolean {
+  return error instanceof ForbiddenResponseError
+}
+
 export async function authenticatedFetch(
   input: RequestInfo | URL,
   { token, onUnauthorized, headers, ...init }: RequestInit & { token: string; onUnauthorized: () => void },
@@ -21,6 +32,15 @@ export async function authenticatedFetch(
   if (response.status === 401) {
     onUnauthorized()
     throw new UnauthorizedResponseError()
+  }
+
+  if (response.status === 403) {
+    const body = await response.json().catch(() => null) as { error?: string } | null
+    const message =
+      body?.error === 'insufficient role'
+        ? undefined // use the friendly default
+        : (body?.error || undefined)
+    throw new ForbiddenResponseError(message)
   }
 
   return response
