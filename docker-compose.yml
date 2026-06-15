@@ -10,6 +10,7 @@ services:
       - ./deploy/mosquitto/config:/mosquitto/config:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
+      # - ./deploy/mosquitto/certs:/mosquitto/certs:ro  # required when enabling the TLS listener
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -t mcm/healthcheck -m ping >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -31,12 +32,21 @@ services:
     volumes:
       - ./deploy/mcm/config.yaml:/etc/mcm/config.yaml:ro
       - mcm_data:/var/lib/mcm
+    # Inject secrets at runtime instead of baking them into the mounted YAML.
+    # Uncomment and supply values (e.g. from a .env file or your orchestrator's
+    # secret store). These override the corresponding fields in config.yaml.
+    # environment:
+    # Use a 32+ char random value for the JWT secret and a strong, unique
+    # bootstrap admin credential; the :? guards fail fast if they are unset.
+    #   MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
+    #   MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
+    #   MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
     healthcheck:
       test: ["CMD", "mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
 volumes:
   mosquitto_data:

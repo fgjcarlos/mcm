@@ -4,7 +4,8 @@ This directory contains the local Eclipse Mosquitto configuration used by the MC
 
 ## Files
 
-- `config/mosquitto.conf`: local-only Mosquitto configuration.
+- `config/mosquitto.conf`: local-only Mosquitto configuration (anonymous, plain TCP — intentionally permissive for development).
+- `config/mosquitto.prod.conf`: production-hardened example.  Disables anonymous access, adds a password file, binds plain MQTT to localhost, and configures a TLS listener on `8883`.  Review the comments inside the file and this README's TLS checklist before use.
 
 ## Exposed ports
 
@@ -43,6 +44,7 @@ MCM currently validates that `ca_cert_file`, `client_cert_file`, and `client_key
 ### Production TLS checklist
 
 - Create a dedicated Mosquitto TLS listener, for example on `8883`, with `cafile`, `certfile`, and `keyfile` configured on the broker.
+- Mount a `/mosquitto/certs/` volume (e.g. `./deploy/mosquitto/certs:/mosquitto/certs:ro`) in the Mosquitto container when enabling the TLS listener — the paths referenced in `mosquitto.prod.conf` (`/mosquitto/certs/ca.crt`, `/mosquitto/certs/server.crt`, `/mosquitto/certs/server.key`) require this mount to be present.
 - Issue a Mosquitto server certificate whose SAN includes the exact DNS name MCM uses in `mosquitto.host` (for example `mosquitto.example.internal` or the Docker service DNS name). Avoid relying on IP addresses unless the certificate contains the IP SAN.
 - Issue a dedicated MCM client certificate and key if Mosquitto uses mutual TLS. Do not reuse broker certificates or human/operator certificates.
 - Keep `mosquitto.tls.insecure_skip_verify: false` in production.
