@@ -17,6 +17,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
+	"github.com/pquerna/otp/totp"
 )
 
 func TestStatusEndpointReportsBrokerSnapshotAndTarget(t *testing.T) {
@@ -97,6 +98,76 @@ func TestLoginSuccessAndCurrentUser(t *testing.T) {
 	}
 	if meResp.Username != "admin" {
 		t.Fatalf("current user username = %q, want %q", meResp.Username, "admin")
+	}
+}
+
+func TestCurrentUserResponseIncludesMFAEnabled(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Seed a user and confirm mfa_enabled starts as false.
+	seedAdminUser(t, store, "admin", "secret-password", false)
+	token := loginAs(t, app, "admin", "secret-password")
+
+	getMe := func(tok string) adminUserResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /me status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var resp adminUserResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode /me response: %v", err)
+		}
+		return resp
+	}
+
+	if resp := getMe(token); resp.MFAEnabled {
+		t.Fatal("/me mfa_enabled = true before enrollment, want false")
+	}
+
+	// Verify the raw JSON contains the "mfa_enabled" key.
+	rawRec := httptest.NewRecorder()
+	rawReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	rawReq.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rawRec, rawReq)
+	rawBody := rawRec.Body.String()
+	if !strings.Contains(rawBody, `"mfa_enabled"`) {
+		t.Fatalf("/me JSON does not contain mfa_enabled key; body = %s", rawBody)
+	}
+
+	// Enroll MFA and confirm mfa_enabled flips to true.
+	secret, _ := enrollAndEnableMFA(t, app, "secret-password", "admin")
+
+	// Re-login to get a fresh token (MFA is now required after enrollment).
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(loginRec, loginReq)
+	var firstStep loginResponse
+	if err := json.NewDecoder(loginRec.Body).Decode(&firstStep); err != nil {
+		t.Fatalf("decode first-step login: %v", err)
+	}
+
+	code, err := totp.GenerateCode(secret, app.now().UTC())
+	if err != nil {
+		t.Fatalf("GenerateCode: %v", err)
+	}
+	stepBody, _ := json.Marshal(loginMFARequest{Challenge: firstStep.MFAChallenge, Code: code})
+	mfaRec := httptest.NewRecorder()
+	mfaReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/mfa", strings.NewReader(string(stepBody)))
+	mfaReq.Header.Set("Content-Type", "application/json")
+	app.Handler().ServeHTTP(mfaRec, mfaReq)
+	var finalResp loginResponse
+	if err := json.NewDecoder(mfaRec.Body).Decode(&finalResp); err != nil {
+		t.Fatalf("decode mfa login: %v", err)
+	}
+
+	if resp := getMe(finalResp.Token); !resp.MFAEnabled {
+		t.Fatal("/me mfa_enabled = false after enrollment, want true")
 	}
 }
 

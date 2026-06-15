@@ -302,12 +302,13 @@ type loginResponse struct {
 }
 
 type adminUserResponse struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	Disabled  bool      `json:"disabled"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         int64     `json:"id"`
+	Username   string    `json:"username"`
+	Disabled   bool      `json:"disabled"`
+	Role       string    `json:"role"`
+	MFAEnabled bool      `json:"mfa_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type errorResponse struct {
@@ -1117,12 +1118,13 @@ func parseIDParam(w http.ResponseWriter, r *http.Request) (int64, bool) {
 
 func toAdminUserResponse(user storage.AdminUser) adminUserResponse {
 	return adminUserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Disabled:  user.Disabled,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:         user.ID,
+		Username:   user.Username,
+		Disabled:   user.Disabled,
+		Role:       user.Role,
+		MFAEnabled: user.MFAEnabled,
+		CreatedAt:  user.CreatedAt,
+		UpdatedAt:  user.UpdatedAt,
 	}
 }
 
