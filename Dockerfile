@@ -24,5 +24,7 @@ COPY --from=backend /mcm /usr/local/bin/mcm
 RUN mkdir -p /var/lib/mcm && chown mcm:mcm /var/lib/mcm
 USER mcm
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD ["mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
 ENTRYPOINT ["mcm"]
 CMD ["server", "--config", "/etc/mcm/config.yaml"]

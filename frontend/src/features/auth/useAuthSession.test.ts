@@ -61,6 +61,7 @@ const sampleUser: AdminUser = {
   username: 'operator',
   disabled: false,
   role: 'operator',
+  mfa_enabled: false,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 }
@@ -267,5 +268,54 @@ describe('useAuthSession', () => {
 
     // useCallback([], []) guarantees the same reference across renders
     expect(logoutAfter).toBe(logoutBefore)
+  })
+
+  it('refreshCurrentUser re-fetches /me and updates currentUser state', async () => {
+    localStorageMock.setItem('mcm_admin_token', 'refresh-token')
+
+    const updatedUser: AdminUser = { ...sampleUser, mfa_enabled: true }
+
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/me': () => jsonResponse(sampleUser),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useAuthSession())
+
+    // Wait for the initial restore
+    await waitFor(() => expect(result.current.currentUser).toEqual(sampleUser))
+
+    // Now swap the mock to return an updated user (mfa_enabled = true)
+    fetchMock.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      const requestUrl =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+      const key = `${method.toUpperCase()} ${requestUrl}`
+      if (key === 'GET /api/v1/auth/me') return jsonResponse(updatedUser)
+      throw new Error(`Unhandled fetch: ${key}`)
+    })
+
+    await act(async () => {
+      result.current.refreshCurrentUser()
+    })
+
+    await waitFor(() => expect(result.current.currentUser).toEqual(updatedUser))
+    expect(result.current.currentUser?.mfa_enabled).toBe(true)
+  })
+
+  it('refreshCurrentUser is a no-op when there is no token', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useAuthSession())
+
+    expect(result.current.token).toBeNull()
+
+    act(() => {
+      result.current.refreshCurrentUser()
+    })
+
+    // No fetch should have been triggered
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
+import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle } from './features/auth/permissions'
@@ -135,12 +136,12 @@ const navItems: NavItem[] = [
     description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
   },
   {
-    id: 'settings',
-    label: 'Settings',
-    path: '/settings',
-    eyebrow: 'System',
-    title: 'Platform settings placeholder',
-    description: 'Global defaults, integration configuration, and broker-level safety controls.',
+    id: 'account',
+    label: 'Account',
+    path: '/account',
+    eyebrow: 'Security',
+    title: 'Account security',
+    description: 'Manage two-factor authentication and account security settings.',
   },
 ]
 
@@ -150,7 +151,7 @@ function navIdFromPath(pathname: string) {
 }
 
 function App() {
-  const { token, currentUser, handleLogin, handleLogout } = useAuthSession()
+  const { token, currentUser, handleLogin, handleLogout, refreshCurrentUser } = useAuthSession()
 
   if (!token) {
     return <LoginScreen onLogin={handleLogin} />
@@ -164,10 +165,10 @@ function App() {
     )
   }
 
-  return <Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} />
+  return <Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} onRefreshUser={refreshCurrentUser} />
 }
 
-function Dashboard({ token, currentUser, onLogout }: { token: string; currentUser: AdminUser; onLogout: () => void }) {
+function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: string; currentUser: AdminUser; onLogout: () => void; onRefreshUser: () => void }) {
   const [activeId, setActiveId] = useState<string>(() => navIdFromPath(window.location.pathname))
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [securityError, setSecurityError] = useState<string>('')
@@ -266,6 +267,8 @@ function Dashboard({ token, currentUser, onLogout }: { token: string; currentUse
         <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} />
+      ) : activeId === 'account' ? (
+        <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : (
         <TopicsPanel topics={topics} latestTopic={latestTopic} />
       )}
