@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
+import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
-import { can, permissionTitle } from './features/auth/permissions'
+import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
 import {
   defaultClientNote,
@@ -143,6 +144,15 @@ const navItems: NavItem[] = [
     title: 'Account security',
     description: 'Manage two-factor authentication and account security settings.',
   },
+  {
+    id: 'admin-users',
+    label: 'Operators',
+    path: '/admin-users',
+    eyebrow: 'Administration',
+    title: 'Admin user directory',
+    description: 'Manage dashboard operators: provision accounts, assign roles, reset credentials, and deactivate stale users.',
+    minRole: 'admin',
+  },
 ]
 
 function navIdFromPath(pathname: string) {
@@ -175,6 +185,12 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditError, setAuditError] = useState<string>('')
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
+  const visibleNavItems = navItems.filter((item) => {
+    if (!item.minRole) return true
+    const userRank = ROLE_RANK[currentUser.role as Role] ?? 0
+    const minRank  = ROLE_RANK[item.minRole as Role] ?? 0
+    return userRank >= minRank
+  })
   const {
     brokerStatus,
     streamState,
@@ -242,7 +258,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
 
   return (
     <DashboardFrame
-      navItems={navItems}
+      navItems={visibleNavItems}
       activeItem={activeItem}
       activeId={activeId}
       brokerStatus={brokerStatus}
@@ -269,6 +285,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
+      ) : activeId === 'admin-users' ? (
+        <AdminUsersPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : (
         <TopicsPanel topics={topics} latestTopic={latestTopic} />
       )}
