@@ -6,7 +6,7 @@ export type AdminUser = {
   username: string
   disabled: boolean
   role: 'viewer' | 'auditor' | 'operator' | 'admin' | string
-  mfa_enabled?: boolean
+  mfa_enabled: boolean
   created_at: string
   updated_at: string
 }
@@ -55,7 +55,27 @@ export function useAuthSession() {
     }
   }, [token, handleLogout])
 
+  const refreshCurrentUser = useCallback(() => {
+    if (!token) return
+    let cancelled = false
+    authenticatedFetch('/api/v1/auth/me', { token, onUnauthorized: handleLogout })
+      .then(async (response) => {
+        if (cancelled) return
+        if (!response.ok) throw new Error('Failed to refresh session.')
+        const user = (await response.json()) as AdminUser
+        if (!cancelled) {
+          setCurrentUser(user)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) handleLogout()
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token, handleLogout])
+
   const isRestoring = token !== null && currentUser === null
 
-  return { token, currentUser, isRestoring, handleLogin, handleLogout }
+  return { token, currentUser, isRestoring, handleLogin, handleLogout, refreshCurrentUser }
 }
