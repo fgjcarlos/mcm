@@ -225,6 +225,12 @@ The project should treat security as a product requirement, not a later add-on:
 
 ---
 
+## Production deployment
+
+A production deployment guide (reverse proxy + TLS,
+secrets, systemd, upgrades, backups, monitoring, hardening checklist) lives
+at [`docs/production.md`](./docs/production.md).
+
 ## Development setup
 
 ### Mosquitto development stack
