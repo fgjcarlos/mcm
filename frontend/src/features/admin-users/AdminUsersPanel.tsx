@@ -36,6 +36,7 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
 
   const [users, setUsers]           = useState<AdminUser[]>([])
   const [loading, setLoading]       = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError]           = useState('')
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -60,11 +61,13 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
 
-  const fetchUsers = useCallback(() => setRefreshTick((n) => n + 1), [])
-
-  useEffect(() => {
+  // `loading` is initialised to `true` so the spinner is shown on first
+  // mount. The effect flips it back to `false` once the fetch settles.
+  // For manual refreshes (button clicks) we use a separate `refreshing`
+  // flag that's only flipped from event handlers — never from the effect
+  // body — so we don't trip the `react-hooks/set-state-in-effect` rule.
+  const loadUsers = useCallback(() => {
     let cancelled = false
-    setLoading(true)
     authenticatedFetch('/api/v1/admin-users', { token, onUnauthorized: onLogout })
       .then(async (res) => {
         if (!res.ok) throw new Error('Failed to load admin users.')
@@ -75,15 +78,27 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         setUsers(data ?? [])
         setError('')
         setLoading(false)
+        setRefreshing(false)
       })
       .catch((err: Error) => {
         if (cancelled) return
         if (isUnauthorizedResponseError(err)) return
         setError(err.message)
         setLoading(false)
+        setRefreshing(false)
       })
     return () => { cancelled = true }
-  }, [token, refreshTick, onLogout])
+  }, [token, onLogout])
+
+  const fetchUsers = useCallback(() => {
+    setRefreshTick((n) => n + 1)
+    setRefreshing(true)
+    loadUsers()
+  }, [loadUsers])
+
+  useEffect(() => {
+    loadUsers()
+  }, [loadUsers, refreshTick])
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -337,7 +352,11 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         ) : users.length === 0 ? (
           <p className="p-6 text-sm text-slate-400">No admin users found.</p>
         ) : (
-          <table className="w-full text-sm">
+          <>
+            {refreshing ? (
+              <p className="border-b border-white/10 p-3 text-xs uppercase tracking-[0.18em] text-slate-500">Refreshing…</p>
+            ) : null}
+            <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10">
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Username</th>
@@ -408,6 +427,7 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </section>
