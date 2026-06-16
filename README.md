@@ -92,6 +92,13 @@ Reference docs:
 - Structured `log/slog` JSON logs with request-ID propagation (`X-Request-ID`).
 - OpenAPI 3.1 contract for every endpoint, linted in CI.
 
+**Edge agent (`mcm-agent`)**
+
+- Standalone Go binary that runs on edge devices, posting heartbeats to the central MCM server and optionally executing lightweight MQTT probes (publish/subscribe, TLS handshake, broker reachability).
+- Authenticates with the server using a long-lived enrollment token; heartbeats carry broker connection status, last-seen timestamp, and device metadata.
+- Shipped as a separate archive per platform (`mcm-agent_<version>_<os>_<arch>.tar.gz`) — see [docs/releasing.md](docs/releasing.md) for the artifact matrix and [docs/edge-sites.md](docs/edge-sites.md) for the install/upgrade flow.
+- Installable as a `systemd` service (`mcm-agent.service`) with config under `/etc/mcm-agent/config.yaml`.
+
 **Frontend**
 
 - Real login screen against `/api/v1/auth/login`; the token is the single source of truth for protected API calls and the broker WebSocket subprotocol handshake.

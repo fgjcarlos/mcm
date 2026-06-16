@@ -4,12 +4,12 @@ MCM uses [GoReleaser](https://goreleaser.com/) to build multi-architecture binar
 
 ## Supported architectures
 
-| OS | Arch | Binary | Container |
-|----|------|--------|-----------|
-| Linux | amd64 | Yes | Yes |
-| Linux | arm64 | Yes | Yes |
-| macOS | arm64 | Yes | No |
-| Windows | amd64 | Yes | No |
+| OS | Arch | `mcm` binary | `mcm-agent` binary | Container |
+|----|------|--------------|--------------------|-----------|
+| Linux | amd64 | Yes | Yes | Yes |
+| Linux | arm64 | Yes | Yes | Yes |
+| macOS | arm64 | Yes | Yes | No |
+| Windows | amd64 | Yes | Yes (no `systemd` example) | No |
 
 ## Creating a release
 
@@ -35,6 +35,10 @@ Each release publishes:
 - `mcm_<version>_linux_arm64.tar.gz`
 - `mcm_<version>_darwin_arm64.tar.gz`
 - `mcm_<version>_windows_amd64.zip`
+- `mcm-agent_<version>_linux_amd64.tar.gz`
+- `mcm-agent_<version>_linux_arm64.tar.gz`
+- `mcm-agent_<version>_darwin_arm64.tar.gz`
+- `mcm-agent_<version>_windows_amd64.zip`
 - `checksums.txt` (SHA-256)
 
 ## Container images
@@ -52,10 +56,14 @@ The `latest` and version tags are multi-arch manifests supporting `linux/amd64` 
 
 | Deployment target | Artifact |
 |-------------------|----------|
-| x86 server or VM | `linux_amd64` binary or `ghcr.io/fgjcarlos/mcm:latest` (amd64) |
-| Raspberry Pi 4/5, ARM server | `linux_arm64` binary or `ghcr.io/fgjcarlos/mcm:latest` (arm64) |
-| macOS (Apple Silicon) | `darwin_arm64` binary |
-| Windows server | `windows_amd64` zip |
+| x86 server or VM (MCM server) | `mcm_linux_amd64` binary or `ghcr.io/fgjcarlos/mcm:latest` (amd64) |
+| Raspberry Pi 4/5, ARM server (MCM server) | `mcm_linux_arm64` binary or `ghcr.io/fgjcarlos/mcm:latest` (arm64) |
+| macOS (Apple Silicon) — server | `mcm_darwin_arm64` binary |
+| Windows server | `mcm_windows_amd64` zip |
+| x86 edge device running the agent | `mcm-agent_linux_amd64` binary |
+| ARM edge device running the agent | `mcm-agent_linux_arm64` binary |
+| macOS (Apple Silicon) — agent | `mcm-agent_darwin_arm64` binary |
+| Windows edge device running the agent | `mcm-agent_windows_amd64` zip |
 
 For Docker deployments, `docker pull` automatically selects the correct architecture.
 

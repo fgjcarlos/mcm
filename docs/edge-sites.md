@@ -98,7 +98,17 @@ The `mcm-agent` binary runs on each edge device and automatically sends heartbea
 
 ### Installation
 
-Download the pre-built binary for your platform from the [releases page](https://github.com/fgjcarlos/mcm/releases) and place it in `/usr/local/bin/mcm-agent`.
+Download the `mcm-agent_<version>_<os>_<arch>.tar.gz` archive for your platform from the [releases page](https://github.com/fgjcarlos/mcm/releases) (see [docs/releasing.md](releasing.md#selecting-the-right-artifact) for the full artifact matrix), then extract and place it in `/usr/local/bin/mcm-agent`:
+
+```bash
+# Linux amd64 example
+curl -fsSL -O https://github.com/fgjcarlos/mcm/releases/download/v1.0.0/mcm-agent_1.0.0_linux_amd64.tar.gz
+curl -fsSL -O https://github.com/fgjcarlos/mcm/releases/download/v1.0.0/checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf mcm-agent_1.0.0_linux_amd64.tar.gz -C /usr/local/bin mcm-agent
+```
+
+Verify the signature on `checksums.txt` following [docs/releasing.md](releasing.md#verifying-release-signatures) before installing.
 
 ### Configuration
 
