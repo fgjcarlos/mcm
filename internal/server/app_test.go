@@ -54,6 +54,103 @@ func TestStatusEndpointReportsBrokerSnapshotAndTarget(t *testing.T) {
 	}
 }
 
+func TestStatusEndpointRequiresAuthWhenConfigured(t *testing.T) {
+	cfg := config.Default()
+	cfg.Database.Path = filepath.Join(t.TempDir(), "mcm.db")
+	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
+	cfg.Auth.TokenTTL = "1h"
+	cfg.Auth.BootstrapAdmin = config.BootstrapAdminConfig{}
+	cfg.Status.RequireAuth = true
+
+	store, err := storage.Open(cfg.Database.Path)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	app, err := New(cfg, store, logging.Discard())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Unauthenticated request must be rejected.
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	// Authenticated request (viewer role) must succeed.
+	hash, _ := auth.HashPassword("viewer-password-ok")
+	_, err = store.CreateAdminUser(context.Background(), storage.CreateAdminUserParams{
+		Username: "viewer", PasswordHash: hash, Role: "viewer",
+	})
+	if err != nil {
+		t.Fatalf("CreateAdminUser: %v", err)
+	}
+	token := issueToken(t, app, "viewer", "viewer-password-ok")
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d, want %d; body = %s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+}
+
+func TestMetricsEndpointRequiresAuthWhenConfigured(t *testing.T) {
+	cfg := config.Default()
+	cfg.Database.Path = filepath.Join(t.TempDir(), "mcm.db")
+	cfg.Auth.JWTSecret = "0123456789abcdef0123456789abcdef"
+	cfg.Auth.TokenTTL = "1h"
+	cfg.Auth.BootstrapAdmin = config.BootstrapAdminConfig{}
+	cfg.Metrics.RequireAuth = true
+
+	store, err := storage.Open(cfg.Database.Path)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	app, err := New(cfg, store, logging.Discard())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Unauthenticated request must be rejected.
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated metrics = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	// Authenticated request (auditor role) must succeed.
+	seedAdminUser(t, store, "scraper", "scraper-password-ok", false)
+	token := issueToken(t, app, "scraper", "scraper-password-ok")
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	app.Handler().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("authenticated metrics = %d, want %d; body = %s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+}
+
+func issueToken(t *testing.T, app *App, username, password string) string {
+	t.Helper()
+	body := strings.NewReader(`{"username":"` + username + `","password":"` + password + `"}`)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct{ Token string `json:"token"` }
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	return resp.Token
+}
+
 func TestLoginSuccessAndCurrentUser(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
@@ -786,6 +883,10 @@ func newTestApp(t *testing.T) (*App, *storage.Store) {
 	// Tests model MCM behind a reverse proxy: trust the default httptest peer
 	// (192.0.2.1) so X-Forwarded-For client IPs are honored in test requests.
 	cfg.HTTP.TrustedProxies = []string{"192.0.2.1"}
+	// Disable auth on observability endpoints in unit tests; auth-gating is
+	// exercised explicitly in TestMetricsRequireAuth / TestStatusRequireAuth.
+	cfg.Metrics.RequireAuth = false
+	cfg.Status.RequireAuth = false
 
 	store, err := storage.Open(cfg.Database.Path)
 	if err != nil {
