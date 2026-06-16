@@ -48,6 +48,13 @@ issues:
       text: "G112"
       path: "_test\\.go"
 
+    # G101: hardcoded credentials — test files contain fixture strings that
+    # look like credentials by design (validBootstrapCred, placeholderSecretsYAML).
+    # The CI matrix is the only place these literals exist, never in production.
+    - linters: [gosec]
+      text: "G101"
+      path: "_test\\.go"
+
     # G202: SQL string concatenation — the WHERE clause fragments are built from
     # boolean flags and integer IDs only; no user-controlled strings are injected.
     - linters: [gosec]
