@@ -191,15 +191,16 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 
 	h.mu.Lock()
 	previousStatus := h.status.Status
-	if event.Type == "broker_status" {
+	switch event.Type {
+	case "broker_status":
 		h.status = event
 		h.statusEvents++
-	} else if event.Type == "broker_log" {
+	case "broker_log":
 		h.logs = append(h.logs, event)
 		if len(h.logs) > maxBrokerLogBuffer {
 			h.logs = append([]BrokerEvent(nil), h.logs[len(h.logs)-maxBrokerLogBuffer:]...)
 		}
-	} else if event.Type == "topic_message" {
+	case "topic_message":
 		h.topicMessages++
 		observedAt := event.ObservedAt
 		h.lastMessageAt = &observedAt

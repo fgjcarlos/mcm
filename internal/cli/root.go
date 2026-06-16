@@ -70,7 +70,7 @@ func newStatusCommand() *cobra.Command {
 			if writeErr != nil {
 				return writeErr
 			}
-			return fmt.Errorf("Mosquitto connectivity check failed")
+			return fmt.Errorf("mosquitto connectivity check failed")
 		},
 	}
 
