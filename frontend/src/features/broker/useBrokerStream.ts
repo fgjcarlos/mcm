@@ -26,7 +26,7 @@ export type SparkplugDecodedPayload = {
 }
 
 export type PayloadInspection = {
-  detected_type: 'json_object' | 'json_array' | 'json_scalar' | 'text' | 'binary' | string
+  detected_type: string
   byte_length: number
   truncated: boolean
   json_valid: boolean
@@ -197,10 +197,10 @@ export function useBrokerStream(token: string, onLogout: () => void) {
         scheduleReconnect()
       })
 
-      socket.addEventListener('message', (message) => {
+      socket.addEventListener('message', (message: MessageEvent<string>) => {
         if (destroyed || socket !== currentSocket) return
         try {
-          const event = JSON.parse((message as MessageEvent).data) as BrokerEvent
+          const event = JSON.parse(message.data) as BrokerEvent
           if (event.type === 'broker_status' && event.status) {
             setBrokerStatus(event.status)
           }

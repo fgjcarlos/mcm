@@ -5,7 +5,7 @@ export type AdminUser = {
   id: number
   username: string
   disabled: boolean
-  role: 'viewer' | 'auditor' | 'operator' | 'admin' | string
+  role: string
   mfa_enabled: boolean
   created_at: string
   updated_at: string
