@@ -1,6 +1,6 @@
 module github.com/fgjcarlos/mcm
 
-go 1.24.0
+go 1.24.2
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
