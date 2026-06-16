@@ -47,15 +47,22 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           # `install-mode: goinstall` compiles golangci-lint from source using the
-          # runner's Go toolchain (1.25.11 from go.mod). The prebuilt binaries on
-          # GitHub releases are often built with an older Go and refuse to load
-          # configs targeting 1.25.x ("Go language version used to build golangci-lint
-          # is lower than the targeted Go version"). We pin v1.64.8 because the
-          # .golangci.yml is still on the v1 schema — v2.x of golangci-lint would
-          # need a schema migration. When migrating to the v2 schema, bump version
-          # back to `latest`.
+          # runner's Go toolchain (1.25.11 from go.mod). This avoids the upstream
+          # binary's toolchain version being older than the project's target Go
+          # version (a hard requirement of golangci-lint: it refuses to load
+          # configs targeting a Go version higher than the one used to build
+          # the linter binary).
+          #
+          # Pinned to v2.0.0, the lowest v2.x release, because:
+          # - v1.64.8 (the last v1.x) was built with Go 1.24 and refuses configs
+          #   targeting 1.25.x.
+          # - the v2.x binary releases on GitHub also lag the current Go releases
+          #   and hit the same toolchain-mismatch error.
+          # - the v2 config schema (.golangci.yml) has been stable since v2.0.0;
+          #   building from source against `version: v2.0.0` keeps the action
+          #   deterministic while compiling with the runner's Go 1.25.11.
           install-mode: goinstall
-          version: v1.64.8
+          version: v2.0.0
 
   govulncheck:
     name: govulncheck
