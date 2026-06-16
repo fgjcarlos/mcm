@@ -52,7 +52,7 @@ func startBrokerStub(t *testing.T, connackCode byte) (host string, port int) {
 		}
 		// Read remaining length (variable-length encoding, up to 4 bytes)
 		var remainingLength int
-		var multiplier int = 1
+		multiplier := 1
 		for i := 0; i < 4; i++ {
 			b := make([]byte, 1)
 			if _, err := conn.Read(b); err != nil {

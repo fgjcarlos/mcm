@@ -70,7 +70,7 @@ func newStatusCommand() *cobra.Command {
 			if writeErr != nil {
 				return writeErr
 			}
-			return fmt.Errorf("Mosquitto connectivity check failed")
+			return fmt.Errorf("mosquitto connectivity check failed")
 		},
 	}
 
@@ -87,17 +87,6 @@ func newVersionCommand(version VersionInfo) *cobra.Command {
 			out := cmd.OutOrStdout()
 			printVersion(out, version)
 			return nil
-		},
-	}
-}
-
-func placeholderCommand(use string, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: not implemented yet\n", cmd.CommandPath())
-			return err
 		},
 	}
 }

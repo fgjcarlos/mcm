@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly vulnerability scan — surfaces new CVEs in existing deps.
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
@@ -31,6 +34,49 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./... -race -count=1
+
+  golangci-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pinned to v2.12.2, built with Go 1.26.2, so it loads the v2-schema
+          # .golangci.yml and is higher than the project's target Go version
+          # (1.25.11 from go.mod) — golangci-lint requires the binary's build
+          # Go to be >= the target Go.
+          #
+          # Action is `@v9` because `@v6` explicitly rejects golangci-lint
+          # v2.x with: `invalid version string 'v2.12.2', golangci-lint v2
+          # is not supported by golangci-lint-action v6, you must update to
+          # golangci-lint-action v7`. v9.2.1 (May 2026) is the latest release.
+          #
+          # An earlier attempt used `install-mode: goinstall` with
+          # `version: v2.0.0`, which the action translated to
+          # `go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.0.0`.
+          # The v2 module path is `.../golangci-lint/v2/cmd/golangci-lint`, so
+          # `go install` failed with `unknown revision cmd/golangci-lint/v2.0.0`.
+          # Using the prebuilt binary avoids that whole class of path issues.
+          version: v2.12.2
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
 
   backend-build:
     name: Backend build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -72,6 +118,19 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: go build ./...
+
+  docker-build:
+    name: Docker build smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build MCM image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: mcm:ci
 
   frontend:
     name: Frontend lint and build

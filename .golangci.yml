@@ -1,0 +1,80 @@
+version: "2"
+linters:
+  enable:
+    - gosec
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (net/http.ResponseWriter).Write
+    gosec:
+      excludes:
+        - G115
+        - G404
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - staticcheck
+        path: internal/server/broker_events
+        text: SA1019
+      - linters:
+          - gosec
+        path: _test\.go
+        text: G402
+      - linters:
+          - gosec
+        path: _test\.go
+        text: G112
+      - linters:
+          - gosec
+        path: _test\.go
+        text: G101
+      - linters:
+          - gosec
+        path: _test\.go
+        text: G117
+      # G117 on internal/agent/heartbeat.go: the agent sends a {Username,Password}
+      # JSON payload to POST /api/v1/auth/login to obtain a token. The password
+      # is *meant* to be marshaled into the body of that auth request; suppressing
+      # G117 here is the documented gosec pattern for authentication flows.
+      - linters:
+          - gosec
+        path: internal/agent/heartbeat\.go
+        text: G117
+      - linters:
+          - gosec
+        path: internal/storage/store\.go
+        text: G202
+      - linters:
+          - gosec
+        path: internal/storage/login_attempts\.go
+        text: G202
+      - linters:
+          - gosec
+        path: internal/server/run\.go
+        text: G402
+      - linters:
+          - gosec
+        path: internal/tlsutil
+        text: G402
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - frontend/
+      - node_modules/
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
