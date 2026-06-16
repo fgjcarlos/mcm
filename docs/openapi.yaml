@@ -605,6 +605,320 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/mqtt-users:
+    get:
+      tags: [MQTT Users]
+      summary: List MQTT broker users
+      description: |
+        Returns the full set of MQTT broker users (the credentials stored in
+        Mosquitto's password file). Requires auditor or higher.
+      responses:
+        "200":
+          description: MQTT user list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MQTTUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [MQTT Users]
+      summary: Create an MQTT broker user
+      description: |
+        Generates a random 24-character URL-safe password, hashes it with
+        PBKDF2 at the configured iteration count, and persists the user.
+        The cleartext password is returned exactly once in the response —
+        the server does not store it.
+        Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMQTTUserRequest" }
+      responses:
+        "201":
+          description: User created; cleartext password returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUserWithPassword" }
+        "400":
+          description: Missing or invalid `username`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "'username' already exists."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/mqtt-users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MQTTUserID"
+    get:
+      tags: [MQTT Users]
+      summary: Get an MQTT user
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: MQTT user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUser" }
+        "404":
+          description: User not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [MQTT Users]
+      summary: Update an MQTT user
+      description: |
+        Mutates the user's `username` and/or `disabled` flag. Both fields
+        are optional; the request body must contain at least one.
+        Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMQTTUserRequest" }
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUser" }
+        "400":
+          description: Invalid body, unknown user, or username conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: User not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [MQTT Users]
+      summary: Delete an MQTT user
+      description: Requires operator or higher.
+      responses:
+        "204": { description: User deleted. }
+        "404":
+          description: User not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/mqtt-users/{id}/reset-password:
+    parameters:
+      - $ref: "#/components/parameters/MQTTUserID"
+    post:
+      tags: [MQTT Users]
+      summary: Reset an MQTT user's password
+      description: |
+        Generates a new random 24-character password, persists the new
+        PBKDF2 hash, and returns the cleartext password exactly once.
+        Requires operator or higher.
+      responses:
+        "200":
+          description: User updated; new cleartext password returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUserWithPassword" }
+        "404":
+          description: User not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/edge/heartbeat:
+    post:
+      tags: [Edge]
+      summary: Edge site heartbeat
+      description: |
+        Upserts an edge site record keyed on `site_id`. Intended to be
+        called periodically by the `mcm-agent` binary on each managed
+        edge device. Returns the upserted site, including the
+        server-managed `last_seen_at` timestamp.
+        Requires operator or higher.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EdgeHeartbeatRequest" }
+      responses:
+        "200":
+          description: Upserted edge site.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EdgeSite" }
+        "400":
+          description: Missing `site_id` or invalid body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/edge/sites:
+    get:
+      tags: [Edge]
+      summary: List edge sites
+      description: Returns all known edge sites ordered by most recent heartbeat. Requires viewer or higher.
+      responses:
+        "200":
+          description: Edge site list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: "#/components/schemas/EdgeSite" }
+                required: [sites]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/edge/sites/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Edge site identifier (the `site_id` reported by the agent).
+        schema: { type: string }
+    get:
+      tags: [Edge]
+      summary: Get an edge site
+      description: Requires viewer or higher.
+      responses:
+        "200":
+          description: Edge site.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EdgeSite" }
+        "400":
+          description: Missing `id`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Edge site not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/deployments:
+    get:
+      tags: [Deployments]
+      summary: List deployment history
+      description: |
+        Paginated deployment history, newest first. `limit` defaults to
+        50 and is capped at 200; `offset` defaults to 0.
+        Returns `404` when the deploy subsystem is not configured.
+        Requires auditor or higher.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Deployment list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deployments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Deployment" }
+                required: [deployments]
+        "404":
+          description: Deploy is not configured on this server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/deployments/preview:
+    post:
+      tags: [Deployments]
+      summary: Preview a deployment
+      description: |
+        Renders the next Mosquitto ACL and password file bodies from the
+        current DB state, diffs them against the last applied snapshot,
+        and returns the rendered bodies plus the unified diffs.
+        No state is written. Requires operator or higher.
+      responses:
+        "200":
+          description: Preview result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentPreview" }
+        "404":
+          description: Deploy is not configured on this server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/deployments/apply:
+    post:
+      tags: [Deployments]
+      summary: Apply a deployment
+      description: |
+        Renders the current state, writes it to disk atomically, and
+        records a new `Deployment` row. The previous snapshot is kept
+        for rollback. Requires admin.
+      responses:
+        "200":
+          description: Recorded deployment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "404":
+          description: Deploy is not configured on this server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Render, write, or persistence failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      summary: Redacted runtime configuration
+      description: |
+        Returns a safe subset of the running configuration: HTTP bind
+        address and port, TLS toggle, Mosquitto host/port/protocol, and
+        deploy mode. Sensitive values (JWT secret, bootstrap admin
+        password, database DSN, TLS key paths) are intentionally
+        omitted. Requires admin.
+      responses:
+        "200":
+          description: Redacted configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 components:
   securitySchemes:
     bearerAuth:
@@ -627,6 +941,11 @@ components:
       schema: { type: string }
       description: Numeric string ID assigned at creation time.
     JSONSchemaID:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer, minimum: 1 }
+    MQTTUserID:
       in: path
       name: id
       required: true
@@ -958,3 +1277,100 @@ components:
         edge_node_id: { type: string }
         device_id: { type: string }
       required: [namespace, group_id, message_type, edge_node_id]
+    MQTTUser:
+      type: object
+      description: MQTT broker user (password material is never returned).
+      properties:
+        id: { type: integer, minimum: 1 }
+        username: { type: string }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, username, disabled, created_at, updated_at]
+    MQTTUserWithPassword:
+      description: |
+        Returned exactly once on `POST /api/v1/mqtt-users` and
+        `POST /api/v1/mqtt-users/{id}/reset-password`. The cleartext
+        password is not stored server-side; if it is lost, a new one
+        must be generated via the reset endpoint.
+      allOf:
+        - $ref: "#/components/schemas/MQTTUser"
+        - type: object
+          properties:
+            password: { type: string, minLength: 24, maxLength: 24 }
+          required: [password]
+    CreateMQTTUserRequest:
+      type: object
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+      required: [username]
+    UpdateMQTTUserRequest:
+      type: object
+      description: At least one of `username` or `disabled` must be set.
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+        disabled: { type: boolean }
+      minProperties: 1
+    EdgeHeartbeatRequest:
+      type: object
+      properties:
+        site_id: { type: string, minLength: 1, maxLength: 128 }
+        name: { type: string, maxLength: 256 }
+        version: { type: string, maxLength: 64 }
+        status: { type: string, maxLength: 64 }
+        message: { type: string, maxLength: 1024 }
+      required: [site_id]
+    EdgeSite:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        version: { type: string }
+        status: { type: string }
+        message: { type: string }
+        last_seen_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, status, last_seen_at, created_at, updated_at]
+    Deployment:
+      type: object
+      properties:
+        id: { type: integer, minimum: 1 }
+        actor: { type: string }
+        status: { type: string }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, actor, status, created_at, updated_at]
+    DeploymentPreview:
+      type: object
+      properties:
+        acl_diff: { type: string }
+        passwd_diff: { type: string }
+        acl_body: { type: string }
+        passwd_body: { type: string }
+        has_changes: { type: boolean }
+      required: [acl_diff, passwd_diff, acl_body, passwd_body, has_changes]
+    SettingsResponse:
+      type: object
+      properties:
+        http:
+          type: object
+          properties:
+            bind_address: { type: string }
+            port: { type: integer, minimum: 0, maximum: 65535 }
+            tls_enabled: { type: boolean }
+          required: [bind_address, port, tls_enabled]
+        mosquitto:
+          type: object
+          properties:
+            host: { type: string }
+            port: { type: integer, minimum: 0, maximum: 65535 }
+            protocol: { type: string, enum: [mqtt, mqtts, ws, wss] }
+          required: [host, port, protocol]
+        deploy:
+          type: object
+          properties:
+            mode: { type: string }
+          required: [mode]
+      required: [http, mosquitto, deploy]
