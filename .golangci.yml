@@ -1,6 +1,12 @@
 # MCM golangci-lint configuration.
 # Enabled linters match the set described in issue #177: errcheck, staticcheck,
 # gosec, ineffassign, and the default enabled set.
+#
+# This file is a v1-schema golangci-lint config (no `version:` key). It is loaded
+# correctly by golangci-lint v1.x and, in CI, by the `golangci/golangci-lint-action@v6`
+# pinned to v1.64.8 in .github/workflows/ci.yml. Migrating to the v2 schema would
+# surface new findings (G117, G202 in storage/login_attempts, ST1023/ST1005/QF1003
+# in a handful of files) that are tracked as follow-up issues from PR #209.
 
 linters:
   enable:
