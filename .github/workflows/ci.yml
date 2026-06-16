@@ -46,10 +46,15 @@ jobs:
           cache: false
       - uses: golangci/golangci-lint-action@v6
         with:
-          # Pinned to the last v1.x release of golangci-lint. v2.x (>= 2.0.0) requires
-          # migrating .golangci.yml to the v2 schema, which surfaces new findings
-          # (G117, G202 in storage/login_attempts, etc.) tracked as follow-up issues
-          # from PR #209. Bump to `latest` once those are resolved.
+          # `install-mode: goinstall` compiles golangci-lint from source using the
+          # runner's Go toolchain (1.25.11 from go.mod). The prebuilt binaries on
+          # GitHub releases are often built with an older Go and refuse to load
+          # configs targeting 1.25.x ("Go language version used to build golangci-lint
+          # is lower than the targeted Go version"). We pin v1.64.8 because the
+          # .golangci.yml is still on the v1 schema — v2.x of golangci-lint would
+          # need a schema migration. When migrating to the v2 schema, bump version
+          # back to `latest`.
+          install-mode: goinstall
           version: v1.64.8
 
   govulncheck:
