@@ -51,6 +51,39 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+
+signs:
+  - id: checksums
+    cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    certificate: "${artifact}-keyless.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - id: container
+    cmd: cosign
+    env:
+      - COSIGN_EXPERIMENTAL=1
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+    artifacts: all
+    output: true
+
 changelog:
   sort: asc
   filters:
