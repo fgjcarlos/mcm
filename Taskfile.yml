@@ -1,0 +1,161 @@
+version: '3'
+
+# MCM (Mosquitto Control Manager) — Taskfile
+#
+# First version of MCM ships as a single Docker image. This Taskfile is
+# the supported way to drive the local dev workflow (build, up, logs,
+# smoke tests, volume backup/restore). `task` is the go-task runner:
+# https://taskfile.dev
+#
+# Quick start:
+#   task build       build the mcm:dev image
+#   task up          start the mcm + mosquitto stack
+#   task logs        tail mcm logs (bootstrap admin password is here)
+#   task smoke       hit /healthz /readyz /api/v1/status
+#   task down        stop the stack
+#
+# Run `task` with no arguments to list every available task.
+
+vars:
+  IMAGE: "mcm:dev"
+  COMPOSE: docker compose
+  MCM_PORT: "8080"
+  MCM_HEALTH_URL: 'http://localhost:{{.MCM_PORT}}/healthz'
+  MCM_READY_URL: 'http://localhost:{{.MCM_PORT}}/readyz'
+  MCM_STATUS_URL: 'http://localhost:{{.MCM_PORT}}/api/v1/status'
+  BACKUP_DIR: backups
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the mcm Docker image (linux/amd64)
+    cmds:
+      - docker buildx build --load -t {{.IMAGE}} .
+
+  up:
+    desc: Start the mcm + mosquitto stack in the background
+    cmds:
+      - "{{.COMPOSE}} up -d"
+
+  down:
+    desc: Stop the mcm + mosquitto stack
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  ps:
+    desc: List services
+    cmds:
+      - "{{.COMPOSE}} ps"
+
+  logs:
+    desc: Tail mcm service logs
+    cmds:
+      - "{{.COMPOSE}} logs -f mcm"
+
+  ready:
+    desc: Block until /healthz returns 200
+    cmds:
+      - cmd: |
+          for i in $(seq 1 60); do
+            if curl -fsS {{.MCM_HEALTH_URL}} >/dev/null 2>&1; then
+              echo "ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "mcm did not become ready in 60s" >&2
+          exit 1
+
+  smoke:
+    desc: Smoke-test the running mcm container
+    cmds:
+      - echo "GET {{.MCM_HEALTH_URL}}"
+      - curl -fsS {{.MCM_HEALTH_URL}}
+      - echo
+      - echo "GET {{.MCM_READY_URL}}"
+      - curl -fsS {{.MCM_READY_URL}}
+      - echo
+      - echo "GET {{.MCM_STATUS_URL}}"
+      - curl -fsS {{.MCM_STATUS_URL}}
+
+  backup:
+    desc: Snapshot the mcm data volume
+    cmds:
+      - mkdir -p {{.BACKUP_DIR}}
+      - docker run --rm -v mcm_mcm_data:/data:ro -v $(pwd)/{{.BACKUP_DIR}}:/backup alpine sh -c "tar czf /backup/mcm-data.tgz -C / data"
+      - ls -lh {{.BACKUP_DIR}}/mcm-data.tgz
+
+  restore:
+    desc: Restore the mcm data volume
+    cmds:
+      - test -f {{.BACKUP_DIR}}/mcm-data.tgz
+      - "{{.COMPOSE}} down"
+      - docker run --rm -v mcm_mcm_data:/data -v $(pwd)/{{.BACKUP_DIR}}:/backup:ro alpine sh -c "rm -rf /data/* && tar xzf /backup/mcm-data.tgz -C /data"
+      - "{{.COMPOSE}} up -d"
+
+  test:go:
+    desc: Run Go tests with -race
+    cmds:
+      - go test ./... -race -count=1
+
+  test:frontend:
+    desc: Run frontend tests
+    cmds:
+      - npm --prefix frontend ci
+      - npm --prefix frontend run test:run
+
+  test:
+    desc: Run all tests
+    deps: [test:go, test:frontend]
+
+  lint:go:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:frontend:
+    desc: Run ESLint
+    cmds:
+      - npm --prefix frontend ci
+      - npm --prefix frontend run lint
+
+  lint:openapi:
+    desc: Lint the OpenAPI spec
+    cmds:
+      - npx -y @redocly/cli@latest lint docs/openapi.yaml
+
+  lint:site:
+    desc: Build the Astro site
+    cmds:
+      - npm --prefix site ci
+      - npm --prefix site run build
+
+  lint:
+    desc: Run every linter
+    deps: [lint:go, lint:frontend, lint:openapi, lint:site]
+
+  format:
+    desc: Run gofmt
+    cmds:
+      - gofmt -l -w .
+
+  clean:
+    desc: Remove dev image, data volume, and build artifacts
+    cmds:
+      - docker rmi {{.IMAGE}} 2>/dev/null || true
+      - "{{.COMPOSE}} down -v --remove-orphans"
+      - rm -rf bin/ {{.BACKUP_DIR}}/
+
+  help:
+    desc: Print the quick-start recipe
+    cmds:
+      - echo "MCM quick start:"
+      - echo "  task build"
+      - echo "  task up"
+      - echo "  task logs"
+      - echo "  task smoke"
+      - echo "  task down"
