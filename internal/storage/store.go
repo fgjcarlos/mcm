@@ -232,24 +232,6 @@ CREATE INDEX idx_deployments_created_at ON deployments(created_at);
 `,
 	},
 	{
-		version: 13,
-		name:    "create_edge_sites",
-		sql: `
-CREATE TABLE edge_sites (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL DEFAULT '',
-	version TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL DEFAULT 'unknown',
-	message TEXT NOT NULL DEFAULT '',
-	last_seen_at TEXT NOT NULL,
-	created_at TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-CREATE INDEX idx_edge_sites_status ON edge_sites(status);
-CREATE INDEX idx_edge_sites_last_seen_at ON edge_sites(last_seen_at);
-`,
-	},
-	{
 		version: 14,
 		name:    "add_admin_users_mfa_last_totp_step",
 		sql: `

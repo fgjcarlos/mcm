@@ -2,7 +2,6 @@
 bin/
 # Locally built binaries dropped at the repo root (e.g. `go build ./cmd/...`)
 /mcm
-/mcm-agent
 frontend/dist/*
 !frontend/dist/index.html
 frontend/node_modules/
