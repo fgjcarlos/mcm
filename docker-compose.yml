@@ -30,19 +30,21 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./deploy/mcm/config.yaml:/etc/mcm/config.yaml:ro
       - mcm_data:/var/lib/mcm
-    # Inject secrets at runtime instead of baking them into the mounted YAML.
-    # Uncomment and supply values (e.g. from a .env file or your orchestrator's
-    # secret store). These override the corresponding fields in config.yaml.
-    # environment:
-    # Use a 32+ char random value for the JWT secret and a strong, unique
-    # bootstrap admin credential; the :? guards fail fast if they are unset.
-    #   MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
-    #   MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
-    #   MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
+    # Inject secrets at runtime via env. MCM_AUTH_JWT_SECRET and
+    # MCM_BOOTSTRAP_ADMIN_PASSWORD must be supplied (use a .env file or
+    # the orchestrator's secret store). MCM_BOOTSTRAP_ADMIN_USERNAME
+    # defaults to "admin" when unset. Other fields come from
+    # internal/config.Default() and may be overridden with MCM_* env
+    # vars (MCM_HTTP_PORT, MCM_DATABASE_PATH, MCM_MOSQUITTO_HOST, etc.).
+    environment:
+      MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
+      MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
+      MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
+      MCM_MOSQUITTO_HOST: mosquitto
+      MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
-      test: ["CMD", "mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

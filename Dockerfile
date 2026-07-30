@@ -8,7 +8,6 @@ RUN npm run build
 
 # Stage 2: Build Go backend
 FROM golang:1.24-alpine AS backend
-RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -18,13 +17,12 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /mcm ./cmd/mcm
 
 # Stage 3: Production image
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata wget \
     && addgroup -S mcm && adduser -S mcm -G mcm
 COPY --from=backend /mcm /usr/local/bin/mcm
 RUN mkdir -p /var/lib/mcm && chown mcm:mcm /var/lib/mcm
 USER mcm
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD ["mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
+    CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["mcm"]
-CMD []

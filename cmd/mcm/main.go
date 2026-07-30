@@ -18,7 +18,11 @@ import (
 	"github.com/fgjcarlos/mcm/internal/server"
 )
 
-const defaultConfigPath = "./mcm.yaml"
+// defaultConfigPath is empty so the binary starts without a YAML file:
+// Load("") skips the YAML step and resolves config purely from MCM_*
+// environment variables + Default(). Compose deployments that want a
+// starter YAML can pass --config explicitly or set MCM_CONFIG_FILE.
+const defaultConfigPath = ""
 
 func main() {
 	configPath := flag.String("config", defaultConfigPath, "path to the MCM YAML config file")
