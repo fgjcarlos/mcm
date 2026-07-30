@@ -36,8 +36,38 @@ jobs:
       - name: docker buildx build
         run: docker buildx build --load -t mcm:dev .
 
+      # Smoke run: build the image, mount a minimal valid YAML so the
+      # binary's --config flag resolves, and supply the secrets + bootstrap
+      # admin via env vars. The server-only binary (post #235/#238) takes
+      # --config directly with no subcommands; #231 will simplify the
+      # Dockerfile default entrypoint, after which this step can drop the
+      # --config override.
+      - name: write smoke config
+        run: |
+          cat > /tmp/mcm-smoke.yaml <<'EOF'
+          http:
+            bind_address: 0.0.0.0
+            port: 8080
+          database:
+            path: /var/lib/mcm/mcm.db
+          mosquitto:
+            host: 127.0.0.1
+            port: 1883
+          auth:
+            token_ttl: 24h
+          logging:
+            level: info
+            format: json
+          EOF
+
       - name: docker run (smoke)
-        run: docker run -d --name mcm-smoke -p 8080:8080 mcm:dev
+        run: |
+          docker run -d --name mcm-smoke -p 8080:8080 \
+            -v /tmp/mcm-smoke.yaml:/etc/mcm/config.yaml:ro \
+            -e MCM_AUTH_JWT_SECRET=ci-smoke-jwt-secret-at-least-32-chars-long \
+            -e MCM_BOOTSTRAP_ADMIN_USERNAME=ci-admin \
+            -e MCM_BOOTSTRAP_ADMIN_PASSWORD=ci-admin-password-1234 \
+            mcm:dev --config /etc/mcm/config.yaml
 
       - name: wait 5s
         run: sleep 5
