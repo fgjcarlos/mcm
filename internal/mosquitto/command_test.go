@@ -2,6 +2,7 @@ package mosquitto
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,9 @@ func TestExecRunner(t *testing.T) {
 
 	t.Run("executes command successfully and returns combined output", func(t *testing.T) {
 		t.Parallel()
+		if runtime.GOOS == "windows" {
+			t.Skipf("unix-only: echo not available in PowerShell")
+		}
 		runner := ExecRunner{}
 		out, err := runner.Run(context.Background(), "echo", "hello-mcm")
 		if err != nil {

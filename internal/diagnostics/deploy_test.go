@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -249,6 +250,9 @@ func TestCheckDirWritable(t *testing.T) {
 
 	t.Run("read-only directory fails", func(t *testing.T) {
 		t.Parallel()
+		if runtime.GOOS == "windows" {
+			t.Skipf("unix-only: read-only enforcement not available on Windows")
+		}
 		// Skip on systems where we might be running as root.
 		if os.Getuid() == 0 {
 			t.Skip("skipping read-only test when running as root")
