@@ -165,9 +165,9 @@ func TestVerifyPassword(t *testing.T) {
 
 		malformed := []string{
 			"notahash",
-			"$6$101$abc$def",   // wrong scheme
-			"$7$notanint$x$y",  // non-numeric iterations
-			"$7$101$!!!$!!!",   // invalid base64
+			"$6$101$abc$def",  // wrong scheme
+			"$7$notanint$x$y", // non-numeric iterations
+			"$7$101$!!!$!!!",  // invalid base64
 			"",
 		}
 

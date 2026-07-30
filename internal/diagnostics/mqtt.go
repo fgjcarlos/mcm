@@ -148,7 +148,6 @@ func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.D
 	return nil
 }
 
-
 func mqttConnackReturnCode(code byte) string {
 	switch code {
 	case 1:
