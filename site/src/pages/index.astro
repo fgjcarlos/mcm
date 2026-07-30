@@ -48,31 +48,35 @@ const frontendFeatures = [
 
 const opsFeatures = [
   {
-    title: "Single binary CLI",
-    body: "mcm server / doctor / status / config / backup / version — cross-compiled on every PR.",
+    title: "Docker-first deployment",
+    body: "One image, one compose file. Build, start, and back up the stack with the Taskfile recipes shipped in the repo.",
   },
   {
     title: "OpenAPI 3.1 contract",
     body: "Every endpoint described, linted in CI, ready for client generation.",
   },
   {
-    title: "Docker Compose dev stack",
-    body: "Local Mosquitto broker for development and quick trials.",
+    title: "Image CI",
+    body: "Single GitHub Actions job builds the image, smoke-runs it, and lints Go / frontend / OpenAPI / Astro.",
   },
 ];
 
 const quickStart = [
   {
-    label: "Clone",
-    code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm",
+    label: "Clone and build",
+    code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build",
   },
   {
-    label: "Start the broker",
-    code: "docker compose up -d",
+    label: "Start the stack",
+    code: "task up",
   },
   {
-    label: "Run MCM",
-    code: "go run ./cmd/mcm server --config ./mcm.yaml",
+    label: "Capture the bootstrap admin",
+    code: "task logs    # look for 'bootstrap admin created' — username + password",
+  },
+  {
+    label: "Open the dashboard",
+    code: "open http://localhost:8080",
   },
 ];
 
@@ -90,7 +94,7 @@ const stack = [
 
 <Layout
   title="MCM — Mosquitto Control Manager"
-  description="Open source control plane for Eclipse Mosquitto. Web UI, REST API, realtime observability, RBAC, audit trail, HTTPS, and Prometheus metrics — without replacing Mosquitto as the broker."
+  description="Open source control plane for Eclipse Mosquitto. Docker-first deployment, web UI, REST API, realtime observability, RBAC, audit trail, HTTPS, and Prometheus metrics — without replacing Mosquitto as the broker."
 >
   <main class="mx-auto w-full max-w-6xl px-6 py-16 sm:py-24">
     <header class="flex flex-col gap-6">
@@ -103,7 +107,7 @@ const stack = [
           rel="noopener noreferrer"
           target="_blank"
         >
-          CI on every PR
+          Image CI
         </a>
       </div>
 
@@ -115,6 +119,9 @@ const stack = [
         <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
           MCM is an open source control plane for Eclipse Mosquitto. Modern web UI, REST and WebSocket API,
           realtime broker observability, RBAC, audit trail, HTTPS — without replacing Mosquitto as the broker.
+        </p>
+        <p class="text-base leading-relaxed text-cyan-100/90">
+          Runs entirely in Docker. One image, one compose file — no CLI, no binaries.
         </p>
       </div>
 
@@ -154,8 +161,7 @@ const stack = [
         <p class="mt-5 leading-relaxed text-slate-300">
           Mosquitto is lightweight, reliable, and widely adopted at the edge. But day-to-day operation usually
           means hand-editing config files, ACLs, password files, and stitching dashboards together. MCM fills
-          that gap with a clean control plane: a Go binary plus a React dashboard backed by a single SQLite
-          database.
+          that gap with a clean control plane backed by a single SQLite database.
         </p>
         <p class="mt-3 leading-relaxed text-slate-300">
           MCM never tries to replace Mosquitto. It connects to your existing broker as a client, configures it
@@ -173,8 +179,8 @@ const stack = [
           ))}
         </ul>
         <p class="mt-6 text-sm leading-relaxed text-cyan-50/80">
-          One static Go binary. Pure-Go SQLite driver, so cross-compiling to Linux amd64/arm64, macOS arm64,
-          and Windows works out of the box on every PR.
+          Published as a single Docker image. The Go binary, React dashboard, and Mosquitto broker ship in one
+          compose stack — pulled, started, and backed up with the Taskfile recipes.
         </p>
       </article>
     </section>
@@ -198,7 +204,7 @@ const stack = [
 
     <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
       <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Quick start</p>
-      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Three commands to a local control plane.</h2>
+      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Four steps to a local control plane.</h2>
       <ol class="mt-8 space-y-4">
         {quickStart.map((step, idx) => (
           <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
@@ -215,8 +221,8 @@ const stack = [
         ))}
       </ol>
       <p class="mt-6 text-sm text-slate-400">
-        Need TLS, mTLS, or Prometheus scraping? Each is covered in the
-        <a class="underline-offset-4 hover:underline" href={`${repoURL}#https-and-optional-mtls`}>README</a>.
+        Need TLS, mTLS, reverse proxy setup, or volume backups? See
+        <a class="underline-offset-4 hover:underline" href={`${repoURL}/blob/main/docs/production.md`}>docs/production.md</a>.
       </p>
     </section>
 
