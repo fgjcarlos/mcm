@@ -1105,3 +1105,213 @@ func TestRBACOperatorCanManageMQTTButNotAdminUsers(t *testing.T) {
 		t.Fatalf("operator POST /api/v1/admin-users status = %d, want %d, body = %s", denyRec.Code, http.StatusForbidden, denyRec.Body.String())
 	}
 }
+
+func TestHandleGetAdminUserWithValidID(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Seed admin user
+	seedAdminUser(t, store, "admin", "admin-password", false)
+	token := loginAs(t, app, "admin", "admin-password")
+
+	// Create another user to test
+	user := seedAdminUser(t, store, "testuser", "secret", false)
+
+	// GET the user
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodGet, "/api/v1/admin-users/"+strconv.FormatInt(user.ID, 10), "", token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get admin user status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp adminUserResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Username != "testuser" {
+		t.Fatalf("get admin user username = %q, want testuser", resp.Username)
+	}
+	if resp.ID != user.ID {
+		t.Fatalf("get admin user id = %d, want %d", resp.ID, user.ID)
+	}
+}
+
+func TestHandleGetAdminUserNonExistentID(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Seed admin user
+	seedAdminUser(t, store, "admin", "admin-password", false)
+	token := loginAs(t, app, "admin", "admin-password")
+
+	// GET non-existent user
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodGet, "/api/v1/admin-users/99999", "", token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get non-existent user status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+
+	var resp errorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error != "admin user not found" {
+		t.Fatalf("get non-existent user error = %q, want admin user not found", resp.Error)
+	}
+}
+
+func TestHandleGetAdminUserForbiddenForNonAdmin(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Seed admin user
+	admin := seedAdminUser(t, store, "admin", "admin-password", false)
+
+	// Seed non-auditor user (viewer - lowest role)
+	seedAdminUserWithRole(t, store, "viewer-user", "secret", auth.RoleViewer)
+	token := loginAs(t, app, "viewer-user", "secret")
+
+	// Viewer should not be able to GET admin users (requires auditor role or higher)
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodGet, "/api/v1/admin-users/"+strconv.FormatInt(admin.ID, 10), "", token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("get admin user as viewer status = %d, want %d, body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+// optionalAuthProbeHandler is a stub handler that records whether
+// currentUserContextKey was present in the request context after the
+// optionalAuth middleware ran. It is used by the TestOptionalAuth*
+// tests to exercise the middleware directly (not through app.Handler(),
+// which routes registered endpoints that may or may not call optionalAuth).
+func optionalAuthProbeHandler() (http.Handler, *bool, *string) {
+	var sawClaims bool
+	var username string
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := currentUserFromContext(r.Context())
+		sawClaims = ok
+		if ok {
+			username = claims.Username
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	return h, &sawClaims, &username
+}
+
+func TestOptionalAuthWithValidToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "admin-password", false)
+	token := loginAs(t, app, "admin", "admin-password")
+
+	next, sawClaims, capturedUsername := optionalAuthProbeHandler()
+	handler := app.optionalAuth(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("optionalAuth with valid token status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !*sawClaims {
+		t.Fatal("optionalAuth did not set claims on context with valid token")
+	}
+	if *capturedUsername != "admin" {
+		t.Fatalf("claims username = %q, want admin", *capturedUsername)
+	}
+}
+
+func TestOptionalAuthWithInvalidToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	next, sawClaims, _ := optionalAuthProbeHandler()
+	handler := app.optionalAuth(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "Bearer invalid.token.here")
+	handler.ServeHTTP(rec, req)
+
+	// optionalAuth must not block; it should call the next handler regardless.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("optionalAuth with invalid token status = %d, want %d (must not block)", rec.Code, http.StatusOK)
+	}
+	if *sawClaims {
+		t.Fatal("optionalAuth set claims on context with invalid token — should not")
+	}
+}
+
+func TestOptionalAuthWithNoToken(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	next, sawClaims, _ := optionalAuthProbeHandler()
+	handler := app.optionalAuth(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("optionalAuth with no token status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if *sawClaims {
+		t.Fatal("optionalAuth set claims on context with no token — should not")
+	}
+}
+
+func TestOptionalAuthWithMalformedAuthHeader(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	next, sawClaims, _ := optionalAuthProbeHandler()
+	handler := app.optionalAuth(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "InvalidFormat token")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("optionalAuth with malformed header status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if *sawClaims {
+		t.Fatal("optionalAuth set claims on context with malformed header — should not")
+	}
+}
+
+func TestOptionalAuthWithWhitespaceInHeader(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUser(t, store, "admin", "admin-password", false)
+	token := loginAs(t, app, "admin", "admin-password")
+
+	next, sawClaims, capturedUsername := optionalAuthProbeHandler()
+	handler := app.optionalAuth(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
+	req.Header.Set("Authorization", "  Bearer  "+token+"  ")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("optionalAuth with whitespace header status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !*sawClaims {
+		t.Fatal("optionalAuth did not set claims on context with whitespace-padded Bearer")
+	}
+	if *capturedUsername != "admin" {
+		t.Fatalf("claims username = %q, want admin", *capturedUsername)
+	}
+}
