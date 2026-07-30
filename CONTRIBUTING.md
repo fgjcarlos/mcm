@@ -49,6 +49,10 @@ make test
 
 `make test` and `make build` generate `frontend/dist` before invoking the Go toolchain, which keeps the embedded frontend contract explicit in local development and CI. If you use `go test`, `go build`, or `go run` directly, run `npm --prefix frontend run build` first.
 
+### Windows notes
+
+On Windows, `go test -race` requires GCC. If you are using TDM-GCC, the test may fail to link. Use MinGW-w64 (via msys2) for `-race` support on Windows.
+
 ## Review and merge policy
 
 - All changes to `main` go through pull requests.

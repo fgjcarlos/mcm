@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -566,6 +567,9 @@ logging:
 }
 
 func TestDefaultPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skipf("unix-only: os.UserConfigDir returns %%APPDATA%% on Windows")
+	}
 	temp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", temp)
 	t.Setenv("HOME", temp)
@@ -1329,8 +1333,10 @@ func TestLoadJWTSecretBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat bootstrap state: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("bootstrap state mode = %#o, want 0600", got)
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("bootstrap state mode = %#o, want 0600", got)
+		}
 	}
 
 	// Second boot with the SAME env-less setup: the secret must be the

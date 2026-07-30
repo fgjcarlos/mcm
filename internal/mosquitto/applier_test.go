@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,9 @@ func TestAtomicWrite(t *testing.T) {
 
 	t.Run("writes content and sets permissions 0600", func(t *testing.T) {
 		t.Parallel()
+		if runtime.GOOS == "windows" {
+			t.Skipf("unix-only: Windows ignores 0600 bitmask")
+		}
 		dir := t.TempDir()
 		path := filepath.Join(dir, "target.txt")
 		content := "hello world\n"
