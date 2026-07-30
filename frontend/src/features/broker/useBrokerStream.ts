@@ -152,6 +152,25 @@ export function useBrokerStream(token: string, onLogout: () => void) {
     let currentSocket: WebSocket | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let backoffMs = BASE_DELAY_MS
+    let isFirstConnection = true
+
+    // Helper to fetch and re-anchor snapshot_at on reconnect (issue #257)
+    const refetchSnapshot = () => {
+      if (destroyed) return
+      authenticatedFetch('/api/v1/status', { token, onUnauthorized: onLogout })
+        .then((response) => (response.ok ? response.json() : Promise.reject(new Error('status request failed'))))
+        .then((status: StatusResponse) => {
+          if (destroyed) return
+          const traffic = withSnapshotAt(status.broker.metrics.traffic ?? emptyTrafficMetrics)
+          setBrokerStatus(status.broker.status)
+          setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, traffic) : traffic)
+        })
+        .catch(() => {
+          if (!destroyed) {
+            setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
+          }
+        })
+    }
 
     function connect() {
       if (destroyed) return
@@ -168,6 +187,13 @@ export function useBrokerStream(token: string, onLogout: () => void) {
         // Reset backoff on a successful connection
         backoffMs = BASE_DELAY_MS
         setStreamState('connected')
+        // Re-anchor snapshot_at after reconnect (but not on first connection)
+        // This fixes issue #257: events arriving after reconnect were being dropped
+        // because they were <= the snapshot_at from the initial mount
+        if (!isFirstConnection) {
+          refetchSnapshot()
+        }
+        isFirstConnection = false
       })
 
       function scheduleReconnect() {
@@ -232,7 +258,7 @@ export function useBrokerStream(token: string, onLogout: () => void) {
       currentSocket?.close()
       currentSocket = null
     }
-  }, [token])
+  }, [token, onLogout])
 
   const uniqueTopicCount = useMemo(() => new Set(topics.map((topic) => topic.topic)).size, [topics])
 
