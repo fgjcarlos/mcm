@@ -134,8 +134,8 @@ func TestDecodePayload(t *testing.T) {
 		// UInt32=7 UInt64=8 Float=9 Double=10 Boolean=11 String=12 DateTime=13
 		// Text=14 UUID=15 DataSet=16 Bytes=17 Template=18
 		metrics := []testMetric{
-			{name: "temperature", datatype: 3, intValue: uint64Ptr(42)},  // Int32
-			{name: "status", datatype: 11, boolValue: boolPtr(true)},     // Boolean
+			{name: "temperature", datatype: 3, intValue: uint64Ptr(42)},   // Int32
+			{name: "status", datatype: 11, boolValue: boolPtr(true)},      // Boolean
 			{name: "label", datatype: 12, stringValue: strPtr("running")}, // String
 		}
 

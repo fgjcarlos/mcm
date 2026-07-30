@@ -57,7 +57,6 @@ func TestCreateMQTTUser(t *testing.T) {
 	})
 }
 
-
 func TestGetMQTTUser(t *testing.T) {
 	t.Parallel()
 

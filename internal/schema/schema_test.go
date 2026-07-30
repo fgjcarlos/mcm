@@ -109,16 +109,16 @@ func TestValidateJSONPayloadArrayItems(t *testing.T) {
 
 func TestValidateSchemaDocumentRejectsMalformedKeywords(t *testing.T) {
 	cases := map[string]string{
-		"enum not array":         `{"type":"string","enum":"x"}`,
-		"empty enum":             `{"type":"string","enum":[]}`,
-		"minimum not number":     `{"type":"number","minimum":"low"}`,
-		"maximum not number":     `{"type":"number","maximum":true}`,
-		"minLength negative":     `{"type":"string","minLength":-1}`,
-		"maxLength not integer":  `{"type":"string","maxLength":1.5}`,
-		"pattern not string":     `{"type":"string","pattern":42}`,
-		"pattern invalid regex":  `{"type":"string","pattern":"["}`,
-		"items not object":       `{"type":"array","items":"string"}`,
-		"items malformed":        `{"type":"array","items":{"type":"bogus"}}`,
+		"enum not array":        `{"type":"string","enum":"x"}`,
+		"empty enum":            `{"type":"string","enum":[]}`,
+		"minimum not number":    `{"type":"number","minimum":"low"}`,
+		"maximum not number":    `{"type":"number","maximum":true}`,
+		"minLength negative":    `{"type":"string","minLength":-1}`,
+		"maxLength not integer": `{"type":"string","maxLength":1.5}`,
+		"pattern not string":    `{"type":"string","pattern":42}`,
+		"pattern invalid regex": `{"type":"string","pattern":"["}`,
+		"items not object":      `{"type":"array","items":"string"}`,
+		"items malformed":       `{"type":"array","items":{"type":"bogus"}}`,
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
