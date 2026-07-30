@@ -62,8 +62,8 @@ func MatchTOTPStep(secret, code string, now time.Time) (int64, bool) {
 	return 0, false
 }
 
-// GenerateRecoveryCodes returns count random recovery codes in groups of four hex
-// characters separated by a dash (e.g. "A1B2-C3D4"). The plaintext codes are
+// GenerateRecoveryCodes returns count random recovery codes in groups of four base32
+// characters (no padding) separated by a dash (e.g. "A1B2-C3D4"). The plaintext codes are
 // shown once to the operator; their bcrypt hashes are what the server persists.
 func GenerateRecoveryCodes(count int) ([]string, error) {
 	if count <= 0 {
