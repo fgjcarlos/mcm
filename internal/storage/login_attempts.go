@@ -19,8 +19,8 @@ type LoginAttemptParams struct {
 
 // LoginAttemptStats summarizes failed login attempts for rate limiting decisions.
 type LoginAttemptStats struct {
-	Count       int
-	OldestAt    time.Time
+	Count    int
+	OldestAt time.Time
 }
 
 // RecordLoginAttempt stores the outcome of a login attempt.

@@ -38,21 +38,21 @@ const (
 
 // BrokerEvent is the JSON contract streamed to the frontend broker WebSocket.
 type BrokerEvent struct {
-	Type              string                    `json:"type"`
-	Status            string                    `json:"status,omitempty"`
-	Topic             string                    `json:"topic,omitempty"`
-	PayloadPreview    string                    `json:"payload_preview,omitempty"`
-	PayloadFormat     string                    `json:"payload_format,omitempty"`
-	PayloadBytes      int                       `json:"payload_bytes,omitempty"`
-	Truncated         bool                      `json:"truncated,omitempty"`
-	Payload           *PayloadInspection        `json:"payload_inspection,omitempty"`
-	SchemaValidation  *SchemaValidationResult   `json:"schema_validation,omitempty"`
-	Sparkplug         *sparkplug.Metadata       `json:"sparkplug,omitempty"`
-	SparkplugMetrics  *sparkplug.DecodedPayload `json:"sparkplug_metrics,omitempty"`
-	Source            string                    `json:"source,omitempty"`
-	Severity          string                    `json:"severity,omitempty"`
-	Message           string                    `json:"message,omitempty"`
-	ObservedAt        time.Time                 `json:"observed_at"`
+	Type             string                    `json:"type"`
+	Status           string                    `json:"status,omitempty"`
+	Topic            string                    `json:"topic,omitempty"`
+	PayloadPreview   string                    `json:"payload_preview,omitempty"`
+	PayloadFormat    string                    `json:"payload_format,omitempty"`
+	PayloadBytes     int                       `json:"payload_bytes,omitempty"`
+	Truncated        bool                      `json:"truncated,omitempty"`
+	Payload          *PayloadInspection        `json:"payload_inspection,omitempty"`
+	SchemaValidation *SchemaValidationResult   `json:"schema_validation,omitempty"`
+	Sparkplug        *sparkplug.Metadata       `json:"sparkplug,omitempty"`
+	SparkplugMetrics *sparkplug.DecodedPayload `json:"sparkplug_metrics,omitempty"`
+	Source           string                    `json:"source,omitempty"`
+	Severity         string                    `json:"severity,omitempty"`
+	Message          string                    `json:"message,omitempty"`
+	ObservedAt       time.Time                 `json:"observed_at"`
 }
 
 // SchemaValidationResult summarizes JSON schema validation for an observed topic payload.
@@ -104,7 +104,7 @@ type BrokerEventSnapshot struct {
 
 // BrokerTrafficMetrics summarizes recent topic activity for operator dashboards.
 type BrokerTrafficMetrics struct {
-	SnapshotAt            time.Time           `json:"snapshot_at"`
+	SnapshotAt           time.Time           `json:"snapshot_at"`
 	WindowSeconds        int                 `json:"window_seconds"`
 	MessageCount         int                 `json:"message_count"`
 	MessageRatePerMinute float64             `json:"message_rate_per_minute"`
@@ -349,7 +349,7 @@ func computeBrokerTrafficMetrics(events []BrokerEvent, now time.Time, window tim
 	}
 
 	metrics := BrokerTrafficMetrics{
-		SnapshotAt:            now.UTC(),
+		SnapshotAt:           now.UTC(),
 		WindowSeconds:        int(window.Seconds()),
 		MessageCount:         messageCount,
 		MessageRatePerMinute: float64(messageCount) / window.Minutes(),

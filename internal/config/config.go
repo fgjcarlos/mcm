@@ -369,11 +369,11 @@ logging:
 // Load is the env-first config entry point.
 //
 // Resolution order (later overrides earlier):
-//   1. In-code defaults from Default().
-//   2. YAML file: `path` if non-empty, else `MCM_CONFIG_FILE` if set.
-//      A missing file when one is requested is an error; a missing file
-//      when neither path nor env is set is fine (env-only mode).
-//   3. Environment variables (every MCM_* var listed below).
+//  1. In-code defaults from Default().
+//  2. YAML file: `path` if non-empty, else `MCM_CONFIG_FILE` if set.
+//     A missing file when one is requested is an error; a missing file
+//     when neither path nor env is set is fine (env-only mode).
+//  3. Environment variables (every MCM_* var listed below).
 //
 // After resolution:
 //   - If MCM_AUTH_JWT_SECRET was unset, a cryptographically random

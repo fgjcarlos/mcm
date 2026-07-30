@@ -8,110 +8,118 @@ on:
 permissions:
   contents: read
 
+# Single image-driven job for the Docker-first pivot (#230). Builds the
+# image, smoke-runs it, then exercises Go, frontend, OpenAPI, and the
+# Astro site. No matrix, no GoReleaser, no separate lint jobs — every
+# check is a step.
 jobs:
-  backend-test:
-    name: Backend tests
+  image:
+    name: Image build + smoke + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            site/package-lock.json
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: npm ci
-        run: npm --prefix frontend ci
-      - name: npm run build
-        run: npm --prefix frontend run build
-      - name: go vet
-        run: go vet ./...
+
+      # --- Image build + smoke ----------------------------------------------------
+      - name: docker buildx build
+        run: docker buildx build --load -t mcm:dev .
+
+      # Smoke run: build the image, mount a minimal valid YAML so the
+      # binary's --config flag resolves, and supply the secrets + bootstrap
+      # admin via env vars. The server-only binary (post #235/#238) takes
+      # --config directly with no subcommands; #231 will simplify the
+      # Dockerfile default entrypoint, after which this step can drop the
+      # --config override.
+      - name: write smoke config
+        run: |
+          cat > /tmp/mcm-smoke.yaml <<'EOF'
+          http:
+            bind_address: 0.0.0.0
+            port: 8080
+          database:
+            path: /var/lib/mcm/mcm.db
+          mosquitto:
+            host: 127.0.0.1
+            port: 1883
+          auth:
+            token_ttl: 24h
+          logging:
+            level: info
+            format: json
+          EOF
+
+      - name: docker run (smoke)
+        run: |
+          docker run -d --name mcm-smoke -p 8080:8080 \
+            -v /tmp/mcm-smoke.yaml:/etc/mcm/config.yaml:ro \
+            -e MCM_AUTH_JWT_SECRET=ci-smoke-jwt-secret-at-least-32-chars-long \
+            -e MCM_BOOTSTRAP_ADMIN_USERNAME=ci-admin \
+            -e MCM_BOOTSTRAP_ADMIN_PASSWORD=ci-admin-password-1234 \
+            mcm:dev --config /etc/mcm/config.yaml
+
+      - name: wait 5s
+        run: sleep 5
+
+      - name: curl /healthz
+        run: curl -fsS http://localhost:8080/healthz
+
+      - name: curl /readyz
+        run: curl -fsS http://localhost:8080/readyz
+
+      - name: docker stop+rm
+        run: |
+          docker stop mcm-smoke
+          docker rm mcm-smoke
+
+      # --- Go ---------------------------------------------------------------------
       - name: go test
         run: go test ./... -race -count=1
 
-  backend-build:
-    name: Backend build (${{ matrix.goos }}/${{ matrix.goarch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            goos: linux
-            goarch: amd64
-          - runner: ubuntu-latest
-            goos: linux
-            goarch: arm64
-          - runner: macos-latest
-            goos: darwin
-            goarch: arm64
-          - runner: windows-latest
-            goos: windows
-            goarch: amd64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: frontend/.nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: npm ci
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt -l .
+        # Must produce no output: every Go file is formatted.
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+
+      # --- Frontend ---------------------------------------------------------------
+      - name: npm ci (frontend)
         run: npm --prefix frontend ci
-      - name: npm run build
+
+      - name: npm run build (frontend)
         run: npm --prefix frontend run build
-      - name: go build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: go build ./...
 
-  frontend:
-    name: Frontend lint and build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: frontend/.nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: npm ci
-        run: npm ci
-      - name: npm run lint
-        run: npm run lint
-      - name: npm run test:run
-        run: npm run test:run
-      - name: npm run build
-        run: npm run build
+      - name: npm run lint (frontend)
+        run: npm --prefix frontend run lint
 
-  goreleaser-check:
-    name: GoReleaser config check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: "~> v2"
-          args: check
+      - name: npm run test:run (frontend)
+        run: npm --prefix frontend run test:run
 
-  openapi:
-    name: OpenAPI spec lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: frontend/.nvmrc
+      # --- OpenAPI ----------------------------------------------------------------
       - name: redocly lint
         run: npx -y @redocly/cli@latest lint docs/openapi.yaml
+
+      # --- Astro site -------------------------------------------------------------
+      - name: npm ci (site)
+        run: npm --prefix site ci
+
+      - name: npm run build (site)
+        run: npm --prefix site run build
