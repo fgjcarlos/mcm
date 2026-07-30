@@ -3,6 +3,7 @@ package acl
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -251,10 +252,12 @@ func TestMemoryStoreConcurrency(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
 
-	// Create rules concurrently
-	done := make(chan bool, 100)
+	// Create rules concurrently using sync.WaitGroup
+	var wg sync.WaitGroup
+	wg.Add(100)
 	for i := 0; i < 100; i++ {
 		go func(index int) {
+			defer wg.Done()
 			// Use valid topic filters and principals
 			principal := "user" + string(rune('a'+index%26))
 			topicFilter := "home/" + "sensor" + string(rune('0'+(index%10)))
@@ -267,14 +270,11 @@ func TestMemoryStoreConcurrency(t *testing.T) {
 			if err != nil {
 				t.Errorf("CreateRule returned error: %v", err)
 			}
-			done <- true
 		}(i)
 	}
 
-	// Wait for all goroutines
-	for i := 0; i < 100; i++ {
-		<-done
-	}
+	// Wait for all goroutines to complete
+	wg.Wait()
 
 	// Verify all rules were created
 	rules, err := store.ListRules(ctx)

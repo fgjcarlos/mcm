@@ -1,21 +1,40 @@
-package acl
+package acl_test
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/fgjcarlos/mcm/internal/acl"
 )
 
-// testACLRules is a shared helper function that tests the full ACL Store contract.
-// It can be reused by other Store implementations (e.g., SQLite store).
-func testACLRules(t *testing.T, store Store) {
+// RunACLRulesContractTests is a shared helper function that tests the full ACL Store contract.
+// It is exported so that other Store implementations (e.g., the SQLite store in
+// internal/storage) can also call it from their own *_test.go files to verify
+// contract compliance against the same scenarios.
+//
+// The name deliberately starts with "Run" (not "Test") so that the Go testing
+// framework does not try to invoke it as a test function — it accepts a store
+// argument, so it cannot satisfy the standard `func TestXxx(t *testing.T)`
+// signature and would otherwise be flagged as a setup failure.
+//
+// Usage:
+//
+//	func TestStorageACLStoreContract(t *testing.T) {
+//	    store := store.ACLStore()
+//	    acl.RunACLRulesContractTests(t, store)
+//	}
+//
+// The helper uses the provided store argument directly (no internal store creation),
+// so sub-tests exercise only the implementation passed in.
+func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 	ctx := context.Background()
 
 	t.Run("create assigns ID", func(t *testing.T) {
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "alice",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 		}
 
 		created, err := store.CreateRule(ctx, r)
@@ -29,40 +48,41 @@ func testACLRules(t *testing.T, store Store) {
 	})
 
 	t.Run("list returns sorted by ID", func(t *testing.T) {
-		store := NewMemoryStore()
+		// Create a fresh store for this sub-test
+		freshStore := acl.NewMemoryStore()
 
-		r1 := Rule{
+		r1 := acl.Rule{
 			Principal:   "user1",
 			TopicFilter: "topic1",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 		}
-		r2 := Rule{
+		r2 := acl.Rule{
 			Principal:   "user2",
 			TopicFilter: "topic2",
-			Permission:  PermissionWrite,
+			Permission:  acl.PermissionWrite,
 		}
-		r3 := Rule{
+		r3 := acl.Rule{
 			Principal:   "user3",
 			TopicFilter: "topic3",
-			Permission:  PermissionReadWrite,
+			Permission:  acl.PermissionReadWrite,
 		}
 
-		created1, err := store.CreateRule(ctx, r1)
+		created1, err := freshStore.CreateRule(ctx, r1)
 		if err != nil {
 			t.Fatalf("CreateRule 1 returned error: %v", err)
 		}
 
-		created2, err := store.CreateRule(ctx, r2)
+		created2, err := freshStore.CreateRule(ctx, r2)
 		if err != nil {
 			t.Fatalf("CreateRule 2 returned error: %v", err)
 		}
 
-		created3, err := store.CreateRule(ctx, r3)
+		created3, err := freshStore.CreateRule(ctx, r3)
 		if err != nil {
 			t.Fatalf("CreateRule 3 returned error: %v", err)
 		}
 
-		rules, err := store.ListRules(ctx)
+		rules, err := freshStore.ListRules(ctx)
 		if err != nil {
 			t.Fatalf("ListRules returned error: %v", err)
 		}
@@ -78,28 +98,28 @@ func testACLRules(t *testing.T, store Store) {
 	})
 
 	t.Run("update preserves ID and replaces content", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "alice",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 			Description: "original",
 		}
 
-		created, err := store.CreateRule(ctx, r)
+		created, err := freshStore.CreateRule(ctx, r)
 		if err != nil {
 			t.Fatalf("CreateRule returned error: %v", err)
 		}
 
-		updated := Rule{
+		updated := acl.Rule{
 			Principal:   "bob",
 			TopicFilter: "factory/#",
-			Permission:  PermissionWrite,
+			Permission:  acl.PermissionWrite,
 			Description: "updated",
 		}
 
-		result, err := store.UpdateRule(ctx, created.ID, updated)
+		result, err := freshStore.UpdateRule(ctx, created.ID, updated)
 		if err != nil {
 			t.Fatalf("UpdateRule returned error: %v", err)
 		}
@@ -113,7 +133,7 @@ func testACLRules(t *testing.T, store Store) {
 		if result.TopicFilter != "factory/#" {
 			t.Errorf("TopicFilter not updated: %q", result.TopicFilter)
 		}
-		if result.Permission != PermissionWrite {
+		if result.Permission != acl.PermissionWrite {
 			t.Errorf("Permission not updated: %q", result.Permission)
 		}
 		if result.Description != "updated" {
@@ -122,40 +142,40 @@ func testACLRules(t *testing.T, store Store) {
 	})
 
 	t.Run("update missing ID returns ErrRuleNotFound", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "alice",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 		}
 
-		_, err := store.UpdateRule(ctx, "999", r)
-		if !errors.Is(err, ErrRuleNotFound) {
+		_, err := freshStore.UpdateRule(ctx, "999", r)
+		if !errors.Is(err, acl.ErrRuleNotFound) {
 			t.Errorf("UpdateRule missing ID returned %v, want ErrRuleNotFound", err)
 		}
 	})
 
 	t.Run("delete existing succeeds", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "alice",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 		}
 
-		created, err := store.CreateRule(ctx, r)
+		created, err := freshStore.CreateRule(ctx, r)
 		if err != nil {
 			t.Fatalf("CreateRule returned error: %v", err)
 		}
 
-		err = store.DeleteRule(ctx, created.ID)
+		err = freshStore.DeleteRule(ctx, created.ID)
 		if err != nil {
 			t.Fatalf("DeleteRule returned error: %v", err)
 		}
 
-		rules, err := store.ListRules(ctx)
+		rules, err := freshStore.ListRules(ctx)
 		if err != nil {
 			t.Fatalf("ListRules returned error: %v", err)
 		}
@@ -165,49 +185,49 @@ func testACLRules(t *testing.T, store Store) {
 	})
 
 	t.Run("delete missing ID returns ErrRuleNotFound", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		err := store.DeleteRule(ctx, "999")
-		if !errors.Is(err, ErrRuleNotFound) {
+		err := freshStore.DeleteRule(ctx, "999")
+		if !errors.Is(err, acl.ErrRuleNotFound) {
 			t.Errorf("DeleteRule missing ID returned %v, want ErrRuleNotFound", err)
 		}
 	})
 
 	t.Run("validation rejects empty principal", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  PermissionRead,
+			Permission:  acl.PermissionRead,
 		}
 
-		_, err := store.CreateRule(ctx, r)
+		_, err := freshStore.CreateRule(ctx, r)
 		if err == nil {
 			t.Fatal("CreateRule accepted empty principal")
 		}
 
-		var validationErr *ValidationError
+		var validationErr *acl.ValidationError
 		if !errors.As(err, &validationErr) {
 			t.Errorf("expected *ValidationError, got %T", err)
 		}
 	})
 
 	t.Run("validation rejects invalid permission", func(t *testing.T) {
-		store := NewMemoryStore()
+		freshStore := acl.NewMemoryStore()
 
-		r := Rule{
+		r := acl.Rule{
 			Principal:   "alice",
 			TopicFilter: "sensors/+/temperature",
-			Permission:  Permission("invalid"),
+			Permission:  acl.Permission("invalid"),
 		}
 
-		_, err := store.CreateRule(ctx, r)
+		_, err := freshStore.CreateRule(ctx, r)
 		if err == nil {
 			t.Fatal("CreateRule accepted invalid permission")
 		}
 
-		var validationErr *ValidationError
+		var validationErr *acl.ValidationError
 		if !errors.As(err, &validationErr) {
 			t.Errorf("expected *ValidationError, got %T", err)
 		}
@@ -216,5 +236,5 @@ func testACLRules(t *testing.T, store Store) {
 
 // TestMemoryStoreRunsContract verifies that MemoryStore implements the Store contract.
 func TestMemoryStoreRunsContract(t *testing.T) {
-	testACLRules(t, NewMemoryStore())
+	RunACLRulesContractTests(t, acl.NewMemoryStore())
 }

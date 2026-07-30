@@ -505,7 +505,19 @@ func TestMatchTOTPStepNegativeStepSkipped(t *testing.T) {
 	step, ok := MatchTOTPStep(secret, code, veryEarlyTime)
 	// This should either fail (because the code is from too far in future) or succeed
 	// The important thing is it doesn't crash trying to check negative steps
-	t.Logf("MatchTOTPStep with early time: ok=%v, step=%d", ok, step)
+
+	// Assert that the function completes without panic and returns a valid result
+	// (either success with a non-negative step, or failure with step=0 and ok=false)
+	if ok {
+		if step < 0 {
+			t.Errorf("MatchTOTPStep returned negative step=%d, should not happen", step)
+		}
+	} else {
+		// Failure is expected for a code from too far in the future
+		if step != 0 {
+			t.Errorf("MatchTOTPStep failed but returned step=%d (expected 0 on failure)", step)
+		}
+	}
 }
 
 // TestHashRecoveryCodeWithLeadingTrailingSpaces verifies trimming.
@@ -524,5 +536,55 @@ func TestHashRecoveryCodeWithLeadingTrailingSpaces(t *testing.T) {
 	}
 	if !MatchRecoveryCode(hash, codeWithSpaces) {
 		t.Error("hash should match spaced code")
+	}
+}
+
+// TestMatchTOTPStepReplay verifies replay behavior: the same code produces the same step counter.
+// This test demonstrates that MatchTOTPStep returns the matched step for replay detection.
+// The CALLER is responsible for persisting the step and rejecting reused steps —
+// MatchTOTPStep itself does not reject replay; it returns the step for the caller to decide.
+func TestMatchTOTPStepReplay(t *testing.T) {
+	fixedTime := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+
+	enrollment, err := NewMFAEnrollment("TestIssuer", "testuser")
+	if err != nil {
+		t.Fatalf("NewMFAEnrollment returned error: %v", err)
+	}
+	secret := enrollment.Secret
+
+	// Generate a code for the current step
+	currentStep := fixedTime.UTC().Unix() / 30
+	code, _ := totp.GenerateCodeCustom(secret, time.Unix(currentStep*30, 0).UTC(), totp.ValidateOpts{
+		Period: 30, Digits: 6, Algorithm: 0,
+	})
+
+	// First call: MatchTOTPStep succeeds and returns the step
+	step1, ok1 := MatchTOTPStep(secret, code, fixedTime)
+	if !ok1 {
+		t.Fatalf("first MatchTOTPStep failed, ok=%v", ok1)
+	}
+	if step1 != currentStep {
+		t.Errorf("first step = %d, want %d", step1, currentStep)
+	}
+
+	// Second call: MatchTOTPStep with the same code returns the same step
+	step2, ok2 := MatchTOTPStep(secret, code, fixedTime)
+	if !ok2 {
+		t.Fatalf("second MatchTOTPStep failed, ok=%v", ok2)
+	}
+	if step2 != currentStep {
+		t.Errorf("second step = %d, want %d", step2, currentStep)
+	}
+
+	// Both calls return the same step counter
+	if step1 != step2 {
+		t.Errorf("step changed across calls: %d vs %d", step1, step2)
+	}
+
+	// The caller must persist step1 and reject step2 if step2 == step1 (replay check).
+	// This test demonstrates that MatchTOTPStep returns consistent steps for the same code,
+	// allowing the caller to implement replay detection by comparing persisted steps.
+	if step1 > 0 {
+		t.Logf("Replay detection note: caller received step=%d twice. Caller should reject the second use of this step.", step1)
 	}
 }
