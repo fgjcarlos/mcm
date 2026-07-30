@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -975,4 +976,506 @@ database:
 			t.Fatalf("error = %q, want invalid backend message", err)
 		}
 	})
+}
+
+// envVarNames lists every MCM_* environment variable applyEnvOverrides reads.
+// Used by env tests below to assert the var-name → field wiring is stable.
+var envVarNames = []string{
+	"MCM_HTTP_BIND_ADDRESS",
+	"MCM_HTTP_PORT",
+	"MCM_DATABASE_PATH",
+	"MCM_AUTH_JWT_SECRET",
+	"MCM_AUTH_TOKEN_TTL",
+	"MCM_BOOTSTRAP_ADMIN_USERNAME",
+	"MCM_BOOTSTRAP_ADMIN_PASSWORD",
+	"MCM_MOSQUITTO_HOST",
+	"MCM_MOSQUITTO_PORT",
+	"MCM_MOSQUITTO_USERNAME",
+	"MCM_MOSQUITTO_PASSWORD",
+	"MCM_LOG_LEVEL",
+	"MCM_LOG_FORMAT",
+}
+
+// withClearedEnv unsets every MCM_* var and points MCM_DATABASE_PATH at
+// a per-test temp dir so the JWT-secret bootstrap path can write
+// .bootstrap.json without hitting the default /var/lib/mcm (which is not
+// writable in CI). Tests that need a different db path can override
+// MCM_DATABASE_PATH after calling withClearedEnv.
+func withClearedEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range envVarNames {
+		t.Setenv(name, "")
+		if _, ok := os.LookupEnv(name); ok {
+			_ = os.Unsetenv(name)
+		}
+	}
+	t.Setenv("MCM_DATABASE_PATH", filepath.Join(t.TempDir(), "mcm.db"))
+}
+
+// TestEnvEveryVarIsWired documents the env-first contract: each var listed
+// in envVarNames overrides the corresponding Config field when set, and
+// does NOT override when empty. This is the "every new env var" acceptance
+// check from #228.
+//
+// Some vars come in "pairs" that the validator enforces as both-set or
+// both-empty (MCM_BOOTSTRAP_ADMIN_USERNAME/PASSWORD,
+// MCM_MOSQUITTO_USERNAME/PASSWORD). Sub-tests that wire a single var in a
+// pair must also set its companion with a valid value so the validator
+// passes and we can isolate the wiring assertion.
+func TestEnvEveryVarIsWired(t *testing.T) {
+	// Companion vars set per pair so validator-required "both or neither"
+	// invariants don't false-fail the wiring assertion.
+	const companionBootstrap = "comp-bootstrap-admin"
+	const companionMosquittoUser = "comp-mqtt-user"
+	const companionMosquittoPass = "comp-mqtt-pass"
+
+	cases := []struct {
+		envName    string
+		envVal     string
+		extraSetup func(t *testing.T)
+		check      func(t *testing.T, cfg Config)
+	}{
+		{"MCM_HTTP_BIND_ADDRESS", "1.2.3.4", nil, func(t *testing.T, c Config) {
+			if c.HTTP.BindAddress != "1.2.3.4" {
+				t.Fatalf("HTTP.BindAddress = %q, want 1.2.3.4", c.HTTP.BindAddress)
+			}
+		}},
+		{"MCM_HTTP_PORT", "9090", nil, func(t *testing.T, c Config) {
+			if c.HTTP.Port != 9090 {
+				t.Fatalf("HTTP.Port = %d, want 9090", c.HTTP.Port)
+			}
+		}},
+		{"MCM_DATABASE_PATH", "/tmp/mcm-test/db.sqlite", nil, func(t *testing.T, c Config) {
+			if c.Database.Path != "/tmp/mcm-test/db.sqlite" {
+				t.Fatalf("Database.Path = %q, want /tmp/mcm-test/db.sqlite", c.Database.Path)
+			}
+		}},
+		{"MCM_AUTH_JWT_SECRET", validJWTValue, nil, func(t *testing.T, c Config) {
+			if c.Auth.JWTSecret != validJWTValue {
+				t.Fatalf("Auth.JWTSecret = %q, want test fixture", c.Auth.JWTSecret)
+			}
+		}},
+		{"MCM_AUTH_TOKEN_TTL", "48h", nil, func(t *testing.T, c Config) {
+			if c.Auth.TokenTTL != "48h" {
+				t.Fatalf("Auth.TokenTTL = %q, want 48h", c.Auth.TokenTTL)
+			}
+		}},
+		{"MCM_BOOTSTRAP_ADMIN_USERNAME", "root-admin", func(t *testing.T) {
+			t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", companionBootstrap)
+		}, func(t *testing.T, c Config) {
+			if c.Auth.BootstrapAdmin.Username != "root-admin" {
+				t.Fatalf("BootstrapAdmin.Username = %q, want root-admin", c.Auth.BootstrapAdmin.Username)
+			}
+		}},
+		{"MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred, func(t *testing.T) {
+			t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", companionBootstrap)
+		}, func(t *testing.T, c Config) {
+			if c.Auth.BootstrapAdmin.Password != validBootstrapCred {
+				t.Fatalf("BootstrapAdmin.Password = %q, want test fixture", c.Auth.BootstrapAdmin.Password)
+			}
+		}},
+		{"MCM_MOSQUITTO_HOST", "broker.example.com", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_USERNAME", companionMosquittoUser)
+			t.Setenv("MCM_MOSQUITTO_PASSWORD", companionMosquittoPass)
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Host != "broker.example.com" {
+				t.Fatalf("Mosquitto.Host = %q, want broker.example.com", c.Mosquitto.Host)
+			}
+		}},
+		{"MCM_MOSQUITTO_PORT", "8883", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_USERNAME", companionMosquittoUser)
+			t.Setenv("MCM_MOSQUITTO_PASSWORD", companionMosquittoPass)
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Port != 8883 {
+				t.Fatalf("Mosquitto.Port = %d, want 8883", c.Mosquitto.Port)
+			}
+		}},
+		{"MCM_MOSQUITTO_USERNAME", "broker-user", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_PASSWORD", companionMosquittoPass)
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Username != "broker-user" {
+				t.Fatalf("Mosquitto.Username = %q, want broker-user", c.Mosquitto.Username)
+			}
+		}},
+		{"MCM_MOSQUITTO_PASSWORD", "broker-pass", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_USERNAME", companionMosquittoUser)
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Password != "broker-pass" {
+				t.Fatalf("Mosquitto.Password = %q, want broker-pass", c.Mosquitto.Password)
+			}
+		}},
+		{"MCM_LOG_LEVEL", "debug", nil, func(t *testing.T, c Config) {
+			if c.Logging.Level != "debug" {
+				t.Fatalf("Logging.Level = %q, want debug", c.Logging.Level)
+			}
+		}},
+		{"MCM_LOG_FORMAT", "text", nil, func(t *testing.T, c Config) {
+			if c.Logging.Format != "text" {
+				t.Fatalf("Logging.Format = %q, want text", c.Logging.Format)
+			}
+		}},
+	}
+
+	if len(cases) != len(envVarNames) {
+		t.Fatalf("test wiring drift: %d vars in envVarNames but %d cases", len(envVarNames), len(cases))
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.envName, func(t *testing.T) {
+			withClearedEnv(t)
+			// Re-set the bootstrap pair so the validator doesn't reject
+			// the config before we can check the wiring of the var under
+			// test. This is unrelated to the env var being wired.
+			t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "wired-bootstrap-admin")
+			t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+			t.Setenv("MCM_MOSQUITTO_USERNAME", "wired-mqtt-user")
+			t.Setenv("MCM_MOSQUITTO_PASSWORD", "wired-mqtt-pass")
+			if tc.extraSetup != nil {
+				tc.extraSetup(t)
+			}
+			t.Setenv(tc.envName, tc.envVal)
+
+			cfg, err := Load("")
+			if err != nil {
+				t.Fatalf("Load returned error: %v", err)
+			}
+			tc.check(t, cfg)
+		})
+	}
+}
+
+// TestEnvOverridesYAML documents that env wins over YAML: a YAML file
+// present and MCM_CONFIG_FILE unset must still be overridable from env.
+// This is the "env vars must come first and be the supported path" half
+// of the acceptance criteria.
+func TestEnvOverridesYAML(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(yamlPath, []byte(`
+http:
+  bind_address: 10.0.0.1
+  port: 8080
+database:
+  path: `+dir+`/from-yaml.db
+auth:
+  jwt_secret: `+validJWTValue+`
+  token_ttl: 24h
+mosquitto:
+  host: yaml-broker
+  port: 1883
+logging:
+  level: info
+  format: json
+`), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	t.Setenv("MCM_CONFIG_FILE", yamlPath)
+	t.Setenv("MCM_HTTP_BIND_ADDRESS", "env-broker")
+	t.Setenv("MCM_HTTP_PORT", "9090")
+	t.Setenv("MCM_LOG_LEVEL", "warn")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.HTTP.BindAddress != "env-broker" {
+		t.Errorf("HTTP.BindAddress = %q, want env-broker (env must win)", cfg.HTTP.BindAddress)
+	}
+	if cfg.HTTP.Port != 9090 {
+		t.Errorf("HTTP.Port = %d, want 9090", cfg.HTTP.Port)
+	}
+	if cfg.Mosquitto.Host != "yaml-broker" {
+		t.Errorf("Mosquitto.Host = %q, want yaml-broker (YAML wins over defaults)", cfg.Mosquitto.Host)
+	}
+	if cfg.Logging.Level != "warn" {
+		t.Errorf("Logging.Level = %q, want warn (env override)", cfg.Logging.Level)
+	}
+}
+
+// TestLoadEnvOnly confirms the env-only path: no YAML file, no
+// MCM_CONFIG_FILE, every required field sourced from env (plus the
+// auto-generated JWT secret). This is the acceptance criterion
+// "`internal/config/config_test.go` covers... env-only mode".
+func TestLoadEnvOnly(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mcm.db")
+
+	t.Setenv("MCM_DATABASE_PATH", dbPath)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "12h")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_MOSQUITTO_PORT", "1883")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+	// Intentionally leave MCM_AUTH_JWT_SECRET empty: bootstrap path
+	// should generate one. MCM_CONFIG_FILE also empty (env-only mode).
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.HTTP.BindAddress != Default().HTTP.BindAddress {
+		t.Errorf("HTTP.BindAddress = %q, want default %q", cfg.HTTP.BindAddress, Default().HTTP.BindAddress)
+	}
+	if cfg.HTTP.Port != Default().HTTP.Port {
+		t.Errorf("HTTP.Port = %d, want default %d", cfg.HTTP.Port, Default().HTTP.Port)
+	}
+	if cfg.Database.Path != dbPath {
+		t.Errorf("Database.Path = %q, want %q", cfg.Database.Path, dbPath)
+	}
+	if !strings.HasPrefix(cfg.Auth.JWTSecret, "") || len(cfg.Auth.JWTSecret) < 32 {
+		t.Errorf("Auth.JWTSecret length = %d, want >= 32", len(cfg.Auth.JWTSecret))
+	}
+	if cfg.Auth.JWTSecret == validJWTValue {
+		t.Errorf("Auth.JWTSecret = test fixture, want generated secret")
+	}
+	if cfg.Auth.TokenTTL != "12h" {
+		t.Errorf("Auth.TokenTTL = %q, want 12h", cfg.Auth.TokenTTL)
+	}
+	if cfg.Mosquitto.Host != "127.0.0.1" {
+		t.Errorf("Mosquitto.Host = %q, want 127.0.0.1", cfg.Mosquitto.Host)
+	}
+}
+
+// TestLoadYAMLFileMissingErrors guards the "missing file when one is
+// requested is an error" half of the env-first contract.
+func TestLoadYAMLFileMissingErrors(t *testing.T) {
+	withClearedEnv(t)
+	t.Setenv("MCM_CONFIG_FILE", "/nonexistent/mcm/config.yaml")
+
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("Load succeeded, want error for missing YAML file")
+	}
+	if !strings.Contains(err.Error(), "read config file") {
+		t.Fatalf("error = %q, want 'read config file' prefix", err)
+	}
+}
+
+// TestLoadInvalidPortIgnored documents current behavior: a non-numeric
+// MCM_HTTP_PORT / MCM_MOSQUITTO_PORT is silently ignored (the field keeps
+// its previous value). Callers that need hard validation should grep for
+// these vars before booting. ponytail: keep silent-ignore here, return
+// validation error when the operator-facing config docs call it out.
+func TestLoadInvalidPortIgnored(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	t.Setenv("MCM_DATABASE_PATH", filepath.Join(dir, "mcm.db"))
+	t.Setenv("MCM_AUTH_JWT_SECRET", validJWTValue)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_MOSQUITTO_PORT", "not-a-number")
+	t.Setenv("MCM_HTTP_PORT", "also-not-a-number")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.HTTP.Port != Default().HTTP.Port {
+		t.Errorf("HTTP.Port = %d, want default %d (invalid env ignored)", cfg.HTTP.Port, Default().HTTP.Port)
+	}
+	if cfg.Mosquitto.Port != Default().Mosquitto.Port {
+		t.Errorf("Mosquitto.Port = %d, want default %d (invalid env ignored)", cfg.Mosquitto.Port, Default().Mosquitto.Port)
+	}
+}
+
+// TestLoadJWTSecretBootstrap covers the persistence contract from #228:
+//
+//   - First boot with no MCM_AUTH_JWT_SECRET: a secret is generated and
+//     written to <Database.Path's dir>/.bootstrap.json (mode 0600).
+//   - Second boot with the same DB path: the persisted secret is reused,
+//     not regenerated.
+//
+// This is the only runnable check behind the bootstrap path.
+func TestLoadJWTSecretBootstrap(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mcm.db")
+	statePath := filepath.Join(dir, ".bootstrap.json")
+
+	t.Setenv("MCM_DATABASE_PATH", dbPath)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+	// MCM_AUTH_JWT_SECRET stays empty on purpose.
+
+	first, err := Load("")
+	if err != nil {
+		t.Fatalf("first Load: %v", err)
+	}
+	if len(first.Auth.JWTSecret) < 32 {
+		t.Fatalf("first secret length = %d, want >= 32", len(first.Auth.JWTSecret))
+	}
+
+	// State file must exist on disk with mode 0600.
+	info, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatalf("stat bootstrap state: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("bootstrap state mode = %#o, want 0600", got)
+	}
+
+	// Second boot with the SAME env-less setup: the secret must be the
+	// persisted one, not a freshly generated one.
+	second, err := Load("")
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	if second.Auth.JWTSecret != first.Auth.JWTSecret {
+		t.Fatalf("second secret = %q, want persisted %q", second.Auth.JWTSecret, first.Auth.JWTSecret)
+	}
+}
+
+// TestLoadExplicitJWTSecretSkipsBootstrap covers: when MCM_AUTH_JWT_SECRET
+// is set explicitly, the bootstrap path must NOT touch the state file.
+// Otherwise the operator's explicit choice could be silently overwritten
+// by a regenerated value if they later unset the env var.
+func TestLoadExplicitJWTSecretSkipsBootstrap(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mcm.db")
+	statePath := filepath.Join(dir, ".bootstrap.json")
+
+	t.Setenv("MCM_DATABASE_PATH", dbPath)
+	t.Setenv("MCM_AUTH_JWT_SECRET", validJWTValue)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.JWTSecret != validJWTValue {
+		t.Errorf("Auth.JWTSecret = %q, want explicit %q", cfg.Auth.JWTSecret, validJWTValue)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("bootstrap state file exists when MCM_AUTH_JWT_SECRET was set; err = %v", err)
+	}
+}
+
+// TestLoadBootstrapAdminAutoGenerated covers: with no
+// MCM_BOOTSTRAP_ADMIN_*, the server creates admin/<random 24-char pw>
+// and sets BootstrapAdmin.AutoGenerated = true so the caller can log
+// the credentials once.
+func TestLoadBootstrapAdminAutoGenerated(t *testing.T) {
+	withClearedEnv(t)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mcm.db")
+	t.Setenv("MCM_DATABASE_PATH", dbPath)
+	t.Setenv("MCM_AUTH_JWT_SECRET", validJWTValue)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	// Leave MCM_BOOTSTRAP_ADMIN_USERNAME and _PASSWORD unset.
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.BootstrapAdmin.Username != "admin" {
+		t.Errorf("Username = %q, want admin", cfg.Auth.BootstrapAdmin.Username)
+	}
+	if len(cfg.Auth.BootstrapAdmin.Password) != 24 {
+		t.Errorf("Password length = %d, want 24", len(cfg.Auth.BootstrapAdmin.Password))
+	}
+	if !cfg.Auth.BootstrapAdmin.AutoGenerated {
+		t.Error("AutoGenerated = false, want true when env vars were unset")
+	}
+
+	// Two consecutive loads must produce different passwords (sanity
+	// check that randomPassword actually draws from crypto/rand, not a
+	// fixed seed).
+	withClearedEnv(t)
+	t.Setenv("MCM_DATABASE_PATH", dbPath)
+	t.Setenv("MCM_AUTH_JWT_SECRET", validJWTValue)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+	cfg2, err := Load("")
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	if cfg2.Auth.BootstrapAdmin.Password == cfg.Auth.BootstrapAdmin.Password {
+		t.Errorf("two loads produced identical bootstrap passwords; random source is broken")
+	}
+}
+
+// TestLoadEnvOnlyAutoFillsRequiredFields is the sanity floor for the
+// env-only mode: Load() with no YAML file and only MCM_DATABASE_PATH set
+// must auto-generate every other required field (JWT secret, bootstrap
+// admin, mosquitto defaults) so the server can boot.
+//
+// Note: MCM_DATABASE_PATH must be writable for the JWT-secret bootstrap
+// path; that's the only env var this test asserts. Everything else flows
+// from Default() + the auto-gen blocks.
+func TestLoadEnvOnlyAutoFillsRequiredFields(t *testing.T) {
+	withClearedEnv(t)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := Default()
+	if cfg.HTTP.BindAddress != want.HTTP.BindAddress || cfg.HTTP.Port != want.HTTP.Port {
+		t.Errorf("HTTP defaults drift: got %+v, want %+v", cfg.HTTP, want.HTTP)
+	}
+	if cfg.Mosquitto.Host != want.Mosquitto.Host {
+		t.Errorf("Mosquitto.Host = %q, want %q", cfg.Mosquitto.Host, want.Mosquitto.Host)
+	}
+	if cfg.Mosquitto.Port != want.Mosquitto.Port {
+		t.Errorf("Mosquitto.Port = %d, want %d", cfg.Mosquitto.Port, want.Mosquitto.Port)
+	}
+	if len(cfg.Auth.JWTSecret) < 32 {
+		t.Errorf("Auth.JWTSecret length = %d, want >= 32 (bootstrap)", len(cfg.Auth.JWTSecret))
+	}
+	if cfg.Auth.JWTSecret != strings.TrimSpace(cfg.Auth.JWTSecret) {
+		t.Errorf("Auth.JWTSecret has leading/trailing whitespace")
+	}
+	if cfg.Auth.BootstrapAdmin.Username != "admin" || len(cfg.Auth.BootstrapAdmin.Password) != 24 {
+		t.Errorf("bootstrap admin not auto-generated: %+v", cfg.Auth.BootstrapAdmin)
+	}
+	if !cfg.Auth.BootstrapAdmin.AutoGenerated {
+		t.Errorf("BootstrapAdmin.AutoGenerated = false, want true")
+	}
+}
+
+// TestParseExampleYAMLEnvFirstRead is a smoke test for the docstring on
+// applyEnvOverrides: ExampleYAML must still parse, and env must win over
+// any field it sets.
+func TestParseExampleYAMLEnvFirstRead(t *testing.T) {
+	withClearedEnv(t)
+	t.Setenv("MCM_MOSQUITTO_HOST", "from-env.example")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Mosquitto.Host != "from-env.example" {
+		t.Errorf("Mosquitto.Host = %q, want from-env.example", cfg.Mosquitto.Host)
+	}
 }
