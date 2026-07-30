@@ -1,14 +1,10 @@
 # Production deployment guide
 
-This guide covers running MCM in production: putting it behind a reverse proxy
-with TLS termination, supplying secrets safely, performing upgrades and
-backups, scraping Prometheus metrics, and applying a baseline hardening
-checklist. It assumes the **standalone binary** path; the Docker flow lives
-in [`deploy/mcm/README.md`](../deploy/mcm/README.md).
+This guide covers running MCM in production behind a reverse proxy with TLS termination, supplying secrets safely, performing upgrades and backups, scraping Prometheus metrics, and applying a baseline hardening checklist. It assumes the **Docker** path (`task` + `docker compose`).
 
-> MCM is pre-1.0 software. Treat the security model as evolving: pin a
-> version, watch releases, and keep an upgrade window ready. The project
-> status is documented in the top-level [README](../README.md#project-status).
+> MCM is pre-1.0 software. Treat the security model as evolving: pin an
+> image tag, watch releases, and keep an upgrade window ready. The project
+> status is documented in the top-level [README](../README.md#quickstart-docker).
 
 ---
 
@@ -18,13 +14,13 @@ The recommended production shape is:
 
 ```
 ┌──────────┐    TLS     ┌────────────────┐    plain    ┌──────────────┐
-│ Browsers │  ────────▶ │ Reverse proxy  │  ────────▶  │  mcm server  │  ──▶ Mosquitto
-│ / API    │   :443     │  (Caddy/nginx  │   :8080     │  :8080       │      :1883 / :8883
-│ clients  │            │   / Traefik)   │             │  (loopback)  │      (plain / TLS)
+│ Browsers │  ────────▶ │ Reverse proxy  │  ────────▶  │   mcm (docker)│ ──▶ Mosquitto
+│ / API    │   :443     │  (Caddy/nginx  │   :8080     │   :8080      │     :1883 / :8883
+│ clients  │            │   / Traefik)   │             │   (loopback) │     (plain / TLS)
 └──────────┘            └────────────────┘             └──────────────┘
 ```
 
-Why a proxy in front of `mcm server`:
+Why a proxy in front of `mcm`:
 
 - **TLS termination** with HSTS, modern ciphers, and ACME automation that the
   Go `net/http` server does not provide.
@@ -33,19 +29,17 @@ Why a proxy in front of `mcm server`:
 - **`trusted_proxies` integration** so the rate-limit lockout and audit logs
   see the real client IP, not the proxy's.
 
-Bind `mcm` to a loopback or private interface (`http.bind_address:
-127.0.0.1` in [`config.yaml`](../deploy/mcm/config.yaml)) and let the proxy
-own the public address. Do not expose `:8080` directly to the internet.
+Bind `mcm` to a loopback or private interface (`MCM_HTTP_BIND_ADDRESS=127.0.0.1`)
+and let the proxy own the public address. Do not expose `:8080` directly
+to the internet.
 
 ---
 
 ## 2. Reverse proxy examples
 
-All three snippets assume:
-
-- MCM listens on `127.0.0.1:8080`.
-- TLS is terminated at the proxy.
-- The proxy is the only thing reachable on `:443`.
+All three snippets assume MCM listens on `127.0.0.1:8080`. Run the container
+with `-p 127.0.0.1:8080:8080` (or compose `ports: ["127.0.0.1:8080:8080"]`)
+so it is not reachable on the host's external interfaces.
 
 ### Caddy (simplest, ACME built in)
 
@@ -61,9 +55,10 @@ mcm.example.com {
 }
 ```
 
-`trusted_proxies` must list the proxy's source address (for Caddy on the
-same host, `127.0.0.1` is implicit when `bind_address` is loopback; for a
-remote proxy, add its CIDR).
+`trusted_proxies` must list the proxy's source address. Set
+`MCM_HTTP_TRUSTED_PROXIES=127.0.0.1/32` for a same-host proxy, or the
+remote proxy's CIDR for a remote one. (If the env var name for your build
+differs, check [`internal/config/config.go`](../internal/config/config.go).)
 
 ### nginx
 
@@ -109,34 +104,29 @@ labels:
   - "traefik.http.middlewares.mcm-headers.headers.customrequestheaders.X-Forwarded-For={{.RemoteAddr}}"
 ```
 
-If you terminate TLS at the proxy, you can leave MCM's built-in
-`http.tls.enabled` set to `false`. The HTTPS guidance in the
-[README](../README.md#https-and-optional-mtls) still applies if you
-prefer MCM to serve TLS directly (common in air-gapped edge installs where
-a proxy is overkill).
+If you terminate TLS at the proxy, leave MCM's built-in HTTPS off (default).
+For air-gapped edge installs where a proxy is overkill, you can terminate
+TLS directly at the MCM container by mounting certificates and setting the
+corresponding `MCM_HTTP_TLS_*` env vars; see
+[`internal/config/config.go`](../internal/config/config.go) for the field
+list.
 
 ---
 
 ## 3. Secrets management
 
-`config.yaml` ships with **placeholder values that fail validation** (see the
-header comment in [`deploy/mcm/config.yaml`](../deploy/mcm/config.yaml)).
-Three fields must be replaced before `mcm server` will start:
+Configure MCM through `MCM_*` environment variables. The supported pattern
+is to commit a `docker-compose.override.yml` (gitignored) with the real
+secrets, or supply them via your orchestrator's secret store.
 
-- `auth.jwt_secret` — at least 32 random characters.
-- `auth.bootstrap_admin.username`
-- `auth.bootstrap_admin.password` — change after first login.
+Two values must be set explicitly so the server can boot:
 
-The server honors three environment overrides that take precedence over the
-YAML values at startup, which lets you keep the YAML in version control with
-placeholders and inject real secrets from a `.env` file, Docker secret, or
-orchestrator secret store:
-
-| Environment variable             | YAML field                          |
-| --------------------------------- | ----------------------------------- |
-| `MCM_AUTH_JWT_SECRET`             | `auth.jwt_secret`                   |
-| `MCM_BOOTSTRAP_ADMIN_USERNAME`    | `auth.bootstrap_admin.username`     |
-| `MCM_BOOTSTRAP_ADMIN_PASSWORD`    | `auth.bootstrap_admin.password`     |
+- `MCM_AUTH_JWT_SECRET` — at least 32 random characters. If unset, the
+  server generates one and persists it to
+  `<MCM_DATABASE_PATH's dir>/.bootstrap.json` (mode 0600).
+- `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — the
+  first-boot admin. If both are unset, the server creates `admin` with a
+  random 24-char password and logs it once.
 
 Generate a strong JWT secret with:
 
@@ -144,64 +134,30 @@ Generate a strong JWT secret with:
 openssl rand -base64 48
 ```
 
-Validate the resulting configuration before restarting:
-
-```bash
-mcm config validate --config /etc/mcm/config.yaml
-```
-
-Do **not** commit real secrets. The placeholder YAML is safe to commit; the
-production values come from the deployment platform's secret store.
+Pass the value to the container via your platform's secret store. Do
+**not** commit real secrets. The default image is safe to ship; the
+production values come from the deployment platform.
 
 ---
 
-## 4. Running `mcm` as a service
+## 4. Operating the stack
 
-MCM does not ship a systemd unit. A minimal one is shown below — adapt the
-user, paths, and `EnvironmentFile=` to your platform. Place it at
-`/etc/systemd/system/mcm.service` and `systemctl daemon-reload`.
-
-```ini
-[Unit]
-Description=Mosquitto Control Manager
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=mcm
-Group=mcm
-EnvironmentFile=/etc/mcm/mcm.env
-ExecStart=/usr/local/bin/mcm server --config /etc/mcm/config.yaml
-Restart=on-failure
-RestartSec=5s
-
-# Hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/lib/mcm
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/mcm/mcm.env` carries the three `MCM_*` overrides from §3 with mode
-`0600`, owned by `mcm:mcm`.
-
-Operational commands:
+The supported daily workflow uses the [`Taskfile.yml`](../Taskfile.yml):
 
 ```bash
-systemctl status mcm           # health and recent logs
-journalctl -u mcm -f           # follow logs
-mcm doctor --config /etc/mcm/config.yaml   # run diagnostics
-mcm status --config /etc/mcm/config.yaml   # check broker reachability
+task up                  # start mcm + mosquitto
+task logs                # tail logs; bootstrap admin prints here on first boot
+task ps                  # confirm both services healthy
+task smoke               # curl /healthz, /readyz, /api/v1/status
+task ready               # block until /healthz returns 200
+task down                # stop the stack
 ```
 
-`mcm doctor` validates config, database, TLS, and broker connectivity; run
-it after any config change and as part of incident triage.
+For liveness, point your orchestrator at the container's
+`GET /healthz`. For readiness, use `GET /readyz`. For human / dashboard
+status, use `GET /api/v1/status` (do **not** treat it as a liveness probe —
+broker disconnects are reported here without implying the MCM process
+should be restarted).
 
 ---
 
@@ -209,82 +165,73 @@ it after any config change and as part of incident triage.
 
 MCM tracks its schema with an internal `schema_migrations` table. The server
 applies pending migrations on startup, so the upgrade is a stop → replace
-binary → start cycle:
+image → start cycle:
 
 ```bash
-# 1. Snapshot the database first (see §6).
-mcm backup create --config /etc/mcm/config.yaml --output /var/backups/mcm/pre-upgrade.db
+# 1. Snapshot the data volume first (see §6).
+task backup
 
-# 2. Stop the service.
-sudo systemctl stop mcm
+# 2. Pull the new image and recreate the container.
+docker compose pull mcm
+docker compose up -d
 
-# 3. Replace the binary.
-sudo install -m 0755 ./mcm /usr/local/bin/mcm
-
-# 4. Start; the server applies migrations and reopens the listener.
-sudo systemctl start mcm
-sudo journalctl -u mcm -f   # watch for "migrations applied" or errors
+# 3. Watch the logs until migrations complete.
+task logs
 ```
 
 A new minor version is **backwards-compatible** at the SQLite level:
 existing rows are preserved, and migrations add columns or tables
 additively. **Major versions may require the documented upgrade path in
-[docs/releasing.md](./releasing.md)**; check the release notes before
-upgrading across major boundaries.
+the release notes**; check the release notes before upgrading across major
+boundaries.
 
-Roll back the same way: stop, restore the binary, start. The database
-migrations are forward-only; rolling back the binary on a database that has
-already been migrated to a newer schema is **not supported** — restore the
-pre-upgrade backup instead.
+Roll back the same way: stop the stack, point at the previous image tag,
+restore the volume snapshot if needed.
 
 ---
 
 ## 6. Backup and restore
 
-The SQLite database is the only stateful component. `mcm backup create`
-takes a consistent snapshot, and `mcm backup restore` writes it back:
+The `mcm_data` named volume holds the SQLite database plus the
+`.bootstrap.json` JWT-secret file. The supported backup and restore recipes
+ship with the `Taskfile.yml`:
 
 ```bash
-# Backup
-mcm backup create \
-    --config /etc/mcm/config.yaml \
-    --output /var/backups/mcm/mcm-$(date +%Y%m%d-%H%M%S).db
+# Backup: writes backups/mcm-data.tgz from the mcm_data volume
+task backup
 
-# Restore (overwrites an existing database; --force is required)
-sudo systemctl stop mcm
-mcm backup restore \
-    --config /etc/mcm/config.yaml \
-    --input /var/backups/mcm/mcm-20260615-120000.db \
-    --force
-sudo systemctl start mcm
+# Restore: stops the stack, replaces the volume contents from the tgz,
+# brings the stack back up
+task restore
 ```
 
-The backup artifact contains everything stored in SQLite: admin users,
-broker metrics, audit events, security events. It does **not** include
-Mosquitto's own configuration, password file, ACL file, TLS material, logs,
-or any other file referenced from `config.yaml` — back those up separately
-according to your platform's process.
+The backup tgz contains everything stored in the volume: admin users,
+broker metrics, audit events, security events, and the auto-generated
+JWT secret. It does **not** include Mosquitto's own configuration,
+password file, ACL file, TLS material, logs, or any file referenced from
+your env-var config — back those up separately according to your
+platform's process.
 
 ### Recommended schedule
 
-| Asset                           | Frequency             | Tool                                   |
-| ------------------------------- | --------------------- | -------------------------------------- |
-| MCM SQLite (`mcm backup create`)| Hourly, retained 24h  | cron / systemd timer + off-host sync   |
-| MCM SQLite                      | Daily, retained 30d   | cron / systemd timer + off-host sync   |
-| Mosquitto password file / ACLs  | On change + daily     | your platform's file backup mechanism  |
-| TLS certificates and keys       | On renewal            | your platform's secret store           |
-| `config.yaml` and overrides     | On change, in git     | version control                        |
+| Asset                              | Frequency             | Tool                                   |
+| ---------------------------------- | --------------------- | -------------------------------------- |
+| `mcm_data` volume (`task backup`)  | Hourly, retained 24h  | cron / systemd timer + off-host sync   |
+| `mcm_data` volume                  | Daily, retained 30d   | cron / systemd timer + off-host sync   |
+| Mosquitto password file / ACLs     | On change + daily     | your platform's file backup mechanism  |
+| TLS certificates and keys          | On renewal            | your platform's secret store           |
+| `docker-compose.yml` and env vars  | On change, in git     | version control                        |
 
 ### Restore drill
 
 A backup you have never restored is not a backup. Schedule a quarterly drill:
 
-1. Restore the most recent artifact to a **separate** database path.
-2. Start a second `mcm server` against the restored database on a
-   non-default port (use `--config` with a temporary `config.yaml`).
+1. Start a temporary stack with a different volume name:
+   `docker compose -p mcm-drill up -d`.
+2. Run `task restore` (or copy the tgz into the temporary volume).
 3. Hit `GET /api/v1/status` and a few admin endpoints to confirm the
    schema is intact.
-4. Tear the temporary instance down and record the result.
+4. Tear the temporary stack down and record the result.
 
 ---
 
@@ -292,8 +239,7 @@ A backup you have never restored is not a backup. Schedule a quarterly drill:
 
 MCM exposes Prometheus metrics on `/metrics` and operational status on
 `/api/v1/status`. The full metric inventory and scrape config are in the
-top-level [README](../README.md#health-readiness-and-observability); a starter
-Grafana dashboard lives at
+top-level [README](../README.md#reference); a starter Grafana dashboard lives at
 [`deploy/grafana/mcm-dashboard.json`](../deploy/grafana/mcm-dashboard.json).
 
 Minimal scrape config:
@@ -316,46 +262,34 @@ Recommended alerts:
 - `mcm_up == 0` (add a `probe` job that hits `/api/v1/status` from outside
   the proxy to catch proxy outages).
 
-For liveness/readiness probes, prefer a process-level check (e.g. systemd
-`Type=notify` once MCM adds it, or simply `mcm status --config ...` from
-the node) over hitting `/api/v1/status`: that endpoint intentionally
-reports broker disconnects without implying the MCM process should be
-restarted, so it is not a liveness signal.
-
 ---
 
 ## 8. Hardening checklist
 
-Cross-linked from the production readiness milestone in
-[ROADMAP.md](../ROADMAP.md).
-
-- [ ] `auth.jwt_secret` is at least 32 random characters, rotated on
+- [ ] `MCM_AUTH_JWT_SECRET` is at least 32 random characters, rotated on
       suspected compromise.
-- [ ] `auth.bootstrap_admin.password` is set to a unique value, the default
+- [ ] `MCM_BOOTSTRAP_ADMIN_PASSWORD` is set to a unique value, the default
       account is renamed or disabled after first login.
-- [ ] `mcm` binds to `127.0.0.1` or a private interface; a reverse proxy
-      owns the public address.
+- [ ] `MCM_HTTP_BIND_ADDRESS` is `127.0.0.1` or a private interface; a
+      reverse proxy owns the public address.
 - [ ] TLS is terminated at the proxy with HSTS, modern ciphers, and ACME
-      renewal; `http.tls.enabled` is off at the MCM layer unless required.
-- [ ] `http.trusted_proxies` lists the proxy's source address/CIDR.
-- [ ] MCM is run as a dedicated unprivileged user; systemd unit applies
-      `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=true`.
+      renewal; built-in TLS is off at the MCM layer unless required.
+- [ ] `MCM_HTTP_TRUSTED_PROXIES` lists the proxy's source address/CIDR.
+- [ ] The container runs as a non-root user (the image defaults to `mcm`).
 - [ ] `MCM_AUTH_JWT_SECRET`, `MCM_BOOTSTRAP_ADMIN_PASSWORD` live in the
-      platform's secret store, mode `0600`; nothing real in `config.yaml`
-      in version control.
+      platform's secret store, mode `0600`; nothing real in version control.
 - [ ] Mosquitto runs with its own authentication and ACL; MCM is the
       control plane, not a replacement for broker security.
 - [ ] Backups run on the schedule in §6 and the quarterly restore drill
       has been executed at least once.
 - [ ] Prometheus is scraping `/metrics`; broker-down, login-failure-spike,
       and p95-latency alerts are wired.
-- [ ] `mcm doctor` runs cleanly after every config or topology change.
+- [ ] `task smoke` runs cleanly after every config or topology change.
 
 ---
 
 ## See also
 
-- [README](../README.md) — what works today, CLI, security baseline.
-- [`deploy/mcm/README.md`](../deploy/mcm/README.md) — Docker deployment.
+- [README](../README.md) — quickstart, configuration, development commands.
 - [SECURITY.md](../SECURITY.md) — how to report a vulnerability.
 - [`docs/openapi.yaml`](./openapi.yaml) — the HTTP API contract.
