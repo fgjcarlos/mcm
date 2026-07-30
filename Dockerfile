@@ -27,4 +27,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD ["mcm", "doctor", "--config", "/etc/mcm/config.yaml"]
 ENTRYPOINT ["mcm"]
-CMD ["server", "--config", "/etc/mcm/config.yaml"]
+CMD []
