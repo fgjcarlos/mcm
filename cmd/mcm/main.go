@@ -24,7 +24,17 @@ import (
 // starter YAML can pass --config explicitly or set MCM_CONFIG_FILE.
 const defaultConfigPath = ""
 
+// Build info. Set via -ldflags at build time (see Dockerfile). Defaults are
+// the literal strings shown so a plain `go build` produces a usable banner
+// instead of empty fields.
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	configPath := flag.String("config", defaultConfigPath, "path to the MCM YAML config file")
 	flag.Usage = func() {
 		//nolint:errcheck // flag usage writes to stderr; nothing useful to do with a write error
@@ -33,6 +43,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("mcm %s (commit %s, built %s)\n", version, commit, buildDate)
+		os.Exit(0)
+	}
 
 	if flag.NArg() > 0 {
 		//nolint:errcheck // flag usage writes to stderr; nothing useful to do with a write error
