@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/logging"
@@ -750,6 +751,10 @@ func TestSuccessfulLoginResetsFailedAttempts(t *testing.T) {
 
 func TestAppReadyzChecksDatabase(t *testing.T) {
 	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Mark the broker connected so the readiness gate focuses on the DB path.
+	app.brokerEvents.Publish(BrokerEvent{Type: "broker_status", Status: "connected", ObservedAt: app.now().UTC()})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -772,6 +777,74 @@ func TestAppReadyzChecksDatabase(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"not_ready"`)) {
 		t.Fatalf("not-ready response missing status; body=%s", rec.Body.String())
+	}
+}
+
+func TestAppReadyzReportsNotReadyWhenBrokerDisconnected(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Default broker status after NewBrokerEventHub is "disconnected", so no
+	// Publish call is needed: the readiness gate must reject this state even
+	// when the DB is healthy.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("not-ready status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"not_ready"`)) {
+		t.Fatalf("not-ready response missing status; body=%s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`broker unavailable`)) {
+		t.Fatalf("not-ready response should report broker unavailable; body=%s", rec.Body.String())
+	}
+}
+
+func TestAppLivezReturnsAlive(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("livez status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"alive"`)) {
+		t.Fatalf("livez response missing alive status; body=%s", rec.Body.String())
+	}
+}
+
+func TestAppHealthzAliasReturnsOK(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"ok"`)) {
+		t.Fatalf("healthz response missing ok status; body=%s", rec.Body.String())
+	}
+}
+
+func TestAppLivezIsProcessOnly(t *testing.T) {
+	// /livez must NOT touch DB or broker: a process that can still serve HTTP
+	// must report alive even when the broker has never connected and the DB
+	// is closed. Use the lightweight NewHandler so no storage is required.
+	handler := NewHandler(acl.NewMemoryStore())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("livez status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"alive"`)) {
+		t.Fatalf("livez response missing alive status; body=%s", rec.Body.String())
 	}
 }
 

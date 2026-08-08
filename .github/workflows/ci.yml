@@ -72,11 +72,33 @@ jobs:
       - name: wait 5s
         run: sleep 5
 
-      - name: curl /healthz
+      - name: curl /livez
+        run: curl -fsS http://localhost:8080/livez
+
+      - name: curl /healthz (alias)
         run: curl -fsS http://localhost:8080/healthz
 
-      - name: curl /readyz
-        run: curl -fsS http://localhost:8080/readyz
+      # /readyz requires the broker to be reachable. The CI smoke container
+      # does NOT run a Mosquitto sidecar, so we expect 503 ("not_ready",
+      # error="broker unavailable") and verify the response body. Post-#255
+      # the readiness handler checks both SQLite and the broker snapshot;
+      # this curl exercises the broker-unreachable path of that new logic.
+      - name: curl /readyz (expects 503 in smoke — no Mosquitto)
+        run: |
+          code=$(curl -sS -o /tmp/readyz.json -w "%{http_code}" http://localhost:8080/readyz)
+          if [ "$code" != "503" ]; then
+            echo "Expected 503 from /readyz in smoke (no broker running), got $code"
+            cat /tmp/readyz.json
+            exit 1
+          fi
+          cat /tmp/readyz.json
+          echo
+          if ! grep -q '"broker unavailable"' /tmp/readyz.json; then
+            echo "Expected /readyz body to report broker unavailable"
+            cat /tmp/readyz.json
+            exit 1
+          fi
+          echo "broker-unreachable path confirmed"
 
       - name: docker stop+rm
         run: |

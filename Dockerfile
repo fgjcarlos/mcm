@@ -24,5 +24,5 @@ RUN mkdir -p /var/lib/mcm && chown mcm:mcm /var/lib/mcm
 USER mcm
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+    CMD wget -qO- http://127.0.0.1:8080/livez || exit 1
 ENTRYPOINT ["mcm"]
