@@ -49,6 +49,10 @@ make test
 
 `make test` and `make build` generate `frontend/dist` before invoking the Go toolchain, which keeps the embedded frontend contract explicit in local development and CI. If you use `go test`, `go build`, or `go run` directly, run `npm --prefix frontend run build` first.
 
+### Nightly fuzzing
+
+The `.github/workflows/fuzz.yml` workflow runs nightly at 02:00 UTC (and on manual dispatch) against the ACL and JSON Schema validators in `internal/acl/` and `internal/schema/`. Locally you can reproduce a single target with `go test -run '^$' -fuzz='^FuzzValidateTopicFilter$' -fuzztime=10s ./internal/acl/` (the `-fuzz` flag rejects multiple packages and multiple targets in one process, so fuzz each target in its own invocation). The targets are crash-detection only — they do not assert correctness on every generated input. Seed corpora live in `internal/<pkg>/testdata/fuzz/<FuzzName>/`; Go fuzzing is incompatible with `-race`, so the harness files use a `//go:build !race` guard and the workflow deliberately omits the race flag.
+
 ### Windows notes
 
 On Windows, `go test -race` requires GCC. If you are using TDM-GCC, the test may fail to link. Use MinGW-w64 (via msys2) for `-race` support on Windows.
