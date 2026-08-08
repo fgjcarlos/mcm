@@ -123,7 +123,7 @@ jobs:
           fi
 
       - name: golangci-lint
-        uses: github.com/golangci/golangci-lint/action@v2
+        uses: golangci/golangci-lint-action@v2
         with:
           version: v2.1
           args: --timeout 5m
