@@ -2,5 +2,7 @@ version: 2
 secret:
   ignored-paths:
     - "**/*_test.go"
-    - "**/config.example.yaml"
     - "**/testdata/**"
+    - "**/config.example.yaml"
+    - "deploy/mcm/config.yaml"
+    - "docs/**/*.md"
