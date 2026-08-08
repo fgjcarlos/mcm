@@ -124,6 +124,16 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 
 ## Reference
 
+### Health probes
+
+| Endpoint     | Body                              | Status           | Semantics                                                                                  |
+| ------------ | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| `GET /livez` | `{"status":"alive"}`              | `200`            | Pure process check — never touches the DB or the broker. Use for K8s/Compose liveness.     |
+| `GET /healthz` | `{"status":"ok"}`              | `200`            | Alias of `/livez`, kept for backward compatibility with existing probes.                   |
+| `GET /readyz` | `{"status":"ready"\|"not_ready"}` | `200` / `503`    | DB **and** broker must be reachable; returns `503` otherwise. Use for readiness gates.     |
+
+### More
+
 - [ROADMAP.md](./ROADMAP.md) — high-level product direction.
 - [docs/openapi.yaml](./docs/openapi.yaml) — full REST + WebSocket contract.
 - [docs/production.md](./docs/production.md) — production deployment guide.

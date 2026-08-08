@@ -44,7 +44,7 @@ services:
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/livez || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

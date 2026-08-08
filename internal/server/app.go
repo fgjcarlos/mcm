@@ -211,6 +211,7 @@ func (a *App) Handler() http.Handler {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /livez", aclAPI.handleLivez)
 	mux.HandleFunc("GET /healthz", aclAPI.handleHealthz)
 	mux.HandleFunc("GET /readyz", a.handleReadyz)
 	mux.Handle("GET /metrics", a.metrics.Handler())
@@ -354,6 +355,14 @@ func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"error":  "database unavailable",
+		})
+		return
+	}
+
+	if snapshot := a.brokerEvents.Snapshot(); snapshot.Status.Status != "connected" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "not_ready",
+			"error":  "broker unavailable",
 		})
 		return
 	}
