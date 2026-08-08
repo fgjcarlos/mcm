@@ -45,25 +45,33 @@ func atomicWrite(path, content string, perm os.FileMode) error {
 	tmpName := tmp.Name()
 
 	if _, err := tmp.WriteString(content); err != nil {
+		//nolint:errcheck // best-effort cleanup; original write error is the one to surface
 		tmp.Close()
+		//nolint:errcheck // best-effort cleanup; original write error is the one to surface
 		os.Remove(tmpName)
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Chmod(perm); err != nil {
+		//nolint:errcheck // best-effort cleanup; original chmod error is the one to surface
 		tmp.Close()
+		//nolint:errcheck // best-effort cleanup; original chmod error is the one to surface
 		os.Remove(tmpName)
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
+		//nolint:errcheck // best-effort cleanup; original sync error is the one to surface
 		tmp.Close()
+		//nolint:errcheck // best-effort cleanup; original sync error is the one to surface
 		os.Remove(tmpName)
 		return fmt.Errorf("sync temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
+		//nolint:errcheck // best-effort cleanup; original close error is the one to surface
 		os.Remove(tmpName)
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
+		//nolint:errcheck // best-effort cleanup; original rename error is the one to surface
 		os.Remove(tmpName)
 		return fmt.Errorf("rename temp file: %w", err)
 	}

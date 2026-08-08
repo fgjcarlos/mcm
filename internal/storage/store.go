@@ -666,7 +666,7 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list admin users: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var users []AdminUser
 	for rows.Next() {
@@ -807,7 +807,7 @@ func (s *Store) ListJSONSchemas(ctx context.Context) ([]JSONSchemaDefinition, er
 	if err != nil {
 		return nil, fmt.Errorf("list json schemas: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var schemas []JSONSchemaDefinition
 	for rows.Next() {
 		definition, err := scanJSONSchema(rows)
@@ -996,7 +996,7 @@ func (s *Store) ListBrokerMetricEvents(ctx context.Context, query BrokerMetricQu
 	if err != nil {
 		return nil, fmt.Errorf("list broker metric events: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var events []BrokerMetricEvent
 	for rows.Next() {
@@ -1025,7 +1025,7 @@ func (s *Store) ListBrokerMetricSamples(ctx context.Context, query BrokerMetricQ
 	if err != nil {
 		return nil, fmt.Errorf("list broker metric samples: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var samples []BrokerMetricSample
 	for rows.Next() {
@@ -1156,7 +1156,7 @@ func (s *Store) ListAuditEvents(ctx context.Context, query AuditEventQuery) ([]A
 	if err != nil {
 		return nil, fmt.Errorf("list audit events: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var events []AuditEvent
 	for rows.Next() {
@@ -1240,7 +1240,7 @@ func (s *Store) ListSecurityEvents(ctx context.Context, query SecurityEventQuery
 	if err != nil {
 		return nil, fmt.Errorf("list security events: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var events []SecurityEvent
 	for rows.Next() {

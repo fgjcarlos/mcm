@@ -102,7 +102,7 @@ func mqttConnect(ctx context.Context, cfg config.MosquittoConfig, timeout time.D
 	if err != nil {
 		return diagnosticError(mqttStageTCP, "%w", err)
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 
 	if cfg.TLS.Enabled {
 		tlsConfig, err := tlsutil.BuildMosquittoTLSConfig(cfg)

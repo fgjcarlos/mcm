@@ -31,7 +31,9 @@ func checkDirWritable(path string) error {
 	if err != nil {
 		return fmt.Errorf("directory %q is not writable: %w", dir, err)
 	}
+	//nolint:errcheck // best-effort cleanup of a probe file; diagnostic only
 	tmp.Close()
+	//nolint:errcheck // best-effort cleanup of a probe file; diagnostic only
 	os.Remove(tmp.Name())
 	return nil
 }

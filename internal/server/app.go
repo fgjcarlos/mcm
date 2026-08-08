@@ -777,16 +777,17 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	}
 	resourceID := strconv.FormatInt(id, 10)
 
-	if err := a.store.DeleteAdminUser(r.Context(), id); errors.Is(err, storage.ErrUserNotFound) {
+	switch err := a.store.DeleteAdminUser(r.Context(), id); {
+	case errors.Is(err, storage.ErrUserNotFound):
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": "admin user not found"})
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "admin user not found"})
-	} else if errors.Is(err, storage.ErrLastActiveAdmin) {
+	case errors.Is(err, storage.ErrLastActiveAdmin):
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
-	} else if err != nil {
+	case err != nil:
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
-	} else {
+	default:
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}

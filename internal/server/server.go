@@ -146,7 +146,7 @@ func (api *aclAPI) recordAudit(r *http.Request, action string, resourceType stri
 }
 
 func decodeRuleRequest(r *http.Request) (acl.Rule, error) {
-	defer r.Body.Close()
+	defer r.Body.Close() //nolint:errcheck
 
 	var input aclRuleRequest
 	dec := json.NewDecoder(r.Body)

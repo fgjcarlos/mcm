@@ -84,7 +84,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer store.Close() //nolint:errcheck
 
 	app, err := New(cfg, store, logger)
 	if err != nil {

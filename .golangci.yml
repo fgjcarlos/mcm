@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocritic
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+  exclusions:
+    rules:
+      # errcheck and gocritic in test files are noisy; tests can ignore
+      # deferred Close calls and minor style issues.
+      - path: _test\.go
+        linters: [errcheck, gocritic]
+      # SA1019 = deprecated APIs. We don't auto-fix these (prometheus
+      # collectors migration and nhooyr.io/websocket -> coder/websocket
+      # are both tracked separately). Suppress the noise.
+      - linters: [staticcheck]
+        text: "SA1019:"
+
+run:
+  timeout: 5m
+  tests: true
