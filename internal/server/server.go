@@ -16,6 +16,7 @@ func NewHandler(store acl.Store) http.Handler {
 	api := &aclAPI{store: store}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /livez", api.handleLivez)
 	mux.HandleFunc("GET /healthz", api.handleHealthz)
 	mux.HandleFunc("GET /readyz", api.handleReadyz)
 	mux.HandleFunc("GET /api/v1/acls", api.handleListRules)
@@ -43,6 +44,10 @@ type aclRuleRequest struct {
 type aclErrorResponse struct {
 	Error   string   `json:"error"`
 	Details []string `json:"details,omitempty"`
+}
+
+func (api *aclAPI) handleLivez(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
 }
 
 func (api *aclAPI) handleHealthz(w http.ResponseWriter, _ *http.Request) {

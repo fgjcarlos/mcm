@@ -20,6 +20,7 @@ vars:
   IMAGE: "mcm:dev"
   COMPOSE: docker compose
   MCM_PORT: "8080"
+  MCM_LIVE_URL: 'http://localhost:{{.MCM_PORT}}/livez'
   MCM_HEALTH_URL: 'http://localhost:{{.MCM_PORT}}/healthz'
   MCM_READY_URL: 'http://localhost:{{.MCM_PORT}}/readyz'
   MCM_STATUS_URL: 'http://localhost:{{.MCM_PORT}}/api/v1/status'
@@ -73,6 +74,9 @@ tasks:
   smoke:
     desc: Smoke-test the running mcm container
     cmds:
+      - echo "GET {{.MCM_LIVE_URL}}"
+      - curl -fsS {{.MCM_LIVE_URL}}
+      - echo
       - echo "GET {{.MCM_HEALTH_URL}}"
       - curl -fsS {{.MCM_HEALTH_URL}}
       - echo
