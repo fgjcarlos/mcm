@@ -24,11 +24,9 @@ func TestWebhookAlerterDisabledDropsAlerts(t *testing.T) {
 	alerter := NewWebhookAlerter(config.AlertingConfig{Enabled: false, EndpointURL: server.URL, Timeout: "1s"}, nil)
 	alerter.Enqueue(WebhookAlert{Type: "broker_status", Severity: "warning", Source: "broker", Message: "down"})
 
-	select {
-	case <-time.After(50 * time.Millisecond):
-		if called {
-			t.Fatal("disabled alerter delivered webhook")
-		}
+	<-time.After(50 * time.Millisecond)
+	if called {
+		t.Fatal("disabled alerter delivered webhook")
 	}
 }
 

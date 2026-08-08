@@ -25,7 +25,7 @@ func (s *aclSQLStore) ListRules(ctx context.Context) ([]acl.Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list acl rules: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var rules []acl.Rule
 	for rows.Next() {

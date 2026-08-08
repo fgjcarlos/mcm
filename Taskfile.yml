@@ -121,6 +121,11 @@ tasks:
     cmds:
       - go vet ./...
 
+  lint:golangci:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./... --timeout 5m
+
   lint:frontend:
     desc: Run ESLint
     cmds:
@@ -140,7 +145,7 @@ tasks:
 
   lint:
     desc: Run every linter
-    deps: [lint:go, lint:frontend, lint:openapi, lint:site]
+    deps: [lint:go, lint:golangci, lint:frontend, lint:openapi, lint:site]
 
   format:
     desc: Run gofmt

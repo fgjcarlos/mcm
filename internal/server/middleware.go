@@ -47,9 +47,10 @@ const (
 	// RequestIDHeader is the canonical HTTP header used to read/write the request ID.
 	RequestIDHeader = "X-Request-ID"
 
-	requestIDContextKey requestContextKey = "request_id"
-	requestIDByteLen                      = 12
+	requestIDByteLen = 12
 )
+
+const requestIDContextKey requestContextKey = "request_id"
 
 // RequestIDFromContext returns the request ID associated with ctx, or "" when missing.
 func RequestIDFromContext(ctx context.Context) string {

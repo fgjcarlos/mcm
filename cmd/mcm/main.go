@@ -27,6 +27,7 @@ const defaultConfigPath = ""
 func main() {
 	configPath := flag.String("config", defaultConfigPath, "path to the MCM YAML config file")
 	flag.Usage = func() {
+		//nolint:errcheck // flag usage writes to stderr; nothing useful to do with a write error
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"Usage: mcm [--config <path>]\n\nStarts the MCM HTTP server. Configuration is loaded from --config and\noverridden by MCM_* environment variables (see internal/config).\n")
 		flag.PrintDefaults()
@@ -34,6 +35,7 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() > 0 {
+		//nolint:errcheck // flag usage writes to stderr; nothing useful to do with a write error
 		fmt.Fprintf(flag.CommandLine.Output(), "unexpected arguments: %v\n", flag.Args())
 		flag.Usage()
 		os.Exit(2)
@@ -54,6 +56,7 @@ func run(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	//nolint:errcheck // startup banner to stdout; nothing useful to do with a write error
 	fmt.Fprintf(os.Stdout, "starting MCM server on %s:%d\n", cfg.HTTP.BindAddress, cfg.HTTP.Port)
 	return server.Run(ctx, cfg)
 }
