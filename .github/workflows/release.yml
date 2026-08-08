@@ -1,0 +1,98 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: build + push multi-arch + create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute build metadata
+        id: meta
+        run: |
+          echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/mcm:latest
+          build-args: |
+            VERSION=${{ steps.version.outputs.VERSION }}
+            COMMIT=${{ steps.meta.outputs.COMMIT }}
+            BUILD_DATE=${{ steps.meta.outputs.BUILD_DATE }}
+
+      - name: Upload SBOM as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.version.outputs.VERSION }}
+          path: ${{ steps.build.outputs.sbom }}
+          if-no-files-found: warn
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.build.outputs.sbom }}
+          body: |
+            ## Docker images
+
+            Pull by tag (recommended for production):
+
+            ```
+            docker pull ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }}
+            ```
+
+            The multi-arch manifest covers `linux/amd64` and `linux/arm64`.
+
+            ### Build metadata
+
+            - **Manifest digest**: `${{ steps.build.outputs.digest }}`
+            - **Image**: `ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }}`
+            - **Commit**: `${{ steps.meta.outputs.COMMIT }}`
+            - **Built at**: `${{ steps.meta.outputs.BUILD_DATE }}`
+
+            ### Provenance and SBOM
+
+            The image was built with `docker buildx` provenance attestations enabled
+            (`--provenance=true --sbom=true`). Inspect with:
+
+            ```
+            docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }} --raw
+            ```
+
+            The SBOM is attached to this release as an artifact.
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
