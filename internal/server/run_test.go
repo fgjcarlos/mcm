@@ -172,8 +172,55 @@ func TestRunWaitsForWebhookAlertDrainBeforeReturning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(gracefulShutdownTimeout + brokerMonitorShutdownTimeout):
 		t.Fatal("Run did not return after webhook alert drain completed")
+	}
+}
+
+func TestRunWaitsForBrokerMonitorShutdownBeforeReturning(t *testing.T) {
+	dir := t.TempDir()
+	cfg := newRunTestConfig(t, dir)
+	cfg.Mosquitto.Host = "127.0.0.1"
+	cfg.Mosquitto.Port = 1 // unreachable; broker monitor will be in retry-loop, not blocking shutdown
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	addr := fmt.Sprintf("%s:%d", cfg.HTTP.BindAddress, cfg.HTTP.Port)
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- Run(ctx, cfg)
+	}()
+	waitForHTTPReady(t, addr)
+
+	// Sanity check: HTTP is up and serving.
+	resp, err := http.Get("http://" + addr + "/api/v1/auth/me")
+	if err != nil {
+		t.Fatalf("GET protected endpoint returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(gracefulShutdownTimeout + brokerMonitorShutdownTimeout):
+		t.Fatalf("Run did not return within %s", gracefulShutdownTimeout+brokerMonitorShutdownTimeout)
+	}
+
+	elapsed := time.Since(start)
+	// The broker monitor respects ctx.Done() quickly; Run should return
+	// well under the upper bound. We allow up to the full budget as
+	// slack so the test isn't flaky on slow CI, but flag if it's
+	// close to the limit.
+	if elapsed > gracefulShutdownTimeout {
+		t.Fatalf("Run took %s after cancel; expected under %s", elapsed, gracefulShutdownTimeout)
 	}
 }
 
