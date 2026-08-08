@@ -122,6 +122,12 @@ jobs:
             exit 1
           fi
 
+      - name: golangci-lint
+        uses: github.com/golangci/golangci-lint/action@v2
+        with:
+          version: v2.1
+          args: --timeout 5m
+
       # --- Frontend ---------------------------------------------------------------
       - name: npm ci (frontend)
         run: npm --prefix frontend ci

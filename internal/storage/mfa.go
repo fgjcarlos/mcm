@@ -105,7 +105,7 @@ func (s *Store) UnusedRecoveryCodeHashes(ctx context.Context, userID int64) ([]s
 	if err != nil {
 		return nil, fmt.Errorf("query unused recovery codes: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []struct {
 		ID   int64
 		Hash string

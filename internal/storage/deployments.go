@@ -128,7 +128,7 @@ func (s *Store) ListDeployments(ctx context.Context, limit, offset int) ([]Deplo
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	deployments := make([]Deployment, 0)
 	for rows.Next() {

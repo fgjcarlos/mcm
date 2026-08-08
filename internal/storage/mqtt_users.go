@@ -65,7 +65,7 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list mqtt users: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var users []MQTTUser
 	for rows.Next() {
