@@ -12,6 +12,8 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/fgjcarlos/mcm/frontend"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/deploy"
@@ -28,6 +30,11 @@ const (
 	httpIdleTimeout         = 60 * time.Second
 	httpMaxHeaderBytes      = 16 << 10
 	gracefulShutdownTimeout = 15 * time.Second
+	// brokerMonitorShutdownTimeout caps how long Run waits for
+	// StartBrokerMonitor to drain after context cancel. A stuck
+	// broker monitor cannot block Run beyond the
+	// gracefulShutdownTimeout budget.
+	brokerMonitorShutdownTimeout = 5 * time.Second
 )
 
 // buildApplier constructs the appropriate mosquitto.Applier for the given deploy config.
@@ -132,7 +139,15 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := app.BootstrapAdmin(ctx, cfg); err != nil {
 		return err
 	}
-	go app.StartBrokerMonitor(ctx, cfg.Mosquitto)
+
+	// errgroup so Run waits for the broker monitor to drain after
+	// context cancel — the bare `go` previously used could leak the
+	// goroutine past Run returning, losing in-flight broker events.
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		app.StartBrokerMonitor(gctx, cfg.Mosquitto)
+		return nil
+	})
 
 	handler := withRequestLogging(app.Handler(), logger, app.metrics, app.trustedProxies)
 	tlsConfig, err := buildHTTPTLSConfig(cfg.HTTP.TLS)
@@ -157,14 +172,27 @@ func Run(ctx context.Context, cfg config.Config) error {
 		if err := server.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("listen and serve tls: %w", err)
 		}
-		<-shutdownDone
-		return nil
-	}
-
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("listen and serve: %w", err)
+	} else {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("listen and serve: %w", err)
+		}
 	}
 	<-shutdownDone
+
+	// Wait for the broker monitor to drain after context cancel, capped
+	// at brokerMonitorShutdownTimeout so a stuck monitor cannot block
+	// Run beyond the gracefulShutdownTimeout budget.
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		_ = g.Wait()
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(brokerMonitorShutdownTimeout):
+		logger.Warn("broker monitor did not shut down within timeout",
+			slog.Duration("timeout", brokerMonitorShutdownTimeout))
+	}
 	return nil
 }
 
