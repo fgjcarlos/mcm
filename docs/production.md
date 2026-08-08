@@ -165,7 +165,32 @@ should be restarted).
 
 MCM tracks its schema with an internal `schema_migrations` table. The server
 applies pending migrations on startup, so the upgrade is a stop → replace
-image → start cycle:
+image → start cycle.
+
+### Pulling a tagged release
+
+Published images live at `ghcr.io/fgjcarlos/mcm`. Pin a specific tag in
+production — the `latest` tag moves on every release and is convenient for
+home labs, not for production stability:
+
+```bash
+# Replace the mcm service's `build:` and `image:` lines in docker-compose.yml
+# with the versioned image, then pull and recreate. Example for v0.1.0:
+
+#   services:
+#     mcm:
+#       image: ghcr.io/fgjcarlos/mcm:v0.1.0
+#       # ... rest unchanged
+
+docker compose pull mcm
+docker compose up -d
+```
+
+Each release ships multi-arch (`linux/amd64`, `linux/arm64`) with provenance
+attestations and an SBOM. Inspect the manifest digest from the GitHub Release
+page or with `docker buildx imagetools inspect --raw`.
+
+### Upgrade steps
 
 ```bash
 # 1. Snapshot the data volume first (see §6).
