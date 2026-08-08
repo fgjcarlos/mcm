@@ -1,0 +1,42 @@
+name: fuzz
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - acl
+          - schema
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Go's testing package refuses to run -fuzz when the flag matches more
+      # than one fuzz target in the same process, so we run each target in
+      # its own go test invocation. Each invocation gets a 10 s budget.
+      - name: Run fuzz targets
+        run: |
+          set -e
+          go test -run '^$' -fuzz='^FuzzValidateTopicFilter$' -fuzztime=10s ./internal/${{ matrix.package }}/
+          go test -run '^$' -fuzz='^FuzzValidateRule$' -fuzztime=10s ./internal/${{ matrix.package }}/
+          go test -run '^$' -fuzz='^FuzzValidateSchemaDocument$' -fuzztime=10s ./internal/${{ matrix.package }}/
+          go test -run '^$' -fuzz='^FuzzValidateJSONPayload$' -fuzztime=10s ./internal/${{ matrix.package }}/
+      - name: Upload failing input on panic
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures-${{ matrix.package }}
+          path: |
+            internal/${{ matrix.package }}/testdata/fuzz/Fuzz*/*.testcase
+            **/testdata/fuzz/Fuzz*/*.testcase
+          if-no-files-found: ignore
