@@ -124,7 +124,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 
 	aclBody = mosquitto.RenderACLFile(rules)
 
-	entries := make([]mosquitto.PasswdEntry, 0, len(users))
+	entries := make([]mosquitto.PasswdEntry, 0, len(users)+1)
 	for _, u := range users {
 		if !u.Disabled {
 			entries = append(entries, mosquitto.PasswdEntry{
@@ -132,6 +132,24 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 				Hash:     u.PasswordHash,
 			})
 		}
+	}
+	// Include the broker service user (MCM_MOSQUITTO_USERNAME /
+	// MCM_MOSQUITTO_PASSWORD) in the rendered passwd so the deploy
+	// healthcheck — which authenticates as that user — keeps working
+	// after the broker reloads. Without this the apply would always
+	// roll back because the user MCM connects with would be missing
+	// from the freshly-rendered file. We hash on every render; the
+	// cost is small and the alternative (storing a precomputed hash)
+	// adds a config field for a dev-only convenience.
+	if s.mosquittoCfg.Username != "" && s.mosquittoCfg.Password != "" {
+		hash, hashErr := mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
+		if hashErr != nil {
+			return "", "", fmt.Errorf("hash service user password: %w", hashErr)
+		}
+		entries = append(entries, mosquitto.PasswdEntry{
+			Username: s.mosquittoCfg.Username,
+			Hash:     hash,
+		})
 	}
 	passwdBody = mosquitto.RenderPasswdFile(entries)
 
