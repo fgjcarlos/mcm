@@ -37,7 +37,7 @@ services:
     # and reused on subsequent restarts. The bootstrap admin password is
     # logged once on first boot — recover it via `task logs` / `docker
     # compose logs mcm`. Operators that want explicit credentials (e.g.
-    # production) should layer in `docker-compose.prod.yml` instead of
+    # production) should layer in `docker-compose.secrets.yml` instead of
     # editing this file; see deploy/mcm/README.md for the override shape.
     #
     # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the

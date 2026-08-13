@@ -46,9 +46,9 @@ for the dev flow. Compose will not block first boot.
 Production deployments must NOT rely on auto-generated credentials. Two
 supported options:
 
-### Option A — use the prod override
+### Option A — use the secrets override
 
-The repo ships `docker-compose.prod.yml` at the root, which layers
+The repo ships `docker-compose.secrets.yml` at the root, which layers
 `:?required` semantics for the JWT secret and the bootstrap admin
 password back into the `mcm` service. Set the values in your shell or
 in a gitignored `.env` file, then:
@@ -56,30 +56,43 @@ in a gitignored `.env` file, then:
 ```bash
 MCM_AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
 MCM_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ```
 
 If you forget to set either variable, Compose will refuse to start the
 stack with the same `:?required` error the dev compose used to raise.
 
+This is a **secrets-only override**. It does not by itself harden the
+runtime: the dev compose it layers on top of still exposes
+localhost-bound plaintext MQTT/WebSocket, publishes MCM's HTTP API
+without TLS, and uses the dev Mosquitto conf (anonymous + plain TCP).
+For production, also apply the network/auth/TLS hardening from
+[deploy/mosquitto/README.md](../mosquitto/README.md) and the rest of
+this file's production checklist. The override is meant to be the
+*first* layer, not the whole one.
+
 ### Option B — mount `config.yaml` and set `MCM_*` overrides
 
 If you want full control over every config field, mount this file and
-override the secrets via env vars:
+override the secrets via env vars. The image's `ENTRYPOINT` is a bare
+`mcm`, so the YAML is read **only** when `MCM_CONFIG_FILE` is set
+(this is the contract documented in `cmd/mcm/main.go`):
 
 ```bash
 docker run --rm -p 8080:8080 \
   -v mcm_data:/var/lib/mcm \
   -v $(pwd)/deploy/mcm/config.yaml:/etc/mcm/config.yaml:ro \
+  -e MCM_CONFIG_FILE=/etc/mcm/config.yaml \
   -e MCM_AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
   -e MCM_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
   mcm:dev
 ```
 
-The mounted `config.yaml` is read first and the env vars replace
-`auth.jwt_secret` and `auth.bootstrap_admin.password` before
-validation runs. Without the env vars, the validator rejects the
-shipped placeholder values.
+Without `MCM_CONFIG_FILE`, the YAML is silently ignored — the container
+runs with `Default()` plus the env vars. The env vars replace
+`auth.jwt_secret` and `auth.bootstrap_admin.password` before validation
+runs; without them, the validator rejects the shipped placeholder
+values.
 
 The `mcm_data` Docker volume must be kept across restarts so the
 generated `.bootstrap.json` survives. A fresh `docker volume rm`
@@ -100,9 +113,9 @@ See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checkl
 
 ### Image HEALTHCHECK
 
-Both the development `Dockerfile` and the GoReleaser release image include a built-in `HEALTHCHECK` instruction that runs `mcm doctor` every 30 seconds.  Docker Compose augments this with compose-level healthcheck settings in `docker-compose.yml`.  You do not need to add a healthcheck yourself — it is already built into the image.
+Both the development `Dockerfile` and the GoReleaser release image include a built-in `HEALTHCHECK` instruction that hits `GET /livez` every 30 seconds. Docker Compose augments this with compose-level healthcheck settings in `docker-compose.yml`. You do not need to add a healthcheck yourself — it is already built into the image.
 
-Note: `mcm doctor` dials Mosquitto as part of its check; a container started without a reachable Mosquitto (e.g. standalone `docker run` without the Compose stack) will report `unhealthy` — this is expected. Ensure Mosquitto is running and reachable before relying on the healthcheck result.
+Note: `/livez` only verifies the HTTP server is up and the SQLite DB is reachable. The Mosquitto reachability is exposed via `/readyz`, which returns 503 with `error="broker unavailable"` when the broker cannot be reached. A container started without a reachable Mosquitto (e.g. standalone `docker run` without the Compose stack) will report `healthy` for `/livez` and `503` for `/readyz` — both are expected. To verify the broker side, run `docker compose exec mosquitto mosquitto_pub -h 127.0.0.1 -p 1883 -t mcm/healthcheck -m ping` or use `mosquitto_pub` from the host.
 
 ## Endpoints
 
@@ -119,7 +132,7 @@ The MCM container:
 - Persists the auto-generated JWT secret to `/var/lib/mcm/.bootstrap.json` (mode 0600) so it survives restarts.
 - Honors `MCM_AUTH_JWT_SECRET`, `MCM_BOOTSTRAP_ADMIN_USERNAME`, and `MCM_BOOTSTRAP_ADMIN_PASSWORD` environment overrides at startup (other fields come from the mounted YAML or `internal/config.Default()`).
 - Exposes port `8080` for the HTTP API.
-- Includes a healthcheck via `mcm doctor`.
+- Includes a healthcheck via `/livez`.
 
 ## Building the image standalone
 

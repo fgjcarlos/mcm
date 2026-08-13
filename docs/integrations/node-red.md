@@ -134,5 +134,5 @@ Examples: `plant/area-1/sensor-01/telemetry`, `plant/area-1/plc-03/status`.
 | Node-RED shows "connection refused" | Verify Mosquitto is running and the host/port are correct. For Docker Compose, ensure Node-RED can reach the Mosquitto container (use the service name `mosquitto` if both are in the same Compose network). |
 | "Not authorized" on connect | Check the MQTT username and password in the broker node. Verify the user exists in MCM. |
 | Messages published but not received | Check topic spelling and wildcards. Verify ACL grants read access on the subscribed topic for the connecting user. |
-| TLS handshake failure | Verify the CA certificate matches the broker's server certificate. Check certificate expiry. See `mcm doctor` [TLS diagnostics](../../deploy/mosquitto/README.md#mcm-doctor-tls-diagnostics). |
+| TLS handshake failure | Verify the CA certificate matches the broker's server certificate. Check certificate expiry. See [MQTT readiness diagnostics](../../deploy/mosquitto/README.md#mqtt-readiness-diagnostics) — `GET /readyz` runs the TLS probe and reports the failure phase. |
 | ACL denial not visible | Check Mosquitto log level includes `log_type notice`. Mosquitto silently drops denied publishes without notifying the client. |

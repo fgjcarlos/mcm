@@ -7,9 +7,9 @@
 # persisting the secret to <db dir>/.bootstrap.json.
 #
 # For production deployments you have two options:
-#   1. Layer `docker-compose.prod.yml` on top of `docker-compose.yml`
+#   1. Layer `docker-compose.secrets.yml` on top of `docker-compose.yml`
 #      and supply MCM_AUTH_JWT_SECRET + MCM_BOOTSTRAP_ADMIN_PASSWORD
-#      via env vars or a .env file. See `docker-compose.prod.yml` for
+#      via env vars or a .env file. See `docker-compose.secrets.yml` for
 #      the exact contract.
 #   2. Mount THIS file at /etc/mcm/config.yaml and set the same two
 #      env vars to override the placeholder values below.
