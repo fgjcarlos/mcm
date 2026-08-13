@@ -1,3 +1,31 @@
+# MCM dev Compose stack.
+#
+# Wires the bundled Mosquitto broker with authentication + ACL enabled,
+# and the MCM deploy service writing the rendered passwd/acl files into
+# a NAMED VOLUME that Mosquitto reads from.
+#
+# File ownership of the deploy flow:
+#   1. On first boot, deploy/mosquitto/config/mosquitto-bootstrap.sh
+#      (invoked via the mosquitto service command override) seeds
+#      /mosquitto/config/mosquitto.conf and /mosquitto/config/passwd
+#      from the bind-mounted /mosquitto-init/ source.
+#   2. MCM connects to Mosquitto with the dev admin user
+#      (MCM_MOSQUITTO_USERNAME / MCM_MOSQUITTO_PASSWORD below).
+#   3. On a successful POST /api/v1/deployments/apply, MCM renders the
+#      current ACL rules + MQTT users into the shared volume and
+#      signals the broker via SIGHUP (PID 1 in the mosquitto container)
+#      using `docker exec … kill -HUP 1`. The volume is mounted at
+#      /var/lib/mosquitto-config inside mcm so the path the Go process
+#      writes to and the path Mosquitto reads from point at the same
+#      filesystem.
+#
+# Dev-only caveat: the bootstrap admin password is hardcoded in this
+# file AND in the bootstrap script for the dev stack to be usable on a
+# clean clone without operator input. The production pattern
+# (deploy/mosquitto/config/mosquitto.prod.conf) reads the password from
+# a secret manager and never embeds it in source. See
+# deploy/mosquitto/README.md for the production checklist.
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2.0
@@ -7,12 +35,34 @@ services:
       - "1883:1883"
       - "9001:9001"
     volumes:
-      - ./deploy/mosquitto/config:/mosquitto/config:ro
+      # Shared with the mcm service — Mosquitto writes passwd/acl here on
+      # every MCM deploy apply and reads them on SIGHUP.
+      - mosquitto_config:/mosquitto/config
+      # Source-of-truth config templates baked into the image context.
+      # The bootstrap script copies mosquitto.conf from this path into
+      # the shared volume on first boot so operators can edit the host
+      # file and the running container picks up the change after a
+      # `docker compose down -v && up -d`.
+      - ./deploy/mosquitto/config:/mosquitto-init:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
       # - ./deploy/mosquitto/certs:/mosquitto/certs:ro  # required when enabling the TLS listener
+    # We override the official ENTRYPOINT (not just the CMD) because
+    # eclipse-mosquitto's /docker-entrypoint.sh ALSO seeds
+    # /mosquitto/config/mosquitto.conf from its built-in
+    # /mosquitto-no-auth.conf BEFORE the CMD runs. Docker runs the
+    # ENTRYPOINT first, then appends the CMD as args. If we leave the
+    # entrypoint in place, our auth-enabled conf would be overwritten
+    # by the no-auth default on every fresh volume. Our bootstrap
+    # script handles data/log dir setup, config seeding, and the final
+    # `exec mosquitto` itself, so bypassing the official entrypoint is
+    # safe.
+    entrypoint: /mosquitto-init/mosquitto-bootstrap.sh
+    command: []
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -t mcm/healthcheck -m ping >/dev/null 2>&1 || exit 1"]
+      # The broker now requires auth; the healthcheck must use the same
+      # dev admin credentials the bootstrap script seeds.
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -p 1883 -u admin -P mcm-dev-broker-password -t mcm/healthcheck -m ping >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,17 +81,69 @@ services:
       - "8080:8080"
     volumes:
       - mcm_data:/var/lib/mcm
-    # Inject secrets at runtime via env. MCM_AUTH_JWT_SECRET and
-    # MCM_BOOTSTRAP_ADMIN_PASSWORD must be supplied (use a .env file or
-    # the orchestrator's secret store). MCM_BOOTSTRAP_ADMIN_USERNAME
-    # defaults to "admin" when unset. Other fields come from
-    # internal/config.Default() and may be overridden with MCM_* env
-    # vars (MCM_HTTP_PORT, MCM_DATABASE_PATH, MCM_MOSQUITTO_HOST, etc.).
+      # Same named volume as the mosquitto service — read-write on both
+      # sides so MCM can atomically rewrite passwd/acl and the broker
+      # reads the new content on SIGHUP. The path differs between the
+      # two services (mosquitto: /mosquitto/config, mcm:
+      # /var/lib/mosquitto-config) because the mcm Dockerfile already
+      # creates /var/lib/mcm and we keep the broker paths canonical.
+      - mosquitto_config:/var/lib/mosquitto-config
+      # DEV-ONLY: mount the host's Docker socket so MCM's deploy service
+      # (DockerApplier) can run `docker exec mcm-mosquitto kill -HUP 1`
+      # to signal the broker. The Docker CLI is installed in the mcm
+      # image (Dockerfile: apk add docker-cli) for the same reason. Do
+      # NOT do this in production — a process with socket access is
+      # effectively root on the host. For production use the `file`
+      # deploy mode with a shared filesystem where the broker reads
+      # the passwd/acl on a controlled restart, or run mosquitto and
+      # mcm on the same host so the `pid_path` file mode works
+      # directly.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Dev defaults: MCM_AUTH_JWT_SECRET and MCM_BOOTSTRAP_ADMIN_PASSWORD
+    # are left unset so the Go runtime auto-generates them on first boot.
+    # The JWT secret is persisted to <db dir>/.bootstrap.json (mode 0600)
+    # and reused on subsequent restarts. The bootstrap admin password is
+    # logged once on first boot — recover it via `docker compose logs mcm`.
+    # Operators that want explicit credentials (e.g. production) should
+    # layer in `docker-compose.prod.yml` instead of editing this file;
+    # see deploy/mcm/README.md for the override shape.
+    #
+    # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
+    # validator rejects the "username set, password empty" combination,
+    # and the auto-generation path only fires when both are unset. The
+    # default username "admin" is applied by internal/config.Load() when
+    # the env var is absent.
+    #
+    # MCM_MOSQUITTO_USERNAME / MCM_MOSQUITTO_PASSWORD below are the
+    # credentials MCM uses to connect to the bundled Mosquitto broker;
+    # they MUST match the dev admin user/password the mosquitto
+    # bootstrap script seeds into /mosquitto/config/passwd. Hardcoded
+    # for clean-clone convenience. For production see
+    # deploy/mosquitto/config/mosquitto.prod.conf and the production
+    # checklist in deploy/mosquitto/README.md.
+    #
+    # Other fields come from internal/config.Default() and may be
+    # overridden with MCM_* env vars (MCM_HTTP_PORT, MCM_DATABASE_PATH,
+    # etc.).
     environment:
-      MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
-      MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
-      MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
       MCM_MOSQUITTO_HOST: mosquitto
+      MCM_MOSQUITTO_PORT: "1883"
+      # The dev admin credentials are hardcoded for clean-clone
+      # convenience. They MUST match what the mosquitto bootstrap
+      # script seeds into /mosquitto/config/passwd.
+      MCM_MOSQUITTO_USERNAME: admin
+      MCM_MOSQUITTO_PASSWORD: mcm-dev-broker-password
+      # MCM deploy service — writes passwd/acl into the shared volume
+      # and signals the broker via `docker exec … kill -HUP 1`. The
+      # ACL/Passwd paths are inside the mcm container's view of the
+      # shared volume; Mosquitto reads them from its own
+      # /mosquitto/config mount (same named volume, different mount
+      # point inside each container).
+      MCM_MOSQUITTO_DEPLOY_MODE: docker
+      MCM_MOSQUITTO_DEPLOY_ACL_PATH: /var/lib/mosquitto-config/acl
+      MCM_MOSQUITTO_DEPLOY_PASSWD_PATH: /var/lib/mosquitto-config/passwd
+      MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME: mcm-mosquitto
+      MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY: sighup
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/livez || exit 1"]
@@ -51,6 +153,7 @@ services:
       start_period: 15s
 
 volumes:
+  mosquitto_config:
   mosquitto_data:
   mosquitto_logs:
   mcm_data:

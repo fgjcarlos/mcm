@@ -996,6 +996,13 @@ var envVarNames = []string{
 	"MCM_MOSQUITTO_PORT",
 	"MCM_MOSQUITTO_USERNAME",
 	"MCM_MOSQUITTO_PASSWORD",
+	"MCM_MOSQUITTO_DEPLOY_MODE",
+	"MCM_MOSQUITTO_DEPLOY_ACL_PATH",
+	"MCM_MOSQUITTO_DEPLOY_PASSWD_PATH",
+	"MCM_MOSQUITTO_DEPLOY_PID_PATH",
+	"MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME",
+	"MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY",
+	"MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT",
 	"MCM_LOG_LEVEL",
 	"MCM_LOG_FORMAT",
 }
@@ -1106,6 +1113,71 @@ func TestEnvEveryVarIsWired(t *testing.T) {
 		}, func(t *testing.T, c Config) {
 			if c.Mosquitto.Password != "broker-pass" {
 				t.Fatalf("Mosquitto.Password = %q, want broker-pass", c.Mosquitto.Password)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_MODE", "docker", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.Mode != "docker" {
+				t.Fatalf("Mosquitto.Deploy.Mode = %q, want docker", c.Mosquitto.Deploy.Mode)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "docker")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.ACLPath != "/var/lib/mosquitto-config/acl" {
+				t.Fatalf("Mosquitto.Deploy.ACLPath = %q, want /var/lib/mosquitto-config/acl", c.Mosquitto.Deploy.ACLPath)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "docker")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.PasswdPath != "/var/lib/mosquitto-config/passwd" {
+				t.Fatalf("Mosquitto.Deploy.PasswdPath = %q, want /var/lib/mosquitto-config/passwd", c.Mosquitto.Deploy.PasswdPath)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_PID_PATH", "/var/run/mosquitto/mosquitto.pid", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "file")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/etc/mosquitto/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/etc/mosquitto/passwd")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.PIDPath != "/var/run/mosquitto/mosquitto.pid" {
+				t.Fatalf("Mosquitto.Deploy.PIDPath = %q, want /var/run/mosquitto/mosquitto.pid", c.Mosquitto.Deploy.PIDPath)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "docker")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.ContainerName != "mcm-mosquitto" {
+				t.Fatalf("Mosquitto.Deploy.ContainerName = %q, want mcm-mosquitto", c.Mosquitto.Deploy.ContainerName)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY", "sighup", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "docker")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.ReloadStrategy != "sighup" {
+				t.Fatalf("Mosquitto.Deploy.ReloadStrategy = %q, want sighup", c.Mosquitto.Deploy.ReloadStrategy)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT", "3s", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "docker")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME", "mcm-mosquitto")
+		}, func(t *testing.T, c Config) {
+			if c.Mosquitto.Deploy.HealthcheckTimeout.String() != "3s" {
+				t.Fatalf("Mosquitto.Deploy.HealthcheckTimeout = %s, want 3s", c.Mosquitto.Deploy.HealthcheckTimeout)
 			}
 		}},
 		{"MCM_LOG_LEVEL", "debug", nil, func(t *testing.T, c Config) {
