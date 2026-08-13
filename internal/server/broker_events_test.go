@@ -15,8 +15,75 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
+
+// TestBrokerEventsWebSocketUpgradeWorksThroughWithRequestLogging reproduces the
+// regression where withRequestLogging wraps the handler with a *statusRecorder
+// that does not implement http.Hijacker and exposes no Unwrap() escape hatch.
+// As a result, websocket.Accept cannot complete the upgrade through the
+// production middleware chain and the client never sees 101 Switching Protocols.
+//
+// Acceptance criteria (issue #273):
+//   - 101 Switching Protocols is returned for an authorized handshake.
+//   - The client receives the initial broker_status frame and a subsequent event.
+//   - The handler under test is the FULL production chain (withRequestLogging).
+//   - WriteTimeout survival is covered separately by
+//     TestBrokerEventsWebSocketSurvivesServerWriteTimeout; this test focuses on
+//     the upgrade through the middleware, so httptest.NewServer (WriteTimeout=0)
+//     is the right tool here.
+func TestBrokerEventsWebSocketUpgradeWorksThroughWithRequestLogging(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Build the FULL production middleware chain used by server.Run.
+	handler := withRequestLogging(app.Handler(), logging.Discard(), app.metrics, nil)
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Dial directly so the HTTP handshake response is captured and asserted.
+	token, _, err := app.tokens.Issue(1, "ws-test", auth.RoleAdmin, app.now().UTC())
+	if err != nil {
+		t.Fatalf("Issue token returned error: %v", err)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/broker/events"
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{webSocketSubprotocol},
+		HTTPHeader: http.Header{
+			"Sec-WebSocket-Protocol": []string{"mcm.v1, Bearer." + token},
+		},
+	})
+	if err != nil {
+		t.Fatalf("websocket.Dial returned error: %v", err)
+	}
+	defer conn.CloseNow()
+
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("websocket status = %d, want %d (101 Switching Protocols)", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+	if got := conn.Subprotocol(); got != webSocketSubprotocol {
+		t.Fatalf("negotiated subprotocol = %q, want %q", got, webSocketSubprotocol)
+	}
+
+	// Stream round-trip — proves the recorder wraps the hijacked connection
+	// without breaking the broker event pipeline.
+	initialFrame := readTestWebSocketFrame(t, ctx, conn)
+	if !strings.Contains(initialFrame, `"type":"broker_status"`) {
+		t.Fatalf("initial websocket frame = %s, want broker_status", initialFrame)
+	}
+
+	app.brokerEvents.Publish(TopicEvent("factory/through-logging", []byte(`{"v":1}`), 256))
+	topicFrame := readTestWebSocketFrame(t, ctx, conn)
+	if !strings.Contains(topicFrame, `"type":"topic_message"`) || !strings.Contains(topicFrame, `"topic":"factory/through-logging"`) {
+		t.Fatalf("topic frame through withRequestLogging = %s, want topic_message event", topicFrame)
+	}
+}
 
 // TestBrokerEventsWebSocketSurvivesServerWriteTimeout verifies that a long-lived
 // WebSocket subscriber is NOT forcibly closed by the http.Server WriteTimeout.
