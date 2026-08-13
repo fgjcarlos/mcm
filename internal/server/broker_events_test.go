@@ -5,19 +5,55 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
+
+// captureHandler is a minimal slog.Handler that records every Record so a
+// test can assert on the status/method/path that withRequestLogging
+// ultimately observed. MarshalAttrs is left to the default JSON shape so
+// Attr values come through as their native Go types (ints stay ints).
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *captureHandler) findAttr(r slog.Record, key string) (slog.Attr, bool) {
+	found := false
+	var attr slog.Attr
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			attr = a
+			found = true
+			return false
+		}
+		return true
+	})
+	return attr, found
+}
 
 // TestBrokerEventsWebSocketUpgradeWorksThroughWithRequestLogging reproduces the
 // regression where withRequestLogging wraps the handler with a *statusRecorder
@@ -82,6 +118,109 @@ func TestBrokerEventsWebSocketUpgradeWorksThroughWithRequestLogging(t *testing.T
 	topicFrame := readTestWebSocketFrame(t, ctx, conn)
 	if !strings.Contains(topicFrame, `"type":"topic_message"`) || !strings.Contains(topicFrame, `"topic":"factory/through-logging"`) {
 		t.Fatalf("topic frame through withRequestLogging = %s, want topic_message event", topicFrame)
+	}
+}
+
+// TestWithRequestLoggingRecordsStatus101AfterWebSocketUpgrade is a regression
+// guard for the metrics/log half of issue #273: a successful WebSocket upgrade
+// through withRequestLogging must NOT be logged as HTTP 200. The client sees
+// 101, the access log records 101, and the mcm_http_requests_total counter
+// increments the 101 series.
+//
+// Implementation note: nhooyr.io/websocket v1.8.17 calls
+// w.WriteHeader(http.StatusSwitchingProtocols) at accept.go:135 BEFORE the
+// hijack, so the recorder's status is updated via the existing WriteHeader
+// path. statusRecorder does not need a special-case in Hijack() to learn the
+// real status — the test exercises that path end-to-end so any future change
+// that breaks it (e.g. moving the WriteHeader behind the hijack, or wrapping
+// the writer with a layer that swallows the status) is caught here.
+func TestWithRequestLoggingRecordsStatus101AfterWebSocketUpgrade(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	cap := &captureHandler{}
+	logger := slog.New(cap)
+
+	handler := withRequestLogging(app.Handler(), logger, app.metrics, nil)
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	token, _, err := app.tokens.Issue(1, "ws-metric-test", auth.RoleAdmin, app.now().UTC())
+	if err != nil {
+		t.Fatalf("Issue token returned error: %v", err)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/broker/events"
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{webSocketSubprotocol},
+		HTTPHeader: http.Header{
+			"Sec-WebSocket-Protocol": []string{"mcm.v1, Bearer." + token},
+		},
+	})
+	if err != nil {
+		t.Fatalf("websocket.Dial returned error: %v", err)
+	}
+	defer conn.CloseNow()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("websocket status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+
+	// Read the initial broker_status frame so the handler returns and
+	// withRequestLogging writes the access log + bumps the metrics.
+	_, _, _ = conn.Reader(ctx) // drain initial frame; ignore errors
+	conn.Close(websocket.StatusNormalClosure, "") //nolint:errcheck
+	// Wait briefly for the server-side goroutine to flush the log + counter.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		cap.mu.Lock()
+		n := len(cap.records)
+		cap.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// --- Log assertion -----------------------------------------------------
+	cap.mu.Lock()
+	records := append([]slog.Record(nil), cap.records...)
+	cap.mu.Unlock()
+	if len(records) == 0 {
+		t.Fatalf("withRequestLogging emitted no access log records for the WebSocket upgrade")
+	}
+	var lastStatus int
+	var foundHTTPRequest bool
+	for _, r := range records {
+		if r.Message != "http_request" {
+			continue
+		}
+		foundHTTPRequest = true
+		if attr, ok := cap.findAttr(r, "status"); ok {
+			if v, ok := attr.Value.Any().(int64); ok {
+				lastStatus = int(v)
+			}
+		}
+	}
+	if !foundHTTPRequest {
+		t.Fatalf("no http_request log record among captured records: %d", len(records))
+	}
+	if lastStatus != http.StatusSwitchingProtocols {
+		t.Fatalf("access log status = %d, want %d (101)", lastStatus, http.StatusSwitchingProtocols)
+	}
+
+	// --- Prometheus counter assertion -------------------------------------
+	// Counter for status=101 should have observed exactly one increment.
+	got101 := testutil.ToFloat64(app.metrics.HTTPRequests.WithLabelValues("GET", "/api/v1/broker/events", "101"))
+	if got101 != 1 {
+		t.Fatalf("mcm_http_requests_total{GET,/api/v1/broker/events,101} = %v, want 1", got101)
+	}
+	// Counter for status=200 must NOT have been bumped by the upgrade.
+	got200 := testutil.ToFloat64(app.metrics.HTTPRequests.WithLabelValues("GET", "/api/v1/broker/events", "200"))
+	if got200 != 0 {
+		t.Fatalf("mcm_http_requests_total{GET,/api/v1/broker/events,200} = %v, want 0 (upgrade must not be logged as 200)", got200)
 	}
 }
 
