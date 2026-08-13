@@ -1,0 +1,24 @@
+# Production override for the MCM Docker Compose stack.
+#
+# Why this file exists (issue #274): the dev `docker-compose.yml` no
+# longer requires MCM_AUTH_JWT_SECRET or MCM_BOOTSTRAP_ADMIN_PASSWORD
+# because the Go runtime auto-generates them on first boot. That keeps
+# the bare `task build && task up` flow working on a clean clone, but
+# production deployments must NOT rely on auto-generated credentials —
+# the operator needs control over the JWT secret and the bootstrap
+# admin password.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Both `MCM_AUTH_JWT_SECRET` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` must be
+# set in the shell (or a `.env` file ignored by git) before invoking
+# compose, otherwise compose will refuse to start with the same
+# `:?required` error the dev compose used to raise.
+#
+# See deploy/mcm/README.md for the broader prod deployment guide.
+services:
+  mcm:
+    environment:
+      MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
+      MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
