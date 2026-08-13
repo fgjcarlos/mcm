@@ -28,7 +28,7 @@ task logs                # tail mcm logs; the bootstrap admin password prints he
 
 Open <http://localhost:8080> and sign in with `admin` + the password from `task logs`. Stop the stack with `task down`.
 
-> The bundled Mosquitto is configured for anonymous local development only. For production, see [`docs/production.md`](./docs/production.md).
+> The dev stack now ships with Mosquitto authentication **enabled** (no anonymous clients). The bundled broker is seeded with a single dev admin user by `deploy/mosquitto/config/mosquitto-bootstrap.sh`; the matching credentials are hardcoded in `docker-compose.yml` so MCM can connect at startup. MCM's deploy service then writes the canonical passwd/acl files into a shared named volume (`mosquitto_config`) and SIGHUPs the broker on every successful apply, so user/ACL changes created via the UI/API reach the live broker without an operator running `mosquitto_passwd` by hand. This is a **dev-only** convenience — production uses [`deploy/mosquitto/config/mosquitto.prod.conf`](./deploy/mosquitto/config/mosquitto.prod.conf) and the production checklist in [`docs/production.md`](./docs/production.md).
 
 ---
 
@@ -47,8 +47,13 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_BOOTSTRAP_ADMIN_PASSWORD`    | *(auto-generated)* | 24-char random password logged once on first boot.   |
 | `MCM_MOSQUITTO_HOST`              | `mosquitto`        | The bundled compose service.                         |
 | `MCM_MOSQUITTO_PORT`              | `1883`             |                                                      |
-| `MCM_MOSQUITTO_USERNAME`          | *(unset)*          | Set both username and password for broker auth.      |
-| `MCM_MOSQUITTO_PASSWORD`          | *(unset)*          |                                                      |
+| `MCM_MOSQUITTO_USERNAME`          | `admin`            | Dev default matches the Mosquitto bootstrap script.   |
+| `MCM_MOSQUITTO_PASSWORD`          | `mcm-dev-broker-password` | Dev default matches the Mosquitto bootstrap script. Dev-only — production reads this from a secret manager. |
+| `MCM_MOSQUITTO_DEPLOY_MODE`       | *(unset)*          | `docker` (dev: shared volume + `docker exec kill -HUP 1`), `file` (production: write into a shared dir, broker reloads on its own trigger), or empty (deploy disabled). |
+| `MCM_MOSQUITTO_DEPLOY_ACL_PATH`   | *(unset)*          | On-disk path for the rendered ACL file. Dev: `/var/lib/mosquitto-config/acl` (named volume). |
+| `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH`| *(unset)*          | On-disk path for the rendered passwd file. Dev: `/var/lib/mosquitto-config/passwd`. |
+| `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` | *(unset)*      | Required when `MCM_MOSQUITTO_DEPLOY_MODE=docker`. The Mosquitto container to SIGHUP. |
+| `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` | *(unset)*     | `sighup` (the only supported strategy right now).    |
 | `MCM_LOG_LEVEL`                   | `info`             | `debug`, `info`, `warn`, `error`.                    |
 | `MCM_LOG_FORMAT`                  | `json`             | `json` or `text`.                                    |
 | `MCM_CONFIG_FILE`                 | *(unset)*          | Optional YAML file loaded before env overrides.      |

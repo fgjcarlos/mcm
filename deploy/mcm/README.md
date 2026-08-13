@@ -53,15 +53,20 @@ MCM_BOOTSTRAP_ADMIN_PASSWORD=<strong password>
 
 ### Switching Mosquitto to production auth and TLS
 
-The development `mosquitto.conf` allows anonymous connections and plain TCP, which is intentional for local iteration.  For production:
+The development `mosquitto.conf` ships with `allow_anonymous false` plus a shared passwd/acl file pattern (see [Integration with MCM](../mosquitto/README.md#integration-with-mcm) in the Mosquitto README), which mirrors the production contract — there is no "permissive dev mode" you have to undo. The differences vs. production are:
+
+- **Dev**: `user root` in the broker config so the broker can read passwd/acl files written by the mcm UID across the shared volume. The bootstrap admin password is hardcoded (`mcm-dev-broker-password`) in both `mosquitto-bootstrap.sh` and `docker-compose.yml` so a clean clone works without operator input. The mcm service mounts `/var/run/docker.sock` to run `docker exec … kill -HUP 1` for reloads.
+- **Production**: drop the `user root` directive, source the broker password from a secret manager (do NOT hardcode), do NOT mount the Docker socket into mcm, and use [`deploy/mosquitto/config/mosquitto.prod.conf`](../mosquitto/config/mosquitto.prod.conf) as the broker config (TLS on port `8883`, `require_certificate true` for mutual TLS). Configure MCM's `mosquitto.tls` settings to connect on `8883`.
+
+For production:
 
 1. Copy `deploy/mosquitto/config/mosquitto.prod.conf` to your deployment and follow the comments inside it to:
-   - Create a password file with `mosquitto_passwd`.
+   - Create a password file with `mosquitto_passwd` as the broker user (UID 1883).
    - Supply TLS certificates on port `8883`.
 2. Mount `mosquitto.prod.conf` as `/mosquitto/config/mosquitto.conf` in your Mosquitto container (update the volume binding in `docker-compose.yml`).
 3. Configure MCM's `mosquitto.tls` settings to connect on port `8883`.
 
-See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checklist and the MCM-side config fields.
+See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checklist, the MCM-side config fields, and the integration model.
 
 ### Image HEALTHCHECK
 
