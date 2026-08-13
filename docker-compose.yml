@@ -39,11 +39,17 @@ services:
     # compose logs mcm`. Operators that want explicit credentials (e.g.
     # production) should layer in `docker-compose.prod.yml` instead of
     # editing this file; see deploy/mcm/README.md for the override shape.
+    #
+    # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
+    # validator rejects the "username set, password empty" combination,
+    # and the auto-generation path only fires when both are unset. The
+    # default username "admin" is applied by internal/config.Load() when
+    # the env var is absent.
+    #
     # Other fields come from internal/config.Default() and may be
     # overridden with MCM_* env vars (MCM_HTTP_PORT, MCM_DATABASE_PATH,
     # MCM_MOSQUITTO_HOST, etc.).
     environment:
-      MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
