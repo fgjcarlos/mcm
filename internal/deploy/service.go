@@ -111,6 +111,13 @@ func defaultFileReader(path string) (string, error) {
 }
 
 // render fetches rules and users from the stores and produces rendered ACL and passwd bodies.
+// The service user block (MCM_MOSQUITTO_USERNAME) and its ACL grants are
+// always emitted so the deploy healthcheck and the broker events feed
+// keep working after every apply. The service user's existing hash on
+// disk is reused when present — re-hashing on every render would make
+// has_changes non-idempotent (salt is random), forcing the applier to
+// rewrite the file and SIGHUP the broker on every preview/apply cycle
+// even when nothing changed.
 func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err error) {
 	rules, err := s.aclStore.ListRules(ctx)
 	if err != nil {
@@ -122,7 +129,27 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 		return "", "", fmt.Errorf("list mqtt users: %w", err)
 	}
 
-	aclBody = mosquitto.RenderACLFile(rules)
+	// Read the on-disk passwd so we can preserve the service user's
+	// existing hash. Preview/Apply already read it for the diff, but
+	// render() must not depend on those callers. If the file is absent
+	// (first boot) we recompute the hash.
+	existingPasswd, err := s.readFile(s.deployCfg.PasswdPath)
+	if err != nil {
+		return "", "", fmt.Errorf("read current passwd file: %w", err)
+	}
+	existingEntries := mosquitto.ParsePasswdFile(existingPasswd)
+	existingHashByUser := make(map[string]string, len(existingEntries))
+	for _, e := range existingEntries {
+		existingHashByUser[e.Username] = e.Hash
+	}
+
+	// Build the ACL body: managed rules + service user block.
+	allRules := make([]acl.Rule, 0, len(rules)+1)
+	allRules = append(allRules, rules...)
+	if s.mosquittoCfg.Username != "" {
+		allRules = append(allRules, serviceUserACL(s.mosquittoCfg.Username)...)
+	}
+	aclBody = mosquitto.RenderACLFile(allRules)
 
 	entries := make([]mosquitto.PasswdEntry, 0, len(users)+1)
 	for _, u := range users {
@@ -138,13 +165,18 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 	// healthcheck — which authenticates as that user — keeps working
 	// after the broker reloads. Without this the apply would always
 	// roll back because the user MCM connects with would be missing
-	// from the freshly-rendered file. We hash on every render; the
-	// cost is small and the alternative (storing a precomputed hash)
-	// adds a config field for a dev-only convenience.
+	// from the freshly-rendered file. The hash is reused from the
+	// on-disk file when present so the rendered output is stable across
+	// idempotent applies; only the first render (or a password change
+	// in the MCM_MOSQUITTO_PASSWORD env var) produces a new hash.
 	if s.mosquittoCfg.Username != "" && s.mosquittoCfg.Password != "" {
-		hash, hashErr := mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
-		if hashErr != nil {
-			return "", "", fmt.Errorf("hash service user password: %w", hashErr)
+		hash := existingHashByUser[s.mosquittoCfg.Username]
+		if hash == "" {
+			var hashErr error
+			hash, hashErr = mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
+			if hashErr != nil {
+				return "", "", fmt.Errorf("hash service user password: %w", hashErr)
+			}
 		}
 		entries = append(entries, mosquitto.PasswdEntry{
 			Username: s.mosquittoCfg.Username,
@@ -154,6 +186,34 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 	passwdBody = mosquitto.RenderPasswdFile(entries)
 
 	return aclBody, passwdBody, nil
+}
+
+// serviceUserACL returns the set of ACL rules MCM always emits for the
+// broker service user (MCM_MOSQUITTO_USERNAME). The list is the minimum
+// the runtime needs to keep working after every apply:
+//   - read # — MCM subscribes to every topic for the broker events feed
+//     (the WebSocket clients consume that subscription).
+//   - readwrite mcm/healthcheck — the deploy healthcheck publishes here
+//     and (depending on the test) verifies the round-trip.
+//
+// These are intentional baseline permissions for the service user; they
+// are not user-managed rules and are NEVER exposed in the ACL HTTP API.
+// Operators who want the service user to have more/fewer permissions
+// must use a non-dev deploy mode (e.g. file mode with the service user
+// removed from MCM entirely) and authenticate via an admin ACL rule.
+func serviceUserACL(username string) []acl.Rule {
+	return []acl.Rule{
+		{
+			Principal:   username,
+			TopicFilter: "#",
+			Permission:  acl.PermissionRead,
+		},
+		{
+			Principal:   username,
+			TopicFilter: "mcm/healthcheck",
+			Permission:  acl.PermissionReadWrite,
+		},
+	}
 }
 
 // unifiedDiff generates a unified diff between current and rendered content, clamped to maxDiffLines.

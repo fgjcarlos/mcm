@@ -90,12 +90,26 @@ if [ ! -f "$CONFIG_DIR/passwd" ]; then
 fi
 
 # 2b. Touch the ACL file if missing. mosquitto refuses to start when
-# acl_file is configured but absent; an empty file means "no per-user
-# restrictions", which matches the default state of a fresh dev stack.
-# Same 0644 rationale as the passwd file: MCM reads and rewrites this.
+# acl_file is configured but absent; an empty file would mean "no
+# per-user restrictions" in the broker's ACL implementation, but
+# combined with allow_anonymous false the practical effect is that
+# EVERY authenticated user (including the broker service user) is
+# denied every access — including the deploy healthcheck publish and
+# the broker events feed subscription that MCM and the UI rely on.
+# Seed the ACL with the baseline service-user grants so the stack is
+# usable on first boot. The deploy service re-emits the same block on
+# every apply (see internal/deploy/service.go:serviceUserACL), so the
+# bootstrap is just the initial state — not a special case.
 if [ ! -f "$CONFIG_DIR/acl" ]; then
-    : > "$CONFIG_DIR/acl"
-    echo "mosquitto-bootstrap: created empty $CONFIG_DIR/acl"
+    cat > "$CONFIG_DIR/acl" <<EOF
+# Seeded by deploy/mosquitto/config/mosquitto-bootstrap.sh on first
+# boot. The deploy service preserves and re-emits this block on every
+# apply; do not edit it manually if you want MCM to manage the broker.
+user $DEV_USER
+topic read #
+topic readwrite mcm/healthcheck
+EOF
+    echo "mosquitto-bootstrap: seeded $CONFIG_DIR/acl with service-user grants"
 fi
 
 # 2c. Re-chmod passwd/acl every startup. MCM's atomic-write applier

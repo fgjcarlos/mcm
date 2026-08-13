@@ -284,6 +284,92 @@ func TestPreview_HappyPath(t *testing.T) {
 	}
 }
 
+// TestPreview_ServiceUserHashReused covers the follow-up review on PR #284:
+// render() must NOT re-hash the broker service user on every call. Re-hashing
+// with a fresh random salt makes the rendered passwd file always-different
+// from the on-disk file, so has_changes is never false on a no-op preview,
+// and every apply call rewrites the file + SIGHUPs the broker even when
+// nothing changed. The fix: read the existing passwd file, look up the
+// service user, reuse that hash verbatim.
+func TestPreview_ServiceUserHashReused(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+
+	// Pre-seed the on-disk passwd with the service user. The hash here
+	// is a stand-in for whatever was rendered on the previous apply.
+	const existingHash = "$7$101$existing-salt-12byte==$existing-derived-key=="
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "svc-admin:"+existingHash+"\n")
+
+	aclStore := &fakeACLStore{}
+	mqttStore := &fakeMQTTUserLister{}
+
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	// Configure the service user so render() looks it up.
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "anything" // never re-hashed; the existing entry wins
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	// The passwd body must use the existing hash verbatim, not a fresh one.
+	if !strings.Contains(result.PasswdBody, existingHash) {
+		t.Errorf("PasswdBody did not reuse the existing hash.\nGot:\n%s", result.PasswdBody)
+	}
+	// The passwd diff against the on-disk file must be empty: the rendered
+	// passwd is byte-identical to the existing one. We assert on the
+	// passwd diff specifically (not HasChanges) because the service user
+	// ACL block is also always emitted, so the ACL diff is non-empty on
+	// first preview — that's intentional.
+	if result.PasswdDiff != "" {
+		t.Errorf("want empty PasswdDiff (hash reused), got:\n%s", result.PasswdDiff)
+	}
+}
+
+// TestPreview_ServiceUserACLAlwaysPresent covers the follow-up review on
+// PR #284: an empty ACL file means DENY ALL in Mosquitto. The service
+// user (MCM_MOSQUITTO_USERNAME) is the operator's own connection to the
+// broker — it must always have at least a baseline set of rules so the
+// deploy healthcheck and the broker events feed keep working after every
+// apply. The fix: render() always appends a service-user block to the
+// ACL body, regardless of what the operator's rule store contains.
+func TestPreview_ServiceUserACLAlwaysPresent(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+
+	// Empty operator ruleset + empty on-disk ACL.
+	aclStore := &fakeACLStore{}
+	mqttStore := &fakeMQTTUserLister{}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "")
+
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "p"
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	// The ACL body must contain the service user block with read # and
+	// readwrite mcm/healthcheck. Without those, the deploy healthcheck
+	// silently fails on an ACL-enabled Mosquitto (issue #275 review).
+	if !strings.Contains(result.ACLBody, "user svc-admin") {
+		t.Errorf("ACLBody missing service user block.\nGot:\n%s", result.ACLBody)
+	}
+	if !strings.Contains(result.ACLBody, "topic read #") {
+		t.Errorf("ACLBody missing service user 'topic read #' rule.\nGot:\n%s", result.ACLBody)
+	}
+	if !strings.Contains(result.ACLBody, "topic readwrite mcm/healthcheck") {
+		t.Errorf("ACLBody missing service user 'topic readwrite mcm/healthcheck' rule.\nGot:\n%s", result.ACLBody)
+	}
+}
+
 func TestApply_Disabled(t *testing.T) {
 	t.Parallel()
 

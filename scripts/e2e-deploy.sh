@@ -101,8 +101,13 @@ if [ -f ".env" ]; then
     exit 1
 fi
 
-echo "--- e2e-deploy: build + up (no env vars) ---"
-docker buildx build --load -t mcm:dev . >/dev/null
+echo "--- e2e-deploy: up (no env vars, image already loaded) ---"
+# The mcm:dev image is already loaded by the CI step that downloaded
+# the artifact from the image job. Rebuilding here would double the CI
+# time and the previous flow did that redundantly. Locally (when
+# running this script outside CI), the operator is expected to have
+# built mcm:dev first (e.g. `task build` or `docker buildx build
+# --load -t mcm:dev .`).
 $COMPOSE up -d
 
 echo "--- e2e-deploy: waiting for /livez (${WAIT_SECONDS}s budget) ---"

@@ -72,6 +72,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Dev target adds docker-cli + a docker group at the host socket
+      # GID so the MCM deploy service can run `docker exec … kill -HUP 1`
+      # against the bundled Mosquitto. The production target
+      # (declarative equivalent of `docker build --target prod`) does NOT
+      # include docker-cli — production deployments should not run the
+      # broker via docker exec from inside MCM. Set DOCKER_HOST_GID to
+      # the GID of /var/run/docker.sock on your host (run `stat -c '%g'
+      # /var/run/docker.sock`); the default 999 covers Ubuntu-derived
+      # hosts. CI runs `stat -c '%g' /var/run/docker.sock` and overrides
+      # per-run.
+      target: dev
+      args:
+        DOCKER_HOST_GID: "999"
     container_name: mcm-server
     restart: unless-stopped
     depends_on:
