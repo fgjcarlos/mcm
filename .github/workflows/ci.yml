@@ -105,6 +105,21 @@ jobs:
           docker stop mcm-smoke
           docker rm mcm-smoke
 
+      # --- E2E deploy artifact -----------------------------------------------------
+      # The e2e-deploy job below reuses the mcm:dev image built above.
+      # We `docker save` it and upload as an artifact so the dependent job
+      # can `docker load` without rebuilding (which would otherwise
+      # double the CI time for the frontend build).
+      - name: docker save (for e2e job)
+        run: docker save mcm:dev -o /tmp/mcm-dev.tar
+
+      - name: upload e2e image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev.tar
+          retention-days: 1
+
       # --- Go ---------------------------------------------------------------------
       - name: go test
         run: go test ./... -race -count=1
@@ -151,3 +166,36 @@ jobs:
 
       - name: npm run build (site)
         run: npm --prefix site run build
+
+  # E2E deploy flow for #275. Boots the dev Compose stack (MCM +
+  # Mosquitto), exercises the full deploy API path, and asserts the
+  # broker accepts an allowed publish and silently drops a forbidden
+  # one. The job depends on `image` and reuses the mcm:dev image via
+  # the artifact uploaded above so we do not rebuild the frontend in
+  # a second job.
+  e2e-deploy:
+    name: E2E deploy flow against live Mosquitto
+    runs-on: ubuntu-latest
+    needs: image
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev.tar
+
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev.tar
+
+      - name: scripts/e2e-deploy.sh
+        # Issue #275 acceptance criteria: prove the full MCM UI/API →
+        # Mosquitto deploy path on a live broker. The script asserts
+        # preview, apply, allowed-topic deliver, and forbidden-topic
+        # drop — see scripts/e2e-deploy.sh for the per-step invariants.
+        run: bash scripts/e2e-deploy.sh
