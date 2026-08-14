@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted (architecture slice — config and interface boundaries only)
+Superseded by the Docker-first pivot (#226, 2026-Q2) and the post-pivot
+`ROADMAP.md` ("Futuro" section). PostgreSQL is not a current goal and
+the `postgres` storage backend code introduced by this ADR is dormant.
+The current MVP is SQLite-only, with HA / multi-instance write
+coordination listed in the post-MVP "Futuro" bucket — and that bucket is
+the only path that would re-open the Postgres question. New
+contributors should treat the rest of this document as historical
+context.
 
 ## Context
 

@@ -198,6 +198,18 @@ jobs:
       - name: redocly lint
         run: npx -y @redocly/cli@latest lint docs/openapi.yaml
 
+      # --- Docs coherence ---------------------------------------------------------
+      # Issue #280: fail the build if active docs still reference removed
+      # CLI commands (mcm doctor / config validate / server / status /
+      # agent / backup / restore), the stale Go 1.24 baseline, the
+      # `:v<semver>` tag shape the workflow strips, or the dropped
+      # GoReleaser release tooling. ADRs explicitly marked
+      # `Status: Superseded` are exempt — they carry the historical
+      # record on purpose. See scripts/lint-docs.sh and
+      # ROADMAP.md "Historical scope".
+      - name: docs lint (removed CLI / stale versions)
+        run: bash scripts/lint-docs.sh
+
       # --- Astro site -------------------------------------------------------------
       - name: npm ci (site)
         run: npm --prefix site ci

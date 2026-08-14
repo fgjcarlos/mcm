@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted (the Go + stdlib `net/http` decision is still in force).
+The "CLI commands" bullet and the Cobra recommendation were dropped by
+the Docker-first pivot (#226, 2026-Q2); the binary now exposes only
+`--config` and `--version` (see `cmd/mcm/main.go`). Everything below
+that references a CLI surface is historical context.
 
 ## Context
 
