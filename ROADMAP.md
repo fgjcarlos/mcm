@@ -73,7 +73,7 @@ Exit criteria:
 - An operator can start Mosquitto + MCM locally.
 - An admin can log in, create a user, assign ACLs, and validate access from an MQTT client.
 - The UI shows broker status and basic client/topic activity.
-- `mcm doctor` detects common configuration problems.
+- `GET /readyz` exposes the broker connectivity check (TCP / TLS / MQTT) via the JSON body.
 
 ---
 
@@ -201,20 +201,25 @@ Recommended structure:
 Good issue example:
 
 ```markdown
-Title: Add initial Mosquitto health check to `mcm doctor`
+Title: Surface TLS failure phase in `/readyz` JSON body
 
 Context:
-MCM needs a CLI diagnostic command that verifies the broker is reachable.
+MCM already runs an MQTT probe in the readiness handler, but the JSON
+only exposes a generic "broker unavailable" string. Operators need to
+see whether the failure was TCP, TLS, or MQTT CONNACK so they can pivot
+without grepping logs.
 
 Scope:
-- Read broker host/port from config
-- Connect with an MQTT client
-- Report success/failure in terminal output
+- Extend `internal/diagnostics.MQTTResult` with a `Phase` field
+  (tcp | tls | mqtt).
+- Include the phase in the `/readyz` response body.
+- Add a test that asserts the phase is set for each failure mode.
 
 Acceptance criteria:
-- `mcm doctor` exits 0 when Mosquitto is reachable
-- `mcm doctor` exits non-zero when Mosquitto is unreachable
-- The output includes a human-readable error message
+- `/readyz` includes a `phase` field in the JSON body.
+- TCP failure → phase="tcp".
+- TLS handshake failure → phase="tls".
+- MQTT CONNACK rejection → phase="mqtt".
 ```
 
 Bad issue example:

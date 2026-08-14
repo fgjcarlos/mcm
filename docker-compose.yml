@@ -31,16 +31,25 @@ services:
       - "8080:8080"
     volumes:
       - mcm_data:/var/lib/mcm
-    # Inject secrets at runtime via env. MCM_AUTH_JWT_SECRET and
-    # MCM_BOOTSTRAP_ADMIN_PASSWORD must be supplied (use a .env file or
-    # the orchestrator's secret store). MCM_BOOTSTRAP_ADMIN_USERNAME
-    # defaults to "admin" when unset. Other fields come from
-    # internal/config.Default() and may be overridden with MCM_* env
-    # vars (MCM_HTTP_PORT, MCM_DATABASE_PATH, MCM_MOSQUITTO_HOST, etc.).
+    # Dev defaults: MCM_AUTH_JWT_SECRET and MCM_BOOTSTRAP_ADMIN_PASSWORD
+    # are left unset so the Go runtime auto-generates them on first boot.
+    # The JWT secret is persisted to <db dir>/.bootstrap.json (mode 0600)
+    # and reused on subsequent restarts. The bootstrap admin password is
+    # logged once on first boot — recover it via `task logs` / `docker
+    # compose logs mcm`. Operators that want explicit credentials (e.g.
+    # production) should layer in `docker-compose.secrets.yml` instead of
+    # editing this file; see deploy/mcm/README.md for the override shape.
+    #
+    # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
+    # validator rejects the "username set, password empty" combination,
+    # and the auto-generation path only fires when both are unset. The
+    # default username "admin" is applied by internal/config.Load() when
+    # the env var is absent.
+    #
+    # Other fields come from internal/config.Default() and may be
+    # overridden with MCM_* env vars (MCM_HTTP_PORT, MCM_DATABASE_PATH,
+    # MCM_MOSQUITTO_HOST, etc.).
     environment:
-      MCM_AUTH_JWT_SECRET: "${MCM_AUTH_JWT_SECRET:?required}"
-      MCM_BOOTSTRAP_ADMIN_USERNAME: "${MCM_BOOTSTRAP_ADMIN_USERNAME:-admin}"
-      MCM_BOOTSTRAP_ADMIN_PASSWORD: "${MCM_BOOTSTRAP_ADMIN_PASSWORD:?required}"
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
