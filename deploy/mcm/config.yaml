@@ -1,7 +1,23 @@
-# MCM Docker Compose configuration template.
-# REQUIRED before first run: set jwt_secret and bootstrap_admin.password below.
-# This file ships with placeholder values that fail validation — mcm will not
-# start until you replace them with strong, unique secrets.
+# MCM PRODUCTION configuration template.
+#
+# This file is a PRODUCTION-READY template showing the full file-based
+# config path. The dev Compose stack does NOT mount this file — the
+# dev Quickstart (task build && task up) relies on the Go runtime
+# auto-generating the JWT secret and the bootstrap admin password and
+# persisting the secret to <db dir>/.bootstrap.json.
+#
+# For production deployments you have two options:
+#   1. Layer `docker-compose.secrets.yml` on top of `docker-compose.yml`
+#      and supply MCM_AUTH_JWT_SECRET + MCM_BOOTSTRAP_ADMIN_PASSWORD
+#      via env vars or a .env file. See `docker-compose.secrets.yml` for
+#      the exact contract.
+#   2. Mount THIS file at /etc/mcm/config.yaml and set the same two
+#      env vars to override the placeholder values below.
+#
+# REQUIRED before deploying: replace the jwt_secret and
+# bootstrap_admin.password placeholders below with strong, unique
+# secrets. The config validator rejects these placeholder values, so
+# MCM will not start until you replace them.
 
 http:
   bind_address: "0.0.0.0"

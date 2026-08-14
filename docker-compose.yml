@@ -117,10 +117,10 @@ services:
     # are left unset so the Go runtime auto-generates them on first boot.
     # The JWT secret is persisted to <db dir>/.bootstrap.json (mode 0600)
     # and reused on subsequent restarts. The bootstrap admin password is
-    # logged once on first boot — recover it via `docker compose logs mcm`.
-    # Operators that want explicit credentials (e.g. production) should
-    # layer in `docker-compose.prod.yml` instead of editing this file;
-    # see deploy/mcm/README.md for the override shape.
+    # logged once on first boot — recover it via `task logs` / `docker
+    # compose logs mcm`. Operators that want explicit credentials (e.g.
+    # production) should layer in `docker-compose.secrets.yml` instead of
+    # editing this file; see deploy/mcm/README.md for the override shape.
     #
     # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
     # validator rejects the "username set, password empty" combination,
@@ -138,7 +138,7 @@ services:
     #
     # Other fields come from internal/config.Default() and may be
     # overridden with MCM_* env vars (MCM_HTTP_PORT, MCM_DATABASE_PATH,
-    # etc.).
+    # MCM_MOSQUITTO_HOST, etc.).
     environment:
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_MOSQUITTO_PORT: "1883"
