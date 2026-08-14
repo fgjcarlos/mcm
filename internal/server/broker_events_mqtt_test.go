@@ -119,7 +119,9 @@ func TestBrokerMonitorConnectsToRealMQTTBrokerAndAnnouncesStatus(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
 
-	events, unsubscribe := app.brokerEvents.Subscribe()
+	wsUser := seedAdminUser(t, store, "broker-mqtt-status", "broker-mqtt-status-password", false)
+
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
 	t.Cleanup(unsubscribe)
 	// Drain the buffered initial disconnected status published when the hub was created.
 	drainInitialStatus(t, events)
@@ -150,7 +152,9 @@ func TestBrokerMonitorBridgesIncomingTopicMessages(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
 
-	events, unsubscribe := app.brokerEvents.Subscribe()
+	wsUser := seedAdminUser(t, store, "broker-mqtt-bridge", "broker-mqtt-bridge-password", false)
+
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
 	t.Cleanup(unsubscribe)
 	drainInitialStatus(t, events)
 
@@ -198,7 +202,9 @@ func TestBrokerMonitorReconnectsAfterBrokerRestart(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })
 
-	events, unsubscribe := app.brokerEvents.Subscribe()
+	wsUser := seedAdminUser(t, store, "broker-mqtt-reconnect", "broker-mqtt-reconnect-password", false)
+
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
 	t.Cleanup(unsubscribe)
 	drainInitialStatus(t, events)
 
