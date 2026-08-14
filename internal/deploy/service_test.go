@@ -296,9 +296,12 @@ func TestPreview_ServiceUserHashReused(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 
-	// Pre-seed the on-disk passwd with the service user. The hash here
-	// is a stand-in for whatever was rendered on the previous apply.
-	const existingHash = "$7$101$existing-salt-12byte==$existing-derived-key=="
+	// Pre-seed the on-disk passwd with the service user and the same
+	// configured password. A matching valid hash must be reused verbatim.
+	existingHash, err := mosquitto.HashPassword("anything", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
 	writeFile(t, aclPath, "")
 	writeFile(t, passwdPath, "svc-admin:"+existingHash+"\n")
 
@@ -326,6 +329,48 @@ func TestPreview_ServiceUserHashReused(t *testing.T) {
 	// first preview — that's intentional.
 	if result.PasswdDiff != "" {
 		t.Errorf("want empty PasswdDiff (hash reused), got:\n%s", result.PasswdDiff)
+	}
+}
+
+func TestPreview_ServiceUserPasswordChangeRehashes(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	oldHash, err := mosquitto.HashPassword("old-password", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "svc-admin:"+oldHash+"\n")
+
+	svc := newTestService(
+		&fakeApplier{},
+		&fakeACLStore{},
+		&fakeMQTTUserLister{},
+		newFakeDeploymentStore(),
+		okHealthCheck,
+		deployCfg,
+	)
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "new-password"
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	entries := mosquitto.ParsePasswdFile(result.PasswdBody)
+	if len(entries) != 1 {
+		t.Fatalf("rendered passwd entries = %d, want 1", len(entries))
+	}
+	if entries[0].Hash == oldHash {
+		t.Fatal("service user retained the old hash after its configured password changed")
+	}
+	ok, err := mosquitto.VerifyPassword(entries[0].Hash, "new-password")
+	if err != nil {
+		t.Fatalf("VerifyPassword returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("rendered service-user hash does not match the new configured password")
 	}
 }
 

@@ -171,7 +171,11 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 	// in the MCM_MOSQUITTO_PASSWORD env var) produces a new hash.
 	if s.mosquittoCfg.Username != "" && s.mosquittoCfg.Password != "" {
 		hash := existingHashByUser[s.mosquittoCfg.Username]
-		if hash == "" {
+		matchesConfiguredPassword := false
+		if hash != "" {
+			matchesConfiguredPassword, _ = mosquitto.VerifyPassword(hash, s.mosquittoCfg.Password)
+		}
+		if !matchesConfiguredPassword {
 			var hashErr error
 			hash, hashErr = mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
 			if hashErr != nil {
