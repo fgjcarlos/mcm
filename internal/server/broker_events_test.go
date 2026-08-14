@@ -787,7 +787,6 @@ func readTestWebSocketFrame(t *testing.T, ctx context.Context, conn *websocket.C
 	return string(payload)
 }
 
-
 // TestBrokerEventsWebSocketRejectsDisabledUserOnUpgrade is a regression guard
 // for issue #276: a JWT whose admin user was disabled between token issuance
 // and the WebSocket upgrade must be rejected with 401, not allowed to start
