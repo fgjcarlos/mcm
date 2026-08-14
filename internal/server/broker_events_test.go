@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -83,7 +84,10 @@ func TestBrokerEventsWebSocketUpgradeWorksThroughWithRequestLogging(t *testing.T
 	defer cancel()
 
 	// Dial directly so the HTTP handshake response is captured and asserted.
-	token, _, err := app.tokens.Issue(1, "ws-test", auth.RoleAdmin, app.now().UTC())
+	// The WebSocket handler now revalidates the admin user before upgrade (issue #276),
+	// so seed one whose ID matches the JWT's user_id claim.
+	wsUser := seedAdminUser(t, store, "ws-test", "ws-test-password", false)
+	token, _, err := app.tokens.Issue(wsUser.ID, wsUser.Username, auth.RoleAdmin, app.now().UTC())
 	if err != nil {
 		t.Fatalf("Issue token returned error: %v", err)
 	}
@@ -148,7 +152,11 @@ func TestWithRequestLoggingRecordsStatus101AfterWebSocketUpgrade(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	token, _, err := app.tokens.Issue(1, "ws-metric-test", auth.RoleAdmin, app.now().UTC())
+	// Dial directly so the HTTP handshake response is captured and asserted.
+	// The WebSocket handler revalidates the admin user before upgrade (issue #276),
+	// so seed one whose ID matches the JWT's user_id claim.
+	wsMetricUser := seedAdminUser(t, store, "ws-metric-test", "ws-metric-test-password", false)
+	token, _, err := app.tokens.Issue(wsMetricUser.ID, wsMetricUser.Username, auth.RoleAdmin, app.now().UTC())
 	if err != nil {
 		t.Fatalf("Issue token returned error: %v", err)
 	}
@@ -595,9 +603,9 @@ func TestBrokerEventHubSnapshotIncludesPersistedTrafficMetrics(t *testing.T) {
 
 func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
 	hub := NewBrokerEventHub()
-	first, unsubscribeFirst := hub.Subscribe()
+	first, unsubscribeFirst := hub.Subscribe(0)
 	defer unsubscribeFirst()
-	second, unsubscribeSecond := hub.Subscribe()
+	second, unsubscribeSecond := hub.Subscribe(0)
 	defer unsubscribeSecond()
 
 	drainInitialStatus(t, first)
@@ -622,7 +630,7 @@ func TestBrokerEventHubReplaysBoundedLogBuffer(t *testing.T) {
 		hub.Publish(BrokerLogEvent("broker", "debug", fmt.Sprintf("log-%03d", i)))
 	}
 
-	events, unsubscribe := hub.Subscribe()
+	events, unsubscribe := hub.Subscribe(0)
 	defer unsubscribe()
 	drainInitialStatus(t, events)
 
@@ -710,7 +718,26 @@ func dialTestWebSocketRaw(t *testing.T, serverURL string, path string, protocolH
 func openAuthorizedTestWebSocket(t *testing.T, ctx context.Context, app *App, serverURL string, path string) *websocket.Conn {
 	t.Helper()
 
-	token, _, err := app.tokens.Issue(1, "ws-test", auth.RoleAdmin, app.now().UTC())
+	// The WebSocket handler now calls loadCurrentUser before upgrade (issue #276),
+	// so the admin user referenced by the JWT must exist and not be disabled.
+	// Create it once per test app and reuse the real ID when issuing the token.
+	ctx = app.contextOrBackground(ctx)
+	user, err := app.store.GetAdminUserByUsername(ctx, "ws-test")
+	if err != nil {
+		hash, hashErr := auth.HashPassword("ws-test-password")
+		if hashErr != nil {
+			t.Fatalf("HashPassword returned error: %v", hashErr)
+		}
+		user, err = app.store.CreateAdminUser(ctx, storage.CreateAdminUserParams{
+			Username:     "ws-test",
+			PasswordHash: hash,
+		})
+		if err != nil {
+			t.Fatalf("CreateAdminUser returned error: %v", err)
+		}
+	}
+
+	token, _, err := app.tokens.Issue(user.ID, user.Username, auth.RoleAdmin, app.now().UTC())
 	if err != nil {
 		t.Fatalf("Issue token returned error: %v", err)
 	}
@@ -732,6 +759,16 @@ func openAuthorizedTestWebSocket(t *testing.T, ctx context.Context, app *App, se
 	return conn
 }
 
+// contextOrBackground returns ctx when non-nil, context.Background() otherwise.
+// Helper for callers that pass a derived ctx (dial timeout) but want a
+// background for the storage layer.
+func (a *App) contextOrBackground(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 // readTestWebSocketFrame reads a single text message from the WebSocket connection and
 // asserts it is valid JSON. It returns the payload as a string.
 func readTestWebSocketFrame(t *testing.T, ctx context.Context, conn *websocket.Conn) string {
@@ -748,4 +785,116 @@ func readTestWebSocketFrame(t *testing.T, ctx context.Context, conn *websocket.C
 		t.Fatalf("websocket frame payload is not JSON: %s", string(payload))
 	}
 	return string(payload)
+}
+
+
+// TestBrokerEventsWebSocketRejectsDisabledUserOnUpgrade is a regression guard
+// for issue #276: a JWT whose admin user was disabled between token issuance
+// and the WebSocket upgrade must be rejected with 401, not allowed to start
+// streaming events.
+func TestBrokerEventsWebSocketRejectsDisabledUserOnUpgrade(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Seed a disabled admin user and issue a valid JWT for it.
+	user := seedAdminUser(t, store, "ws-disabled", "ws-disabled-password", true)
+	token, _, err := app.tokens.Issue(user.ID, user.Username, auth.RoleAdmin, app.now().UTC())
+	if err != nil {
+		t.Fatalf("Issue token returned error: %v", err)
+	}
+
+	server := httptest.NewServer(app.Handler())
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/broker/events"
+	conn, resp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{webSocketSubprotocol},
+		HTTPHeader: http.Header{
+			"Sec-WebSocket-Protocol": []string{"mcm.v1, Bearer." + token},
+		},
+	})
+	if err == nil {
+		conn.CloseNow()
+		t.Fatalf("websocket.Dial succeeded for disabled user; expected 401 rejection")
+	}
+	if resp == nil {
+		t.Fatalf("websocket.Dial returned no response (err=%v); expected 401", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("ws status for disabled user = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestBrokerEventsRevokeOnDisableClosesLiveSubscription is a regression guard
+// for issue #276: when an admin disables a user, the broker-event WebSocket
+// already open for that user must be closed within the same request.
+func TestBrokerEventsRevokeOnDisableClosesLiveSubscription(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	server := httptest.NewServer(app.Handler())
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Open an authorized WebSocket for a freshly-seeded enabled user.
+	conn := openAuthorizedTestWebSocket(t, ctx, app, server.URL, "/api/v1/broker/events")
+	defer conn.CloseNow()
+	// Drain the initial broker_status frame so the goroutine is parked on the events channel.
+	_, _, _ = conn.Reader(ctx)
+
+	// Disable the user via the HTTP API (same path a real admin would take).
+	// The PUT /api/v1/admin-users/{id} handler now calls RevokeUser when the
+	// transition is false→true, so the subscriber's channel closes and the
+	// goroutine returns, which closes the WebSocket with StatusPolicyViolation.
+	disableURL := server.URL + "/api/v1/admin-users/" + strconv.FormatInt(currentAdminUserID(t, app, store, "ws-test"), 10)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, disableURL, strings.NewReader(`{"username":"ws-test","disabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+adminToken(t, app, store))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("disable admin user request returned error: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("disable admin user status = %d, want 200", resp.StatusCode)
+	}
+
+	// The WebSocket must close. We assert by attempting to read with a short
+	// deadline — a live subscription would block past it.
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer readCancel()
+	_, _, readErr := conn.Reader(readCtx)
+	if readErr == nil {
+		t.Fatalf("WebSocket read succeeded after user disabled; expected closed connection")
+	}
+}
+
+// currentAdminUserID looks up the seeded admin user by username and returns
+// the ID — used to drive PUT /api/v1/admin-users/{id} from tests without
+// hard-coding IDs.
+func currentAdminUserID(t *testing.T, app *App, store *storage.Store, username string) int64 {
+	t.Helper()
+	user, err := store.GetAdminUserByUsername(context.Background(), username)
+	if err != nil {
+		t.Fatalf("GetAdminUserByUsername(%q) returned error: %v", username, err)
+	}
+	return user.ID
+}
+
+// adminToken issues a JWT for an admin user seeded in this test app.
+// Used to authorize admin-side requests (disable / delete) inside other tests.
+func adminToken(t *testing.T, app *App, store *storage.Store) string {
+	t.Helper()
+	// Use a separate seeded admin to avoid self-revocation when the test user is the one being disabled.
+	admin := seedAdminUser(t, store, "ws-test-admin", "ws-test-admin-password", false)
+	tok, _, err := app.tokens.Issue(admin.ID, admin.Username, auth.RoleAdmin, app.now().UTC())
+	if err != nil {
+		t.Fatalf("Issue token returned error: %v", err)
+	}
+	return tok
 }
