@@ -305,3 +305,117 @@ func TestRenderPasswdFile(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePasswdFile(t *testing.T) {
+	t.Parallel()
+
+	hashAlice, err := HashPassword("alice-pass", DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword for alice: %v", err)
+	}
+	hashBob, err := HashPassword("bob-pass", DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword for bob: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		body string
+		want []PasswdEntry
+	}{
+		{
+			name: "empty",
+			body: "",
+			want: nil,
+		},
+		{
+			name: "only whitespace",
+			body: "\n\n  \n",
+			want: nil,
+		},
+		{
+			name: "single entry",
+			body: "alice:" + hashAlice + "\n",
+			want: []PasswdEntry{{Username: "alice", Hash: hashAlice}},
+		},
+		{
+			name: "two entries with comments",
+			body: "# header\nalice:" + hashAlice + "\n# inline\nbob:" + hashBob + "\n",
+			want: []PasswdEntry{
+				{Username: "alice", Hash: hashAlice},
+				{Username: "bob", Hash: hashBob},
+			},
+		},
+		{
+			name: "malformed lines skipped",
+			body: "no-colon\n:missing-user\nmissing-hash:\nvalid:" + hashAlice,
+			want: []PasswdEntry{{Username: "valid", Hash: hashAlice}},
+		},
+		{
+			name: "preserves insertion order",
+			body: "bob:" + hashBob + "\nalice:" + hashAlice + "\n",
+			want: []PasswdEntry{
+				{Username: "bob", Hash: hashBob},
+				{Username: "alice", Hash: hashAlice},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := ParsePasswdFile(tc.body)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ParsePasswdFile() len = %d, want %d (got=%+v)", len(got), len(tc.want), got)
+			}
+			for i, e := range got {
+				if e.Username != tc.want[i].Username || e.Hash != tc.want[i].Hash {
+					t.Errorf("ParsePasswdFile()[%d] = %+v, want %+v", i, e, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestParseAndRenderPasswdFileRoundTrip documents that the two functions
+// are exact inverses for non-malformed input — the deploy service uses
+// this to preserve the broker service user's hash across applies instead
+// of re-hashing on every render (which would defeat has_changes
+// idempotency, issue #275 review).
+func TestParseAndRenderPasswdFileRoundTrip(t *testing.T) {
+	t.Parallel()
+	hashAlice, err := HashPassword("alice-pass", DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	hashBob, err := HashPassword("bob-pass", DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	original := []PasswdEntry{
+		{Username: "bob", Hash: hashBob},
+		{Username: "alice", Hash: hashAlice},
+	}
+	body := RenderPasswdFile(original)
+	parsed := ParsePasswdFile(body)
+	if len(parsed) != 2 {
+		t.Fatalf("round-trip len = %d, want 2", len(parsed))
+	}
+	// RenderPasswdFile sorts by username; check we got them back in the right order.
+	if parsed[0].Username != "alice" || parsed[1].Username != "bob" {
+		t.Errorf("round-trip order: got %v %v, want alice bob", parsed[0].Username, parsed[1].Username)
+	}
+	for i, e := range parsed {
+		switch e.Username {
+		case "alice":
+			if e.Hash != hashAlice {
+				t.Errorf("alice hash drifted across round-trip")
+			}
+		case "bob":
+			if e.Hash != hashBob {
+				t.Errorf("bob hash drifted across round-trip")
+			}
+		}
+		_ = i
+	}
+}

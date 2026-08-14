@@ -284,6 +284,137 @@ func TestPreview_HappyPath(t *testing.T) {
 	}
 }
 
+// TestPreview_ServiceUserHashReused covers the follow-up review on PR #284:
+// render() must NOT re-hash the broker service user on every call. Re-hashing
+// with a fresh random salt makes the rendered passwd file always-different
+// from the on-disk file, so has_changes is never false on a no-op preview,
+// and every apply call rewrites the file + SIGHUPs the broker even when
+// nothing changed. The fix: read the existing passwd file, look up the
+// service user, reuse that hash verbatim.
+func TestPreview_ServiceUserHashReused(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+
+	// Pre-seed the on-disk passwd with the service user and the same
+	// configured password. A matching valid hash must be reused verbatim.
+	existingHash, err := mosquitto.HashPassword("anything", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "svc-admin:"+existingHash+"\n")
+
+	aclStore := &fakeACLStore{}
+	mqttStore := &fakeMQTTUserLister{}
+
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	// Configure the service user so render() looks it up.
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "anything" // never re-hashed; the existing entry wins
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	// The passwd body must use the existing hash verbatim, not a fresh one.
+	if !strings.Contains(result.PasswdBody, existingHash) {
+		t.Errorf("PasswdBody did not reuse the existing hash.\nGot:\n%s", result.PasswdBody)
+	}
+	// The passwd diff against the on-disk file must be empty: the rendered
+	// passwd is byte-identical to the existing one. We assert on the
+	// passwd diff specifically (not HasChanges) because the service user
+	// ACL block is also always emitted, so the ACL diff is non-empty on
+	// first preview — that's intentional.
+	if result.PasswdDiff != "" {
+		t.Errorf("want empty PasswdDiff (hash reused), got:\n%s", result.PasswdDiff)
+	}
+}
+
+func TestPreview_ServiceUserPasswordChangeRehashes(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	oldHash, err := mosquitto.HashPassword("old-password", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "svc-admin:"+oldHash+"\n")
+
+	svc := newTestService(
+		&fakeApplier{},
+		&fakeACLStore{},
+		&fakeMQTTUserLister{},
+		newFakeDeploymentStore(),
+		okHealthCheck,
+		deployCfg,
+	)
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "new-password"
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	entries := mosquitto.ParsePasswdFile(result.PasswdBody)
+	if len(entries) != 1 {
+		t.Fatalf("rendered passwd entries = %d, want 1", len(entries))
+	}
+	if entries[0].Hash == oldHash {
+		t.Fatal("service user retained the old hash after its configured password changed")
+	}
+	ok, err := mosquitto.VerifyPassword(entries[0].Hash, "new-password")
+	if err != nil {
+		t.Fatalf("VerifyPassword returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("rendered service-user hash does not match the new configured password")
+	}
+}
+
+// TestPreview_ServiceUserACLAlwaysPresent covers the follow-up review on
+// PR #284: an empty ACL file means DENY ALL in Mosquitto. The service
+// user (MCM_MOSQUITTO_USERNAME) is the operator's own connection to the
+// broker — it must always have at least a baseline set of rules so the
+// deploy healthcheck and the broker events feed keep working after every
+// apply. The fix: render() always appends a service-user block to the
+// ACL body, regardless of what the operator's rule store contains.
+func TestPreview_ServiceUserACLAlwaysPresent(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+
+	// Empty operator ruleset + empty on-disk ACL.
+	aclStore := &fakeACLStore{}
+	mqttStore := &fakeMQTTUserLister{}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "")
+
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc.mosquittoCfg.Username = "svc-admin"
+	svc.mosquittoCfg.Password = "p"
+
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	// The ACL body must contain the service user block with read # and
+	// readwrite mcm/healthcheck. Without those, the deploy healthcheck
+	// silently fails on an ACL-enabled Mosquitto (issue #275 review).
+	if !strings.Contains(result.ACLBody, "user svc-admin") {
+		t.Errorf("ACLBody missing service user block.\nGot:\n%s", result.ACLBody)
+	}
+	if !strings.Contains(result.ACLBody, "topic read #") {
+		t.Errorf("ACLBody missing service user 'topic read #' rule.\nGot:\n%s", result.ACLBody)
+	}
+	if !strings.Contains(result.ACLBody, "topic readwrite mcm/healthcheck") {
+		t.Errorf("ACLBody missing service user 'topic readwrite mcm/healthcheck' rule.\nGot:\n%s", result.ACLBody)
+	}
+}
+
 func TestApply_Disabled(t *testing.T) {
 	t.Parallel()
 
@@ -439,6 +570,187 @@ func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _ string) error {
 		return nil // first call (apply) succeeds
 	}
 	return errors.New("rollback applier: write failed")
+}
+
+// recordingAudit captures every audit call for assertions.
+type recordingAudit struct {
+	mu    sync.Mutex
+	calls []auditCall
+}
+
+type auditCall struct {
+	actor        string
+	action       string
+	resourceType string
+	resourceID   string
+	result       string
+}
+
+func (r *recordingAudit) record(_ context.Context, actor, action, resourceType, resourceID, result string, _ []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, auditCall{
+		actor:        actor,
+		action:       action,
+		resourceType: resourceType,
+		resourceID:   resourceID,
+		result:       result,
+	})
+}
+
+func (r *recordingAudit) actions() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.calls))
+	for _, c := range r.calls {
+		out = append(out, c.action+":"+c.result)
+	}
+	return out
+}
+
+// newTestServiceWithAudit wires the service with a recording audit fn.
+func newTestServiceWithAudit(
+	applier mosquitto.Applier,
+	aclStore acl.Store,
+	mqttStore MQTTUserLister,
+	deployStore DeploymentStore,
+	healthCheck HealthChecker,
+	deployCfg config.DeployConfig,
+	audit *recordingAudit,
+) *Service {
+	return NewService(applier, aclStore, mqttStore, deployStore, healthCheck,
+		config.MosquittoConfig{Host: "localhost", Port: 1883},
+		deployCfg,
+		audit.record,
+	)
+}
+
+// TestApply_HealthcheckFailure_AuditAndFilesReverted covers the full rollback
+// lifecycle: when the healthcheck fails but the rollback applier call succeeds,
+// the on-disk files must be reverted to the snapshot and an audit event of
+// type deployment.rolled_back with result "failure" must be emitted.
+//
+// This locks in the contract that #275 depends on: a successful rollback
+// leaves the broker in the exact state it was in before the failed deploy.
+func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl content")
+	writeFile(t, passwdPath, "old passwd content")
+
+	applier := &fakeApplier{}
+	store := newFakeDeploymentStore()
+	audit := &recordingAudit{}
+
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg, audit)
+
+	d, err := svc.Apply(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Apply returned unexpected error: %v", err)
+	}
+	if d.Status != "rolled_back" {
+		t.Errorf("Status = %q, want %q", d.Status, "rolled_back")
+	}
+	// Applier was called twice: apply + rollback.
+	if applier.callCount() != 2 {
+		t.Fatalf("applier called %d times, want 2", applier.callCount())
+	}
+	// Second call (rollback) uses the snapshot content.
+	rollbackCall := applier.callAt(1)
+	if rollbackCall.aclBody != "old acl content" {
+		t.Errorf("rollback aclBody = %q, want %q", rollbackCall.aclBody, "old acl content")
+	}
+	if rollbackCall.passwdBody != "old passwd content" {
+		t.Errorf("rollback passwdBody = %q, want %q", rollbackCall.passwdBody, "old passwd content")
+	}
+
+	// On-disk files must match the snapshot after rollback.
+	gotACL, err := os.ReadFile(aclPath)
+	if err != nil {
+		t.Fatalf("ReadFile acl: %v", err)
+	}
+	if string(gotACL) != "old acl content" {
+		t.Errorf("acl on disk after rollback = %q, want %q", string(gotACL), "old acl content")
+	}
+	gotPasswd, err := os.ReadFile(passwdPath)
+	if err != nil {
+		t.Fatalf("ReadFile passwd: %v", err)
+	}
+	if string(gotPasswd) != "old passwd content" {
+		t.Errorf("passwd on disk after rollback = %q, want %q", string(gotPasswd), "old passwd content")
+	}
+
+	// Audit events: must contain deployment.rolled_back:failure, must NOT
+	// contain deployment.applied:success.
+	actions := audit.actions()
+	if !contains(actions, "deployment.rolled_back:failure") {
+		t.Errorf("audit actions = %v, want deployment.rolled_back:failure", actions)
+	}
+	for _, a := range actions {
+		if a == "deployment.applied:success" {
+			t.Errorf("audit actions = %v, must not include deployment.applied:success when healthcheck failed", actions)
+		}
+	}
+}
+
+// TestApply_RollbackFailure_AuditEmitted covers the case where the rollback
+// applier call itself fails. The service must surface an error to the caller,
+// persist status "rollback_failed", and emit an audit event of type
+// deployment.rollback_failed with result "failure".
+//
+// This is the contract #275 acceptance criteria "A failed reload reverts the
+// files and emits an audit event" depends on. When the rollback itself fails
+// the revert is necessarily incomplete, so the audit must record the failure
+// so operators can investigate.
+func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := &rollbackFailFakeApplier{}
+	store := newFakeDeploymentStore()
+	audit := &recordingAudit{}
+
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg, audit)
+
+	_, err := svc.Apply(context.Background(), "operator")
+	if err == nil {
+		t.Fatal("Apply with rollback failure: want error, got nil")
+	}
+
+	recs, _ := store.ListDeployments(context.Background(), 20, 0)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 deployment record, got %d", len(recs))
+	}
+	if recs[0].Status != "rollback_failed" {
+		t.Errorf("Status = %q, want %q", recs[0].Status, "rollback_failed")
+	}
+	if !strings.Contains(recs[0].Message, "rollback") {
+		t.Errorf("Message = %q, want substring 'rollback'", recs[0].Message)
+	}
+
+	actions := audit.actions()
+	if !contains(actions, "deployment.rollback_failed:failure") {
+		t.Errorf("audit actions = %v, want deployment.rollback_failed:failure", actions)
+	}
+	for _, a := range actions {
+		if a == "deployment.applied:success" {
+			t.Errorf("audit actions = %v, must not include deployment.applied:success when rollback failed", actions)
+		}
+	}
+}
+
+// contains reports whether slice contains s.
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApply_ConcurrentApplyReturnsInProgress(t *testing.T) {

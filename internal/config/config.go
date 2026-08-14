@@ -499,6 +499,13 @@ func Parse(data []byte) (Config, error) {
 //	MCM_MOSQUITTO_PORT                -> Mosquitto.Port
 //	MCM_MOSQUITTO_USERNAME            -> Mosquitto.Username
 //	MCM_MOSQUITTO_PASSWORD            -> Mosquitto.Password
+//	MCM_MOSQUITTO_DEPLOY_MODE               -> Mosquitto.Deploy.Mode
+//	MCM_MOSQUITTO_DEPLOY_ACL_PATH            -> Mosquitto.Deploy.ACLPath
+//	MCM_MOSQUITTO_DEPLOY_PASSWD_PATH         -> Mosquitto.Deploy.PasswdPath
+//	MCM_MOSQUITTO_DEPLOY_PID_PATH            -> Mosquitto.Deploy.PIDPath
+//	MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME      -> Mosquitto.Deploy.ContainerName
+//	MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY     -> Mosquitto.Deploy.ReloadStrategy
+//	MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT -> Mosquitto.Deploy.HealthcheckTimeout
 //	MCM_LOG_LEVEL                     -> Logging.Level
 //	MCM_LOG_FORMAT                    -> Logging.Format
 func applyEnvOverrides(cfg *Config) {
@@ -538,6 +545,29 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MCM_MOSQUITTO_PASSWORD"); v != "" {
 		cfg.Mosquitto.Password = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_MODE"); v != "" {
+		cfg.Mosquitto.Deploy.Mode = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH"); v != "" {
+		cfg.Mosquitto.Deploy.ACLPath = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH"); v != "" {
+		cfg.Mosquitto.Deploy.PasswdPath = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_PID_PATH"); v != "" {
+		cfg.Mosquitto.Deploy.PIDPath = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME"); v != "" {
+		cfg.Mosquitto.Deploy.ContainerName = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY"); v != "" {
+		cfg.Mosquitto.Deploy.ReloadStrategy = v
+	}
+	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Mosquitto.Deploy.HealthcheckTimeout = d
+		}
 	}
 	if v := os.Getenv("MCM_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v

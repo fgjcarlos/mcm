@@ -113,3 +113,30 @@ func RenderPasswdFile(entries []PasswdEntry) string {
 	}
 	return b.String()
 }
+
+// ParsePasswdFile is the inverse of RenderPasswdFile: it reads a
+// Mosquitto password file and returns the entries keyed by username.
+// Empty input and comments return an empty slice. Malformed lines are
+// skipped silently — the file is operator-managed and the renderer is
+// responsible for re-emitting a clean copy on apply.
+func ParsePasswdFile(body string) []PasswdEntry {
+	if body == "" {
+		return nil
+	}
+	var entries []PasswdEntry
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, ':')
+		if idx <= 0 || idx == len(line)-1 {
+			continue
+		}
+		entries = append(entries, PasswdEntry{
+			Username: strings.TrimSpace(line[:idx]),
+			Hash:     strings.TrimSpace(line[idx+1:]),
+		})
+	}
+	return entries
+}
