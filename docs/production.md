@@ -179,7 +179,7 @@ home labs, not for production stability:
 
 #   services:
 #     mcm:
-#       image: ghcr.io/fgjcarlos/mcm:v0.1.0
+#       image: ghcr.io/fgjcarlos/mcm:0.1.0  # release workflow drops the leading v from GHCR tag
 #       # ... rest unchanged
 
 docker compose pull mcm

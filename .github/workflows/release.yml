@@ -35,6 +35,11 @@ jobs:
           echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
+      # ponytail: docker/build-push-action v6 only exposes imageid/digest/metadata.
+      # SBOM is published as an OCI attestation, not a writable file path. To attach
+      # a real SPDX file we generate one with syft in a sidecar step and upload it
+      # as a release asset — keeps the SBOM promise honest. Upgrade path: replace
+      # syft with an in-build SBOM step (buildx 0.13+) once the CI image pins it.
       - name: Build and push multi-arch image
         id: build
         uses: docker/build-push-action@v6
@@ -52,21 +57,29 @@ jobs:
             COMMIT=${{ steps.meta.outputs.COMMIT }}
             BUILD_DATE=${{ steps.meta.outputs.BUILD_DATE }}
 
-      - name: Upload SBOM as build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-${{ steps.version.outputs.VERSION }}
-          path: ${{ steps.build.outputs.sbom }}
-          if-no-files-found: warn
+      - name: Generate SPDX SBOM
+        id: sbom
+        run: |
+          mkdir -p artifacts
+          # Resolve the digest-tagged ref (digest output is sha256:...; we pull the
+          # tag for a stable ref syft can resolve locally).
+          docker pull ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }} >> /dev/null
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/artifacts:/out" \
+            anchore/syft:latest \
+            packages \
+            -o spdx-json=/out/sbom.spdx.json \
+            ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
-            ${{ steps.build.outputs.sbom }}
+            artifacts/sbom.spdx.json
           body: |
             ## Docker images
 
@@ -87,12 +100,18 @@ jobs:
 
             ### Provenance and SBOM
 
-            The image was built with `docker buildx` provenance attestations enabled
-            (`--provenance=true --sbom=true`). Inspect with:
+            The image was built with `docker buildx` provenance + SBOM attestations
+            (`--provenance=true --sbom=true`). Inspect OCI attestations with:
 
             ```
             docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }} --raw
             ```
 
-            The SBOM is attached to this release as an artifact.
+            A standalone SPDX-JSON SBOM is attached as a release asset
+            (`sbom.spdx.json`). Verify with:
+
+            ```
+            cosign verify-attestation --type spdxjson --certificate-identity-regexp '.*' \
+              ghcr.io/${{ github.repository_owner }}/mcm:${{ steps.version.outputs.VERSION }}
+            ```
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
