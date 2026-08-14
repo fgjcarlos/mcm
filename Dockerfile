@@ -9,11 +9,21 @@ RUN npm run build
 # Stage 2: Build Go backend
 FROM golang:1.25-alpine AS backend
 WORKDIR /app
+
+# Build info injected via -ldflags so `mcm --version` reports the actual
+# commit and timestamp instead of the dev defaults baked into main.go.
+# Plain `docker buildx build` (no --build-arg) produces the dev banner.
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./frontend/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /mcm ./cmd/mcm
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o /mcm ./cmd/mcm
 
 # Stage 3: Production image (default target)
 #

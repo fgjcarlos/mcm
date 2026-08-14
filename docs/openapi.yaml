@@ -354,9 +354,14 @@ paths:
     delete:
       tags: [Admin Users]
       summary: Delete admin user
-      description: Requires admin.
+      description: Requires admin. The request body is ignored — only the path ID is read.
       responses:
         "204": { description: User deleted. }
+        "400":
+          description: Invalid path ID (not a positive integer).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -498,9 +503,14 @@ paths:
     delete:
       tags: [JSON Schemas]
       summary: Delete JSON schema validator
-      description: Requires operator or higher.
+      description: Requires operator or higher. The request body is ignored — only the path ID is read.
       responses:
         "204": { description: Schema deleted. }
+        "400":
+          description: Invalid path ID (not a positive integer).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -669,8 +679,8 @@ components:
     LoginRequest:
       type: object
       properties:
-        username: { type: string }
-        password: { type: string, format: password }
+        username: { type: string, minLength: 1 }
+        password: { type: string, format: password, minLength: 1 }
       required: [username, password]
     LoginResponse:
       type: object
@@ -689,9 +699,10 @@ components:
     LoginMFARequest:
       type: object
       properties:
-        mfa_challenge: { type: string, format: jwt }
+        mfa_challenge: { type: string, format: jwt, minLength: 1 }
         code:
           type: string
+          minLength: 1
           description: TOTP code (6 digits) or one of the recovery codes returned at enrollment.
       required: [mfa_challenge, code]
     MFASetupResponse:
@@ -713,6 +724,7 @@ components:
       properties:
         code:
           type: string
+          minLength: 1
           description: First TOTP code from the pending secret.
       required: [code]
     MFADisableRequest:
@@ -721,6 +733,7 @@ components:
         password:
           type: string
           format: password
+          minLength: 1
           description: The current account password — required for re-authentication before disabling MFA.
       required: [password]
     AdminUser:
@@ -736,16 +749,14 @@ components:
     AdminUserRequest:
       type: object
       properties:
-        username: { type: string }
+        username: { type: string, minLength: 1 }
         password:
           type: string
           format: password
           description: Required for POST; optional on PUT (omit to keep current password).
         disabled: { type: boolean, default: false }
         role:
-          allOf:
-            - $ref: "#/components/schemas/Role"
-          description: Defaults to `admin` when omitted.
+          $ref: "#/components/schemas/Role"
       required: [username]
     Role:
       type: string
@@ -774,6 +785,7 @@ components:
         permission: { $ref: "#/components/schemas/ACLPermission" }
         description: { type: string }
       required: [principal, topic_filter, permission]
+      additionalProperties: false
     ACLPermission:
       type: string
       enum: [read, write, readwrite]
@@ -806,6 +818,7 @@ components:
         description: { type: string }
         enabled: { type: boolean, default: true }
       required: [name, topic_filter, schema]
+      additionalProperties: false
     AuditEvent:
       type: object
       properties:

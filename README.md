@@ -129,6 +129,13 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 
 ## Reference
 
+### CLI flags
+
+| Flag       | Default          | Description                                            |
+| ---------- | ---------------- | ------------------------------------------------------ |
+| `--config` | (none, env-only) | Path to a YAML config file. All settings can also be set via `MCM_*` environment variables. See [deploy/mcm/README.md](./deploy/mcm/README.md). |
+| `--version`| `false`          | Print build info (`mcm <version> (commit <sha>, built <iso8601>)`) and exit. Values come from `-ldflags` at build time; a plain `docker buildx build` (no `--build-arg`) prints `mcm dev (commit none, built unknown)`. |
+
 ### Health probes
 
 | Endpoint     | Body                              | Status           | Semantics                                                                                  |

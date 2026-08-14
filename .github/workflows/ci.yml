@@ -39,13 +39,21 @@ jobs:
       # (where the socket typically lives at GID 999) and on local
       # workstations with the conventional GID 997.
       - name: docker buildx build (dev target)
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           echo "Building dev target with DOCKER_HOST_GID=${DOCKER_HOST_GID}"
           docker buildx build --load \
             --target dev \
             --build-arg "DOCKER_HOST_GID=${DOCKER_HOST_GID}" \
-            -t mcm:dev .
+            --build-arg "VERSION=${VERSION}" \
+            --build-arg "COMMIT=${COMMIT}" \
+            --build-arg "BUILD_DATE=${BUILD_DATE}" \
+            -t mcm:dev \
+            .
 
       # Smoke run: build the image, mount a minimal valid YAML so the
       # binary's --config flag resolves, and supply the secrets + bootstrap

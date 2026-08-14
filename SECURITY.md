@@ -68,15 +68,18 @@ record unless you prefer to remain anonymous.
 
 ## Supported versions
 
-MCM is currently pre-1.0 and has not yet shipped a tagged release. The
-policy below applies from the first tagged release onward and will be
-updated as the project stabilises.
+The current supported line is `v0.1.x`. Commits on `main` before `v0.1.0` are
+best-effort; production deployments should pin a tagged release, not a branch
+or `latest`.
 
 | Version line            | Support status                  | Security fixes         |
 | ----------------------- | ------------------------------- | ---------------------- |
-| Latest minor release    | **Active support**              | Yes                    |
-| Previous minor release  | **Critical / high fixes only**  | Yes, until the next minor is out for 30 days |
+| `v0.1.x` (latest)       | **Active support**              | Yes                    |
+| Pre-`v0.1.0` commits    | **End of life**                 | No — please upgrade to `v0.1.x` |
 | Older minor releases    | **End of life**                 | No — please upgrade    |
+
+When a new minor line ships (e.g. `v0.2.x`), the previous line moves to
+critical / high fixes only for a 30-day overlap window.
 
 Concretely:
 

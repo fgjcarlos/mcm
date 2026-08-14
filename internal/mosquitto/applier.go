@@ -2,7 +2,9 @@ package mosquitto
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,37 +47,47 @@ func atomicWrite(path, content string, perm os.FileMode) error {
 	tmpName := tmp.Name()
 
 	if _, err := tmp.WriteString(content); err != nil {
-		//nolint:errcheck // best-effort cleanup; original write error is the one to surface
-		tmp.Close()
-		//nolint:errcheck // best-effort cleanup; original write error is the one to surface
-		os.Remove(tmpName)
+		cleanupTemp(tmp, tmpName, slog.Default())
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		//nolint:errcheck // best-effort cleanup; original chmod error is the one to surface
-		tmp.Close()
-		//nolint:errcheck // best-effort cleanup; original chmod error is the one to surface
-		os.Remove(tmpName)
+		cleanupTemp(tmp, tmpName, slog.Default())
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		//nolint:errcheck // best-effort cleanup; original sync error is the one to surface
-		tmp.Close()
-		//nolint:errcheck // best-effort cleanup; original sync error is the one to surface
-		os.Remove(tmpName)
+		cleanupTemp(tmp, tmpName, slog.Default())
 		return fmt.Errorf("sync temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		//nolint:errcheck // best-effort cleanup; original close error is the one to surface
-		os.Remove(tmpName)
+		cleanupTemp(nil, tmpName, slog.Default())
 		return fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		//nolint:errcheck // best-effort cleanup; original rename error is the one to surface
-		os.Remove(tmpName)
+		cleanupTemp(nil, tmpName, slog.Default())
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 	return nil
+}
+
+// cleanupTemp is the best-effort cleanup path for atomicWrite's error
+// branches. The original write/chmod/sync/close/rename error is returned
+// to the caller; cleanup errors are logged via slog.Warn (not returned)
+// because they cannot supersede the primary error. A missing temp file at
+// Remove time is not an error — it means the temp was never created or
+// was already reaped.
+func cleanupTemp(tmp *os.File, name string, logger *slog.Logger) {
+	if tmp != nil {
+		if err := tmp.Close(); err != nil && logger != nil {
+			logger.Warn("close temp file failed",
+				slog.String("path", name),
+				slog.String("error", err.Error()))
+		}
+	}
+	if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) && logger != nil {
+		logger.Warn("remove temp file failed",
+			slog.String("path", name),
+			slog.String("error", err.Error()))
+	}
 }
 
 // Apply atomically writes the ACL and password files, then sends SIGHUP to
