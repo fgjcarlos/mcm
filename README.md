@@ -34,31 +34,121 @@ Open <http://localhost:8080> and sign in with `admin` + the password from `task 
 
 ## Configuration
 
-MCM is configured through `MCM_*` environment variables. A YAML file can be mounted for non-secret defaults via `MCM_CONFIG_FILE`; env vars override every field the YAML sets.
+MCM is configured through `MCM_*` environment variables. A YAML file can be mounted for non-secret defaults via `MCM_CONFIG_FILE`; env vars override every field the YAML sets. Every variable below is enforced by `internal/config/env_bindings.go` — a typo in a name or a malformed value aborts startup with an actionable error (see [issue #279](https://github.com/fgjcarlos/mcm/issues/279) for the strict-parsing contract).
 
-| Variable                          | Default            | Notes                                                |
-| --------------------------------- | ------------------ | ---------------------------------------------------- |
-| `MCM_HTTP_BIND_ADDRESS`           | `0.0.0.0`          |                                                      |
-| `MCM_HTTP_PORT`                   | `8080`             |                                                      |
-| `MCM_DATABASE_PATH`               | `/var/lib/mcm/mcm.db` | Parent dir must be writable so the JWT-secret bootstrap can persist. |
-| `MCM_AUTH_JWT_SECRET`             | *(auto-generated)* | 64-hex-char random secret persisted to `<db dir>/.bootstrap.json` (mode 0600). Set explicitly to control across restarts. |
-| `MCM_AUTH_TOKEN_TTL`              | `24h`              | Go duration.                                         |
-| `MCM_BOOTSTRAP_ADMIN_USERNAME`    | `admin`            | First-boot only. Leave both empty to auto-generate.  |
-| `MCM_BOOTSTRAP_ADMIN_PASSWORD`    | *(auto-generated)* | 24-char random password logged once on first boot.   |
-| `MCM_MOSQUITTO_HOST`              | `mosquitto`        | The bundled compose service.                         |
-| `MCM_MOSQUITTO_PORT`              | `1883`             |                                                      |
-| `MCM_MOSQUITTO_USERNAME`          | `admin`            | Dev default matches the Mosquitto bootstrap script.   |
-| `MCM_MOSQUITTO_PASSWORD`          | `mcm-dev-broker-password` | Dev default matches the Mosquitto bootstrap script. Dev-only — production reads this from a secret manager. |
-| `MCM_MOSQUITTO_DEPLOY_MODE`       | *(unset)*          | `docker` (dev: shared volume + `docker exec kill -HUP 1`), `file` (production: write into a shared dir, broker reloads on its own trigger), or empty (deploy disabled). |
-| `MCM_MOSQUITTO_DEPLOY_ACL_PATH`   | *(unset)*          | On-disk path for the rendered ACL file. Dev: `/var/lib/mosquitto-config/acl` (named volume). |
-| `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH`| *(unset)*          | On-disk path for the rendered passwd file. Dev: `/var/lib/mosquitto-config/passwd`. |
-| `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` | *(unset)*      | Required when `MCM_MOSQUITTO_DEPLOY_MODE=docker`. The Mosquitto container to SIGHUP. |
-| `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` | *(unset)*     | `sighup` (the only supported strategy right now).    |
-| `MCM_LOG_LEVEL`                   | `info`             | `debug`, `info`, `warn`, `error`.                    |
-| `MCM_LOG_FORMAT`                  | `json`             | `json` or `text`.                                    |
-| `MCM_CONFIG_FILE`                 | *(unset)*          | Optional YAML file loaded before env overrides.      |
+### HTTP listener
 
-Full field documentation lives at the top of [`internal/config/config.go`](./internal/config/config.go).
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_HTTP_BIND_ADDRESS` | `0.0.0.0` | Interface the HTTP API binds to. Loopback/private in production (proxy owns the public address). |
+| `MCM_HTTP_PORT` | `8080` | TCP port for the HTTP API. 1..65535. |
+| `MCM_HTTP_TRUSTED_PROXIES` | *(unset)* | Comma-separated IP/CIDR list. MCM honors `X-Forwarded-For` / `X-Real-IP` from peers in this list. Empty (default) trusts no proxy. |
+| `MCM_HTTP_CORS_ALLOWED_ORIGINS` | *(unset)* | Comma-separated exact origins (scheme://host[:port]) permitted to make cross-origin requests. Empty = same-origin only. |
+
+### HTTP TLS / mTLS
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_HTTP_TLS_ENABLED` | `false` | Serve HTTPS directly from MCM. Off (default) means terminate TLS at the proxy. |
+| `MCM_HTTP_TLS_CERT_FILE` | *(unset)* | Path to PEM-encoded server certificate. Required when `MCM_HTTP_TLS_ENABLED=true`. |
+| `MCM_HTTP_TLS_KEY_FILE` | *(unset)* | Path to PEM-encoded server private key. Required when `MCM_HTTP_TLS_ENABLED=true`. |
+| `MCM_HTTP_TLS_MIN_VERSION` | `1.2` | `"1.2"` or `"1.3"`. |
+| `MCM_HTTP_TLS_CLIENT_CA_FILE` | *(unset)* | Path to PEM-encoded CA bundle for mTLS client cert verification. Required when `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT=true`. |
+| `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT` | `false` | Enforce mTLS: every request must present a client certificate signed by `MCM_HTTP_TLS_CLIENT_CA_FILE`. |
+
+### Database
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_DATABASE_BACKEND` | `sqlite` | `"sqlite"` (uses `MCM_DATABASE_PATH`) or `"postgres"` (uses `MCM_DATABASE_DSN`). |
+| `MCM_DATABASE_PATH` | `/var/lib/mcm/mcm.db` | SQLite file path. Parent dir must be writable so the JWT-secret bootstrap can persist. |
+| `MCM_DATABASE_DSN` | *(unset)* | Postgres connection string. Required when `MCM_DATABASE_BACKEND=postgres`. |
+
+### Auth
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_AUTH_JWT_SECRET` | *(auto-generated)* | 64-hex-char random secret persisted to `<db dir>/.bootstrap.json` (mode 0600). Set explicitly to control across restarts. |
+| `MCM_AUTH_TOKEN_TTL` | `24h` | Go duration (e.g. `"24h"`, `"30m"`). |
+| `MCM_BOOTSTRAP_ADMIN_USERNAME` | `admin` | First-boot only. Leave both empty to auto-generate. |
+| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | *(auto-generated)* | 24-char random password logged once on first boot. |
+| `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` | `15m` | Sliding window for failed-login counting. Go duration. |
+| `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` | `6` | Maximum failed logins within window before the source is locked out. `>=1`. |
+| `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` | `15m` | How long a source remains blocked after the lockout window expires. Go duration. |
+
+### Mosquitto broker connection
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_MOSQUITTO_HOST` | `mosquitto` | Broker hostname or IP. Default matches the bundled compose service. |
+| `MCM_MOSQUITTO_PORT` | `1883` | Broker TCP port. 1..65535. Use `8883` for TLS. |
+| `MCM_MOSQUITTO_USERNAME` | `admin` | Broker service user. Both `_USERNAME` and `_PASSWORD` must be set or both empty. Dev default matches the Mosquitto bootstrap script. |
+| `MCM_MOSQUITTO_PASSWORD` | `mcm-dev-broker-password` | Broker service user password. Read from a secret manager in production. Dev-only. |
+| `MCM_MOSQUITTO_CONFIG_DIR` | *(unset)* | Directory containing the Mosquitto configuration. |
+| `MCM_MOSQUITTO_DATA_DIR` | *(unset)* | Directory for Mosquitto persistent data (retained messages, persistence file). |
+
+### Mosquitto TLS
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_MOSQUITTO_TLS_ENABLED` | `false` | Connect to the broker over TLS (typically port 8883). |
+| `MCM_MOSQUITTO_TLS_CA_CERT_FILE` | *(unset)* | Path to PEM-encoded CA bundle used to verify the broker certificate. Required when `MCM_MOSQUITTO_TLS_ENABLED=true`. |
+| `MCM_MOSQUITTO_TLS_CLIENT_CERT_FILE` | *(unset)* | Path to PEM-encoded client certificate for mTLS to the broker. Required when `MCM_MOSQUITTO_TLS_ENABLED=true`. |
+| `MCM_MOSQUITTO_TLS_CLIENT_KEY_FILE` | *(unset)* | Path to PEM-encoded client private key for mTLS to the broker. Required when `MCM_MOSQUITTO_TLS_ENABLED=true`. |
+| `MCM_MOSQUITTO_TLS_INSECURE_SKIP_VERIFY` | `false` | Skip broker certificate verification. DEV-ONLY escape hatch for self-signed testing; never enable in production. |
+
+### Mosquitto deploy (file / docker)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_MOSQUITTO_DEPLOY_MODE` | *(unset)* | `""` (disabled), `"file"` (write passwd/acl on disk + SIGHUP), or `"docker"` (write files + `docker exec`). |
+| `MCM_MOSQUITTO_DEPLOY_ACL_PATH` | *(unset)* | On-disk path for the rendered ACL file. Required when `deploy.mode` is `"file"` or `"docker"`. |
+| `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH` | *(unset)* | On-disk path for the rendered passwd file. Required when `deploy.mode` is `"file"` or `"docker"`. |
+| `MCM_MOSQUITTO_DEPLOY_PID_PATH` | *(unset)* | Path to the broker's PID file. Optional. |
+| `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` | *(unset)* | Mosquitto container name for the `"docker"` deploy strategy (used by `docker exec kill -HUP 1`). |
+| `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` | *(unset)* | `""` or `"sighup"` (the only supported strategy right now). |
+| `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` | `5s` | Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. |
+| `MCM_MOSQUITTO_DEPLOY_WORKDIR` | *(unset)* | Working directory for the deploy service when writing passwd/acl files. |
+
+### Mosquitto Sparkplug tuning
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_MOSQUITTO_SPARKPLUG_PAYLOAD_DECODE` | `false` | Decode Sparkplug B payloads into typed metrics on the broker events stream. |
+| `MCM_MOSQUITTO_SPARKPLUG_MAX_METRICS` | `50` | Cap on the number of metrics kept per Sparkplug payload (defends against unbounded payloads). `>=1`. |
+
+### Metrics / event retention
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_METRICS_BROKER_RETENTION` | `168h` | How long broker events are persisted. Go duration. Default 7d. |
+| `MCM_METRICS_AUDIT_RETENTION` | `2160h` | How long audit events are persisted. Go duration. Default 90d. |
+| `MCM_METRICS_SECURITY_RETENTION` | `2160h` | How long security events are persisted. Go duration. Default 90d. |
+
+### Alerting (outbound operational webhooks)
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_ALERTING_ENABLED` | `false` | Send operational alerts to the configured webhook endpoint. |
+| `MCM_ALERTING_ENDPOINT_URL` | *(unset)* | Webhook URL to receive operational alerts. Required when `MCM_ALERTING_ENABLED=true`. |
+| `MCM_ALERTING_TIMEOUT` | `5s` | Timeout for individual webhook POSTs. Go duration. |
+| `MCM_ALERTING_SIGNING_SECRET` | *(unset)* | HMAC-SHA256 secret used to sign the `X-MCM-Signature` header on outbound alerts. |
+| `MCM_ALERTING_COOLDOWN` | `5m` | Minimum interval between repeated alerts of the same class. Go duration. |
+
+### Logging
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
+| `MCM_LOG_FORMAT` | `json` | `json` (default, recommended for production / SIEM) or `text`. |
+
+### Other
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_CONFIG_FILE` | *(unset)* | Optional YAML file loaded before env overrides. Not part of the strict-parser table; missing file is an error. |
+
+Full field documentation lives at the top of [`internal/config/config.go`](./internal/config/config.go). The canonical table (and the test that guards it) is in [`internal/config/env_bindings.go`](./internal/config/env_bindings.go).
 
 ---
 

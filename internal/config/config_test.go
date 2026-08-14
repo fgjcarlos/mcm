@@ -1336,12 +1336,13 @@ func TestLoadYAMLFileMissingErrors(t *testing.T) {
 	}
 }
 
-// TestLoadInvalidPortIgnored documents current behavior: a non-numeric
-// MCM_HTTP_PORT / MCM_MOSQUITTO_PORT is silently ignored (the field keeps
-// its previous value). Callers that need hard validation should grep for
-// these vars before booting. ponytail: keep silent-ignore here, return
-// validation error when the operator-facing config docs call it out.
-func TestLoadInvalidPortIgnored(t *testing.T) {
+// TestLoadInvalidPortFails covers the strict contract introduced by
+// issue #279: a non-numeric MCM_HTTP_PORT / MCM_MOSQUITTO_PORT is no
+// longer silently ignored. Load() must abort with an error that names
+// the offending env var AND echoes the (sanitized) value so the
+// operator can find it. Operators that need a soft fallback can
+// pin the value in YAML and unset the env var.
+func TestLoadInvalidPortFails(t *testing.T) {
 	withClearedEnv(t)
 
 	dir := t.TempDir()
@@ -1351,20 +1352,39 @@ func TestLoadInvalidPortIgnored(t *testing.T) {
 	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
 	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
 	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
-	t.Setenv("MCM_MOSQUITTO_PORT", "not-a-number")
 	t.Setenv("MCM_HTTP_PORT", "also-not-a-number")
 	t.Setenv("MCM_LOG_LEVEL", "info")
 	t.Setenv("MCM_LOG_FORMAT", "json")
 
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("Load succeeded, want error for non-numeric MCM_HTTP_PORT")
 	}
-	if cfg.HTTP.Port != Default().HTTP.Port {
-		t.Errorf("HTTP.Port = %d, want default %d (invalid env ignored)", cfg.HTTP.Port, Default().HTTP.Port)
+	if !strings.Contains(err.Error(), "MCM_HTTP_PORT") {
+		t.Errorf("error = %q, want it to mention the env var name", err)
 	}
-	if cfg.Mosquitto.Port != Default().Mosquitto.Port {
-		t.Errorf("Mosquitto.Port = %d, want default %d (invalid env ignored)", cfg.Mosquitto.Port, Default().Mosquitto.Port)
+	if !strings.Contains(err.Error(), "also-not-a-number") {
+		t.Errorf("error = %q, want it to echo the invalid value", err)
+	}
+
+	// Same contract for the broker port.
+	withClearedEnv(t)
+	t.Setenv("MCM_DATABASE_PATH", filepath.Join(dir, "mcm.db"))
+	t.Setenv("MCM_AUTH_JWT_SECRET", validJWTValue)
+	t.Setenv("MCM_AUTH_TOKEN_TTL", "24h")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_USERNAME", "admin")
+	t.Setenv("MCM_BOOTSTRAP_ADMIN_PASSWORD", validBootstrapCred)
+	t.Setenv("MCM_MOSQUITTO_HOST", "127.0.0.1")
+	t.Setenv("MCM_MOSQUITTO_PORT", "not-a-number")
+	t.Setenv("MCM_LOG_LEVEL", "info")
+	t.Setenv("MCM_LOG_FORMAT", "json")
+
+	_, err = Load("")
+	if err == nil {
+		t.Fatal("Load succeeded, want error for non-numeric MCM_MOSQUITTO_PORT")
+	}
+	if !strings.Contains(err.Error(), "MCM_MOSQUITTO_PORT") {
+		t.Errorf("error = %q, want it to mention the env var name", err)
 	}
 }
 
