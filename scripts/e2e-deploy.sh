@@ -108,7 +108,7 @@ echo "--- e2e-deploy: up (no env vars, image already loaded) ---"
 # running this script outside CI), the operator is expected to have
 # built mcm:dev first (e.g. `task build` or `docker buildx build
 # --load -t mcm:dev .`).
-$COMPOSE up -d
+$COMPOSE up -d --no-build
 
 echo "--- e2e-deploy: waiting for /livez (${WAIT_SECONDS}s budget) ---"
 ready=0
@@ -258,6 +258,8 @@ apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
 if [ "$apply_code" != "200" ]; then
     echo "deploy apply failed with HTTP $apply_code:" >&2
     cat "$apply_body" >&2
+    echo "--- mcm logs ---" >&2
+    $COMPOSE logs --no-color mcm >&2 || true
     rm -f "$apply_body"
     exit 1
 fi
