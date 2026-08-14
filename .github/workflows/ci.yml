@@ -33,16 +33,26 @@ jobs:
           cache: true
 
       # --- Image build + smoke ----------------------------------------------------
-      - name: docker buildx build
+      # Build the dev target so the image ships docker-cli + a docker
+      # group at the host socket GID. The host GID is detected at
+      # build time so the image works on GitHub-hosted Ubuntu runners
+      # (where the socket typically lives at GID 999) and on local
+      # workstations with the conventional GID 997.
+      - name: docker buildx build (dev target)
         env:
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          docker buildx build --load -t mcm:dev \
-            --build-arg VERSION=${VERSION} \
-            --build-arg COMMIT=${COMMIT} \
-            --build-arg BUILD_DATE=${BUILD_DATE} \
+          DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
+          echo "Building dev target with DOCKER_HOST_GID=${DOCKER_HOST_GID}"
+          docker buildx build --load \
+            --target dev \
+            --build-arg "DOCKER_HOST_GID=${DOCKER_HOST_GID}" \
+            --build-arg "VERSION=${VERSION}" \
+            --build-arg "COMMIT=${COMMIT}" \
+            --build-arg "BUILD_DATE=${BUILD_DATE}" \
+            -t mcm:dev \
             .
 
       # Smoke run: build the image, mount a minimal valid YAML so the
@@ -114,6 +124,30 @@ jobs:
           docker stop mcm-smoke
           docker rm mcm-smoke
 
+      # --- E2E deploy artifact -----------------------------------------------------
+      # The e2e-deploy job below reuses the mcm:dev image built above.
+      # We `docker save` it to a directory and upload as an artifact so
+      # the dependent job can `docker load` without rebuilding the
+      # frontend (which would double the CI time).
+      #
+      # NOTE: actions/upload-artifact's `path` is a DIRECTORY, not a
+      # file. The previous PR copy said `path: /tmp/mcm-dev.tar` which
+      # made the file a subdirectory of itself; the matching download
+      # produced /tmp/mcm-dev.tar/mcm-dev.tar and `docker load -i` then
+      # failed with "is a directory". Pinned to a directory path here
+      # and the matching download path in the e2e-deploy job.
+      - name: docker save (for e2e job)
+        run: |
+          mkdir -p /tmp/mcm-dev
+          docker save mcm:dev -o /tmp/mcm-dev/mcm-dev.tar
+
+      - name: upload e2e image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+          retention-days: 1
+
       # Quickstart smoke (issue #274): prove the dev Compose stack brings
       # up MCM + Mosquitto with NO env vars, the auto-generated bootstrap
       # admin password is recoverable from the logs, and it authenticates
@@ -170,3 +204,38 @@ jobs:
 
       - name: npm run build (site)
         run: npm --prefix site run build
+
+  # E2E deploy flow for #275. Boots the dev Compose stack (MCM +
+  # Mosquitto), exercises the full deploy API path, and asserts the
+  # broker accepts an allowed publish and silently drops a forbidden
+  # one. The job depends on `image` and reuses the mcm:dev image via
+  # the artifact uploaded above so we do not rebuild the frontend in
+  # a second job.
+  e2e-deploy:
+    name: E2E deploy flow against live Mosquitto
+    runs-on: ubuntu-latest
+    needs: image
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+
+      - name: scripts/e2e-deploy.sh
+        # Issue #275 acceptance criteria: prove the full MCM UI/API →
+        # Mosquitto deploy path on a live broker. The script asserts
+        # preview, apply, allowed-topic deliver, and forbidden-topic
+        # drop — see scripts/e2e-deploy.sh for the per-step invariants.
+        # mcm:dev is already loaded above (from the image job's
+        # artifact); the script must NOT rebuild it.
+        run: bash scripts/e2e-deploy.sh
