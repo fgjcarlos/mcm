@@ -45,6 +45,12 @@ tags:
     description: Read-only access to recent security events (failed logins, lockouts, denials).
   - name: Broker
     description: Realtime broker event stream over WebSocket.
+  - name: MQTT Users
+    description: Mosquitto broker user CRUD (passwd entries). Password material is returned only on create / reset.
+  - name: Deployments
+    description: Preview and apply the rendered Mosquitto password_file and acl_file snapshots.
+  - name: Settings
+    description: Redacted view of the running configuration.
 security:
   - bearerAuth: []
 paths:
@@ -66,11 +72,38 @@ paths:
                     type: string
                     example: ok
                 required: [status]
+  /livez:
+    get:
+      tags: [Health]
+      summary: Process liveness probe
+      description: |
+        Lightweight liveness probe that does not touch storage or the broker.
+        Returns 200 as long as the HTTP server is accepting connections.
+        Unauthenticated by design — gate at the network level for production.
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                required: [status]
   /readyz:
     get:
       tags: [Health]
       summary: Readiness probe
-      description: Checks required serving dependencies (currently SQLite). Use this for load-balancer or orchestrator readiness gates; use `/api/v1/status` for broker/operator status instead.
+      description: |
+        Checks required serving dependencies — SQLite is reachable AND the
+        configured Mosquitto broker is connected. Use this for load-balancer
+        or orchestrator readiness gates; use `/api/v1/status` for the broker
+        snapshot shown to operators instead.
+        Returns 200 when both are healthy and 503 when either dependency is
+        unavailable (response body carries the failing dependency name).
       security: []
       responses:
         "200":
@@ -570,6 +603,209 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/mqtt-users:
+    get:
+      tags: [MQTT Users]
+      summary: List MQTT broker users
+      description: Requires auditor or higher. Password material is never returned.
+      responses:
+        "200":
+          description: MQTT user list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MQTTUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [MQTT Users]
+      summary: Create MQTT broker user
+      description: |
+        Requires operator or higher. The server generates a random 24-character
+        password, hashes it for Mosquitto, and returns the cleartext in the
+        response — surface it to the operator exactly once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MQTTUserRequest" }
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUserWithPassword" }
+        "400":
+          description: Missing username.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Username already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/mqtt-users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MQTTUserID"
+    get:
+      tags: [MQTT Users]
+      summary: Get MQTT broker user
+      description: Requires auditor or higher.
+      responses:
+        "200":
+          description: MQTT user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [MQTT Users]
+      summary: Update MQTT broker user
+      description: Requires operator or higher. Username and disabled are optional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MQTTUserUpdateRequest" }
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUser" }
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [MQTT Users]
+      summary: Delete MQTT broker user
+      description: Requires operator or higher.
+      responses:
+        "204": { description: User deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/mqtt-users/{id}/reset-password:
+    parameters:
+      - $ref: "#/components/parameters/MQTTUserID"
+    post:
+      tags: [MQTT Users]
+      summary: Reset MQTT broker user password
+      description: |
+        Requires operator or higher. Generates a fresh random password, stores
+        the new hash, and returns the cleartext — surface it exactly once.
+      responses:
+        "200":
+          description: New credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MQTTUserWithPassword" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/deployments:
+    get:
+      tags: [Deployments]
+      summary: List recent deployments
+      description: Requires auditor or higher.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Deployment page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deployments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Deployment" }
+                required: [deployments]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Deploy is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/deployments/preview:
+    post:
+      tags: [Deployments]
+      summary: Preview the next deploy
+      description: |
+        Requires operator or higher. Returns the diff and the full rendered
+        bodies that the next apply would write, without touching the broker.
+      responses:
+        "200":
+          description: Rendered preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeploymentPreview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Deploy is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/deployments/apply:
+    post:
+      tags: [Deployments]
+      summary: Apply pending changes
+      description: |
+        Requires admin. Renders the current ACL + passwd state, persists the
+        resulting `Deployment` row, and (when configured) triggers a reload on
+        the broker. Returns 409 if a deploy is already in progress.
+      responses:
+        "200":
+          description: Deployment record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Deploy is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: A deploy is already in progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      summary: Current effective settings
+      description: |
+        Requires admin. Returns a redacted view of the running configuration
+        (no secrets, no TLS private keys, no JWT signing material).
+      responses:
+        "200":
+          description: Effective settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/broker/events:
     get:
       tags: [Broker]
@@ -637,6 +873,11 @@ components:
       schema: { type: string }
       description: Numeric string ID assigned at creation time.
     JSONSchemaID:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer, minimum: 1 }
+    MQTTUserID:
       in: path
       name: id
       required: true
@@ -962,6 +1203,82 @@ components:
           type: array
           items: { type: string }
       required: [schema_id, schema_name, topic_filter, valid]
+    MQTTUser:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, username, disabled, created_at, updated_at]
+    MQTTUserWithPassword:
+      type: object
+      description: |
+        Returned only on create and reset-password. Surface the cleartext
+        exactly once — the server never stores it in this form.
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        password: { type: string, format: password }
+      required: [id, username, disabled, created_at, updated_at, password]
+    MQTTUserRequest:
+      type: object
+      properties:
+        username: { type: string, minLength: 1 }
+      required: [username]
+      additionalProperties: false
+    MQTTUserUpdateRequest:
+      type: object
+      properties:
+        username: { type: string, minLength: 1 }
+        disabled: { type: boolean }
+      additionalProperties: false
+    Deployment:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        actor: { type: string }
+        status: { type: string }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      required: [id, actor, status, created_at, updated_at]
+    DeploymentPreview:
+      type: object
+      properties:
+        has_changes: { type: boolean }
+        acl_diff: { type: string }
+        passwd_diff: { type: string }
+        acl_body: { type: string }
+        passwd_body: { type: string }
+      required: [has_changes, acl_diff, passwd_diff, acl_body, passwd_body]
+    SettingsResponse:
+      type: object
+      properties:
+        http:
+          type: object
+          properties:
+            bind_address: { type: string }
+            port: { type: integer }
+            tls_enabled: { type: boolean }
+          required: [bind_address, port, tls_enabled]
+        mosquitto:
+          type: object
+          properties:
+            host: { type: string }
+            port: { type: integer }
+            protocol: { type: string, enum: [mqtt, mqtts] }
+          required: [host, port, protocol]
+        deploy:
+          type: object
+          properties:
+            mode: { type: string }
+          required: [mode]
+      required: [http, mosquitto, deploy]
     SparkplugMetadata:
       type: object
       properties:
