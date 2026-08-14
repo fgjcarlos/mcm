@@ -15,7 +15,7 @@ import (
 // openAPISyncConfig lets the test locate both the router source file and the
 // OpenAPI document regardless of where `go test` runs from.
 type openAPISyncConfig struct {
-	routerPath string // file containing mux.Handle*("METHOD path", ...)
+	routerPath  string // file containing mux.Handle*("METHOD path", ...)
 	openAPIPath string
 }
 
