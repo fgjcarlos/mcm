@@ -56,7 +56,7 @@ MCM currently validates that `ca_cert_file`, `client_cert_file`, and `client_key
   - Parent directory: avoid world-writable permissions; use `0750` or stricter where possible.
 - Run MCM as a non-root user and mount secrets with ownership or group permissions that allow that user to read only the required files.
 - Rotate certificates before expiry and restart/reload MCM after updating mounted secret files if your deployment platform does not update mounts atomically.
-- Verify connectivity with `mcm doctor --config /path/to/config.yaml` during deployment and after certificate rotation.
+- Verify connectivity with `curl -fsS http://localhost:8080/readyz` during deployment and after certificate rotation. `/readyz` runs an MQTT CONNECT/CONNACK probe and surfaces the failure phase (TCP / TLS / MQTT) in the JSON body. For external checks, `mosquitto_pub -h <host> -p <port> -t mcm/healthcheck -m ping` from any host that can reach the broker is a good end-to-end probe.
 
 ### Example production MCM config
 
@@ -87,13 +87,15 @@ services:
         read_only: true
 ```
 
-### `mcm doctor` TLS diagnostics
+### MQTT readiness diagnostics
 
-`mcm doctor` performs a TCP dial, then a TLS handshake when `mosquitto.tls.enabled` is true, then an MQTT CONNECT/CONNACK exchange. Failure messages are categorized to show which phase failed:
+`GET /readyz` performs, internally, a TCP dial, then a TLS handshake when `mosquitto.tls.enabled` is true, then an MQTT CONNECT/CONNACK exchange (via `internal/diagnostics.CheckMQTTConnectivity`). The JSON body carries the failure phase so the operator can pivot:
 
-- TCP failure: check host, port, listener binding, firewall rules, Docker/Kubernetes networking, and whether Mosquitto is running.
+- `error="broker unavailable"` (or `tcp: ...`): check host, port, listener binding, firewall rules, Docker/Kubernetes networking, and whether Mosquitto is running.
 - TLS handshake failure: TCP reached the broker, but certificate validation or mutual TLS failed. Check the CA file, server certificate SANs, client certificate/key pair, Mosquitto TLS listener settings, and system time.
 - MQTT CONNACK rejection: TCP and TLS succeeded, but Mosquitto rejected the MQTT connection. Check username/password, ACL/auth plugin configuration, client certificate identity mapping, and broker logs.
+
+The HTTP status is `200` when the broker is reachable and `503` otherwise. The `/livez` endpoint is independent and only checks the HTTP server + SQLite, so it stays `200` even when the broker is down.
 
 ### Development-only self-signed example
 

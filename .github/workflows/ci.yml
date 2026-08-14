@@ -114,6 +114,16 @@ jobs:
           docker stop mcm-smoke
           docker rm mcm-smoke
 
+      # Quickstart smoke (issue #274): prove the dev Compose stack brings
+      # up MCM + Mosquitto with NO env vars, the auto-generated bootstrap
+      # admin password is recoverable from the logs, and it authenticates
+      # against /api/v1/auth/login. Runs in a separate Compose project so
+      # it does not collide with the mcm-smoke container above.
+      - name: Quickstart smoke (clean clone, no env)
+        run: |
+          # Reuse the already-built mcm:dev image from the smoke step.
+          ./scripts/quickstart-smoke.sh
+
       # --- Go ---------------------------------------------------------------------
       - name: go test
         run: go test ./... -race -count=1
