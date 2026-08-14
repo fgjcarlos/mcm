@@ -170,7 +170,7 @@ func TestWithRequestLoggingRecordsStatus101AfterWebSocketUpgrade(t *testing.T) {
 
 	// Read the initial broker_status frame so the handler returns and
 	// withRequestLogging writes the access log + bumps the metrics.
-	_, _, _ = conn.Reader(ctx) // drain initial frame; ignore errors
+	_, _, _ = conn.Reader(ctx)                    // drain initial frame; ignore errors
 	conn.Close(websocket.StatusNormalClosure, "") //nolint:errcheck
 	// Wait briefly for the server-side goroutine to flush the log + counter.
 	deadline := time.Now().Add(2 * time.Second)
