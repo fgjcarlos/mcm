@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -158,4 +159,30 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.wroteHeader = true
 	}
 	return s.ResponseWriter.Write(b)
+}
+
+// Hijack delegates to the wrapped http.ResponseWriter when it implements
+// http.Hijacker. This is required for the WebSocket upgrade at
+// /api/v1/broker/events to succeed through withRequestLogging:
+// nhooyr.io/websocket.Accept performs a plain type assertion
+// (w.(http.Hijacker)) that bypasses Unwrap(), so the wrapper itself must
+// expose Hijacker. Without this method the upgrade fails with HTTP 501
+// (issue #273).
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("statusRecorder: underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return hj.Hijack()
+}
+
+// Unwrap returns the underlying http.ResponseWriter so optional interfaces
+// (http.Flusher, http.Pusher, ...) are reachable through
+// http.NewResponseController, and so future libraries that walk the wrapper
+// chain via reflection can still find the original writer. This is the
+// Go 1.20+ idiom for transparent ResponseWriter wrappers. Hijack is also
+// implemented directly because nhooyr.io/websocket v1.8.17 uses a plain
+// type assertion that does not walk Unwrap.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }
