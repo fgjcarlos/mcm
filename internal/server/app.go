@@ -744,6 +744,12 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 		passwordHash = &hashed
 	}
 
+	// Capture the pre-update Disabled flag so we can detect the false→true
+	// transition (only that case revokes broker subscriptions; the other
+	// transitions are handled by JWT lifetime / role gate).
+	previous, prevErr := a.store.GetAdminUserByID(r.Context(), id)
+	previousDisabled := prevErr == nil && previous.Disabled
+
 	user, err := a.store.UpdateAdminUser(r.Context(), id, storage.UpdateAdminUserParams{
 		Username:     req.Username,
 		PasswordHash: passwordHash,
@@ -764,6 +770,16 @@ func (a *App) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request) {
 		a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(id, 10), "failure", map[string]any{"username": req.Username, "disabled": req.Disabled, "password_changed": passwordChanged, "reason": err.Error()})
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
+	}
+
+	// Revoke any open broker-event subscriptions if the user just got
+	// disabled. Password / role changes do not require revocation — the next
+	// JWT lifetime handles those. Audit the revoke so the operator can see
+	// which dashboards got dropped.
+	if !previousDisabled && user.Disabled && a.brokerEvents != nil {
+		if revoked := a.brokerEvents.RevokeUser(user.ID); revoked > 0 {
+			a.recordSecurityChange(r, "admin_user.disabled_broker_revoked", "user_disabled", user.Username)
+		}
 	}
 
 	a.recordAuditFromRequest(r, "admin_user.update", "admin_user", strconv.FormatInt(user.ID, 10), "success", map[string]any{"username": user.Username, "disabled": user.Disabled, "password_changed": passwordChanged})
@@ -788,6 +804,14 @@ func (a *App) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "failure", map[string]any{"reason": err.Error()})
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 	default:
+		// Drop any live broker-event subscriptions owned by the deleted user.
+		// The DELETE has already succeeded at this point — revoke failure
+		// must not roll it back.
+		if a.brokerEvents != nil {
+			if revoked := a.brokerEvents.RevokeUser(id); revoked > 0 {
+				a.recordSecurityChange(r, "admin_user.deleted_broker_revoked", "user_deleted", resourceID)
+			}
+		}
 		a.recordAuditFromRequest(r, "admin_user.delete", "admin_user", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}

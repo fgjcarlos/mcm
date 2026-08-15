@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/alerting"
+	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/backoff"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/metrics"
@@ -78,9 +80,19 @@ type PayloadInspection struct {
 	JSONScalarSummary string   `json:"json_scalar_summary,omitempty"`
 }
 
+// brokerSubscriber pairs a broker event subscription with the admin user that
+// owns the WebSocket connection. The userID lets RevokeUser find and close all
+// live connections for a single user when an admin disables or deletes the
+// account — closing the gap where requireAuth checked the user at request
+// time but the long-lived stream kept receiving events until natural expiry.
+type brokerSubscriber struct {
+	ch     chan BrokerEvent
+	userID int64
+}
+
 type BrokerEventHub struct {
 	mu            sync.RWMutex
-	subscribers   map[chan BrokerEvent]struct{}
+	subscribers   map[*brokerSubscriber]struct{}
 	status        BrokerEvent
 	logs          []BrokerEvent
 	trafficEvents []BrokerEvent
@@ -131,7 +143,7 @@ type BrokerRatePoint struct {
 
 func NewBrokerEventHub() *BrokerEventHub {
 	return &BrokerEventHub{
-		subscribers: make(map[chan BrokerEvent]struct{}),
+		subscribers: make(map[*brokerSubscriber]struct{}),
 		status: BrokerEvent{
 			Type:       "broker_status",
 			Status:     "disconnected",
@@ -155,33 +167,60 @@ func (h *BrokerEventHub) SetMetrics(reg *metrics.Registry) {
 	h.mu.Unlock()
 }
 
-func (h *BrokerEventHub) Subscribe() (<-chan BrokerEvent, func()) {
-	ch := make(chan BrokerEvent, brokerEventSubscriberCapacity)
+func (h *BrokerEventHub) Subscribe(userID int64) (<-chan BrokerEvent, func()) {
+	sub := &brokerSubscriber{
+		ch:     make(chan BrokerEvent, brokerEventSubscriberCapacity),
+		userID: userID,
+	}
 
 	h.mu.Lock()
-	ch <- h.status
+	sub.ch <- h.status
 	for _, event := range h.logs {
-		ch <- event
+		sub.ch <- event
 	}
 	trafficStart := len(h.trafficEvents) - maxBrokerInitialTopicEvents
 	if trafficStart < 0 {
 		trafficStart = 0
 	}
 	for _, event := range h.trafficEvents[trafficStart:] {
-		ch <- event
+		sub.ch <- event
 	}
-	h.subscribers[ch] = struct{}{}
+	h.subscribers[sub] = struct{}{}
 	h.mu.Unlock()
 
 	unsubscribe := func() {
 		h.mu.Lock()
-		if _, ok := h.subscribers[ch]; ok {
-			delete(h.subscribers, ch)
-			close(ch)
+		if _, ok := h.subscribers[sub]; ok {
+			delete(h.subscribers, sub)
+			close(sub.ch)
 		}
 		h.mu.Unlock()
 	}
-	return ch, unsubscribe
+	return sub.ch, unsubscribe
+}
+
+// RevokeUser closes every live broker-event subscription owned by userID.
+// Called from the admin-user handlers after a successful update that flips
+// Disabled to true or a delete, so the long-lived stream stops receiving
+// broker data within the same request that revoked the user — instead of
+// waiting for the JWT to expire.
+//
+// ponytail: O(subscribers) per revoke. The map is small (one entry per open
+// dashboard), so the linear scan stays acceptable until we see real scale;
+// upgrade path is a per-user subscriber index when subscriber count grows.
+func (h *BrokerEventHub) RevokeUser(userID int64) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	revoked := 0
+	for sub := range h.subscribers {
+		if sub.userID != userID {
+			continue
+		}
+		delete(h.subscribers, sub)
+		close(sub.ch)
+		revoked++
+	}
+	return revoked
 }
 
 func (h *BrokerEventHub) Publish(event BrokerEvent) {
@@ -210,9 +249,9 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	store := h.store
 	retention := h.retention
 	reg := h.metrics
-	for ch := range h.subscribers {
+	for sub := range h.subscribers {
 		select {
-		case ch <- event:
+		case sub.ch <- event:
 		default:
 		}
 	}
@@ -637,11 +676,28 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 		return
 	}
-	if _, err := a.tokens.VerifyAt(token, a.now().UTC()); err != nil {
+	claims, err := a.tokens.VerifyAt(token, a.now().UTC())
+	if err != nil {
 		a.recordSecurityFailure(r, "protected_websocket_access_failed", "invalid_bearer_token", "")
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
 		return
 	}
+	// Revalidate the user against the current DB state before the upgrade: a
+	// JWT that outlived a Disable or Delete must not be allowed to open a new
+	// WebSocket. Same check requireAuth performs for HTTP, kept in sync so
+	// HTTP and WebSocket share one identity policy.
+	user, err := a.loadCurrentUser(r.Context(), claims)
+	if errors.Is(err, storage.ErrUserNotFound) {
+		a.recordSecurityFailure(r, "protected_websocket_access_failed", "inactive_user", claims.Username)
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	claims.Username = user.Username
+	claims.Role = auth.Role(user.Role)
 
 	// Accept the WebSocket upgrade, negotiating the subprotocol
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -652,7 +708,7 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow() //nolint:errcheck
 
-	events, unsubscribe := a.brokerEvents.Subscribe()
+	events, unsubscribe := a.brokerEvents.Subscribe(user.ID)
 	defer unsubscribe()
 
 	ctx := conn.CloseRead(r.Context())
@@ -664,8 +720,11 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case event, ok := <-events:
 			if !ok {
-				//nolint:errcheck // client-side close on stream end; nothing useful to do with its error
-				conn.Close(websocket.StatusNormalClosure, "")
+				// Channel was closed by RevokeUser or Subscribe shutdown — close
+				// the WebSocket with StatusPolicyViolation so the client sees the
+				// auth-driven termination rather than a generic stream-end.
+				//nolint:errcheck
+				conn.Close(websocket.StatusPolicyViolation, "user revoked")
 				return
 			}
 			data, err := json.Marshal(event)
