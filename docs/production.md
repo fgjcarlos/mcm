@@ -6,6 +6,8 @@ This guide covers running MCM in production behind a reverse proxy with TLS term
 > image tag, watch releases, and keep an upgrade window ready. The project
 > status is documented in the top-level [README](../README.md#quickstart-docker).
 
+Every `MCM_*` environment variable mentioned below is enforced by the strict table-driven parser in [`internal/config/env_bindings.go`](../internal/config/env_bindings.go). A typo in a name or a malformed value aborts startup with an actionable error — there are no silent fallbacks to YAML or defaults. The full canonical list (with defaults and notes) lives in the [Configuration section of the README](../README.md#configuration).
+
 ---
 
 ## 1. Deployment shape
@@ -127,6 +129,7 @@ Two values must be set explicitly so the server can boot:
 - `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — the
   first-boot admin. If both are unset, the server creates `admin` with a
   random 24-char password and logs it once.
+- `MCM_AUTH_TOKEN_TTL` — JWT lifetime, Go duration (default `24h`).
 
 Generate a strong JWT secret with:
 
@@ -137,6 +140,102 @@ openssl rand -base64 48
 Pass the value to the container via your platform's secret store. Do
 **not** commit real secrets. The default image is safe to ship; the
 production values come from the deployment platform.
+
+### Production env-var reference
+
+Every variable below is enforced by the strict parser (issue #279): a
+typo in a name aborts startup with `unknown env var ...`; a malformed
+value aborts with `invalid env var ...`. The YAML file is loaded first,
+then the env vars override it field-by-field.
+
+#### Listener
+
+- `MCM_HTTP_BIND_ADDRESS` (default `0.0.0.0`) — bind to loopback
+  (`127.0.0.1`) so the proxy owns the public address.
+- `MCM_HTTP_PORT` (default `8080`) — exposed on the loopback interface.
+- `MCM_HTTP_TRUSTED_PROXIES` — comma-separated IP/CIDR list of proxies
+  whose `X-Forwarded-For` / `X-Real-IP` headers MCM honors. Empty
+  (default) trusts no proxy and the direct peer is always used as the
+  client IP.
+- `MCM_HTTP_CORS_ALLOWED_ORIGINS` — comma-separated exact origins
+  permitted to make cross-origin requests. Empty = same-origin only.
+
+#### TLS (only when terminating TLS at MCM directly)
+
+- `MCM_HTTP_TLS_ENABLED` (default `false`) — leave off when terminating
+  TLS at the proxy.
+- `MCM_HTTP_TLS_CERT_FILE` — PEM-encoded server certificate path.
+- `MCM_HTTP_TLS_KEY_FILE` — PEM-encoded server private key path.
+- `MCM_HTTP_TLS_MIN_VERSION` (default `1.2`) — `"1.2"` or `"1.3"`.
+- `MCM_HTTP_TLS_CLIENT_CA_FILE` — CA bundle for client cert verification.
+- `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT` (default `false`) — enable for mTLS.
+
+#### Database
+
+- `MCM_DATABASE_BACKEND` (default `sqlite`) — `"sqlite"` or `"postgres"`.
+- `MCM_DATABASE_PATH` (default `/var/lib/mcm/mcm.db`) — SQLite path; parent
+  dir must be writable.
+- `MCM_DATABASE_DSN` — Postgres connection string. Required when
+  `MCM_DATABASE_BACKEND=postgres`.
+
+#### Auth
+
+- `MCM_AUTH_JWT_SECRET` — see [§3 Secrets management](#3-secrets-management).
+- `MCM_AUTH_TOKEN_TTL` (default `24h`) — JWT lifetime.
+- `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` (default `15m`) — sliding window for
+  failed-login counting.
+- `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` (default `6`) — lockout threshold.
+- `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` (default `15m`) — how long the source
+  remains blocked after the window expires.
+- `MCM_BOOTSTRAP_ADMIN_USERNAME`, `MCM_BOOTSTRAP_ADMIN_PASSWORD` — see
+  [§3 Secrets management](#3-secrets-management).
+
+#### Mosquitto broker connection
+
+- `MCM_MOSQUITTO_HOST` (default `mosquitto`) — broker hostname.
+- `MCM_MOSQUITTO_PORT` (default `1883`, use `8883` for TLS) — broker port.
+- `MCM_MOSQUITTO_USERNAME` / `MCM_MOSQUITTO_PASSWORD` — broker service user
+  (production reads from a secret manager).
+- `MCM_MOSQUITTO_TLS_ENABLED` (default `false`) — connect over TLS.
+- `MCM_MOSQUITTO_TLS_CA_CERT_FILE`, `MCM_MOSQUITTO_TLS_CLIENT_CERT_FILE`,
+  `MCM_MOSQUITTO_TLS_CLIENT_KEY_FILE` — required when TLS is enabled.
+- `MCM_MOSQUITTO_TLS_INSECURE_SKIP_VERIFY` (default `false`) — never
+  enable in production.
+- `MCM_MOSQUITTO_CONFIG_DIR`, `MCM_MOSQUITTO_DATA_DIR` — broker
+  configuration and persistent data directories.
+
+#### Mosquitto deploy (write passwd/acl + reload)
+
+- `MCM_MOSQUITTO_DEPLOY_MODE` — `""` (disabled), `"file"` (production),
+  or `"docker"` (dev compose).
+- `MCM_MOSQUITTO_DEPLOY_ACL_PATH` — on-disk ACL file path.
+- `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH` — on-disk passwd file path.
+- `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` — required when mode is `"docker"`.
+- `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` (default `""`) — `"sighup"`.
+- `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` (default `5s`) — broker
+  healthcheck wait after reload.
+
+#### Retention
+
+- `MCM_METRICS_BROKER_RETENTION` (default `168h`, 7d).
+- `MCM_METRICS_AUDIT_RETENTION` (default `2160h`, 90d).
+- `MCM_METRICS_SECURITY_RETENTION` (default `2160h`, 90d).
+
+#### Alerting
+
+- `MCM_ALERTING_ENABLED` (default `false`).
+- `MCM_ALERTING_ENDPOINT_URL` — webhook URL (required when enabled).
+- `MCM_ALERTING_TIMEOUT` (default `5s`) — per-POST timeout.
+- `MCM_ALERTING_SIGNING_SECRET` — HMAC-SHA256 secret for the
+  `X-MCM-Signature` header.
+- `MCM_ALERTING_COOLDOWN` (default `5m`) — minimum interval between
+  repeated alerts of the same class.
+
+#### Logging
+
+- `MCM_LOG_LEVEL` (default `info`) — `debug`, `info`, `warn`, `error`.
+- `MCM_LOG_FORMAT` (default `json`) — `json` (recommended for SIEM) or
+  `text`.
 
 ---
 
@@ -295,14 +394,43 @@ Recommended alerts:
       suspected compromise.
 - [ ] `MCM_BOOTSTRAP_ADMIN_PASSWORD` is set to a unique value, the default
       account is renamed or disabled after first login.
+- [ ] `MCM_AUTH_TOKEN_TTL` is pinned to your session policy (default
+      `24h`).
+- [ ] `MCM_AUTH_LOGIN_LOCKOUT_WINDOW`, `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS`,
+      and `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` are tuned to your threat model
+      (defaults `15m` / `6` / `15m`).
 - [ ] `MCM_HTTP_BIND_ADDRESS` is `127.0.0.1` or a private interface; a
       reverse proxy owns the public address.
 - [ ] TLS is terminated at the proxy with HSTS, modern ciphers, and ACME
-      renewal; built-in TLS is off at the MCM layer unless required.
-- [ ] `MCM_HTTP_TRUSTED_PROXIES` lists the proxy's source address/CIDR.
+      renewal; built-in TLS is off at the MCM layer unless required
+      (`MCM_HTTP_TLS_ENABLED=false`).
+- [ ] If MCM terminates TLS directly: `MCM_HTTP_TLS_ENABLED=true`,
+      `MCM_HTTP_TLS_CERT_FILE`, `MCM_HTTP_TLS_KEY_FILE`,
+      `MCM_HTTP_TLS_MIN_VERSION=1.3`, and (for mTLS)
+      `MCM_HTTP_TLS_CLIENT_CA_FILE` + `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT=true`.
+- [ ] `MCM_HTTP_TRUSTED_PROXIES` lists the proxy's source address/CIDR so
+      the rate-limit lockout and audit logs see the real client IP.
+- [ ] `MCM_DATABASE_BACKEND=postgres` with `MCM_DATABASE_DSN` from a secret
+      store when scaling beyond a single replica.
+- [ ] `MCM_MOSQUITTO_TLS_ENABLED=true` with the CA / client cert / key
+      paths for broker mTLS on `MCM_MOSQUITTO_PORT=8883`.
+- [ ] `MCM_MOSQUITTO_TLS_INSECURE_SKIP_VERIFY` is `false` (never enable
+      in production).
+- [ ] `MCM_MOSQUITTO_DEPLOY_MODE=file` (or empty + broker-side reload
+      script) and `MCM_MOSQUITTO_DEPLOY_ACL_PATH` /
+      `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH` are mounted from a writable
+      shared volume.
+- [ ] `MCM_METRICS_BROKER_RETENTION`, `MCM_METRICS_AUDIT_RETENTION`, and
+      `MCM_METRICS_SECURITY_RETENTION` are sized to your retention
+      obligations (defaults `168h` / `2160h` / `2160h`).
+- [ ] `MCM_ALERTING_ENABLED=true` with `MCM_ALERTING_ENDPOINT_URL` and
+      `MCM_ALERTING_SIGNING_SECRET` set when an on-call channel exists;
+      otherwise leave `MCM_ALERTING_ENABLED=false`.
 - [ ] The container runs as a non-root user (the image defaults to `mcm`).
-- [ ] `MCM_AUTH_JWT_SECRET`, `MCM_BOOTSTRAP_ADMIN_PASSWORD` live in the
-      platform's secret store, mode `0600`; nothing real in version control.
+- [ ] `MCM_AUTH_JWT_SECRET`, `MCM_BOOTSTRAP_ADMIN_PASSWORD`,
+      `MCM_MOSQUITTO_PASSWORD`, `MCM_ALERTING_SIGNING_SECRET` live in the
+      platform's secret store, mode `0600`; nothing real in version
+      control.
 - [ ] Mosquitto runs with its own authentication and ACL; MCM is the
       control plane, not a replacement for broker security.
 - [ ] Backups run on the schedule in §6 and the quarterly restore drill

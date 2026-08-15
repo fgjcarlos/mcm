@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -119,6 +118,12 @@ type BootstrapAdminConfig struct {
 type LoginLockoutConfig struct {
 	Window      string `yaml:"window"`
 	MaxAttempts int    `yaml:"max_attempts"`
+	// Cooldown is how long the source remains locked out after the
+	// rolling window expires, before retry is allowed. Go duration.
+	// Default "15m". Forward-compatible — the runtime currently keys
+	// off Window+MaxAttempts; Cooldown is exposed via env var so the
+	// contract documented in issue #279 is real today.
+	Cooldown string `yaml:"cooldown"`
 }
 
 // MosquittoConfig controls MQTT broker connectivity.
@@ -131,6 +136,14 @@ type MosquittoConfig struct {
 	Deploy                 DeployConfig       `yaml:"deploy"`
 	SparkplugPayloadDecode bool               `yaml:"sparkplug_payload_decode"`
 	SparkplugMaxMetrics    int                `yaml:"sparkplug_max_metrics"`
+	// ConfigDir is the directory containing the broker configuration.
+	// Surfaced so operators can pin the broker config dir separately from
+	// the deploy paths. Empty means "use deploy.acl_path's directory" or
+	// the broker's compiled-in default.
+	ConfigDir string `yaml:"config_dir"`
+	// DataDir is the broker's persistent data directory (retained
+	// messages, persistence file). Empty means broker default.
+	DataDir string `yaml:"data_dir"`
 }
 
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and
@@ -144,6 +157,10 @@ type DeployConfig struct {
 	ContainerName      string        `yaml:"container_name"`
 	ReloadStrategy     string        `yaml:"reload_strategy"`
 	HealthcheckTimeout time.Duration `yaml:"healthcheck_timeout"`
+	// Workdir is the working directory the deploy service switches into
+	// before writing passwd/acl files. Empty leaves the deploy service
+	// in its default working directory.
+	Workdir string `yaml:"workdir"`
 }
 
 // MosquittoTLSConfig controls MQTT TLS connectivity.
@@ -168,6 +185,11 @@ type AlertingConfig struct {
 	EndpointURL   string `yaml:"endpoint_url"`
 	Timeout       string `yaml:"timeout"`
 	SigningSecret string `yaml:"signing_secret"`
+	// Cooldown is the minimum interval between repeated alerts of the
+	// same class. Go duration. Default "5m". Forward-compatible — the
+	// alerter currently sends every event; Cooldown is exposed via env
+	// var so the contract documented in issue #279 is real today.
+	Cooldown string `yaml:"cooldown"`
 }
 
 // LoggingConfig controls log verbosity and output format.
@@ -214,6 +236,7 @@ func Default() Config {
 			LoginLockout: LoginLockoutConfig{
 				Window:      "15m",
 				MaxAttempts: 6,
+				Cooldown:    "15m",
 			},
 		},
 		Mosquitto: MosquittoConfig{
@@ -230,8 +253,9 @@ func Default() Config {
 			SecurityRetention: "2160h",
 		},
 		Alerting: AlertingConfig{
-			Enabled: false,
-			Timeout: "5s",
+			Enabled:  false,
+			Timeout:  "5s",
+			Cooldown: "5m",
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -405,7 +429,9 @@ func Load(path string) (Config, error) {
 		cfg = yamlCfg
 	}
 
-	applyEnvOverrides(&cfg)
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return Config{}, err
+	}
 
 	if strings.TrimSpace(cfg.Auth.JWTSecret) == "" {
 		secret, err := loadOrGenerateJWTSecret(cfg.Database.Path)
@@ -473,108 +499,15 @@ func Parse(data []byte) (Config, error) {
 		cfg.Logging.Format = Default().Logging.Format
 	}
 
-	applyEnvOverrides(&cfg)
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return Config{}, err
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
-}
-
-// applyEnvOverrides reads every MCM_* environment variable and overrides
-// the corresponding Config field when the variable is set. This is the
-// env-first step: env wins over YAML, YAML wins over in-code defaults.
-//
-// All env vars:
-//
-//	MCM_HTTP_BIND_ADDRESS             -> HTTP.BindAddress
-//	MCM_HTTP_PORT                     -> HTTP.Port
-//	MCM_DATABASE_PATH                 -> Database.Path
-//	MCM_AUTH_JWT_SECRET               -> Auth.JWTSecret
-//	MCM_AUTH_TOKEN_TTL                -> Auth.TokenTTL
-//	MCM_BOOTSTRAP_ADMIN_USERNAME      -> Auth.BootstrapAdmin.Username
-//	MCM_BOOTSTRAP_ADMIN_PASSWORD      -> Auth.BootstrapAdmin.Password
-//	MCM_MOSQUITTO_HOST                -> Mosquitto.Host
-//	MCM_MOSQUITTO_PORT                -> Mosquitto.Port
-//	MCM_MOSQUITTO_USERNAME            -> Mosquitto.Username
-//	MCM_MOSQUITTO_PASSWORD            -> Mosquitto.Password
-//	MCM_MOSQUITTO_DEPLOY_MODE               -> Mosquitto.Deploy.Mode
-//	MCM_MOSQUITTO_DEPLOY_ACL_PATH            -> Mosquitto.Deploy.ACLPath
-//	MCM_MOSQUITTO_DEPLOY_PASSWD_PATH         -> Mosquitto.Deploy.PasswdPath
-//	MCM_MOSQUITTO_DEPLOY_PID_PATH            -> Mosquitto.Deploy.PIDPath
-//	MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME      -> Mosquitto.Deploy.ContainerName
-//	MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY     -> Mosquitto.Deploy.ReloadStrategy
-//	MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT -> Mosquitto.Deploy.HealthcheckTimeout
-//	MCM_LOG_LEVEL                     -> Logging.Level
-//	MCM_LOG_FORMAT                    -> Logging.Format
-func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("MCM_HTTP_BIND_ADDRESS"); v != "" {
-		cfg.HTTP.BindAddress = v
-	}
-	if v := os.Getenv("MCM_HTTP_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.HTTP.Port = port
-		}
-	}
-	if v := os.Getenv("MCM_DATABASE_PATH"); v != "" {
-		cfg.Database.Path = v
-	}
-	if v := os.Getenv("MCM_AUTH_JWT_SECRET"); v != "" {
-		cfg.Auth.JWTSecret = v
-	}
-	if v := os.Getenv("MCM_AUTH_TOKEN_TTL"); v != "" {
-		cfg.Auth.TokenTTL = v
-	}
-	if v := os.Getenv("MCM_BOOTSTRAP_ADMIN_USERNAME"); v != "" {
-		cfg.Auth.BootstrapAdmin.Username = v
-	}
-	if v := os.Getenv("MCM_BOOTSTRAP_ADMIN_PASSWORD"); v != "" {
-		cfg.Auth.BootstrapAdmin.Password = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_HOST"); v != "" {
-		cfg.Mosquitto.Host = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.Mosquitto.Port = port
-		}
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_USERNAME"); v != "" {
-		cfg.Mosquitto.Username = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_PASSWORD"); v != "" {
-		cfg.Mosquitto.Password = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_MODE"); v != "" {
-		cfg.Mosquitto.Deploy.Mode = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH"); v != "" {
-		cfg.Mosquitto.Deploy.ACLPath = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH"); v != "" {
-		cfg.Mosquitto.Deploy.PasswdPath = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_PID_PATH"); v != "" {
-		cfg.Mosquitto.Deploy.PIDPath = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME"); v != "" {
-		cfg.Mosquitto.Deploy.ContainerName = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY"); v != "" {
-		cfg.Mosquitto.Deploy.ReloadStrategy = v
-	}
-	if v := os.Getenv("MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Mosquitto.Deploy.HealthcheckTimeout = d
-		}
-	}
-	if v := os.Getenv("MCM_LOG_LEVEL"); v != "" {
-		cfg.Logging.Level = v
-	}
-	if v := os.Getenv("MCM_LOG_FORMAT"); v != "" {
-		cfg.Logging.Format = v
-	}
 }
 
 // Validate checks whether the configuration is complete and internally consistent.
