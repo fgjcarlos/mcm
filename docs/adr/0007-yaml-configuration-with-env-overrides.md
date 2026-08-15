@@ -2,7 +2,20 @@
 
 ## Status
 
-Accepted
+Superseded by the Docker-first pivot (#226, 2026-Q2). The `mcm` CLI
+subcommands listed below (`mcm config init`, `mcm config validate`) and
+the `mcm-agent` companion process no longer exist. The current
+configuration contract is documented in
+`cmd/mcm/main.go` and the top-level [README](../../README.md#configuration):
+the binary takes only `--config` and `--version`; everything else comes
+from `MCM_*` environment variables, with an optional YAML file loaded
+through `MCM_CONFIG_FILE`.
+
+The points this ADR originally captured — operators want a readable,
+hand-editable config; secrets live outside the image — are still true,
+but the live shape is "YAML via env-driven env vars" rather than "YAML
+via CLI subcommands". New contributors should treat the rest of this
+document as historical context.
 
 ## Context
 
