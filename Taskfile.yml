@@ -157,6 +157,11 @@ tasks:
     cmds:
       - gofmt -l -w .
 
+  docs:gen:
+    desc: Regenerate internal/config/env_table.md from the canonical env-binding table
+    cmds:
+      - go run ./scripts/gen-env-table
+
   clean:
     desc: Remove dev image, data volume, and build artifacts
     cmds:

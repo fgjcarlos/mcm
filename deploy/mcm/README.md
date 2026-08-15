@@ -135,7 +135,10 @@ The MCM container:
 - Runs as a non-root user (`mcm`).
 - Stores the SQLite database at `/var/lib/mcm/mcm.db` (persisted via the `mcm_data` Docker volume).
 - Persists the auto-generated JWT secret to `/var/lib/mcm/.bootstrap.json` (mode 0600) so it survives restarts.
-- Honors `MCM_AUTH_JWT_SECRET`, `MCM_BOOTSTRAP_ADMIN_USERNAME`, and `MCM_BOOTSTRAP_ADMIN_PASSWORD` environment overrides at startup (other fields come from the mounted YAML or `internal/config.Default()`).
+- Honors every `MCM_*` environment variable in the strict-parser table at startup (see [`../../internal/config/env_bindings.go`](../../internal/config/env_bindings.go)). The required secrets are:
+  - `MCM_AUTH_JWT_SECRET` — at least 32 random characters; persisted to `.bootstrap.json` only when unset.
+  - `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — first-boot admin; both empty triggers auto-generation.
+- Other fields come from the mounted YAML or `internal/config.Default()`. A typo in a `MCM_*` name or a malformed value aborts startup with an actionable error (issue #279 contract).
 - Exposes port `8080` for the HTTP API.
 - Includes a healthcheck via `/livez`.
 
