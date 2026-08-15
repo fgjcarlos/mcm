@@ -143,9 +143,14 @@ tasks:
       - npm --prefix site ci
       - npm --prefix site run build
 
+  lint:docs:
+    desc: Lint docs for removed-CLI/stale-version references (issue #280)
+    cmds:
+      - bash scripts/lint-docs.sh
+
   lint:
     desc: Run every linter
-    deps: [lint:go, lint:golangci, lint:frontend, lint:openapi, lint:site]
+    deps: [lint:go, lint:golangci, lint:frontend, lint:openapi, lint:site, lint:docs]
 
   format:
     desc: Run gofmt

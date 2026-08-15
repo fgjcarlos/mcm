@@ -118,7 +118,7 @@ See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checkl
 
 ### Image HEALTHCHECK
 
-Both the development `Dockerfile` and the GoReleaser release image include a built-in `HEALTHCHECK` instruction that hits `GET /livez` every 30 seconds. Docker Compose augments this with compose-level healthcheck settings in `docker-compose.yml`. You do not need to add a healthcheck yourself — it is already built into the image.
+The development `Dockerfile` and the release image built by `.github/workflows/release.yml` (multi-arch, via `docker buildx`) both include a built-in `HEALTHCHECK` instruction that hits `GET /livez` every 30 seconds. Docker Compose augments this with compose-level healthcheck settings in `docker-compose.yml`. You do not need to add a healthcheck yourself — it is already built into the image.
 
 Note: `/livez` only verifies the HTTP server is up and the SQLite DB is reachable. The Mosquitto reachability is exposed via `/readyz`, which returns 503 with `error="broker unavailable"` when the broker cannot be reached. A container started without a reachable Mosquitto (e.g. standalone `docker run` without the Compose stack) will report `healthy` for `/livez` and `503` for `/readyz` — both are expected. To verify the broker side, run `docker compose exec mosquitto mosquitto_pub -h 127.0.0.1 -p 1883 -t mcm/healthcheck -m ping` or use `mosquitto_pub` from the host.
 

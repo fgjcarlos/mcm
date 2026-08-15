@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fgjcarlos/mcm/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
-[![Go](https://img.shields.io/badge/go-1.24-00ADD8?logo=go&logoColor=white)](./go.mod)
+[![Go](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](./go.mod)
 [![Node](https://img.shields.io/badge/node-22.13%20%7C%2024-339933?logo=node.js&logoColor=white)](./frontend/.nvmrc)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./docs/openapi.yaml)
 
@@ -118,7 +118,7 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 └──────────────┘   └──────────────┘   └──────────────┘
 ```
 
-- **Go 1.24** + stdlib `net/http` + `log/slog` (no third-party HTTP framework).
+- **Go 1.25** + stdlib `net/http` + `log/slog` (no third-party HTTP framework).
 - **SQLite** via the pure-Go `modernc.org/sqlite` driver (CGO disabled).
 - **MQTT**: `eclipse/paho.mqtt.golang` (keepalive, auto-reconnect, TLS).
 - **Frontend**: React 19 + Vite 8 + TypeScript 6 + Tailwind CSS 4.

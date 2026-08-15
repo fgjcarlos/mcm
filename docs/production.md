@@ -175,11 +175,11 @@ home labs, not for production stability:
 
 ```bash
 # Replace the mcm service's `build:` and `image:` lines in docker-compose.yml
-# with the versioned image, then pull and recreate. Example for v0.1.0:
+# with the versioned image, then pull and recreate. Example for tag v0.1.0:
 
 #   services:
 #     mcm:
-#       image: ghcr.io/fgjcarlos/mcm:0.1.0  # release workflow drops the leading v from GHCR tag
+#       image: ghcr.io/fgjcarlos/mcm:0.1.0  # release.yml strips the leading v from GHCR tag
 #       # ... rest unchanged
 
 docker compose pull mcm
