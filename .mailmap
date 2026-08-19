@@ -1,0 +1,7 @@
+# Collapse Carlos's multiple local identities into one canonical author.
+# Used by `git log --use-mailmap`, `git shortlog`, and `git blame -M`.
+# Note: GitHub's web Contributors graph does NOT honor .mailmap — that
+# requires rewriting commit messages (filter-repo) and force-push.
+Carlos F. <fgjcarlos@gmail.com>  <fgjcarlos@gmail.com>
+Carlos F. <fgjcarlos@gmail.com>  <74905493+fgjcarlos@users.noreply.github.com>
+Carlos F. <fgjcarlos@gmail.com>  <fgjcarlos@users.noreply.github.com>
