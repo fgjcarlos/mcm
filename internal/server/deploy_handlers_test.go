@@ -94,7 +94,7 @@ type fakeDeployApplier struct {
 	failAll bool
 }
 
-func (f *fakeDeployApplier) Apply(_ context.Context, _, _ string) error {
+func (f *fakeDeployApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	if f.failAll {
 		return errors.New("applier: write failed")
 	}

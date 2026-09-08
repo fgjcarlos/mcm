@@ -251,3 +251,14 @@ jobs:
         # mcm:dev is already loaded above (from the image job's
         # artifact); the script must NOT rebuild it.
         run: bash scripts/e2e-deploy.sh
+
+      - name: scripts/e2e-rollback.sh
+        # Issue #292 acceptance criteria: prove the deploy service
+        # restores the broker's ACL/passwd files from snapshot when the
+        # apply fails (e.g. docker exec kill -HUP returns non-zero
+        # because the broker container is unreachable). The script
+        # snapshots on-disk content, stops the mosquitto container,
+        # performs an apply that must fail, then asserts the on-disk
+        # files are byte-identical to the snapshot AND the broker
+        # restart serves the snapshot config.
+        run: bash scripts/e2e-rollback.sh
