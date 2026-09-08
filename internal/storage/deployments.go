@@ -24,15 +24,15 @@ import (
 // remains in the set as a read-compatible alias for historical rows so
 // older deployments still render in the API.
 var validDeploymentStatuses = map[string]struct{}{
-	"applied":          {},
-	"applying":         {},
-	"active_verified":  {},
-	"failed":           {},
-	"pending":          {},
+	"applied":            {},
+	"applying":           {},
+	"active_verified":    {},
+	"failed":             {},
+	"pending":            {},
 	"pending_activation": {},
-	"rollback_failed":  {},
-	"rolled_back":      {},
-	"saved":            {},
+	"rollback_failed":    {},
+	"rolled_back":        {},
+	"saved":              {},
 }
 
 // ErrDeploymentNotFound is returned when a deployment record does not exist.
