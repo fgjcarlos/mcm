@@ -6,17 +6,33 @@
 [![Node](https://img.shields.io/badge/node-22.13%20%7C%2024-339933?logo=node.js&logoColor=white)](./frontend/.nvmrc)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./docs/openapi.yaml)
 
-**Website**: [fgjcarlos.github.io/mcm](https://fgjcarlos.github.io/mcm) · MCM is an open source control plane for Eclipse Mosquitto.
+**Website**: [fgjcarlos.github.io/mcm](https://fgjcarlos.github.io/mcm) · An open source graphical configuration manager for Eclipse Mosquitto.
 
-It aims to make Mosquitto easier to operate by adding a modern web UI, REST API, realtime observability, user management, ACL management, and deployment tooling — without replacing Mosquitto as the MQTT broker.
+> **Goal:** import, edit, validate, review, apply, and recover the configuration of one Mosquitto instance from a web interface, for explicitly supported broker versions.
 
-> The goal is simple: **the stability and small footprint of Mosquitto, with a modern administration and observability experience.**
+Mosquitto remains the external MQTT broker. MCM provides the administration UI and API, stores its management state in SQLite, and connects to the broker for diagnostics.
+
+## Project status
+
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit `mosquitto.conf`, listeners, broker certificates, bridges, persistence, limits or plugins from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+
+| Capability | Current scope |
+| --- | --- |
+| MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
+| Preview, apply and history | Available for password/ACL files only; activation verification and rollback need hardening. |
+| Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
+| Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
+| Broker configuration editor | Planned, including import and version-aware validation. |
+| Backup and restore | Existing Taskfile recipes have known limitations; do not rely on them for recovery until corrected. |
+| Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
+
+Track the work in [epic #308](https://github.com/fgjcarlos/mcm/issues/308), the [roadmap](./ROADMAP.md), and the [configuration scope and acceptance criteria](./docs/product-scope.md). The Compose broker currently targets the `eclipse-mosquitto:2.0` image family; this is not a full compatibility guarantee across every Mosquitto release.
 
 ---
 
 ## Quickstart (Docker)
 
-MCM ships as a single Docker image. No CLI, no host binaries — `task` is the only tool you need.
+MCM ships as one application image alongside a separate Mosquitto container. Local development requires Git, Docker with Compose, and the Task runner.
 
 ```bash
 git clone https://github.com/fgjcarlos/mcm.git
@@ -28,7 +44,7 @@ task logs                # tail mcm logs; the bootstrap admin password prints he
 
 Open <http://localhost:8080> and sign in with `admin` + the password from `task logs`. Stop the stack with `task down`.
 
-> The dev stack now ships with Mosquitto authentication **enabled** (no anonymous clients). The bundled broker is seeded with a single dev admin user by `deploy/mosquitto/config/mosquitto-bootstrap.sh`; the matching credentials are hardcoded in `docker-compose.yml` so MCM can connect at startup. MCM's deploy service then writes the canonical passwd/acl files into a shared named volume (`mosquitto_config`) and SIGHUPs the broker on every successful apply, so user/ACL changes created via the UI/API reach the live broker without an operator running `mosquitto_passwd` by hand. This is a **dev-only** convenience — production uses [`deploy/mosquitto/config/mosquitto.prod.conf`](./deploy/mosquitto/config/mosquitto.prod.conf) and the production checklist in [`docs/production.md`](./docs/production.md).
+> The dev stack now ships with Mosquitto authentication **enabled** (no anonymous clients). The bundled broker is seeded with a single dev admin user by `deploy/mosquitto/config/mosquitto-bootstrap.sh`; the matching credentials are hardcoded in `docker-compose.yml` so MCM can connect at startup. MCM's deploy service then writes the canonical passwd/acl files into a shared named volume (`mosquitto_config`) and SIGHUPs the broker on every successful apply, so user/ACL changes created via the UI/API reach the live broker without an operator running `mosquitto_passwd` by hand. This is a **dev-only** convenience — production requires adapting the [broker template](./deploy/mosquitto/config/mosquitto.prod.conf), aligning file paths and permissions, and providing a verified activation mechanism. Read the [known production limitations](./docs/production.md#current-limitations) first.
 
 ---
 
@@ -60,9 +76,9 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `MCM_DATABASE_BACKEND` | `sqlite` | `"sqlite"` (uses `MCM_DATABASE_PATH`) or `"postgres"` (uses `MCM_DATABASE_DSN`). |
+| `MCM_DATABASE_BACKEND` | `sqlite` | Only `"sqlite"` is implemented. Selecting `"postgres"` aborts startup. |
 | `MCM_DATABASE_PATH` | `/var/lib/mcm/mcm.db` | SQLite file path. Parent dir must be writable so the JWT-secret bootstrap can persist. |
-| `MCM_DATABASE_DSN` | *(unset)* | Postgres connection string. Required when `MCM_DATABASE_BACKEND=postgres`. |
+| `MCM_DATABASE_DSN` | *(unset)* | Reserved for an unimplemented Postgres backend; not usable in this release. |
 
 ### Auth
 
@@ -165,8 +181,8 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task logs`       | Tail `mcm` logs (bootstrap admin prints here).            |
 | `task ready`      | Block until `/healthz` returns 200.                       |
 | `task smoke`      | Curl `/healthz`, `/readyz`, `/api/v1/status`.             |
-| `task backup`     | Snapshot the `mcm_data` volume into `backups/mcm-data.tgz`. |
-| `task restore`    | Restore `mcm_data` from `backups/mcm-data.tgz`.           |
+| `task backup`     | Legacy volume-only recipe; see [known backup limitations](./docs/production.md#6-backup-and-restore). |
+| `task restore`    | Known path bug; do not use for recovery until [#295](https://github.com/fgjcarlos/mcm/issues/295) is fixed.           |
 | `task test:go`    | `go test ./... -race -count=1`.                           |
 | `task test:frontend` | Install `frontend/` deps and run Vitest.              |
 | `task test`       | Both test suites.                                         |
@@ -232,7 +248,7 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 | ------------ | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------ |
 | `GET /livez` | `{"status":"alive"}`              | `200`            | Pure process check — never touches the DB or the broker. Use for K8s/Compose liveness.     |
 | `GET /healthz` | `{"status":"ok"}`              | `200`            | Alias of `/livez`, kept for backward compatibility with existing probes.                   |
-| `GET /readyz` | `{"status":"ready"\|"not_ready"}` | `200` / `503`    | DB **and** broker must be reachable; returns `503` otherwise. Use for readiness gates.     |
+| `GET /readyz` | `{"status":"ready"\|"not_ready"}` | `200` / `503`    | Pings DB and checks the broker monitor connection state; no fresh MQTT probe or failure-phase field.     |
 
 ### More
 

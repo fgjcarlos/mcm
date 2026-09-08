@@ -6,7 +6,7 @@ Thanks for your interest in MCM. The project is public and feedback is welcome, 
 
 - Project direction, roadmap prioritization, and final merge decisions belong to @fgjcarlos.
 - Issues and pull requests that do not align with the roadmap may be closed, even if the idea is valid in general.
-- Please keep discussions practical, respectful, and focused on MCM's goal: a lightweight control plane for Eclipse Mosquitto.
+- Please keep discussions practical, respectful, and focused on MCM's goal: a graphical configuration manager for one Eclipse Mosquitto instance; see [product scope](docs/product-scope.md).
 
 ## Before opening an issue
 
@@ -44,10 +44,10 @@ Pull requests should:
 For the current Go backend, run:
 
 ```bash
-make test
+task test
 ```
 
-`make test` and `make build` generate `frontend/dist` before invoking the Go toolchain, which keeps the embedded frontend contract explicit in local development and CI. If you use `go test`, `go build`, or `go run` directly, run `npm --prefix frontend run build` first.
+`task test` runs the backend and frontend suites; `task build` builds the application image. Build the frontend explicitly before standalone Go builds to supply embedded assets. If you use `go test`, `go build`, or `go run` directly, run `npm --prefix frontend run build` first.
 
 ### Nightly fuzzing
 

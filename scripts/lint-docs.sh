@@ -24,14 +24,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Files in scope: everything under docs/, deploy/, plus the two
-# repo-root docs.
-FILES=$(find docs deploy README.md ROADMAP.md -type f \
-    \( -name '*.md' -o -name '*.html' -o -name '*.mdx' -o -name '*.txt' \) \
+# Files in scope: guides, repository docs and the published Pages source.
+FILES=$(find docs deploy site/src README.md ROADMAP.md CONTRIBUTING.md -type f \
+    \( -name '*.md' -o -name '*.html' -o -name '*.mdx' -o -name '*.txt' -o -name '*.astro' \) \
     2>/dev/null | sort -u)
 
 if [ -z "$FILES" ]; then
-    echo "lint-docs: no doc files found under docs/, deploy/, README.md, ROADMAP.md" >&2
+    echo "lint-docs: no doc files found under docs/, deploy/, site/src and repository docs" >&2
     exit 1
 fi
 
