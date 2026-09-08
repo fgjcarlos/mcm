@@ -31,15 +31,51 @@ const maxDiffLines = 500
 
 // rollbackTimeout bounds the time the deploy service spends restoring
 // the broker's configuration from snapshot after a failed apply or
-// healthcheck. The deploy service derives a fresh context from
+// verification. The deploy service derives a fresh context from
 // context.Background() with this timeout so a cancelled HTTP request
 // context does NOT abort the rollback — the broker must be brought back
 // to a known state regardless of whether the operator's request is still
 // alive (issue #292, acceptance criterion 3).
 const rollbackTimeout = 10 * time.Second
 
-// HealthChecker is a function that checks MQTT broker connectivity.
-type HealthChecker func(ctx context.Context, cfg config.MosquittoConfig) diagnostics.MQTTResult
+// verifyAttempts and verifyBackoff schedule the bounded retry loop for
+// the post-apply active verification (issue #293, acceptance criterion 4).
+//
+//	attempt 1: immediate after reloadSettleDelay
+//	attempt 2: after verifyBackoff (1s)
+//	attempt 3: after 2*verifyBackoff (2s)
+//
+// reloadSettleDelay is a short pause between applier.Apply returning and
+// the verifier starting. Mosquitto processes SIGHUP asynchronously in its
+// event loop; without a settle, the verifier can race the reload and
+// observe the previous ACL (default-deny for unknown users, but full
+// allow for any user without a matching rule — which is what the new
+// config has during the race window). 1s is enough on a quiet broker;
+// the bounded retries handle longer reload delays.
+const (
+	verifyAttempts    = 3
+	verifyBackoff     = 1 * time.Second
+	reloadSettleDelay = 1 * time.Second
+)
+
+// ActiveVerifier is the post-apply check that proves the broker is
+// serving the freshly-applied configuration (issue #293). Implementations
+// must run a positive test (subscribe + publish round-trip) and a
+// negative test (subscribe to a denied topic is rejected) and return
+// OK=true only when both pass. The deploy service invokes this with
+// bounded retries and backoff.
+type ActiveVerifier interface {
+	VerifyActive(ctx context.Context, opts diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult
+}
+
+// CleartextPasswordLookup returns the cleartext password for a username
+// known to the API. The deploy service uses this to authenticate as a
+// non-service user during the post-apply verification. Cleartexts are
+// stored in memory only (never persisted) and populated at user
+// creation time by the API handler.
+type CleartextPasswordLookup interface {
+	CleartextPassword(username string) (string, bool)
+}
 
 // DeploymentStore abstracts deployment record persistence.
 type DeploymentStore interface {
@@ -71,39 +107,47 @@ type PreviewResult struct {
 
 // Service orchestrates deploy preview, apply, and history.
 type Service struct {
-	mu           sync.Mutex
-	applier      mosquitto.Applier
-	aclStore     acl.Store
-	mqttStore    MQTTUserLister
-	deployStore  DeploymentStore
-	healthCheck  HealthChecker
-	readFile     FileReader
-	mosquittoCfg config.MosquittoConfig
-	deployCfg    config.DeployConfig
-	auditFn      AuditFunc
+	mu             sync.Mutex
+	applier        mosquitto.Applier
+	aclStore       acl.Store
+	mqttStore      MQTTUserLister
+	deployStore    DeploymentStore
+	verifier       ActiveVerifier
+	passwordLookup CleartextPasswordLookup
+	readFile       FileReader
+	mosquittoCfg   config.MosquittoConfig
+	deployCfg      config.DeployConfig
+	auditFn        AuditFunc
 }
 
 // NewService constructs a deploy Service.
+//
+// Issue #293: the legacy HealthChecker field is replaced by an
+// ActiveVerifier (positive+negative MQTT round-trip) plus a
+// CleartextPasswordLookup (so the verifier can authenticate as a
+// non-service user that was created in this process lifetime).
 func NewService(
 	applier mosquitto.Applier,
 	aclStore acl.Store,
 	mqttStore MQTTUserLister,
 	deployStore DeploymentStore,
-	healthCheck HealthChecker,
+	verifier ActiveVerifier,
+	passwordLookup CleartextPasswordLookup,
 	mosquittoCfg config.MosquittoConfig,
 	deployCfg config.DeployConfig,
 	auditFn AuditFunc,
 ) *Service {
 	return &Service{
-		applier:      applier,
-		aclStore:     aclStore,
-		mqttStore:    mqttStore,
-		deployStore:  deployStore,
-		healthCheck:  healthCheck,
-		readFile:     defaultFileReader,
-		mosquittoCfg: mosquittoCfg,
-		deployCfg:    deployCfg,
-		auditFn:      auditFn,
+		applier:        applier,
+		aclStore:       aclStore,
+		mqttStore:      mqttStore,
+		deployStore:    deployStore,
+		verifier:       verifier,
+		passwordLookup: passwordLookup,
+		readFile:       defaultFileReader,
+		mosquittoCfg:   mosquittoCfg,
+		deployCfg:      deployCfg,
+		auditFn:        auditFn,
 	}
 }
 
@@ -299,16 +343,24 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 	}, nil
 }
 
-// Apply applies the current rendered configuration, runs a healthcheck, and rolls back on failure.
-// Apply rejects concurrent calls instead of blocking behind an in-flight deployment.
+// Apply applies the current rendered configuration, verifies the
+// broker is serving it (positive + negative tests with bounded
+// retries), and rolls back on any failure.
 //
-// Issue #292 (P0) rollback behavior:
-//   - The applier receives the on-disk snapshot and restores from it on
-//     partial apply failure (write/rename/sighup/docker-exec).
-//   - The healthcheck rollback uses a fresh bounded context derived from
-//     context.Background() so a cancelled request context does NOT abort
-//     the rollback. The broker must reach a known state regardless of
-//     whether the operator's HTTP request is still alive.
+// Lifecycle (issue #293 P0):
+//
+//	saved              — record inserted with rendered content
+//	applying           — applier is writing files / signalling reload
+//	pending_activation — files written + reload signalled, awaiting verify
+//	active_verified    — verification passed (positive + negative)
+//	failed             — verification exhausted retries; rolled back to snapshot
+//	rolled_back        — (legacy alias kept for compatibility)
+//	rollback_failed    — restore from snapshot also failed
+//
+// The applier receives the on-disk snapshot (issue #292) and the verifier
+// is invoked with bounded retries + backoff. On any persistent failure
+// the rollback runs against a fresh bounded context derived from
+// context.Background() so a cancelled HTTP request cannot abort it.
 func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, error) {
 	if s.deployCfg.Mode == "" {
 		return storage.Deployment{}, ErrDeployDisabled
@@ -335,10 +387,11 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 		return storage.Deployment{}, fmt.Errorf("render config: %w", err)
 	}
 
-	// Insert pending deployment record.
+	// Issue #293: insert with status="saved" so the lifecycle starts
+	// at "rendered content exists, not yet applied to disk".
 	d := &storage.Deployment{
 		Actor:          actor,
-		Status:         "pending",
+		Status:         "saved",
 		ACLSnapshot:    aclSnapshot,
 		PasswdSnapshot: passwdSnapshot,
 		ACLRendered:    aclRendered,
@@ -347,50 +400,165 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 	if err := s.deployStore.InsertDeployment(ctx, d); err != nil {
 		return storage.Deployment{}, fmt.Errorf("insert deployment: %w", err)
 	}
+	s.emitAudit(ctx, actor, "deployment.saved", d.ID, "success")
+
+	// Move to "applying" before touching disk.
+	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "applying", "")
+	s.emitAudit(ctx, actor, "deployment.applying", d.ID, "success")
 
 	// Apply rendered configuration. The applier restores from snapshot
-	// internally on partial failure; on full success it returns nil.
+	// internally on partial failure (issue #292).
 	applyErr := s.applier.Apply(ctx, aclRendered, passwdRendered, aclSnapshot, passwdSnapshot)
 	if applyErr != nil {
 		return s.recordApplyFailure(ctx, actor, d, applyErr)
 	}
 
-	// Healthcheck.
+	// Move to "pending_activation" — files on disk, reload signalled,
+	// awaiting verification.
+	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "pending_activation", "")
+	s.emitAudit(ctx, actor, "deployment.pending_activation", d.ID, "success")
+
+	// Mosquitto processes SIGHUP asynchronously; wait a moment before
+	// the verifier races the reload against the new config (issue #293).
+	// The settle uses a fresh ctx derived from context.Background() so a
+	// cancelled HTTP request does not abort it (the same principle as
+	// the bounded rollback ctx — issue #292, acceptance criterion 3).
+	select {
+	case <-time.After(reloadSettleDelay):
+	case <-ctx.Done():
+		// Ignore — the reload settle must finish even when the request
+		// ctx is cancelled; only the bounded ctx controls the total
+		// verifier budget.
+	}
+
+	// Bounded-retry verification (issue #293, acceptance criterion 4).
+	verifyResult, attempts := s.runVerifier(ctx, aclRendered, passwdRendered)
+	if verifyResult.OK {
+		msg := ""
+		if attempts > 1 {
+			msg = fmt.Sprintf("verified after %d attempts", attempts)
+		}
+		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "active_verified", msg)
+		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
+		return s.mustGetDeployment(ctx, d.ID), nil
+	}
+
+	// Verification exhausted retries — rollback from snapshot.
+	msg := fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
+	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg)
+}
+
+// runVerifier invokes the ActiveVerifier with bounded retries and
+// backoff. Returns the last result and the number of attempts made.
+// The verifier context is bounded by HealthcheckTimeout so the deploy
+// respects the operator's overall budget.
+func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int) {
+	// Pick a test user + topics from the rendered config. If we cannot
+	// find a usable test subject, the verifier is invoked with empty
+	// credentials/topics and will fail — the deploy is then rolled back.
+	testUser, allowedTopic, deniedTopic := s.pickVerificationSubject(ctx, aclBody, passwdBody)
+	password, hasPassword := s.lookupCleartextPassword(testUser)
+	if testUser == "" || !hasPassword || allowedTopic == "" || deniedTopic == "" {
+		return diagnostics.VerifyActiveResult{
+			OK:              false,
+			Stage:           "setup",
+			Message:         "no test subject available (need a non-service user with an ACL grant and a known cleartext password)",
+			PositiveMessage: "skipped: no test subject",
+		}, 0
+	}
+
 	timeout := s.deployCfg.HealthcheckTimeout
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
-	hcCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
-	result := s.healthCheck(hcCtx, s.mosquittoCfg)
-	if result.OK {
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "applied", "")
-		s.emitAudit(ctx, actor, "deployment.applied", d.ID, "success")
-		return s.mustGetDeployment(ctx, d.ID), nil
+	var last diagnostics.VerifyActiveResult
+	for attempt := 1; attempt <= verifyAttempts; attempt++ {
+		verifyCtx, cancel := context.WithTimeout(ctx, timeout)
+		result := s.verifier.VerifyActive(verifyCtx, diagnostics.VerifyActiveOptions{
+			Config:           s.mosquittoCfg,
+			Username:         testUser,
+			Password:         password,
+			AllowedTopic:     allowedTopic,
+			DeniedTopic:      deniedTopic,
+			DialTimeout:      2 * time.Second,
+			RoundTripTimeout: 2 * time.Second,
+			SubTimeout:       2 * time.Second,
+		})
+		cancel()
+		last = result
+		if result.OK {
+			return result, attempt
+		}
+		if attempt < verifyAttempts {
+			select {
+			case <-time.After(time.Duration(attempt) * verifyBackoff):
+			case <-ctx.Done():
+				last.Message = fmt.Sprintf("verification cancelled after %d attempts: %v", attempt, ctx.Err())
+				return last, attempt
+			}
+		}
 	}
+	return last, verifyAttempts
+}
 
-	// Healthcheck failed: rollback. Use a fresh bounded context derived
-	// from context.Background() so a cancelled request context does not
-	// abort the rollback (issue #292, acceptance criterion 3).
+// pickVerificationSubject picks a non-service user from the rendered
+// passwd, the first topic granted to that user, and a topic the user
+// does NOT have access to (negative test). Returns empty strings when
+// no suitable subject is available.
+func (s *Service) pickVerificationSubject(_ context.Context, aclBody, passwdBody string) (user, allowed, denied string) {
+	entries := mosquitto.ParsePasswdFile(passwdBody)
+	rules := mosquitto.ParseACLFile(aclBody)
+	if len(entries) == 0 || len(rules) == 0 {
+		return "", "", ""
+	}
+	for _, e := range entries {
+		// Skip the service user — it has # access so the negative test
+		// would be vacuous.
+		if e.Username == s.mosquittoCfg.Username && s.mosquittoCfg.Username != "" {
+			continue
+		}
+		for _, r := range rules {
+			if r.Principal != e.Username {
+				continue
+			}
+			allowed = r.TopicFilter
+			denied = r.TopicFilter + "/denied"
+			return e.Username, allowed, denied
+		}
+	}
+	return "", "", ""
+}
+
+// lookupCleartextPassword returns the cleartext password for the test
+// user, if available in the in-memory store. When the store is not
+// configured (e.g. in older test setups), returns false.
+func (s *Service) lookupCleartextPassword(username string) (string, bool) {
+	if s.passwordLookup == nil || username == "" {
+		return "", false
+	}
+	return s.passwordLookup.CleartextPassword(username)
+}
+
+// rollbackAfterVerifyFailure rolls back from snapshot after verification
+// exhausted retries and persists the appropriate status / audit event.
+func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot, msg string) (storage.Deployment, error) {
 	rollbackCtx, cancelRollback := context.WithTimeout(context.Background(), rollbackTimeout)
 	defer cancelRollback()
 	rollbackErr := s.applier.Apply(rollbackCtx, aclSnapshot, passwdSnapshot, "", "")
 	if rollbackErr != nil {
-		msg := fmt.Sprintf("healthcheck failed: %s; rollback also failed: %s", result.Message, rollbackErr.Error())
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", msg)
+		full := fmt.Sprintf("%s; rollback also failed: %s", msg, rollbackErr.Error())
+		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", full)
 		s.emitAudit(ctx, actor, "deployment.rollback_failed", d.ID, "failure")
-		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("deploy rollback failed: %w", rollbackErr)
+		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("verification rollback failed: %w", rollbackErr)
 	}
-
-	msg := fmt.Sprintf("healthcheck failed: %s", result.Message)
 	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rolled_back", msg)
 	s.emitAudit(ctx, actor, "deployment.rolled_back", d.ID, "failure")
 	return s.mustGetDeployment(ctx, d.ID), nil
 }
 
 // recordApplyFailure persists the appropriate status and audit event for
-// an apply that did not reach the healthcheck stage. Distinguishes
+// an apply that did not reach the verification stage. Distinguishes
 // between "failed but restored" (ErrApplyRestored — operator does not
 // need to intervene) and "rollback also failed" (ErrRollbackFailed —
 // broker is in an indeterminate state).

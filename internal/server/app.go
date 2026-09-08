@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"io/fs"
@@ -47,6 +48,16 @@ type App struct {
 	frontendFS         fs.FS
 	logger             *slog.Logger
 	now                func() time.Time
+
+	// userPasswords holds cleartext MQTT passwords in memory keyed by
+	// username. Populated by handleCreateMQTTUser when a new user is
+	// created (so the deploy verifier can authenticate as that user
+	// during the post-apply positive+negative tests). Never persisted;
+	// lost on restart, which is acceptable because issue #293 requires
+	// the verifier to run during the same process lifetime as the
+	// apply that produced the rendered config.
+	userPasswords   map[string]string
+	userPasswordsMu sync.RWMutex
 }
 
 // New creates an HTTP app configured for the auth MVP. logger may be nil; the
@@ -102,6 +113,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		trustedProxies:     trustedProxies,
 		logger:             logger,
 		now:                time.Now,
+		userPasswords:      make(map[string]string),
 	}, nil
 }
 
@@ -197,6 +209,45 @@ func (a *App) pruneEventRetention(ctx context.Context) {
 
 // Handler returns the configured HTTP handler tree.
 //
+// CleartextPassword implements deploy.CleartextPasswordLookup so the
+// deploy verifier can authenticate as a non-service user during the
+// post-apply verification (issue #293). Returns the cleartext only if
+// it was stored in memory by a prior handleCreateMQTTUser call in the
+// same process lifetime.
+func (a *App) CleartextPassword(username string) (string, bool) {
+	if username == "" || a.userPasswords == nil {
+		return "", false
+	}
+	a.userPasswordsMu.RLock()
+	defer a.userPasswordsMu.RUnlock()
+	pw, ok := a.userPasswords[username]
+	return pw, ok
+}
+
+// rememberMQTTPassword stores the cleartext MQTT password in memory so
+// the deploy verifier can use it later. Called by handleCreateMQTTUser
+// after the user is persisted. Never logged or persisted.
+func (a *App) rememberMQTTPassword(username, password string) {
+	if username == "" || password == "" {
+		return
+	}
+	a.userPasswordsMu.Lock()
+	defer a.userPasswordsMu.Unlock()
+	a.userPasswords[username] = password
+}
+
+// forgetMQTTPassword removes the cleartext for a username from the
+// in-memory store. Called when a user is deleted or disabled so the
+// cleartext does not outlive the user.
+func (a *App) forgetMQTTPassword(username string) {
+	if username == "" || a.userPasswords == nil {
+		return
+	}
+	a.userPasswordsMu.Lock()
+	defer a.userPasswordsMu.Unlock()
+	delete(a.userPasswords, username)
+}
+
 // Body-size limiting: the entire mux is wrapped with withBodyLimit so every route —
 // including pre-auth endpoints such as POST /api/v1/auth/login — enforces the 1 MiB
 // cap. Routes that carry no body (GET /healthz, GET /metrics, GET /api/v1/broker/events

@@ -9,12 +9,30 @@ import (
 )
 
 // validDeploymentStatuses is the allowed set of deployment status values.
+//
+// Issue #293 (P0) explicit lifecycle:
+//
+//	saved              — record inserted, rendered content not yet on disk
+//	applying           — applier is writing files and signalling reload
+//	pending_activation — files written + reload signalled, awaiting verification
+//	active_verified    — verified the broker is serving the new config
+//	failed             — apply or verification failed, files restored from snapshot
+//	rolled_back        — healthcheck failed; applier successfully reverted to snapshot
+//	rollback_failed    — applier could not restore the broker to a known state
+//
+// "applied" is no longer written by the deploy service (issue #293). It
+// remains in the set as a read-compatible alias for historical rows so
+// older deployments still render in the API.
 var validDeploymentStatuses = map[string]struct{}{
-	"pending":         {},
-	"applied":         {},
-	"failed":          {},
-	"rolled_back":     {},
-	"rollback_failed": {},
+	"applied":            {},
+	"applying":           {},
+	"active_verified":    {},
+	"failed":             {},
+	"pending":            {},
+	"pending_activation": {},
+	"rollback_failed":    {},
+	"rolled_back":        {},
+	"saved":              {},
 }
 
 // ErrDeploymentNotFound is returned when a deployment record does not exist.

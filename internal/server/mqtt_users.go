@@ -102,6 +102,12 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stash the cleartext so the deploy verifier can authenticate as
+	// this user during the post-apply verification (issue #293). Lost
+	// on restart — operators must re-create the user (or wait for the
+	// next password rotation) to re-arm the verifier.
+	a.rememberMQTTPassword(u.Username, password)
+
 	a.recordAuditFromRequest(r, "mqtt_user.create", "mqtt_user", strconv.FormatInt(u.ID, 10), "success", map[string]any{"username": u.Username})
 	writeJSON(w, http.StatusCreated, mqttUserWithPasswordResponse{
 		mqttUserResponse: toMQTTUserResponse(u),
@@ -177,6 +183,9 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.recordAuditFromRequest(r, "mqtt_user.update", "mqtt_user", strconv.FormatInt(u.ID, 10), "success", map[string]any{"username": u.Username, "disabled": u.Disabled})
+	if u.Disabled {
+		a.forgetMQTTPassword(u.Username)
+	}
 	writeJSON(w, http.StatusOK, toMQTTUserResponse(u))
 }
 
@@ -188,11 +197,17 @@ func (a *App) handleDeleteMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 	resourceID := strconv.FormatInt(id, 10)
 
+	// Look up the user first so we can forget its cleartext on success.
+	u, lookupErr := a.store.GetMQTTUser(r.Context(), id)
+
 	if err := a.store.DeleteMQTTUser(r.Context(), id); errors.Is(err, storage.ErrMQTTUserNotFound) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
 	} else if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 	} else {
+		if lookupErr == nil {
+			a.forgetMQTTPassword(u.Username)
+		}
 		a.recordAuditFromRequest(r, "mqtt_user.delete", "mqtt_user", resourceID, "success", nil)
 		w.WriteHeader(http.StatusNoContent)
 	}

@@ -262,3 +262,13 @@ jobs:
         # files are byte-identical to the snapshot AND the broker
         # restart serves the snapshot config.
         run: bash scripts/e2e-rollback.sh
+
+      - name: scripts/e2e-verify.sh
+        # Issue #293 acceptance criteria: prove the deploy service only
+        # marks a deployment active_verified after the positive +
+        # negative MQTT round-trip succeeds against the live broker.
+        # The script asserts the new ACL/passwd is in effect, and that
+        # the broker stops serving the new config as soon as the broker
+        # is unreachable (verifier must catch the "broker serving OLD
+        # config" failure mode).
+        run: bash scripts/e2e-verify.sh

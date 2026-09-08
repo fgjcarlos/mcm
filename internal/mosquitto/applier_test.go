@@ -81,15 +81,28 @@ func TestFileApplierApply(t *testing.T) {
 		dir := t.TempDir()
 		aclPath := filepath.Join(dir, "acl")
 		passwdPath := filepath.Join(dir, "passwd")
+		pidPath := filepath.Join(dir, "mosquitto.pid")
+		if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
+			t.Fatalf("seed pid: %v", err)
+		}
 
+		var signalled bool
 		fa := FileApplier{
 			ACLPath:    aclPath,
 			PasswdPath: passwdPath,
+			PIDPath:    pidPath,
+			SignalFunc: func(_ int) error {
+				signalled = true
+				return nil
+			},
 		}
 
 		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
+		}
+		if !signalled {
+			t.Fatal("SignalFunc was not called after a successful apply")
 		}
 
 		gotACL, err := os.ReadFile(aclPath)
@@ -109,7 +122,7 @@ func TestFileApplierApply(t *testing.T) {
 		}
 	})
 
-	t.Run("empty PIDPath skips SIGHUP", func(t *testing.T) {
+	t.Run("empty PIDPath returns ErrReloadNotSignaled", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
 		var killed bool
@@ -124,11 +137,18 @@ func TestFileApplierApply(t *testing.T) {
 		}
 
 		err := fa.Apply(context.Background(), "a", "b", "", "")
-		if err != nil {
-			t.Fatalf("Apply returned error: %v", err)
+		if !errors.Is(err, ErrReloadNotSignaled) {
+			t.Fatalf("Apply error = %v, want ErrReloadNotSignaled", err)
 		}
 		if killed {
 			t.Fatal("SignalFunc was called with empty PIDPath, want no signal sent")
+		}
+		// Neither file must be created — the apply aborted before I/O.
+		if _, statErr := os.Stat(fa.ACLPath); statErr == nil {
+			t.Fatal("ACL file was created before PIDPath check; expected no I/O")
+		}
+		if _, statErr := os.Stat(fa.PasswdPath); statErr == nil {
+			t.Fatal("passwd file was created before PIDPath check; expected no I/O")
 		}
 	})
 
@@ -496,7 +516,15 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 			t.Fatalf("marker: %v", err)
 		}
 
-		fa := FileApplier{ACLPath: aclPath, PasswdPath: passwdPath}
+		// Provide a PIDPath so the apply progresses past the
+		// ErrReloadNotSignaled guard (issue #293). The path doesn't
+		// need to point at a real file — we want the rename of the
+		// passwd to fail, not the SIGHUP.
+		pidPath := filepath.Join(dir, "mosquitto.pid")
+		if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
+			t.Fatalf("seed pid: %v", err)
+		}
+		fa := FileApplier{ACLPath: aclPath, PasswdPath: passwdPath, PIDPath: pidPath}
 
 		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
 		if err == nil {
