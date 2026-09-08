@@ -462,6 +462,23 @@ var envBindings = []envBinding{
 		},
 	},
 	{
+		Name: "MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND",
+		Path: "mosquitto.deploy.reload_command",
+		Doc:  `Whitespace-separated command + argv that MCM invokes after a successful deploy write. Issue #294 production reload mechanism. Example: "systemctl reload mosquitto.service". When set, takes precedence over reload_strategy=sighup and PIDPath.`,
+		Apply: func(cfg *Config, raw string) error {
+			if raw == "" {
+				cfg.Mosquitto.Deploy.ReloadCommand = nil
+				return nil
+			}
+			parts := strings.Fields(raw)
+			if len(parts) == 0 {
+				return fmt.Errorf("reload_command is empty whitespace; provide at least the command name")
+			}
+			cfg.Mosquitto.Deploy.ReloadCommand = parts
+			return nil
+		},
+	},
+	{
 		Name: "MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT",
 		Path: "mosquitto.deploy.healthcheck_timeout",
 		Doc:  "Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. Default 5s.",

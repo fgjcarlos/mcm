@@ -272,3 +272,14 @@ jobs:
         # is unreachable (verifier must catch the "broker serving OLD
         # config" failure mode).
         run: bash scripts/e2e-verify.sh
+
+      - name: scripts/e2e-prod.sh
+        # Issue #294 acceptance criteria: prove the production-aligned
+        # deploy flow works end-to-end without mounting the Docker
+        # socket into MCM. The script uses a separate Compose file
+        # (docker-compose.prod.yml) that wires the FileApplier with a
+        # ReloadCommand helper script — the production analogue of
+        # `systemctl reload mosquitto.service`. After apply, a
+        # subscriber round-trip on the granted topic proves the
+        # ReloadCommand path triggered the broker reload.
+        run: bash scripts/e2e-prod.sh

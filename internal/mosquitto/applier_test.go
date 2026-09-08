@@ -152,6 +152,81 @@ func TestFileApplierApply(t *testing.T) {
 		}
 	})
 
+	t.Run("ReloadCommand replaces SIGHUP for production deploys", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runner := &fakeRunner{}
+		var signalled bool
+		fa := FileApplier{
+			ACLPath:    filepath.Join(dir, "acl"),
+			PasswdPath: filepath.Join(dir, "passwd"),
+			PIDPath:    filepath.Join(dir, "mosquitto.pid"),
+			SignalFunc: func(_ int) error {
+				signalled = true
+				return nil
+			},
+			ReloadCommand: []string{"/usr/bin/systemctl", "reload", "mosquitto.service"},
+			ReloadRunner:  runner,
+		}
+
+		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
+		if err != nil {
+			t.Fatalf("Apply returned error: %v", err)
+		}
+
+		// ReloadCommand must be invoked; SIGHUP must NOT.
+		if runner.name != "/usr/bin/systemctl" {
+			t.Errorf("ReloadRunner.name = %q, want %q", runner.name, "/usr/bin/systemctl")
+		}
+		if got, want := runner.args, []string{"reload", "mosquitto.service"}; fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("ReloadRunner.args = %v, want %v", got, want)
+		}
+		if signalled {
+			t.Error("SignalFunc was called even though ReloadCommand is set; production must use one or the other")
+		}
+	})
+
+	t.Run("ReloadCommand failure triggers rollback", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		runner := &fakeRunner{err: errors.New("systemctl: unit mosquitto.service not found")}
+		fa := FileApplier{
+			ACLPath:       filepath.Join(dir, "acl"),
+			PasswdPath:    filepath.Join(dir, "passwd"),
+			ReloadCommand: []string{"/usr/bin/systemctl", "reload", "mosquitto.service"},
+			ReloadRunner:  runner,
+		}
+
+		// Seed the on-disk files so the snapshot is non-empty.
+		if err := os.WriteFile(fa.ACLPath, []byte("old acl"), 0o600); err != nil {
+			t.Fatalf("seed acl: %v", err)
+		}
+		if err := os.WriteFile(fa.PasswdPath, []byte("old passwd"), 0o600); err != nil {
+			t.Fatalf("seed passwd: %v", err)
+		}
+
+		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		if !errors.Is(err, ErrApplyRestored) {
+			t.Fatalf("Apply error = %v, want ErrApplyRestored", err)
+		}
+
+		// On-disk files must be reverted to the snapshot.
+		gotACL, err := os.ReadFile(fa.ACLPath)
+		if err != nil {
+			t.Fatalf("ReadFile acl: %v", err)
+		}
+		if string(gotACL) != "old acl" {
+			t.Errorf("acl on disk = %q, want %q (snapshot restored)", string(gotACL), "old acl")
+		}
+		gotPasswd, err := os.ReadFile(fa.PasswdPath)
+		if err != nil {
+			t.Fatalf("ReadFile passwd: %v", err)
+		}
+		if string(gotPasswd) != "old passwd" {
+			t.Errorf("passwd on disk = %q, want %q (snapshot restored)", string(gotPasswd), "old passwd")
+		}
+	})
+
 	t.Run("with PIDPath sends signal to process", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()

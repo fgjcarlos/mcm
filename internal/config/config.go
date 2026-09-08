@@ -149,6 +149,14 @@ type MosquittoConfig struct {
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and
 // signals the broker to reload. Mode "file" writes files on the local
 // filesystem; mode "docker" writes files and signals via docker exec.
+//
+// Issue #294: the production reload mechanism is ReloadCommand (a
+// command + argv that the applier invokes via os/exec after a
+// successful write). This lets operators plug in `systemctl reload
+// mosquitto`, an SSH hop, a k8s rollout trigger, or any other sidecar
+// without giving MCM access to the Docker socket. PIDPath remains
+// supported for dev (and for legacy operators who already share a PID
+// namespace with the broker).
 type DeployConfig struct {
 	Mode               string        `yaml:"mode"`
 	ACLPath            string        `yaml:"acl_path"`
@@ -156,6 +164,7 @@ type DeployConfig struct {
 	PIDPath            string        `yaml:"pid_path"`
 	ContainerName      string        `yaml:"container_name"`
 	ReloadStrategy     string        `yaml:"reload_strategy"`
+	ReloadCommand      []string      `yaml:"reload_command"`
 	HealthcheckTimeout time.Duration `yaml:"healthcheck_timeout"`
 	// Workdir is the working directory the deploy service switches into
 	// before writing passwd/acl files. Empty leaves the deploy service

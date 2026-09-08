@@ -123,6 +123,7 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_MOSQUITTO_DEPLOY_PID_PATH` | *(unset)* | Path to the broker's PID file. Optional. |
 | `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` | *(unset)* | Mosquitto container name for the `"docker"` deploy strategy (used by `docker exec kill -HUP 1`). |
 | `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` | *(unset)* | `""` or `"sighup"` (the only supported strategy right now). |
+| `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` | *(unset)* | Whitespace-separated command + argv invoked after a successful deploy write. Issue #294 production reload mechanism. Example: `"systemctl reload mosquitto.service"`. Takes precedence over `reload_strategy=sighup` and `pid_path` when set. |
 | `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` | `5s` | Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. |
 | `MCM_MOSQUITTO_DEPLOY_WORKDIR` | *(unset)* | Working directory for the deploy service when writing passwd/acl files. |
 

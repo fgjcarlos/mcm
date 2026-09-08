@@ -65,13 +65,30 @@ type Applier interface {
 	Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error
 }
 
-// FileApplier writes files directly to the filesystem and optionally sends
-// SIGHUP to the Mosquitto process identified by PIDPath.
+// FileApplier writes files directly to the filesystem and signals
+// Mosquitto to reload them. Two reload mechanisms are supported:
+//
+//   - PIDPath + SignalFunc: legacy SIGHUP-to-PID path used by the dev
+//     Compose stack. Kept for backwards compatibility but is NOT
+//     recommended for production — it requires MCM and Mosquitto to
+//     share a PID namespace, which is rare outside of containers.
+//
+//   - ReloadCommand + ReloadRunner: production reload mechanism
+//     (issue #294). The applier invokes ReloadCommand[0] with
+//     ReloadCommand[1:] as argv via ReloadRunner. This lets operators
+//     plug in `systemctl reload mosquitto`, an SSH hop, a k8s rollout
+//     trigger, or any other sidecar without giving MCM access to the
+//     Docker socket.
+//
+// If both are set, ReloadCommand takes precedence and the SIGHUP path
+// is ignored. If neither is set, Apply returns ErrReloadNotSignaled.
 type FileApplier struct {
-	ACLPath    string
-	PasswdPath string
-	PIDPath    string          // if empty, skip reload
-	SignalFunc func(int) error // if nil, uses platform default (SIGHUP)
+	ACLPath       string
+	PasswdPath    string
+	PIDPath       string          // if empty AND no ReloadCommand, Apply refuses
+	SignalFunc    func(int) error // if nil, uses platform default (SIGHUP)
+	ReloadCommand []string        // production: command + argv to invoke after a successful write
+	ReloadRunner  CommandRunner   // if nil, defaults to ExecRunner{}
 }
 
 // DockerApplier writes files to paths that are volume-mounted into a Docker
@@ -190,12 +207,13 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if f.PIDPath == "" {
-		// Issue #293: refuse to silently skip SIGHUP. An apply without
-		// a reload signal cannot be verified-active (the broker would
-		// keep serving the previous config until something external
-		// triggers the reload), so the deploy service must NOT mark
-		// this active.
+	// Issue #293: refuse to silently skip SIGHUP. An apply without
+	// a reload signal cannot be verified-active (the broker would
+	// keep serving the previous config until something external
+	// triggers the reload), so the deploy service must NOT mark
+	// this active. ReloadCommand (issue #294) is also an acceptable
+	// reload mechanism; reloadBroker picks the right one.
+	if f.PIDPath == "" && len(f.ReloadCommand) == 0 {
 		return ErrReloadNotSignaled
 	}
 
@@ -220,10 +238,10 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 		return f.rollbackAfterPartialApply("rename passwd", err, aclSnapshot, passwdSnapshot)
 	}
 
-	// Stage 3: signal the broker. If SIGHUP fails after the files were
+	// Stage 3: signal the broker. If the reload fails after the files were
 	// already renamed, the broker is now serving the new configuration
 	// without having reloaded it — rollback from snapshot.
-	if err := f.signalReload(); err != nil {
+	if err := f.reloadBroker(); err != nil {
 		return f.rollbackAfterPartialApply("signal reload", err, aclSnapshot, passwdSnapshot)
 	}
 
@@ -264,6 +282,40 @@ func (f FileApplier) signalReload() error {
 	}
 	if err := sigFn(pid); err != nil {
 		return fmt.Errorf("send SIGHUP to pid %d: %w", pid, err)
+	}
+	return nil
+}
+
+// reloadBroker picks the right reload mechanism for the applier
+// configuration. ReloadCommand takes precedence over PIDPath+SIGHUP —
+// production deploys use ReloadCommand so MCM does not need the
+// Docker socket. If neither is set, returns ErrReloadNotSignaled.
+func (f FileApplier) reloadBroker() error {
+	if len(f.ReloadCommand) > 0 {
+		return f.reloadViaCommand()
+	}
+	if f.PIDPath != "" {
+		return f.signalReload()
+	}
+	return ErrReloadNotSignaled
+}
+
+// reloadViaCommand invokes ReloadCommand[0] with the remaining argv
+// entries via ReloadRunner (defaults to ExecRunner{}). The command and
+// its arguments are passed literally to exec.Command, never through a
+// shell — so MCM operators can safely template paths into the argv.
+func (f FileApplier) reloadViaCommand() error {
+	if len(f.ReloadCommand) == 0 {
+		return fmt.Errorf("reload command is empty: at least the command name is required")
+	}
+	runner := f.ReloadRunner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	name := f.ReloadCommand[0]
+	args := f.ReloadCommand[1:]
+	if _, err := runner.Run(context.Background(), name, args...); err != nil {
+		return fmt.Errorf("reload command %q: %w", name, err)
 	}
 	return nil
 }
