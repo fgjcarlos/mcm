@@ -221,8 +221,62 @@ then the env vars override it field-by-field.
 - `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH` — on-disk passwd file path.
 - `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` — required when mode is `"docker"`.
 - `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` (default `""`) — `"sighup"`.
+- `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` (default unset) — whitespace-
+  separated command + argv that MCM invokes after a successful deploy
+  write. Takes precedence over `reload_strategy=sighup` and `pid_path`
+  when set. Example: `"systemctl reload mosquitto.service"`. Required for
+  production deployments that do NOT mount the Docker socket into MCM
+  (issue #294).
 - `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` (default `5s`) — broker
   healthcheck wait after reload.
+
+##### Production reload command (issue #294)
+
+Production deployments must NOT mount `/var/run/docker.sock` into the
+MCM container — a process with socket access is effectively root on
+the host, and the broker reload is trivial to perform out-of-band.
+The `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` setting lets MCM hand the
+reload off to a sidecar without escalating privileges:
+
+- **systemd**: `"systemctl reload mosquitto.service"` — runs on the
+  broker host (typically via SSH). The MCM container runs with the
+  `CAP_KILL` capability (or as a user with write access to the broker's
+  PID file).
+- **Podman / k8s / ECS sidecar**: a small helper binary that signals
+  the broker process via a unix socket or HTTP endpoint exposed by
+  the broker sidecar. Pass the helper's argv verbatim.
+- **Custom script**: any executable + argv that exits 0 on success.
+  The command is invoked via `exec.Command(name, args...)` — there is
+  no shell, so paths with spaces or shell metacharacters are safe.
+
+The dev Compose stack continues to use the legacy `docker exec kill -HUP 1`
+path (which requires `/var/run/docker.sock` mounted into MCM) — this is
+the only deploy mode that still benefits from the legacy `pid_path` +
+`signal_func` plumbing. Production deployments should set
+`MCM_MOSQUITTO_DEPLOY_MODE=file` and `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND`
+exclusively.
+
+##### Production path alignment (issue #294)
+
+Both `mosquitto.conf` and `mosquitto.prod.conf` reference the same
+file paths (`/mosquitto/config/passwd` + `/mosquitto/config/acl`) so
+the MCM render output lands where the broker expects it. Operators
+migrating from the legacy `passwords` (with `s`) path must rename the
+file before deploying — the MCM startup capability check will refuse
+to boot if the configured paths are not writable.
+
+The MCM process MUST have write access to the parent directory of
+both `ACLPath` and `PasswdPath`. The atomic-rename applier writes a
+temp file in the parent and `os.Rename`s it into place — if the parent
+is not writable, the apply fails. To satisfy this in production:
+
+- Run MCM and Mosquitto as the same UID (recommended), or in the same
+  supplementary group with write access to the shared config dir.
+- Set the shared config dir's group to that group and apply the
+  setgid bit (`chmod g+s`); MCM's atomic-rename preserves the group.
+- Do NOT use `chmod 777` in production — it is a dev shortcut that
+  the bootstrap script applies only for the local dev stack.
+
 
 #### Retention
 

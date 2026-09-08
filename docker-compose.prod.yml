@@ -1,0 +1,96 @@
+# MCM production-style deploy stack — issue #294.
+#
+# Mirrors the production managed flow without giving MCM access to the
+# Docker socket:
+#
+#   - mosquitto runs as the official `mosquitto` UID (NOT root).
+#   - The mcm service shares a NAMED VOLUME with mosquitto for the
+#     passwd/acl files but does NOT mount /var/run/docker.sock.
+#   - Reload is signalled via MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND
+#     running a helper script that sends SIGHUP to the broker.
+#   - mosquitto and mcm share the host PID namespace (`pid: host`) so
+#     the helper script can find mosquitto's PID. In real production
+#     this is replaced by a service unit (e.g. `systemctl reload
+#     mosquitto`) or an out-of-band signal — the helper script is the
+#     CI analogue.
+#
+# This file is exercised by scripts/e2e-prod.sh. The dev flow uses
+# docker-compose.yml (which mounts the docker socket and uses the
+# `docker exec kill -HUP 1` path).
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mcm-prod-mosquitto
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - mosquitto_config:/mosquitto/config
+      - ./deploy/mosquitto/config:/mosquitto-init:ro
+    # Run the dev bootstrap (chmods are dev-only side effects — they are
+    # no-ops here because we share the host PID namespace and the
+    # cross-UID mismatch workaround is unnecessary).
+    command: /mosquitto-init/mosquitto-bootstrap.sh
+    healthcheck:
+      # The eclipse-mosquitto image ships busybox; use `nc -z` to confirm
+      # the MQTT listener accepts TCP connections. Combined with the
+      # bootstrap's first-boot `mosquitto_passwd -c`, a successful
+      # listener probe implies the broker is fully booted.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  mcm:
+    image: mcm:dev
+    container_name: mcm-prod-server
+    # Share mosquitto's PID namespace so the reload helper script
+    # can find the broker's process. In a real production deployment
+    # this is replaced by an out-of-band signal (systemd, SSH, etc.).
+    pid: "service:mosquitto"
+    # Run as root so the reload helper script can send SIGHUP to the
+    # broker process. Production deployments run MCM as a non-root
+    # user with the minimal capability set — see docs/production.md
+    # for the secure equivalent. The dev image (`mcm:dev`) is not
+    # built to drop privileges, so this test is the simplest
+    # representation of "MCM has the signal capability it needs".
+    user: root
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    volumes:
+      - mosquitto_config:/var/lib/mosquitto-config
+      # Reload helper script — production analogue of `systemctl reload`.
+      - ./deploy/mosquitto/prod/reload-mosquitto.sh:/usr/local/bin/reload-mosquitto.sh:ro
+    environment:
+      MCM_HTTP_BIND_ADDRESS: 0.0.0.0
+      # Production deploy configuration — issue #294.
+      MCM_MOSQUITTO_DEPLOY_MODE: file
+      MCM_MOSQUITTO_DEPLOY_ACL_PATH: /var/lib/mosquitto-config/acl
+      MCM_MOSQUITTO_DEPLOY_PASSWD_PATH: /var/lib/mosquitto-config/passwd
+      MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND: /usr/local/bin/reload-mosquitto.sh
+      MCM_MOSQUITTO_USERNAME: admin
+      MCM_MOSQUITTO_PASSWORD: mcm-dev-broker-password
+    # Note: NO /var/run/docker.sock mount. The reload command signals
+      # the broker via SIGHUP using the shared host PID namespace.
+
+  mosquitto-clients:
+    # Helper container that runs mosquitto_sub / mosquitto_pub against
+    # the broker. Used by scripts/e2e-prod.sh to verify the new ACL
+    # is in effect.
+    image: eclipse-mosquitto:2.0
+    container_name: mcm-prod-clients
+    # Network alias is sufficient for the client to reach the broker.
+    # No PID namespace sharing — the client only does pub/sub.
+    restart: unless-stopped
+    depends_on:
+      mcm:
+        condition: service_started
+    command: ["sleep", "infinity"]
+
+volumes:
+  mosquitto_config:

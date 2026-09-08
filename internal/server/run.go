@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -51,15 +52,109 @@ func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
 		}
 	case "file":
 		return mosquitto.FileApplier{
-			ACLPath:    cfg.ACLPath,
-			PasswdPath: cfg.PasswdPath,
-			PIDPath:    cfg.PIDPath,
+			ACLPath:       cfg.ACLPath,
+			PasswdPath:    cfg.PasswdPath,
+			PIDPath:       cfg.PIDPath,
+			ReloadCommand: cfg.ReloadCommand,
+			ReloadRunner:  mosquitto.ExecRunner{},
 		}
 	default:
 		// Deploy disabled or unknown — return a no-op applier.
 		// The service guards via ErrDeployDisabled before calling Apply.
 		return mosquitto.FileApplier{}
 	}
+}
+
+// checkDeployCapabilities is the issue #294 startup gate that fails fast
+// with an actionable error when the deploy surface is misconfigured.
+// It does NOT fail the MCM server when deploy is disabled (empty mode)
+// or when the only thing missing is a reload trigger (the existing
+// apply path returns ErrReloadNotSignaled at runtime; we just log a
+// warning so operators see the misconfiguration before traffic arrives).
+//
+// The check covers four surfaces:
+//
+//  1. ACLPath + PasswdPath parents writable by the MCM process — the
+//     atomic-rename applier writes to those directories on every
+//     successful deploy.
+//  2. PIDPath readable when the legacy SIGHUP reload is configured —
+//     the applier reads it on every apply.
+//  3. Either PIDPath or ReloadCommand set when reload_strategy is
+//     "sighup" / unspecified — otherwise the apply will fail at
+//     runtime (#293) and operators should know before serving traffic.
+//  4. ContainerName non-empty in docker mode — docker exec needs a
+//     target.
+func checkDeployCapabilities(cfg config.DeployConfig, applier mosquitto.Applier, logger *slog.Logger) error {
+	if cfg.Mode == "" {
+		// Deploy disabled — nothing to verify.
+		return nil
+	}
+
+	switch cfg.Mode {
+	case "file":
+		// (1) ACLPath + PasswdPath writable.
+		if err := requireWritableParent(cfg.ACLPath, "acl_path"); err != nil {
+			return err
+		}
+		if err := requireWritableParent(cfg.PasswdPath, "passwd_path"); err != nil {
+			return err
+		}
+
+		// (2) PIDPath readable when set.
+		if cfg.PIDPath != "" {
+			if _, err := os.Stat(cfg.PIDPath); err != nil {
+				return fmt.Errorf("deploy PIDPath %q is not accessible: %w", cfg.PIDPath, err)
+			}
+		}
+
+		// (3) Reload trigger — log-only warning, no startup failure.
+		if cfg.PIDPath == "" && len(cfg.ReloadCommand) == 0 {
+			logger.Warn(
+				"deploy has no reload trigger (neither PIDPath nor ReloadCommand set); POST /api/v1/deployments/apply will fail with ErrReloadNotSignaled until you configure one",
+				"mode", cfg.Mode,
+			)
+		}
+		return nil
+
+	case "docker":
+		// (4) ContainerName non-empty.
+		if cfg.ContainerName == "" {
+			return fmt.Errorf("deploy container_name is empty; the \"docker\" mode requires a target container for docker exec")
+		}
+		// Note: Docker socket reachability is checked at apply time via
+		// docker exec. We intentionally do NOT touch the socket at
+		// startup — production deployments do NOT mount it.
+		return nil
+
+	default:
+		return fmt.Errorf("deploy mode %q is not supported; use \"file\" or \"docker\"", cfg.Mode)
+	}
+}
+
+// requireWritableParent ensures the parent directory of path exists and
+// is writable by the MCM process. Returns an actionable error otherwise.
+func requireWritableParent(path, fieldName string) error {
+	if path == "" {
+		return fmt.Errorf("deploy %s is empty; set it to the broker passwd/acl file path the MCM process must write to", fieldName)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("deploy %s parent dir %q is not creatable: %w", fieldName, dir, err)
+	}
+	// Probe write by creating a tiny file in the parent dir and removing it.
+	f, err := os.CreateTemp(dir, ".mcm-cap-probe-*")
+	if err != nil {
+		return fmt.Errorf("deploy %s parent dir %q is not writable by the MCM process: %w", fieldName, dir, err)
+	}
+	probePath := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return fmt.Errorf("deploy %s parent dir %q probe failed: %w", fieldName, dir, err)
+	}
+	if err := os.Remove(probePath); err != nil {
+		return fmt.Errorf("deploy %s parent dir %q probe cleanup failed: %w", fieldName, dir, err)
+	}
+	return nil
 }
 
 // openConfiguredStorage opens the persistence backend selected in the config.
@@ -122,6 +217,16 @@ func Run(ctx context.Context, cfg config.Config) error {
 	go app.StartEventRetentionPruner(ctx)
 	deployCfg := cfg.Mosquitto.Deploy
 	applier := buildApplier(deployCfg)
+	// Issue #294: capability checks run before serving traffic so the
+	// operator sees a clear error at startup instead of a confusing
+	// 500 at the first POST /api/v1/deployments/apply. The checks
+	// cover the minimum surface needed for a deploy to land on the
+	// broker: the ACL/passwd paths are writable by the MCM process,
+	// and (when reload_strategy=sighup is used) the PID file is
+	// readable.
+	if err := checkDeployCapabilities(deployCfg, applier, logger); err != nil {
+		return fmt.Errorf("deploy capability check failed: %w", err)
+	}
 	app.deploySvc = deploy.NewService(
 		applier,
 		store.ACLStore(),

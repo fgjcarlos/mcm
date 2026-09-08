@@ -1002,6 +1002,7 @@ var envVarNames = []string{
 	"MCM_MOSQUITTO_DEPLOY_PID_PATH",
 	"MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME",
 	"MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY",
+	"MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND",
 	"MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT",
 	"MCM_LOG_LEVEL",
 	"MCM_LOG_FORMAT",
@@ -1168,6 +1169,16 @@ func TestEnvEveryVarIsWired(t *testing.T) {
 		}, func(t *testing.T, c Config) {
 			if c.Mosquitto.Deploy.ReloadStrategy != "sighup" {
 				t.Fatalf("Mosquitto.Deploy.ReloadStrategy = %q, want sighup", c.Mosquitto.Deploy.ReloadStrategy)
+			}
+		}},
+		{"MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND", "systemctl reload mosquitto.service", func(t *testing.T) {
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_MODE", "file")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_ACL_PATH", "/var/lib/mosquitto-config/acl")
+			t.Setenv("MCM_MOSQUITTO_DEPLOY_PASSWD_PATH", "/var/lib/mosquitto-config/passwd")
+		}, func(t *testing.T, c Config) {
+			want := []string{"systemctl", "reload", "mosquitto.service"}
+			if fmt.Sprint(c.Mosquitto.Deploy.ReloadCommand) != fmt.Sprint(want) {
+				t.Fatalf("Mosquitto.Deploy.ReloadCommand = %v, want %v", c.Mosquitto.Deploy.ReloadCommand, want)
 			}
 		}},
 		{"MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT", "3s", func(t *testing.T) {

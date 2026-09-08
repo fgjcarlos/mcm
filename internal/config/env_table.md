@@ -40,6 +40,7 @@ Regenerate with `go run ./scripts/gen-env-table`.
 | `MCM_MOSQUITTO_DEPLOY_PID_PATH` | `mosquitto.deploy.pid_path` | Path to the broker's PID file. Optional even when deploy.mode is "file". |
 | `MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME` | `mosquitto.deploy.container_name` | Mosquitto container name for the "docker" deploy strategy (used by `docker exec kill -HUP 1`). |
 | `MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY` | `mosquitto.deploy.reload_strategy` | Reload strategy for the "file" deploy mode. "" or "sighup" (the only supported strategy right now). |
+| `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` | `mosquitto.deploy.reload_command` | Whitespace-separated command + argv that MCM invokes after a successful deploy write. Issue #294 production reload mechanism. Example: "systemctl reload mosquitto.service". When set, takes precedence over reload_strategy=sighup and PIDPath. |
 | `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` | `mosquitto.deploy.healthcheck_timeout` | Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. Default 5s. |
 | `MCM_MOSQUITTO_DEPLOY_WORKDIR` | `mosquitto.deploy.workdir` | Working directory for the deploy service when writing passwd/acl files. Defaults to the deploy service's CWD. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | `mosquitto.config_dir` | Directory containing the Mosquitto configuration. Surfaced for operators that pin the broker config dir separately from deploy paths. |
