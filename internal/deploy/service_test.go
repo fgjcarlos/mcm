@@ -21,6 +21,30 @@ import (
 
 // --- Fakes ---
 
+// fakePasswordLookup answers CleartextPassword calls from an in-memory
+// map populated by tests.
+type fakePasswordLookup struct {
+	mu   sync.Mutex
+	pwds map[string]string
+}
+
+func newFakePasswordLookup() *fakePasswordLookup {
+	return &fakePasswordLookup{pwds: make(map[string]string)}
+}
+
+func (f *fakePasswordLookup) remember(username, password string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pwds[username] = password
+}
+
+func (f *fakePasswordLookup) CleartextPassword(username string) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pw, ok := f.pwds[username]
+	return pw, ok
+}
+
 // fakeApplier records calls to Apply and can be configured to fail.
 type fakeApplier struct {
 	mu       sync.Mutex
@@ -178,12 +202,49 @@ func enabledDeployCfg(t *testing.T) (config.DeployConfig, string, string) {
 	}, aclPath, passwdPath
 }
 
-func okHealthCheck(_ context.Context, _ config.MosquittoConfig) diagnostics.MQTTResult {
-	return diagnostics.MQTTResult{OK: true, Message: "ok"}
+// okVerifier is the ActiveVerifier that always returns OK=true.
+func okVerifier(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
+	return diagnostics.VerifyActiveResult{
+		OK:              true,
+		Stage:           "ok",
+		Message:         "positive: OK; negative: rejected",
+		PositiveMessage: "positive: round-trip OK",
+		NegativeMessage: "negative: rejected (0x80)",
+	}
 }
 
-func failHealthCheck(_ context.Context, _ config.MosquittoConfig) diagnostics.MQTTResult {
-	return diagnostics.MQTTResult{OK: false, Message: "broker unreachable"}
+// failVerifier is the ActiveVerifier that always returns OK=false.
+func failVerifier(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
+	return diagnostics.VerifyActiveResult{
+		OK:              false,
+		Stage:           "positive",
+		Message:         "positive: subscribe failed",
+		PositiveMessage: "positive: subscribe failed",
+	}
+}
+
+// flakyVerifier returns OK=false on the first failUntil calls and OK=true
+// afterwards. Used to exercise the bounded-retry path.
+type flakyVerifier struct {
+	mu        sync.Mutex
+	failUntil int
+	calls     int
+}
+
+func (f *flakyVerifier) VerifyActive(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= f.failUntil {
+		return failVerifier(context.Background(), diagnostics.VerifyActiveOptions{})
+	}
+	return okVerifier(context.Background(), diagnostics.VerifyActiveOptions{})
+}
+
+func (f *flakyVerifier) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 func noAudit(_ context.Context, _, _, _, _, _ string, _ []byte) {}
@@ -193,10 +254,11 @@ func newTestService(
 	aclStore acl.Store,
 	mqttStore MQTTUserLister,
 	deployStore DeploymentStore,
-	healthCheck HealthChecker,
+	verifier ActiveVerifier,
+	passwordLookup CleartextPasswordLookup,
 	deployCfg config.DeployConfig,
 ) *Service {
-	svc := NewService(applier, aclStore, mqttStore, deployStore, healthCheck,
+	svc := NewService(applier, aclStore, mqttStore, deployStore, verifier, passwordLookup,
 		config.MosquittoConfig{Host: "localhost", Port: 1883},
 		deployCfg,
 		noAudit,
@@ -222,7 +284,8 @@ func TestPreview_Disabled(t *testing.T) {
 		&fakeACLStore{},
 		&fakeMQTTUserLister{},
 		store,
-		okHealthCheck,
+		diagnostics.VerifierFunc(okVerifier),
+		&fakePasswordLookup{},
 		config.DeployConfig{Mode: ""}, // disabled
 	)
 
@@ -247,7 +310,7 @@ func TestPreview_NoChanges(t *testing.T) {
 	writeFile(t, aclPath, "")
 	writeFile(t, passwdPath, "")
 
-	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
 	result, err := svc.Preview(context.Background(), "operator")
 	if err != nil {
@@ -278,7 +341,7 @@ func TestPreview_HappyPath(t *testing.T) {
 	writeFile(t, aclPath, "")
 	writeFile(t, passwdPath, "")
 
-	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
 	result, err := svc.Preview(context.Background(), "operator")
 	if err != nil {
@@ -316,7 +379,7 @@ func TestPreview_ServiceUserHashReused(t *testing.T) {
 	aclStore := &fakeACLStore{}
 	mqttStore := &fakeMQTTUserLister{}
 
-	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 	// Configure the service user so render() looks it up.
 	svc.mosquittoCfg.Username = "svc-admin"
 	svc.mosquittoCfg.Password = "anything" // never re-hashed; the existing entry wins
@@ -356,7 +419,8 @@ func TestPreview_ServiceUserPasswordChangeRehashes(t *testing.T) {
 		&fakeACLStore{},
 		&fakeMQTTUserLister{},
 		newFakeDeploymentStore(),
-		okHealthCheck,
+		diagnostics.VerifierFunc(okVerifier),
+		&fakePasswordLookup{},
 		deployCfg,
 	)
 	svc.mosquittoCfg.Username = "svc-admin"
@@ -400,7 +464,7 @@ func TestPreview_ServiceUserACLAlwaysPresent(t *testing.T) {
 	writeFile(t, aclPath, "")
 	writeFile(t, passwdPath, "")
 
-	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 	svc.mosquittoCfg.Username = "svc-admin"
 	svc.mosquittoCfg.Password = "p"
 
@@ -432,7 +496,8 @@ func TestApply_Disabled(t *testing.T) {
 		&fakeACLStore{},
 		&fakeMQTTUserLister{},
 		store,
-		okHealthCheck,
+		diagnostics.VerifierFunc(okVerifier),
+		&fakePasswordLookup{},
 		config.DeployConfig{Mode: ""},
 	)
 
@@ -454,15 +519,16 @@ func TestApply_Success(t *testing.T) {
 
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
 
-	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg)
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
 
 	d, err := svc.Apply(context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
-	if d.Status != "applied" {
-		t.Errorf("Status = %q, want %q", d.Status, "applied")
+	if d.Status != "active_verified" {
+		t.Errorf("Status = %q, want %q", d.Status, "active_verified")
 	}
 	if applier.callCount() != 1 {
 		t.Errorf("applier called %d times, want 1", applier.callCount())
@@ -482,7 +548,7 @@ func TestApply_ApplierError(t *testing.T) {
 	applier := &fakeApplier{failAll: true}
 	store := newFakeDeploymentStore()
 
-	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg)
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
 	_, err := svc.Apply(context.Background(), "operator")
 	if err == nil {
@@ -497,9 +563,112 @@ func TestApply_ApplierError(t *testing.T) {
 	if recs[0].Status != "failed" {
 		t.Errorf("Status = %q, want %q", recs[0].Status, "failed")
 	}
-	// No healthcheck should have been called; applier called exactly once.
+	// No verification should have been called; applier called exactly once.
 	if applier.callCount() != 1 {
 		t.Errorf("applier called %d times, want 1", applier.callCount())
+	}
+}
+
+// TestApply_LifecycleSavedApplyingPendingActivationActiveVerified
+// covers issue #293 acceptance criterion 1: the deployment record must
+// walk the explicit lifecycle states in order — saved (record inserted),
+// applying (applier writing), pending_activation (applier done, awaiting
+// verification), and finally active_verified (positive + negative
+// verification passed).
+func TestApply_LifecycleSavedApplyingPendingActivationActiveVerified(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := &fakeApplier{}
+	store := newRecordingDeploymentStore()
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+
+	d, err := svc.Apply(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if d.Status != "active_verified" {
+		t.Errorf("Status = %q, want %q", d.Status, "active_verified")
+	}
+	// Every lifecycle state must appear in the recorded transitions in
+	// the expected order.
+	want := []string{"saved", "applying", "pending_activation", "active_verified"}
+	got := store.statuses()
+	if len(got) != len(want) {
+		t.Fatalf("recorded statuses = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("transition[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestApply_VerifierRetriesThenSucceeds covers issue #293 acceptance
+// criterion 4: bounded retries. The first attempt fails (transient),
+// the second succeeds — apply still ends in active_verified.
+func TestApply_VerifierRetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := &fakeApplier{}
+	store := newFakeDeploymentStore()
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	verifier := &flakyVerifier{failUntil: 1}
+
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(verifier.VerifyActive), pwLookup, deployCfg)
+
+	d, err := svc.Apply(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if d.Status != "active_verified" {
+		t.Errorf("Status = %q, want %q", d.Status, "active_verified")
+	}
+	if verifier.callCount() != 2 {
+		t.Errorf("verifier called %d times, want 2 (one retry)", verifier.callCount())
+	}
+}
+
+// TestApply_VerifierExhaustsRetries covers issue #293 acceptance
+// criterion 4: bounded retries must terminate. When the verifier fails
+// every attempt, the apply rolls back and lands in rolled_back (NOT
+// active_verified).
+func TestApply_VerifierExhaustsRetries(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := &fakeApplier{}
+	store := newFakeDeploymentStore()
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	verifier := &flakyVerifier{failUntil: 99} // never succeeds
+
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(verifier.VerifyActive), pwLookup, deployCfg)
+
+	d, err := svc.Apply(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if d.Status != "rolled_back" {
+		t.Errorf("Status = %q, want %q", d.Status, "rolled_back")
+	}
+	if verifier.callCount() != verifyAttempts {
+		t.Errorf("verifier called %d times, want %d", verifier.callCount(), verifyAttempts)
+	}
+	// Applier called twice: once for apply, once for rollback.
+	if applier.callCount() != 2 {
+		t.Errorf("applier called %d times, want 2 (apply + rollback)", applier.callCount())
 	}
 }
 
@@ -514,7 +683,7 @@ func TestApply_HealthcheckFailure_Rollback(t *testing.T) {
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
 
-	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg)
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg)
 
 	d, err := svc.Apply(context.Background(), "operator")
 	// rolled_back is not an error to the caller according to spec scenarios; the
@@ -551,7 +720,7 @@ func TestApply_RollbackFailure(t *testing.T) {
 	rollbackFailApplier := &rollbackFailFakeApplier{}
 	store := newFakeDeploymentStore()
 
-	svc := newTestService(rollbackFailApplier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg)
+	svc := newTestService(rollbackFailApplier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg)
 
 	_, err := svc.Apply(context.Background(), "operator")
 	if err == nil {
@@ -578,6 +747,41 @@ func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _, _, _ string) er
 		return nil // first call (apply) succeeds
 	}
 	return errors.New("rollback applier: write failed")
+}
+
+// recordingDeploymentStore extends fakeDeploymentStore to record every
+// status transition in order so the lifecycle test can assert the
+// recorded sequence.
+type recordingDeploymentStore struct {
+	*fakeDeploymentStore
+	mu        sync.Mutex
+	transitns []string
+}
+
+func newRecordingDeploymentStore() *recordingDeploymentStore {
+	return &recordingDeploymentStore{fakeDeploymentStore: newFakeDeploymentStore()}
+}
+
+func (r *recordingDeploymentStore) InsertDeployment(ctx context.Context, d *storage.Deployment) error {
+	r.mu.Lock()
+	r.transitns = append(r.transitns, d.Status)
+	r.mu.Unlock()
+	return r.fakeDeploymentStore.InsertDeployment(ctx, d)
+}
+
+func (r *recordingDeploymentStore) UpdateDeploymentStatus(ctx context.Context, id int64, status, message string) error {
+	r.mu.Lock()
+	r.transitns = append(r.transitns, status)
+	r.mu.Unlock()
+	return r.fakeDeploymentStore.UpdateDeploymentStatus(ctx, id, status, message)
+}
+
+func (r *recordingDeploymentStore) statuses() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.transitns))
+	copy(out, r.transitns)
+	return out
 }
 
 // recordingAudit captures every audit call for assertions.
@@ -616,17 +820,40 @@ func (r *recordingAudit) actions() []string {
 	return out
 }
 
+// withSeedUsers returns an ACL store, an MQTT user list store, and a
+// password lookup pre-populated with a single test user ("verify-user")
+// that has a readwrite grant on "verify/topic". Use this in tests that
+// expect the deploy verifier to succeed (active_verified) — without
+// the seed the verifier has no test subject and the apply rolls back.
+func withSeedUsers(t *testing.T) (*fakeACLStore, *fakeMQTTUserLister, *fakePasswordLookup) {
+	t.Helper()
+	hash, err := mosquitto.HashPassword("verify-pass", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	aclStore := &fakeACLStore{rules: []acl.Rule{
+		{Principal: "verify-user", TopicFilter: "verify/topic", Permission: acl.PermissionReadWrite},
+	}}
+	mqttStore := &fakeMQTTUserLister{users: []storage.MQTTUser{
+		{Username: "verify-user", PasswordHash: hash},
+	}}
+	pwLookup := newFakePasswordLookup()
+	pwLookup.remember("verify-user", "verify-pass")
+	return aclStore, mqttStore, pwLookup
+}
+
 // newTestServiceWithAudit wires the service with a recording audit fn.
 func newTestServiceWithAudit(
 	applier mosquitto.Applier,
 	aclStore acl.Store,
 	mqttStore MQTTUserLister,
 	deployStore DeploymentStore,
-	healthCheck HealthChecker,
+	verifier ActiveVerifier,
+	passwordLookup CleartextPasswordLookup,
 	deployCfg config.DeployConfig,
 	audit *recordingAudit,
 ) *Service {
-	return NewService(applier, aclStore, mqttStore, deployStore, healthCheck,
+	return NewService(applier, aclStore, mqttStore, deployStore, verifier, passwordLookup,
 		config.MosquittoConfig{Host: "localhost", Port: 1883},
 		deployCfg,
 		audit.record,
@@ -651,7 +878,7 @@ func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
 	store := newFakeDeploymentStore()
 	audit := &recordingAudit{}
 
-	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg, audit)
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
 	d, err := svc.Apply(context.Background(), "operator")
 	if err != nil {
@@ -722,7 +949,7 @@ func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
 	store := newFakeDeploymentStore()
 	audit := &recordingAudit{}
 
-	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg, audit)
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
 	_, err := svc.Apply(context.Background(), "operator")
 	if err == nil {
@@ -787,10 +1014,10 @@ func TestApply_RollbackUsesIndependentContext(t *testing.T) {
 	applier := &rollbackCtxRecordingApplier{}
 	store := newFakeDeploymentStore()
 
-	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg)
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg)
 
 	// Use a context that is cancelled BEFORE Apply runs. The healthcheck
-	// will fail because failHealthCheck ignores ctx and always returns
+	// will fail because failVerifier ignores ctx and always returns
 	// failure; the rollback must then run with an independent ctx.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -841,7 +1068,7 @@ func TestApply_ApplierRolledBack_StatusFailed(t *testing.T) {
 	store := newFakeDeploymentStore()
 	audit := &recordingAudit{}
 
-	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg, audit)
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
 	_, err := svc.Apply(context.Background(), "operator")
 	if err == nil {
@@ -898,7 +1125,7 @@ func TestApply_ApplierRollbackFailed_StatusRollbackFailed(t *testing.T) {
 	store := newFakeDeploymentStore()
 	audit := &recordingAudit{}
 
-	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg, audit)
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
 	_, err := svc.Apply(context.Background(), "operator")
 	if err == nil {
@@ -943,7 +1170,7 @@ func TestApply_ConcurrentApplyReturnsInProgress(t *testing.T) {
 
 	applier := newBlockingApplier()
 	store := newFakeDeploymentStore()
-	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg)
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
 	done := make(chan error, 1)
 	go func() {
@@ -1017,7 +1244,7 @@ func TestPreview_DiffTruncation(t *testing.T) {
 	writeFile(t, passwdPath, "")
 
 	// ACL store has no rules → rendered ACL is empty → big diff.
-	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, newFakeDeploymentStore(), okHealthCheck, deployCfg)
+	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
 	result, err := svc.Preview(context.Background(), "operator")
 	if err != nil {

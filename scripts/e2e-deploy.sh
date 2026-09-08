@@ -25,7 +25,7 @@
 #   2. POST /auth/login returns 200 + token.
 #   3. POST /mqtt-users returns 201 + user + password.
 #   4. POST /deployments/preview returns 200 with has_changes=true.
-#   5. POST /deployments/apply returns 200 with status="applied".
+#   5. POST /deployments/apply returns 200 with status="active_verified".
 #   6. mosquitto_pub for the allowed topic succeeds (exit 0).
 #   7. mosquitto_pub for the forbidden topic fails with a non-zero exit
 #      and "not authorised" in stderr.
@@ -265,11 +265,11 @@ if [ "$apply_code" != "200" ]; then
 fi
 APPLY_STATUS="$(jq -r '.status // empty' "$apply_body")"
 rm -f "$apply_body"
-if [ "$APPLY_STATUS" != "applied" ]; then
-    echo "expected deploy apply status=applied, got $APPLY_STATUS" >&2
+if [ "$APPLY_STATUS" != "active_verified" ]; then
+    echo "expected deploy apply status=active_verified, got $APPLY_STATUS" >&2
     exit 1
 fi
-echo "apply OK, status=applied"
+echo "apply OK, status=active_verified"
 
 # Wait for the broker to settle after SIGHUP. The reload is async —
 # without this delay the publish checks below race the reload.

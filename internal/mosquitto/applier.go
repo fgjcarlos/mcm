@@ -32,6 +32,14 @@ var ErrApplyRestored = errors.New("apply failed; restored from snapshot")
 // intervention to reconcile.
 var ErrRollbackFailed = errors.New("rollback failed")
 
+// ErrReloadNotSignaled is returned by FileApplier.Apply when PIDPath is
+// empty. The applier refuses to silently skip SIGHUP (issue #293,
+// acceptance criterion 2): a deploy cannot be marked active without a
+// real reload signal, so the operator must either provide a PIDPath or
+// configure a reload strategy that does not depend on signal-based
+// reload (out of scope for the MVP).
+var ErrReloadNotSignaled = errors.New("reload not signaled: FileApplier requires PIDPath")
+
 // Applier writes Mosquitto ACL and password files and signals the broker to
 // reload its configuration.
 //
@@ -182,6 +190,14 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if f.PIDPath == "" {
+		// Issue #293: refuse to silently skip SIGHUP. An apply without
+		// a reload signal cannot be verified-active (the broker would
+		// keep serving the previous config until something external
+		// triggers the reload), so the deploy service must NOT mark
+		// this active.
+		return ErrReloadNotSignaled
+	}
 
 	// Stage 1: write both temp files. Neither rename has happened yet.
 	aclTmp, err := writeStage(f.ACLPath, aclBody, 0o600)
@@ -207,10 +223,8 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 	// Stage 3: signal the broker. If SIGHUP fails after the files were
 	// already renamed, the broker is now serving the new configuration
 	// without having reloaded it — rollback from snapshot.
-	if f.PIDPath != "" {
-		if err := f.signalReload(); err != nil {
-			return f.rollbackAfterPartialApply("signal reload", err, aclSnapshot, passwdSnapshot)
-		}
+	if err := f.signalReload(); err != nil {
+		return f.rollbackAfterPartialApply("signal reload", err, aclSnapshot, passwdSnapshot)
 	}
 
 	return nil

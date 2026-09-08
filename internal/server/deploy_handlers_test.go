@@ -101,9 +101,21 @@ func (f *fakeDeployApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 
-func okDeployHealthCheck(_ context.Context, _ config.MosquittoConfig) diagnostics.MQTTResult {
-	return diagnostics.MQTTResult{OK: true, Message: "ok"}
+func okDeployVerifier(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
+	return diagnostics.VerifyActiveResult{OK: true, Stage: "ok", Message: "ok"}
 }
+
+func failDeployVerifier(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
+	return diagnostics.VerifyActiveResult{OK: false, Stage: "positive", Message: "verifier rejected"}
+}
+
+// fakeDeployPasswordLookup is the empty CleartextPasswordLookup used by
+// the server-package deploy handler tests. The tests use empty ACL /
+// user fixtures, so the verifier returns "no test subject" and the
+// apply fails to "rolled_back" — which is what these tests assert.
+type fakeDeployPasswordLookup struct{}
+
+func (fakeDeployPasswordLookup) CleartextPassword(string) (string, bool) { return "", false }
 
 // newTestDeployService builds a deploy.Service wired with fakes and optionally enabled.
 func newTestDeployService(t *testing.T, enabled bool) *deploy.Service {
@@ -122,7 +134,8 @@ func newTestDeployService(t *testing.T, enabled bool) *deploy.Service {
 		&fakeDeployACLStore{},
 		&fakeDeployMQTTStore{},
 		newFakeDeployStore(),
-		okDeployHealthCheck,
+		diagnostics.VerifierFunc(okDeployVerifier),
+		&fakeDeployPasswordLookup{},
 		config.MosquittoConfig{Host: "localhost", Port: 1883},
 		deployCfg,
 		func(_ context.Context, _, _, _, _, _ string, _ []byte) {},
@@ -315,9 +328,8 @@ func TestHandleDeployApply(t *testing.T) {
 			&fakeDeployACLStore{},
 			&fakeDeployMQTTStore{},
 			newFakeDeployStore(),
-			func(_ context.Context, _ config.MosquittoConfig) diagnostics.MQTTResult {
-				return diagnostics.MQTTResult{OK: false, Message: "broker unreachable"}
-			},
+			diagnostics.VerifierFunc(failDeployVerifier),
+			&fakeDeployPasswordLookup{},
 			config.MosquittoConfig{Host: "localhost", Port: 1883},
 			config.DeployConfig{Mode: "file", ACLPath: dir + "/acl", PasswdPath: dir + "/passwd"},
 			func(_ context.Context, _, _, _, _, _ string, _ []byte) {},

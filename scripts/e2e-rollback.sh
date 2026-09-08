@@ -207,11 +207,11 @@ if [ "$apply_code" != "200" ]; then
 fi
 APPLY_STATUS="$(jq -r '.status // empty' "$apply_body")"
 rm -f "$apply_body"
-if [ "$APPLY_STATUS" != "applied" ]; then
-    echo "expected initial apply status=applied, got $APPLY_STATUS" >&2
+if [ "$APPLY_STATUS" != "active_verified" ]; then
+    echo "expected initial apply status=active_verified, got $APPLY_STATUS" >&2
     exit 1
 fi
-echo "initial apply OK, status=applied"
+echo "initial apply OK, status=active_verified"
 
 # Snapshot the on-disk ACL/passwd files. After the rollback these must
 # be byte-identical.
@@ -238,17 +238,17 @@ fail_code="$(curl -sS -o "$fail_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
     -H "Authorization: Bearer ${TOKEN}" || echo "000")"
 # Either HTTP 500 (apply error) or some other error code is acceptable,
-# but the request MUST NOT return 200 with status=applied.
+# but the request MUST NOT return 200 with status=active_verified.
 if [ "$fail_code" = "200" ]; then
     APPLY_STATUS_AFTER="$(jq -r '.status // empty' "$fail_body")"
-    if [ "$APPLY_STATUS_AFTER" = "applied" ]; then
-        echo "expected failed apply status != applied, got $APPLY_STATUS_AFTER" >&2
+    if [ "$APPLY_STATUS_AFTER" = "active_verified" ]; then
+        echo "expected failed apply status != active_verified, got $APPLY_STATUS_AFTER" >&2
         cat "$fail_body" >&2
         rm -f "$fail_body"
         exit 1
     fi
 fi
-echo "failed apply returned HTTP $fail_code (expected non-200 OR non-applied status)"
+echo "failed apply returned HTTP $fail_code (expected non-200 OR non-active_verified status)"
 rm -f "$fail_body"
 
 echo "--- e2e-rollback: verifying on-disk files were rolled back to snapshot ---"

@@ -127,7 +127,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 		store.ACLStore(),
 		store,
 		store,
-		diagnostics.CheckMQTTConnectivity,
+		// Issue #293: the post-apply verifier (positive+negative round-trip)
+		// replaces the old CONNECT/CONNACK-only healthcheck. The cleartext
+		// lookup lives on App so the verifier can authenticate as a
+		// non-service user that was created in this process lifetime.
+		diagnostics.VerifierFunc(diagnostics.VerifyActive),
+		app,
 		cfg.Mosquitto,
 		deployCfg,
 		deployAuditFn,
