@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,14 +30,21 @@ type fakeApplier struct {
 }
 
 type applyCall struct {
-	aclBody    string
-	passwdBody string
+	aclBody       string
+	passwdBody    string
+	aclSnapshot   string
+	passwdSnapshot string
 }
 
-func (f *fakeApplier) Apply(_ context.Context, aclBody, passwdBody string) error {
+func (f *fakeApplier) Apply(_ context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, applyCall{aclBody: aclBody, passwdBody: passwdBody})
+	f.calls = append(f.calls, applyCall{
+		aclBody:        aclBody,
+		passwdBody:     passwdBody,
+		aclSnapshot:    aclSnapshot,
+		passwdSnapshot: passwdSnapshot,
+	})
 	if f.failAll {
 		return errors.New("applier: write failed")
 	}
@@ -564,7 +572,7 @@ type rollbackFailFakeApplier struct {
 	count int32
 }
 
-func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _ string) error {
+func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	n := atomic.AddInt32(&r.count, 1)
 	if n == 1 {
 		return nil // first call (apply) succeeds
@@ -743,6 +751,179 @@ func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
 	}
 }
 
+// rollbackCtxRecordingApplier captures the ctx passed to the rollback Apply
+// call so the test can assert it is derived from context.Background()
+// (not from the cancelled request ctx).
+type rollbackCtxRecordingApplier struct {
+	applyErrs       []error // errors to return on each Apply call
+	rollbackCtxErr  error   // error captured from the rollback call's ctx
+}
+
+func (r *rollbackCtxRecordingApplier) Apply(ctx context.Context, _, _, _, _ string) error {
+	// Record the ctx.Err() of the SECOND call (the rollback) to confirm
+	// it is NOT cancelled.
+	if len(r.applyErrs) >= 1 {
+		r.rollbackCtxErr = ctx.Err()
+	}
+	if len(r.applyErrs) == 0 {
+		r.applyErrs = append(r.applyErrs, nil) // apply succeeds
+		return nil
+	}
+	// rollback fails
+	return errors.New("rollback applier: simulated failure")
+}
+
+// TestApply_RollbackUsesIndependentContext covers issue #292 acceptance
+// criterion 3: when the request ctx is cancelled, the rollback must still
+// run. The rollback applier call must use a fresh context derived from
+// context.Background() — not the cancelled request ctx.
+func TestApply_RollbackUsesIndependentContext(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := &rollbackCtxRecordingApplier{}
+	store := newFakeDeploymentStore()
+
+	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, failHealthCheck, deployCfg)
+
+	// Use a context that is cancelled BEFORE Apply runs. The healthcheck
+	// will fail because failHealthCheck ignores ctx and always returns
+	// failure; the rollback must then run with an independent ctx.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := svc.Apply(ctx, "operator")
+	if err == nil {
+		t.Fatal("Apply: want error (rollback failure), got nil")
+	}
+
+	// The rollback applier call must have seen a non-cancelled context.
+	if applier.rollbackCtxErr != nil {
+		t.Errorf("rollback ctx.Err() = %v, want nil (rollback must use an independent context)", applier.rollbackCtxErr)
+	}
+
+	// The deployment record must reflect rollback_failed.
+	recs, _ := store.ListDeployments(context.Background(), 20, 0)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 deployment record, got %d", len(recs))
+	}
+	if recs[0].Status != "rollback_failed" {
+		t.Errorf("Status = %q, want %q", recs[0].Status, "rollback_failed")
+	}
+}
+
+// errApplyRolledBackFakeApplier always returns an error wrapping
+// mosquitto.ErrApplyRestored (apply failed but applier restored from
+// snapshot). Used to verify the deploy service records status "failed"
+// with the right audit event when the applier handles the rollback itself.
+type errApplyRolledBackFakeApplier struct{}
+
+func (errApplyRolledBackFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
+	return fmt.Errorf("simulated: %w", mosquitto.ErrApplyRestored)
+}
+
+// TestApply_ApplierRolledBack_StatusFailed covers the case where the
+// applier handles the partial-failure rollback internally and returns
+// ErrApplyRestored. The deploy service must record status "failed"
+// (NOT "rollback_failed") because the broker is back on the previous
+// configuration — operator does not need to intervene.
+func TestApply_ApplierRolledBack_StatusFailed(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := errApplyRolledBackFakeApplier{}
+	store := newFakeDeploymentStore()
+	audit := &recordingAudit{}
+
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg, audit)
+
+	_, err := svc.Apply(context.Background(), "operator")
+	if err == nil {
+		t.Fatal("Apply: want error (apply failed), got nil")
+	}
+
+	recs, _ := store.ListDeployments(context.Background(), 20, 0)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 deployment record, got %d", len(recs))
+	}
+	// Status must be "failed" (broker was restored to snapshot, but
+	// the apply itself did not succeed).
+	if recs[0].Status != "failed" {
+		t.Errorf("Status = %q, want %q (broker was restored by applier; operator does not need to intervene)", recs[0].Status, "failed")
+	}
+	// The audit must record deployment.failed, NOT deployment.rollback_failed.
+	actions := audit.actions()
+	if !contains(actions, "deployment.failed:failure") {
+		t.Errorf("audit actions = %v, want deployment.failed:failure", actions)
+	}
+	for _, a := range actions {
+		if a == "deployment.rollback_failed:failure" {
+			t.Errorf("audit actions = %v, must NOT include deployment.rollback_failed when applier restored successfully", actions)
+		}
+		if a == "deployment.applied:success" {
+			t.Errorf("audit actions = %v, must not include deployment.applied:success on apply failure", actions)
+		}
+	}
+}
+
+// errApplyRollbackFailedFakeApplier always returns an error wrapping
+// mosquitto.ErrRollbackFailed. Used to verify the deploy service records
+// status "rollback_failed" (not "failed") when the applier could not
+// restore from snapshot and the broker is in an indeterminate state.
+type errApplyRollbackFailedFakeApplier struct{}
+
+func (errApplyRollbackFailedFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
+	return fmt.Errorf("simulated: %w", mosquitto.ErrRollbackFailed)
+}
+
+// TestApply_ApplierRollbackFailed_StatusRollbackFailed covers the case
+// where the applier fails to restore from snapshot and returns
+// ErrRollbackFailed. The deploy service must record status
+// "rollback_failed" because the broker is in an indeterminate state and
+// requires operator intervention.
+func TestApply_ApplierRollbackFailed_StatusRollbackFailed(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	applier := errApplyRollbackFailedFakeApplier{}
+	store := newFakeDeploymentStore()
+	audit := &recordingAudit{}
+
+	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, okHealthCheck, deployCfg, audit)
+
+	_, err := svc.Apply(context.Background(), "operator")
+	if err == nil {
+		t.Fatal("Apply: want error, got nil")
+	}
+
+	recs, _ := store.ListDeployments(context.Background(), 20, 0)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 deployment record, got %d", len(recs))
+	}
+	if recs[0].Status != "rollback_failed" {
+		t.Errorf("Status = %q, want %q (applier could not restore; broker indeterminate)", recs[0].Status, "rollback_failed")
+	}
+
+	actions := audit.actions()
+	if !contains(actions, "deployment.rollback_failed:failure") {
+		t.Errorf("audit actions = %v, want deployment.rollback_failed:failure", actions)
+	}
+	for _, a := range actions {
+		if a == "deployment.failed:failure" {
+			t.Errorf("audit actions = %v, must NOT include deployment.failed when applier rollback also failed", actions)
+		}
+	}
+}
+
 // contains reports whether slice contains s.
 func contains(slice []string, s string) bool {
 	for _, v := range slice {
@@ -803,7 +984,7 @@ func newBlockingApplier() *blockingApplier {
 	return &blockingApplier{started: make(chan struct{}), releaseCh: make(chan struct{})}
 }
 
-func (b *blockingApplier) Apply(_ context.Context, _, _ string) error {
+func (b *blockingApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	b.mu.Lock()
 	b.count++
 	b.mu.Unlock()

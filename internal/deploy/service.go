@@ -29,6 +29,15 @@ var ErrDeployInProgress = errors.New("deploy already in progress")
 // maxDiffLines is the maximum number of lines in a returned unified diff.
 const maxDiffLines = 500
 
+// rollbackTimeout bounds the time the deploy service spends restoring
+// the broker's configuration from snapshot after a failed apply or
+// healthcheck. The deploy service derives a fresh context from
+// context.Background() with this timeout so a cancelled HTTP request
+// context does NOT abort the rollback — the broker must be brought back
+// to a known state regardless of whether the operator's request is still
+// alive (issue #292, acceptance criterion 3).
+const rollbackTimeout = 10 * time.Second
+
 // HealthChecker is a function that checks MQTT broker connectivity.
 type HealthChecker func(ctx context.Context, cfg config.MosquittoConfig) diagnostics.MQTTResult
 
@@ -292,6 +301,14 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 
 // Apply applies the current rendered configuration, runs a healthcheck, and rolls back on failure.
 // Apply rejects concurrent calls instead of blocking behind an in-flight deployment.
+//
+// Issue #292 (P0) rollback behavior:
+//   - The applier receives the on-disk snapshot and restores from it on
+//     partial apply failure (write/rename/sighup/docker-exec).
+//   - The healthcheck rollback uses a fresh bounded context derived from
+//     context.Background() so a cancelled request context does NOT abort
+//     the rollback. The broker must reach a known state regardless of
+//     whether the operator's HTTP request is still alive.
 func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, error) {
 	if s.deployCfg.Mode == "" {
 		return storage.Deployment{}, ErrDeployDisabled
@@ -331,12 +348,11 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 		return storage.Deployment{}, fmt.Errorf("insert deployment: %w", err)
 	}
 
-	// Apply rendered configuration.
-	if err := s.applier.Apply(ctx, aclRendered, passwdRendered); err != nil {
-		msg := err.Error()
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "failed", msg)
-		s.emitAudit(ctx, actor, "deployment.failed", d.ID, "failure")
-		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("apply config: %w", err)
+	// Apply rendered configuration. The applier restores from snapshot
+	// internally on partial failure; on full success it returns nil.
+	applyErr := s.applier.Apply(ctx, aclRendered, passwdRendered, aclSnapshot, passwdSnapshot)
+	if applyErr != nil {
+		return s.recordApplyFailure(ctx, actor, d, applyErr)
 	}
 
 	// Healthcheck.
@@ -354,8 +370,12 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 		return s.mustGetDeployment(ctx, d.ID), nil
 	}
 
-	// Healthcheck failed: rollback.
-	rollbackErr := s.applier.Apply(ctx, aclSnapshot, passwdSnapshot)
+	// Healthcheck failed: rollback. Use a fresh bounded context derived
+	// from context.Background() so a cancelled request context does not
+	// abort the rollback (issue #292, acceptance criterion 3).
+	rollbackCtx, cancelRollback := context.WithTimeout(context.Background(), rollbackTimeout)
+	defer cancelRollback()
+	rollbackErr := s.applier.Apply(rollbackCtx, aclSnapshot, passwdSnapshot, "", "")
 	if rollbackErr != nil {
 		msg := fmt.Sprintf("healthcheck failed: %s; rollback also failed: %s", result.Message, rollbackErr.Error())
 		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", msg)
@@ -367,6 +387,23 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rolled_back", msg)
 	s.emitAudit(ctx, actor, "deployment.rolled_back", d.ID, "failure")
 	return s.mustGetDeployment(ctx, d.ID), nil
+}
+
+// recordApplyFailure persists the appropriate status and audit event for
+// an apply that did not reach the healthcheck stage. Distinguishes
+// between "failed but restored" (ErrApplyRestored — operator does not
+// need to intervene) and "rollback also failed" (ErrRollbackFailed —
+// broker is in an indeterminate state).
+func (s *Service) recordApplyFailure(ctx context.Context, actor string, d *storage.Deployment, applyErr error) (storage.Deployment, error) {
+	msg := applyErr.Error()
+	if errors.Is(applyErr, mosquitto.ErrRollbackFailed) {
+		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", msg)
+		s.emitAudit(ctx, actor, "deployment.rollback_failed", d.ID, "failure")
+		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("apply failed and rollback failed: %w", applyErr)
+	}
+	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "failed", msg)
+	s.emitAudit(ctx, actor, "deployment.failed", d.ID, "failure")
+	return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("apply config: %w", applyErr)
 }
 
 // List returns deployment records ordered newest first.
