@@ -5,7 +5,7 @@ This directory contains the local Eclipse Mosquitto configuration used by the MC
 ## Files
 
 - `config/mosquitto.conf`: dev-stack Mosquitto configuration with auth + ACL enabled. The dev stack shares this dir with MCM via a named volume; see [Integration with MCM](#integration-with-mcm) below for the deploy flow.
-- `config/mosquitto.prod.conf`: production-hardened example. Disables anonymous access, adds a password file, binds plain MQTT to localhost, and configures a TLS listener on `8883`. Review the comments inside the file and this README's TLS checklist before use.
+- `config/mosquitto.prod.conf`: operator-adapted starting template. Disables anonymous access, uses `passwords`, binds plain MQTT to `0.0.0.0`, and defines a TLS listener on `8883`. It does not reference `acl_file`; mTLS is commented out by default. Review the comments inside the file and this README's TLS checklist before use.
 - `config/mosquitto-bootstrap.sh`: dev-only init script that seeds the shared config volume on first boot (see [Integration with MCM](#integration-with-mcm)).
 
 ## Exposed ports
@@ -49,10 +49,14 @@ The dev Compose stack wires MCM's deploy service directly to the bundled broker:
 The end-to-end flow on every successful deploy apply:
 
 1. MCM renders the current ACL rules + MQTT users into two files (`mosquitto.RenderACLFile` / `mosquitto.RenderPasswdFile`).
-2. The deploy service additionally re-hashes the `MCM_MOSQUITTO_PASSWORD` on every render so the service user MCM connects with never drops out of the rendered passwd even when an operator removes it from the MCM DB.
-3. `internal/mosquitto.DockerApplier` writes both files atomically (temp + rename) into the named volume that Mosquitto mounts at `/mosquitto/config/`.
+2. The deploy service includes the service account and its baseline ACLs. It reuses the existing hash when it matches the configured password; otherwise it generates a new hash.
+3. `internal/mosquitto.DockerApplier` replaces each file atomically (temp + rename); the pair is not one atomic transaction. It writes into the named volume that Mosquitto mounts at `/mosquitto/config/`.
 4. `docker exec mcm-mosquitto kill -HUP 1` signals the broker to reload the passwd/acl without a container restart.
-5. MCM runs a healthcheck (`diagnostics.CheckMQTTConnectivity`) that does a real MQTT CONNECT/CONNACK exchange. If it fails, the deploy service reverts to the snapshot it took before applying and emits an audit event — see `internal/deploy/service.go:276` (rollback path) and the `TestApply_HealthcheckFailure_AuditAndFilesReverted` / `TestApply_RollbackFailure_AuditEmitted` tests.
+5. MCM runs a healthcheck (`diagnostics.CheckMQTTConnectivity`) that does a real MQTT CONNECT/CONNACK exchange. If it fails, the deploy service reverts to the snapshot it took before applying and emits an audit event — see `internal/deploy/service.go` and the `TestApply_HealthcheckFailure_AuditAndFilesReverted` / `TestApply_RollbackFailure_AuditEmitted` tests.
+
+This flow is limited to password/ACL files. A successful CONNECT does not verify ACL changes, and an applier failure after a partial write does not currently trigger recovery. These gaps are tracked in [#292](https://github.com/fgjcarlos/mcm/issues/292) and [#293](https://github.com/fgjcarlos/mcm/issues/293).
+
+The production template is not a drop-in version of this managed flow. Align its password/ACL paths, ownership and reload mechanism with MCM first; see [production limitations](../../docs/production.md#current-limitations) and [#294](https://github.com/fgjcarlos/mcm/issues/294). Do not switch an existing broker to MCM-generated files before reviewing how its existing users and rules will be imported.
 
 ### Dev-only knobs (don't carry to production)
 
@@ -61,7 +65,7 @@ The end-to-end flow on every successful deploy apply:
 | `MCM_MOSQUITTO_PASSWORD` | Hardcoded `mcm-dev-broker-password` in `docker-compose.yml` and `mosquitto-bootstrap.sh` | Production reads the broker password from a secret manager; never embed it in source. |
 | `user root` in `mosquitto.conf` | Set | The cross-container shared volume is pre-populated by the image as the `mosquitto` UID; running as root is the simplest way for the broker to read files written by the `mcm` UID. Production should match broker/mcm UIDs (or run both as the same UID). |
 | `chmod 777` on the shared config dir | Set by `mosquitto-bootstrap.sh` | Same UID-mismatch workaround. Production matches UIDs, no chmod needed. |
-| Mount of `/var/run/docker.sock` into mcm | Set | Lets MCM run `docker exec … kill -HUP 1` against the host daemon. **Do NOT do this in production.** Production uses the `file` deploy mode with a shared filesystem and a broker-side reload trigger, or co-locates mcm + mosquitto on one host so the `pid_path` file mode works. |
+| Mount of `/var/run/docker.sock` into mcm | Set | Lets MCM run `docker exec … kill -HUP 1` against the host daemon. **Do NOT do this in production.** File mode needs compatible ownership and a configured PID/signal path. Any broker-side reload trigger is operator-provided; the production adapter remains tracked in #294. |
 | `docker-cli` installed in the mcm image | Set | Companion to the docker socket mount; the `DockerApplier` shells out to `docker exec`. Production does not need the docker CLI. |
 | Bootstrap `admin` user seeded by the script | `admin` / `mcm-dev-broker-password` | Production creates the broker user with `mosquitto_passwd -c` on the host as the mosquitto user before the first broker boot. |
 
@@ -115,7 +119,7 @@ MCM currently validates that `ca_cert_file`, `client_cert_file`, and `client_key
   - Parent directory: avoid world-writable permissions; use `0750` or stricter where possible.
 - Run MCM as a non-root user and mount secrets with ownership or group permissions that allow that user to read only the required files.
 - Rotate certificates before expiry and restart/reload MCM after updating mounted secret files if your deployment platform does not update mounts atomically.
-- Verify connectivity with `curl -fsS http://localhost:8080/readyz` during deployment and after certificate rotation. `/readyz` runs an MQTT CONNECT/CONNACK probe and surfaces the failure phase (TCP / TLS / MQTT) in the JSON body. For external checks, `mosquitto_pub -h <host> -p <port> -t mcm/healthcheck -m ping` from any host that can reach the broker is a good end-to-end probe.
+- Verify connectivity with `curl -fsS http://localhost:8080/readyz` during deployment and after certificate rotation. `/readyz` checks SQLite and the broker monitor connection state; it does not perform a fresh MQTT probe or return a failure-phase field. For external checks, `mosquitto_pub` with the configured host, port, credentials and TLS options from any host that can reach the broker is a good end-to-end probe.
 
 ### Example production MCM config
 
@@ -148,13 +152,11 @@ services:
 
 ### MQTT readiness diagnostics
 
-`GET /readyz` performs, internally, a TCP dial, then a TLS handshake when `mosquitto.tls.enabled` is true, then an MQTT CONNECT/CONNACK exchange (via `internal/diagnostics.CheckMQTTConnectivity`). The JSON body carries the failure phase so the operator can pivot:
+`GET /readyz` pings SQLite and checks the broker monitor's connection state. It returns `200` when ready or `503` with `database unavailable` / `broker unavailable`. It does not run a fresh CONNECT/CONNACK probe or return a `phase` field.
 
-- `error="broker unavailable"` (or `tcp: ...`): check host, port, listener binding, firewall rules, Docker/Kubernetes networking, and whether Mosquitto is running.
-- TLS handshake failure: TCP reached the broker, but certificate validation or mutual TLS failed. Check the CA file, server certificate SANs, client certificate/key pair, Mosquitto TLS listener settings, and system time.
-- MQTT CONNACK rejection: TCP and TLS succeeded, but Mosquitto rejected the MQTT connection. Check username/password, ACL/auth plugin configuration, client certificate identity mapping, and broker logs.
+The deploy healthcheck internally uses `CheckMQTTConnectivity` for a real TCP/TLS/MQTT connection check. Its diagnostic message can distinguish those stages; exposing structured diagnostics in the UI/API is tracked in [#306](https://github.com/fgjcarlos/mcm/issues/306). Connectivity alone does not verify a configuration change.
 
-The HTTP status is `200` when the broker is reachable and `503` otherwise. The `/livez` endpoint is independent and only checks the HTTP server + SQLite, so it stays `200` even when the broker is down.
+`/livez` and `/healthz` are process liveness endpoints; they do not check SQLite or Mosquitto.
 
 ### Development-only self-signed example
 

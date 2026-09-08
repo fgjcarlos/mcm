@@ -4,11 +4,23 @@ This guide covers running MCM in production behind a reverse proxy with TLS term
 
 > MCM is pre-1.0 software. Treat the security model as evolving: pin an
 > image tag, watch releases, and keep an upgrade window ready. The project
-> status is documented in the top-level [README](../README.md#quickstart-docker).
+> status is documented in the top-level [README](../README.md#project-status).
 
 Every `MCM_*` environment variable mentioned below is enforced by the strict table-driven parser in [`internal/config/env_bindings.go`](../internal/config/env_bindings.go). A typo in a name or a malformed value aborts startup with an actionable error — there are no silent fallbacks to YAML or defaults. The full canonical list (with defaults and notes) lives in the [Configuration section of the README](../README.md#configuration).
 
 ---
+
+## Current limitations
+
+MCM is alpha. The complete graphical configuration and recovery workflow is still being built; see [product scope](product-scope.md) and [epic #308](https://github.com/fgjcarlos/mcm/issues/308).
+
+- Deploy currently writes only password/ACL files. It does not edit `mosquitto.conf` or manage broker listeners, certificates or bridges.
+- The supplied production broker template uses `passwords` and does not reference an `acl_file`. Align both file references with the paths MCM writes before relying on managed permissions.
+- File mode requires compatible filesystem ownership and an explicit activation path. Without a PID path it writes files without signaling; the current connectivity check does not prove that a new policy is active. A broker-side trigger is operator-provided, not a bundled MCM component. See [#293](https://github.com/fgjcarlos/mcm/issues/293) and [#294](https://github.com/fgjcarlos/mcm/issues/294).
+- Partial-write recovery and immutable preview/apply revisions remain open. Test changes and recovery on a disposable deployment before enabling production writes.
+- The existing Taskfile backup/restore recipes are not a verified recovery mechanism. Read [section 6](#6-backup-and-restore) before upgrading or restoring.
+- SQLite is the only implemented database backend; PostgreSQL and multiple-writer HA are not available.
+
 
 ## 1. Deployment shape
 
@@ -31,15 +43,13 @@ Why a proxy in front of `mcm`:
 - **`trusted_proxies` integration** so the rate-limit lockout and audit logs
   see the real client IP, not the proxy's.
 
-Bind `mcm` to a loopback or private interface (`MCM_HTTP_BIND_ADDRESS=127.0.0.1`)
-and let the proxy own the public address. Do not expose `:8080` directly
-to the internet.
+For a container, keep MCM listening on `0.0.0.0:8080` inside its network namespace and restrict the published host address as shown below. A bare-metal process can bind to loopback directly. Let the reverse proxy own the public address.
 
 ---
 
 ## 2. Reverse proxy examples
 
-All three snippets assume MCM listens on `127.0.0.1:8080`. Run the container
+All three snippets assume the proxy reaches MCM at the host address `127.0.0.1:8080`. Run the container
 with `-p 127.0.0.1:8080:8080` (or compose `ports: ["127.0.0.1:8080:8080"]`)
 so it is not reachable on the host's external interfaces.
 
@@ -172,11 +182,10 @@ then the env vars override it field-by-field.
 
 #### Database
 
-- `MCM_DATABASE_BACKEND` (default `sqlite`) — `"sqlite"` or `"postgres"`.
+- `MCM_DATABASE_BACKEND` (default `sqlite`) — only `"sqlite"` is implemented. Selecting `"postgres"` aborts startup.
 - `MCM_DATABASE_PATH` (default `/var/lib/mcm/mcm.db`) — SQLite path; parent
   dir must be writable.
-- `MCM_DATABASE_DSN` — Postgres connection string. Required when
-  `MCM_DATABASE_BACKEND=postgres`.
+- `MCM_DATABASE_DSN` — reserved for an unimplemented backend; not usable in this release.
 
 #### Auth
 
@@ -292,8 +301,8 @@ page or with `docker buildx imagetools inspect --raw`.
 ### Upgrade steps
 
 ```bash
-# 1. Snapshot the data volume first (see §6).
-task backup
+# First obtain and verify a consistent backup using the process in section 6.
+# Do not rely on the uncorrected Taskfile restore recipe.
 
 # 2. Pull the new image and recreate the container.
 docker compose pull mcm
@@ -316,46 +325,20 @@ restore the volume snapshot if needed.
 
 ## 6. Backup and restore
 
-The `mcm_data` named volume holds the SQLite database plus the
-`.bootstrap.json` JWT-secret file. The supported backup and restore recipes
-ship with the `Taskfile.yml`:
+The `mcm_data` volume holds SQLite and `.bootstrap.json`. The legacy recipes in `Taskfile.yml` have known defects tracked in [#295](https://github.com/fgjcarlos/mcm/issues/295):
 
-```bash
-# Backup: writes backups/mcm-data.tgz from the mcm_data volume
-task backup
+- The archive contains `data/...` and extraction targets `/data`, producing `/data/data/...` rather than restoring files to their original paths.
+- They hardcode `mcm_mcm_data`; changing the Compose project does not redirect that volume reference.
+- The backup copies a potentially active SQLite database without coordinating a consistent snapshot.
+- They omit Mosquitto configuration, ACL/password files, certificates and broker persistence.
 
-# Restore: stops the stack, replaces the volume contents from the tgz,
-# brings the stack back up
-task restore
-```
+**Do not run the existing `task restore` as a production recovery procedure or against an alternate project expecting isolation.** The recipe removes files before extracting its archive.
 
-The backup tgz contains everything stored in the volume: admin users,
-broker metrics, audit events, security events, and the auto-generated
-JWT secret. It does **not** include Mosquitto's own configuration,
-password file, ACL file, TLS material, logs, or any file referenced from
-your env-var config — back those up separately according to your
-platform's process.
+Until #295 is implemented, use an operator-managed backup process: identify the actual volumes and mounted files, obtain a consistent SQLite backup through a suitable database backup mechanism or a coordinated stop, and capture the corresponding broker configuration and required persistent data. Protect archives containing credentials, private keys or bootstrap secrets. Keep secret values out of version control.
 
-### Recommended schedule
+A recovery set needs an inventory of the MCM database/bootstrap state, Mosquitto config and includes, passwd/ACL or Dynamic Security state when used, certificates, broker persistence when required, and deployment settings. Record versions and file ownership as well as content.
 
-| Asset                              | Frequency             | Tool                                   |
-| ---------------------------------- | --------------------- | -------------------------------------- |
-| `mcm_data` volume (`task backup`)  | Hourly, retained 24h  | cron / systemd timer + off-host sync   |
-| `mcm_data` volume                  | Daily, retained 30d   | cron / systemd timer + off-host sync   |
-| Mosquitto password file / ACLs     | On change + daily     | your platform's file backup mechanism  |
-| TLS certificates and keys          | On renewal            | your platform's secret store           |
-| `docker-compose.yml` and env vars  | On change, in git     | version control                        |
-
-### Restore drill
-
-A backup you have never restored is not a backup. Schedule a quarterly drill:
-
-1. Start a temporary stack with a different volume name:
-   `docker compose -p mcm-drill up -d`.
-2. Run `task restore` (or copy the tgz into the temporary volume).
-3. Hit `GET /api/v1/status` and a few admin endpoints to confirm the
-   schema is intact.
-4. Tear the temporary stack down and record the result.
+Validate recovery in an isolated environment with explicitly selected volumes. Confirm file paths, database integrity, admin login, MQTT authentication, allowed and denied operations, and broker restart. Do not rely on a file listing alone. Define backup frequency and retention from the installation's recovery requirements after that drill succeeds; MCM does not yet automate this workflow.
 
 ---
 
@@ -410,14 +393,12 @@ Recommended alerts:
       `MCM_HTTP_TLS_CLIENT_CA_FILE` + `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT=true`.
 - [ ] `MCM_HTTP_TRUSTED_PROXIES` lists the proxy's source address/CIDR so
       the rate-limit lockout and audit logs see the real client IP.
-- [ ] `MCM_DATABASE_BACKEND=postgres` with `MCM_DATABASE_DSN` from a secret
-      store when scaling beyond a single replica.
+- [ ] `MCM_DATABASE_BACKEND=sqlite` with one MCM writer; PostgreSQL/HA are not implemented.
 - [ ] `MCM_MOSQUITTO_TLS_ENABLED=true` with the CA / client cert / key
       paths for broker mTLS on `MCM_MOSQUITTO_PORT=8883`.
 - [ ] `MCM_MOSQUITTO_TLS_INSECURE_SKIP_VERIFY` is `false` (never enable
       in production).
-- [ ] `MCM_MOSQUITTO_DEPLOY_MODE=file` (or empty + broker-side reload
-      script) and `MCM_MOSQUITTO_DEPLOY_ACL_PATH` /
+- [ ] `MCM_MOSQUITTO_DEPLOY_MODE=file` with verified signaling (or empty to disable deployment) and `MCM_MOSQUITTO_DEPLOY_ACL_PATH` /
       `MCM_MOSQUITTO_DEPLOY_PASSWD_PATH` are mounted from a writable
       shared volume.
 - [ ] `MCM_METRICS_BROKER_RETENTION`, `MCM_METRICS_AUDIT_RETENTION`, and
@@ -433,7 +414,7 @@ Recommended alerts:
       control.
 - [ ] Mosquitto runs with its own authentication and ACL; MCM is the
       control plane, not a replacement for broker security.
-- [ ] Backups run on the schedule in §6 and the quarterly restore drill
+- [ ] An operator-managed consistent backup process exists and an isolated restore drill
       has been executed at least once.
 - [ ] Prometheus is scraping `/metrics`; broker-down, login-failure-spike,
       and p95-latency alerts are wired.

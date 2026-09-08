@@ -5,60 +5,28 @@ import FeatureSection from "../components/FeatureSection.astro";
 const repoURL = "https://github.com/fgjcarlos/mcm";
 
 const backendFeatures = [
-  {
-    title: "Auth, RBAC, lockouts",
-    body: "JWT login, bcrypt hashing, four roles (viewer < auditor < operator < admin), and per-IP/per-username 429 lockouts.",
-  },
-  {
-    title: "ACL & schema management",
-    body: "Mosquitto ACL rules with wildcard validation, plus JSON Schema validators bound to MQTT topic filters.",
-  },
-  {
-    title: "Realtime broker stream",
-    body: "Eclipse paho.mqtt.golang client with keepalive and auto-reconnect, fanned out over an authenticated WebSocket.",
-  },
-  {
-    title: "Audit & security trail",
-    body: "Every admin action and security event persisted in SQLite, surfaced through dedicated read-only APIs.",
-  },
-  {
-    title: "Observability",
-    body: "Structured slog with request IDs, Prometheus /metrics with bounded labels, starter Grafana dashboard.",
-  },
-  {
-    title: "HTTPS / mTLS",
-    body: "Optional TLS listener with configurable minimum version and optional client certificate verification.",
-  },
+  { title: "MQTT users and basic ACLs", body: "Create, disable and rotate MQTT credentials. Edit user/topic permissions, then review and apply their password and ACL files." },
+  { title: "Deployment review and history", body: "Preview password/ACL differences and track apply attempts. Verified activation and recovery after partial failures are still being improved." },
+  { title: "Operator access and audit", body: "Separate dashboard accounts, role-based access, two-factor authentication, and administrative audit and security events." },
 ];
 
 const frontendFeatures = [
-  {
-    title: "Real login",
-    body: "Token-backed sign-in form against /api/v1/auth/login with restored-session flow.",
-  },
-  {
-    title: "Live dashboard",
-    body: "Broker status, traffic widgets, topic explorer, realtime log feed.",
-  },
-  {
-    title: "Audit & security panels",
-    body: "Browse persisted admin and security events with consistent token handling.",
-  },
+  { title: "Observed MQTT traffic", body: "Inspect topic names and bounded payload previews received by MCM. This is observed traffic, not a complete client inventory." },
+  { title: "Connection events", body: "Follow MCM connection transitions and operational events. Full Mosquitto log ingestion and broker metrics are planned." },
+  { title: "Optional message diagnostics", body: "Sparkplug B inspection and JSON Schema results help inspect messages. They do not configure the broker or enforce payload rejection." },
 ];
 
 const opsFeatures = [
-  {
-    title: "Docker-first deployment",
-    body: "One image, one compose file. Build, start, and back up the stack with the Taskfile recipes shipped in the repo.",
-  },
-  {
-    title: "OpenAPI 3.1 contract",
-    body: "Every endpoint described, linted in CI, ready for client generation.",
-  },
-  {
-    title: "Image CI",
-    body: "Single GitHub Actions job builds the image, smoke-runs it, and lints Go / frontend / OpenAPI / Astro.",
-  },
+  { title: "One managed broker", body: "A Go application image with its embedded React UI, SQLite management state, and a separate Mosquitto broker container." },
+  { title: "Administration API", body: "REST and authenticated WebSocket interfaces accompany the dashboard. Broker configuration editing is a planned extension." },
+  { title: "Development and verification", body: "Docker Compose and Taskfile support local development. Production activation and complete backup/restore remain tracked work." },
+];
+
+const plannedFeatures = [
+  { title: "Import and edit configuration", body: "A version-aware editor for mosquitto.conf and included files, preserving existing settings, comments and advanced directives." },
+  { title: "Listeners, TLS and bridges", body: "Guided configuration of MQTT and WebSocket listeners, broker certificates, authentication and connections between brokers." },
+  { title: "General settings and plugins", body: "Persistence, limits, sessions, logging and supported plugins, including Dynamic Security, with explicit version compatibility." },
+  { title: "Verified changes and recovery", body: "Review an immutable revision, see whether it needs reload or restart, verify activation and recover the previous configuration." },
 ];
 
 const quickStart = [
@@ -76,12 +44,12 @@ const quickStart = [
   },
   {
     label: "Open the dashboard",
-    code: "open http://localhost:8080",
+    code: "http://localhost:8080",
   },
 ];
 
 const stack = [
-  "Go 1.24",
+  "Go 1.25",
   "net/http + slog",
   "SQLite (pure Go)",
   "paho MQTT",
@@ -94,7 +62,7 @@ const stack = [
 
 <Layout
   title="MCM — Mosquitto Control Manager"
-  description="Open source control plane for Eclipse Mosquitto. Docker-first deployment, web UI, REST API, realtime observability, RBAC, audit trail, HTTPS, and Prometheus metrics — without replacing Mosquitto as the broker."
+  description="MCM is building a graphical configuration manager for Eclipse Mosquitto. Explore current user and ACL management, the configuration roadmap, and alpha limitations."
 >
   <main class="mx-auto w-full max-w-6xl px-6 py-16 sm:py-24">
     <header class="flex flex-col gap-6">
@@ -114,14 +82,14 @@ const stack = [
       <div class="max-w-3xl space-y-5">
         <p class="text-sm font-semibold uppercase tracking-[0.4em] text-cyan-300">Mosquitto Control Manager</p>
         <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">
-          The operations layer Mosquitto deserves.
+          Mosquitto configuration, from your browser.
         </h1>
         <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
-          MCM is an open source control plane for Eclipse Mosquitto. Modern web UI, REST and WebSocket API,
-          realtime broker observability, RBAC, audit trail, HTTPS — without replacing Mosquitto as the broker.
+          MCM aims to let you import, edit, validate, apply and recover the configuration of a Mosquitto
+          broker from a web interface. Mosquitto remains your MQTT broker.
         </p>
         <p class="text-base leading-relaxed text-cyan-100/90">
-          Runs entirely in Docker. One image, one compose file — no CLI, no binaries.
+          Alpha today: MQTT users, basic ACLs and observed traffic. Full broker configuration editing is still in development.
         </p>
       </div>
 
@@ -157,16 +125,16 @@ const stack = [
     <section class="mt-20 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
       <article class="rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
         <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What MCM is</p>
-        <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Operations, not a broker rewrite.</h2>
+        <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">One broker. A clear administration workflow.</h2>
         <p class="mt-5 leading-relaxed text-slate-300">
-          Mosquitto is lightweight, reliable, and widely adopted at the edge. But day-to-day operation usually
-          means hand-editing config files, ACLs, password files, and stitching dashboards together. MCM fills
-          that gap with a clean control plane backed by a single SQLite database.
+          The goal is to configure one Mosquitto instance without hand-editing files during routine administration.
+          Guided forms and an advanced editor will cover explicitly supported broker versions, while preserving
+          existing configuration and showing the effect of every change.
         </p>
         <p class="mt-3 leading-relaxed text-slate-300">
-          MCM never tries to replace Mosquitto. It connects to your existing broker as a client, configures it
-          where appropriate, and gives operators visibility, auditability, and least-privilege access without
-          asking them to change MQTT engines.
+          Today, MCM manages MQTT users and basic ACLs through generated files. It also provides operator
+          access control, audit views and traffic inspection. Editing listeners, certificates, bridges and
+          general broker settings remains planned work.
         </p>
       </article>
       <article class="rounded-3xl border border-cyan-300/20 bg-cyan-400/10 p-8 backdrop-blur">
@@ -179,8 +147,8 @@ const stack = [
           ))}
         </ul>
         <p class="mt-6 text-sm leading-relaxed text-cyan-50/80">
-          Published as a single Docker image. The Go binary, React dashboard, and Mosquitto broker ship in one
-          compose stack — pulled, started, and backed up with the Taskfile recipes.
+          MCM packages its backend and dashboard in one application image. Mosquitto runs separately in the
+          Compose stack. SQLite is the only implemented management database.
         </p>
       </article>
     </section>
@@ -188,23 +156,43 @@ const stack = [
     <section class="mt-20 space-y-10">
       <div class="flex flex-col gap-3">
         <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What works today</p>
-        <h2 class="text-3xl font-semibold tracking-tight text-white">A complete first cut, in alpha.</h2>
+        <h2 class="text-3xl font-semibold tracking-tight text-white">Available now, with a defined scope.</h2>
         <p class="max-w-2xl text-slate-300">
-          The MVP scope is feature-complete and MCM is in a hardening phase. Every item below is shipped,
-          tested, and exercised on every pull request.
+          The configuration-manager MVP is not complete. These capabilities exist today; the roadmap tracks
+          the remaining configuration coverage, activation checks and recovery work.
         </p>
       </div>
 
       <div class="space-y-8">
-        <FeatureSection label="Backend" items={backendFeatures} />
-        <FeatureSection label="Frontend" items={frontendFeatures} />
+        <FeatureSection label="Administration" items={backendFeatures} />
+        <FeatureSection label="Diagnostics" items={frontendFeatures} />
         <FeatureSection label="Operations" items={opsFeatures} />
       </div>
     </section>
 
+    <section class="mt-20 space-y-8" id="roadmap">
+      <div class="max-w-3xl space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Planned configuration workflow</p>
+        <h2 class="text-3xl font-semibold tracking-tight text-white">Import. Review. Apply. Recover.</h2>
+        <p class="leading-relaxed text-slate-300">These features are planned, not available controls in the current alpha. Compatibility will be defined and tested for specific Mosquitto versions.</p>
+      </div>
+      <FeatureSection label="Next capabilities" items={plannedFeatures} />
+      <div class="rounded-3xl border border-amber-300/25 bg-amber-400/10 p-6 sm:p-8">
+        <h3 class="text-xl font-semibold text-amber-100">Before relying on production changes</h3>
+        <p class="mt-3 leading-relaxed text-slate-300">Activation verification, recovery after partial writes and production file permissions need work. The existing volume backup and restore recipes also have known limitations. Review the deployment guide before enabling writes on an existing broker.</p>
+        <div class="mt-5 flex flex-wrap gap-5 text-sm font-semibold text-cyan-100">
+          <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Implementation tracker</a>
+          <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/product-scope.md`}>Scope and acceptance criteria</a>
+          <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md#current-limitations`}>Production limitations</a>
+        </div>
+      </div>
+      <p class="max-w-3xl text-sm leading-relaxed text-slate-400">Sparkplug and JSON Schema remain optional diagnostics. Multi-broker administration, fleets, SSO and high availability are deferred while the one-broker configuration workflow is completed.</p>
+    </section>
+
     <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
       <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Quick start</p>
-      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Four steps to a local control plane.</h2>
+      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Try the current alpha locally.</h2>
+      <p class="mt-4 text-sm leading-relaxed text-slate-300">Requires Git, Docker with Compose, and Task. This starts the development stack; it is not a production setup.</p>
       <ol class="mt-8 space-y-4">
         {quickStart.map((step, idx) => (
           <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
@@ -221,7 +209,7 @@ const stack = [
         ))}
       </ol>
       <p class="mt-6 text-sm text-slate-400">
-        Need TLS, mTLS, reverse proxy setup, or volume backups? See
+        For deployment requirements, TLS and known backup/recovery limitations, read
         <a class="underline-offset-4 hover:underline" href={`${repoURL}/blob/main/docs/production.md`}>docs/production.md</a>.
       </p>
     </section>

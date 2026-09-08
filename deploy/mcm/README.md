@@ -101,10 +101,10 @@ existing tokens.
 
 ### Switching Mosquitto to production auth and TLS
 
-The development `mosquitto.conf` ships with `allow_anonymous false` plus a shared passwd/acl file pattern (see [Integration with MCM](../mosquitto/README.md#integration-with-mcm) in the Mosquitto README), which mirrors the production contract — there is no "permissive dev mode" you have to undo. The differences vs. production are:
+The development `mosquitto.conf` ships with `allow_anonymous false` plus a shared passwd/acl file pattern (see [Integration with MCM](../mosquitto/README.md#integration-with-mcm) in the Mosquitto README), but the production template still requires file, ACL and activation alignment. See [known limitations](../../docs/production.md#current-limitations). The development shortcuts are:
 
 - **Dev**: `user root` in the broker config so the broker can read passwd/acl files written by the mcm UID across the shared volume. The bootstrap admin password is hardcoded (`mcm-dev-broker-password`) in both `mosquitto-bootstrap.sh` and `docker-compose.yml` so a clean clone works without operator input. The mcm service mounts `/var/run/docker.sock` to run `docker exec … kill -HUP 1` for reloads.
-- **Production**: drop the `user root` directive, source the broker password from a secret manager (do NOT hardcode), do NOT mount the Docker socket into mcm, and use [`deploy/mosquitto/config/mosquitto.prod.conf`](../mosquitto/config/mosquitto.prod.conf) as the broker config (TLS on port `8883`, `require_certificate true` for mutual TLS). Configure MCM's `mosquitto.tls` settings to connect on `8883`.
+- **Production**: drop the `user root` directive, source the broker password from a secret manager (do NOT hardcode), do NOT mount the Docker socket into mcm, and use [`deploy/mosquitto/config/mosquitto.prod.conf`](../mosquitto/config/mosquitto.prod.conf) as the broker config (TLS on port `8883`, uncomment `require_certificate true` if mutual TLS is required). Configure MCM's `mosquitto.tls` settings to connect on `8883`.
 
 For production:
 
@@ -112,7 +112,8 @@ For production:
    - Create a password file with `mosquitto_passwd` as the broker user (UID 1883).
    - Supply TLS certificates on port `8883`.
 2. Mount `mosquitto.prod.conf` as `/mosquitto/config/mosquitto.conf` in your Mosquitto container (update the volume binding in `docker-compose.yml`).
-3. Configure MCM's `mosquitto.tls` settings to connect on port `8883`.
+3. Align the broker password and ACL references with MCM deploy paths, then verify filesystem ownership and signaling. The template does not set `acl_file`; file mode without a PID path does not signal the broker. See #294.
+4. Configure MCM's `mosquitto.tls` settings to connect on port `8883` and verify authentication plus allowed/denied operations.
 
 See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checklist, the MCM-side config fields, and the integration model.
 
@@ -120,7 +121,7 @@ See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checkl
 
 The development `Dockerfile` and the release image built by `.github/workflows/release.yml` (multi-arch, via `docker buildx`) both include a built-in `HEALTHCHECK` instruction that hits `GET /livez` every 30 seconds. Docker Compose augments this with compose-level healthcheck settings in `docker-compose.yml`. You do not need to add a healthcheck yourself — it is already built into the image.
 
-Note: `/livez` only verifies the HTTP server is up and the SQLite DB is reachable. The Mosquitto reachability is exposed via `/readyz`, which returns 503 with `error="broker unavailable"` when the broker cannot be reached. A container started without a reachable Mosquitto (e.g. standalone `docker run` without the Compose stack) will report `healthy` for `/livez` and `503` for `/readyz` — both are expected. To verify the broker side, run `docker compose exec mosquitto mosquitto_pub -h 127.0.0.1 -p 1883 -t mcm/healthcheck -m ping` or use `mosquitto_pub` from the host.
+Note: `/livez` is a process check; it does not access SQLite or the broker. The Mosquitto reachability is exposed via `/readyz`, which returns 503 with `error="broker unavailable"` when the broker cannot be reached. A container started without a reachable Mosquitto (e.g. standalone `docker run` without the Compose stack) will report `healthy` for `/livez` and `503` for `/readyz` — both are expected. To verify the broker side, use `mosquitto_pub` with the configured credentials and TLS options from a host that can reach the broker.
 
 ## Endpoints
 
