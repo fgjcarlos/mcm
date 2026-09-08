@@ -30,9 +30,9 @@ type fakeApplier struct {
 }
 
 type applyCall struct {
-	aclBody       string
-	passwdBody    string
-	aclSnapshot   string
+	aclBody        string
+	passwdBody     string
+	aclSnapshot    string
 	passwdSnapshot string
 }
 
@@ -755,8 +755,8 @@ func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
 // call so the test can assert it is derived from context.Background()
 // (not from the cancelled request ctx).
 type rollbackCtxRecordingApplier struct {
-	applyErrs       []error // errors to return on each Apply call
-	rollbackCtxErr  error   // error captured from the rollback call's ctx
+	applyErrs      []error // errors to return on each Apply call
+	rollbackCtxErr error   // error captured from the rollback call's ctx
 }
 
 func (r *rollbackCtxRecordingApplier) Apply(ctx context.Context, _, _, _, _ string) error {
