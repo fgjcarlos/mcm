@@ -86,15 +86,23 @@ func TestFileApplierApply(t *testing.T) {
 			t.Fatalf("seed pid: %v", err)
 		}
 
+		var signalled bool
 		fa := FileApplier{
 			ACLPath:    aclPath,
 			PasswdPath: passwdPath,
 			PIDPath:    pidPath,
+			SignalFunc: func(_ int) error {
+				signalled = true
+				return nil
+			},
 		}
 
 		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
+		}
+		if !signalled {
+			t.Fatal("SignalFunc was not called after a successful apply")
 		}
 
 		gotACL, err := os.ReadFile(aclPath)

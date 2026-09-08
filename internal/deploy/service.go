@@ -41,9 +41,9 @@ const rollbackTimeout = 10 * time.Second
 // verifyAttempts and verifyBackoff schedule the bounded retry loop for
 // the post-apply active verification (issue #293, acceptance criterion 4).
 //
-//   attempt 1: immediate after reloadSettleDelay
-//   attempt 2: after verifyBackoff (1s)
-//   attempt 3: after 2*verifyBackoff (2s)
+//	attempt 1: immediate after reloadSettleDelay
+//	attempt 2: after verifyBackoff (1s)
+//	attempt 3: after 2*verifyBackoff (2s)
 //
 // reloadSettleDelay is a short pause between applier.Apply returning and
 // the verifier starting. Mosquitto processes SIGHUP asynchronously in its
@@ -53,9 +53,9 @@ const rollbackTimeout = 10 * time.Second
 // config has during the race window). 1s is enough on a quiet broker;
 // the bounded retries handle longer reload delays.
 const (
-	verifyAttempts     = 3
-	verifyBackoff      = 1 * time.Second
-	reloadSettleDelay  = 1 * time.Second
+	verifyAttempts    = 3
+	verifyBackoff     = 1 * time.Second
+	reloadSettleDelay = 1 * time.Second
 )
 
 // ActiveVerifier is the post-apply check that proves the broker is
