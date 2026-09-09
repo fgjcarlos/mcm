@@ -379,20 +379,130 @@ restore the volume snapshot if needed.
 
 ## 6. Backup and restore
 
-The `mcm_data` volume holds SQLite and `.bootstrap.json`. The legacy recipes in `Taskfile.yml` have known defects tracked in [#295](https://github.com/fgjcarlos/mcm/issues/295):
+The MCM deploy service exposes two scripts — `scripts/backup.sh` and
+`scripts/restore.sh` — that capture a consistent, restartable
+recovery set covering the MCM database, the Mosquitto configuration,
+and the broker certificates. They were rewritten in #295 to fix
+three defects the legacy Taskfile recipes had:
 
-- The archive contains `data/...` and extraction targets `/data`, producing `/data/data/...` rather than restoring files to their original paths.
-- They hardcode `mcm_mcm_data`; changing the Compose project does not redirect that volume reference.
-- The backup copies a potentially active SQLite database without coordinating a consistent snapshot.
-- They omit Mosquitto configuration, ACL/password files, certificates and broker persistence.
+- The legacy archive put files at `data/...` and extracted to `/data`,
+  producing `/data/data/...` rather than restoring files to their
+  original volume paths. The new scripts use relative paths in the
+  helper containers so each file lands at the right volume path.
+- The legacy recipes hardcoded `mcm_mcm_data`; the new scripts
+  resolve volumes via `docker compose --project-name volume ls`, so
+  any `COMPOSE_PROJECT_NAME` works.
+- The legacy backup copied a live SQLite database without a consistent
+  snapshot. The new backup uses `sqlite3 .backup` for a
+  WAL-inclusive snapshot — no server downtime, no torn writes.
 
-**Do not run the existing `task restore` as a production recovery procedure or against an alternate project expecting isolation.** The recipe removes files before extracting its archive.
+### 6.1 What the backup captures
 
-Until #295 is implemented, use an operator-managed backup process: identify the actual volumes and mounted files, obtain a consistent SQLite backup through a suitable database backup mechanism or a coordinated stop, and capture the corresponding broker configuration and required persistent data. Protect archives containing credentials, private keys or bootstrap secrets. Keep secret values out of version control.
+By default (without `--include-broker-data`):
 
-A recovery set needs an inventory of the MCM database/bootstrap state, Mosquitto config and includes, passwd/ACL or Dynamic Security state when used, certificates, broker persistence when required, and deployment settings. Record versions and file ownership as well as content.
+- `mcm_data` volume:
+  - `mcm.db`, `mcm.db-shm`, `mcm.db-wal` — the SQLite database + WAL.
+  - `.bootstrap.json` — the JWT secret.
+- `mosquitto_config` volume:
+  - `passwd` — broker password file.
+  - `acl` — broker ACL file.
+  - `mosquitto.conf` — broker configuration.
+  - `certs/` — broker certificates (when present).
 
-Validate recovery in an isolated environment with explicitly selected volumes. Confirm file paths, database integrity, admin login, MQTT authentication, allowed and denied operations, and broker restart. Do not rely on a file listing alone. Define backup frequency and retention from the installation's recovery requirements after that drill succeeds; MCM does not yet automate this workflow.
+`mosquitto_data` and `mosquitto_logs` are skipped. Use
+`--include-broker-data` to also capture the broker's persistent
+message store (often larger; the operator may prefer a separate
+retention strategy).
+
+### 6.2 Running a backup
+
+```sh
+task backup                 # writes backups/mcm-data.tgz
+# or:
+bash scripts/backup.sh /path/to/backup-$(date +%Y%m%d).tgz
+```
+
+`scripts/backup.sh` accepts these flags:
+
+- `--include-broker-data`: also backup the `mosquitto_data` volume.
+- `--skip-mosquitto`: skip the broker config (MCM-only backups).
+- `--operator NAME`: tag the manifest with an operator name.
+- `--alpine-image IMAGE`: override the alpine image used by helpers
+  (default `alpine:3.21`).
+
+The output is a single `.tgz` containing the captured files plus a
+`manifest.json` with sha256 of every file. Restore validates the
+sha256 against the staging tree and refuses to proceed on mismatch.
+
+### 6.3 Running a restore
+
+```sh
+# Stop the MCM service so it doesn't write to the volume mid-restore.
+task down
+
+bash scripts/restore.sh --confirm backups/mcm-data.tgz
+
+# Restart the MCM service AND the broker — the broker must re-read
+# the restored passwd/acl files; MCM's in-memory verifier cleartext
+# store (#293) is empty after a container restart, so we restart both
+# services rather than relying on a deploy apply.
+docker compose up -d
+docker compose restart mosquitto
+```
+
+`scripts/restore.sh --confirm` requires explicit confirmation
+(there is no `--force` path; the prompt is the safety net). The
+script:
+
+1. Extracts the archive to a private staging directory.
+2. Re-reads `manifest.json` and verifies every file's sha256.
+3. Resolves the volumes via `docker compose --project-name volume ls`.
+4. Writes each file to its original volume path using a helper
+   container that sets the correct UID/GID (MCM runs as UID 100 in
+   the alpine-based image; the broker as UID 1883).
+5. Preserves file modes (`0600` for sensitive files like mcm.db and
+   .bootstrap.json; `0644` for the broker config).
+
+### 6.4 Recovery validation
+
+Run the recovery drill in an isolated environment with explicitly
+selected volumes (`task down` first; do not operate on a live
+deployment). The `scripts/e2e-recovery.sh` test in CI runs the full
+flow end-to-end:
+
+1. Apply a known-good config (creates an MQTT user + ACL).
+2. Run `scripts/backup.sh` to capture the state.
+3. `docker compose down -v` (wipe EVERYTHING).
+4. `docker compose up -d` (re-up empty; MCM bootstraps a new admin).
+5. Run `scripts/restore.sh --confirm` to write the captured files.
+6. Restart mosquitto (so it reads the restored passwd/acl).
+7. Verify: the original admin password works (proves .bootstrap.json
+   + SQLite round-tripped), the captured user still exists, and the
+   broker accepts the user's original cleartext password on the
+   granted topic.
+
+A failed drill exposes missing files, wrong perms, or volume
+resolution bugs that would otherwise surface only in a real outage.
+Re-run after every release that touches `internal/storage`,
+`internal/server`, or `scripts/`.
+
+### 6.5 Operating notes
+
+- The archive contains secrets (`.bootstrap.json` is the JWT signing
+  key, `passwd` is the broker password file). Encrypt at rest
+  (LUKS, cloud KMS, age, etc.) and never commit a backup archive to
+  version control.
+- A backup is only useful if the verifier can re-arm after a
+  restore. The deploy verifier (#293) holds cleartext passwords in
+  memory — after a container restart this map is empty. Operators
+  who resume deploys after a restore need to either re-create users
+  via the API or wait for the next password rotation. The
+  `scripts/e2e-recovery.sh` test accounts for this and does NOT run
+  a deploy apply after the restore; it restarts mosquitto to pick
+  up the restored passwd/acl directly.
+- Backup frequency and retention are operational choices outside
+  the scope of these scripts. Schedule a daily backup with a 30-day
+  retention as a starting point; tune to your recovery objectives.
 
 ---
 

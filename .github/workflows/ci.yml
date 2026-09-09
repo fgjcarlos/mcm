@@ -283,3 +283,14 @@ jobs:
         # subscriber round-trip on the granted topic proves the
         # ReloadCommand path triggered the broker reload.
         run: bash scripts/e2e-prod.sh
+
+      - name: scripts/e2e-recovery.sh
+        # Issue #295 acceptance criteria: prove backup/restore round-trips
+        # through a full wipe. Apply a known config, backup, wipe all
+        # volumes with `docker compose down -v`, re-up, restore, then
+        # verify the original admin password still authenticates and
+        # the broker accepts the captured user with its original
+        # cleartext. This is the recovery drill operators are expected
+        # to run after every release that touches storage / server /
+        # backup code.
+        run: bash scripts/e2e-recovery.sh
