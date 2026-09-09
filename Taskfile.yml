@@ -87,19 +87,15 @@ tasks:
       - curl -fsS {{.MCM_STATUS_URL}}
 
   backup:
-    desc: Snapshot the mcm data volume
+    desc: Snapshot the MCM + Mosquitto configuration (issue #295)
     cmds:
-      - mkdir -p {{.BACKUP_DIR}}
-      - docker run --rm -v mcm_mcm_data:/data:ro -v $(pwd)/{{.BACKUP_DIR}}:/backup alpine sh -c "tar czf /backup/mcm-data.tgz -C / data"
-      - ls -lh {{.BACKUP_DIR}}/mcm-data.tgz
+      - bash scripts/backup.sh "{{.BACKUP_DIR}}/mcm-data.tgz"
 
   restore:
-    desc: Restore the mcm data volume
+    desc: Restore MCM + Mosquitto from a backup archive (issue #295)
     cmds:
       - test -f {{.BACKUP_DIR}}/mcm-data.tgz
-      - "{{.COMPOSE}} down"
-      - docker run --rm -v mcm_mcm_data:/data -v $(pwd)/{{.BACKUP_DIR}}:/backup:ro alpine sh -c "rm -rf /data/* && tar xzf /backup/mcm-data.tgz -C /data"
-      - "{{.COMPOSE}} up -d"
+      - bash scripts/restore.sh --confirm "{{.BACKUP_DIR}}/mcm-data.tgz"
 
   test:go:
     desc: Run Go tests with -race
