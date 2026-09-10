@@ -47,7 +47,7 @@ The proposed navigation is Configuration, MQTT Access, Changes, Diagnostics and 
 - File replacement is atomic per file, not across the ACL/passwd pair; recovery does not currently cover every applier failure (#292).
 - File mode can skip signaling when PIDPath is absent, and CONNECT/CONNACK does not establish that the intended policy is active (#293).
 - The production template requires explicit path/ACL alignment and a verified permission/activation mechanism (#294).
-- Preview and Apply are not bound to an immutable revision (#296).
+- Preview and Apply are bound to a one-hour immutable revision; stale desired/on-disk state returns 409 (#296).
 - Renames and existing unmanaged file entries need an ownership and reference policy (#297, #298).
 - Backup/restore paths, snapshot consistency, volume selection and complete broker coverage need correction (#295).
 
