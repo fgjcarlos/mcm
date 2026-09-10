@@ -252,6 +252,12 @@ jobs:
         # artifact); the script must NOT rebuild it.
         run: bash scripts/e2e-deploy.sh
 
+      - name: scripts/e2e-revision.sh
+        # Issue #296 acceptance criteria: prove two authenticated operators
+        # cannot apply stale revisions, and that both desired-state edits and
+        # external on-disk edits after Preview return HTTP 409.
+        run: bash scripts/e2e-revision.sh
+
       - name: scripts/e2e-rollback.sh
         # Issue #292 acceptance criteria: prove the deploy service
         # restores the broker's ACL/passwd files from snapshot when the
