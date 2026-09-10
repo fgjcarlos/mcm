@@ -195,11 +195,20 @@ if [ "$acl_code" != "201" ]; then
 fi
 rm -f "$acl_body"
 
+PREVIEW_BODY="$(auth_curl POST /api/v1/deployments/preview)"
+REVISION_ID="$(printf '%s' "$PREVIEW_BODY" | jq -r '.revision_id // empty')"
+if [ -z "$REVISION_ID" ]; then
+    echo "preview response did not include revision_id: $PREVIEW_BODY" >&2
+    exit 1
+fi
+
 echo "--- e2e-verify: POST /api/v1/deployments/apply ---"
 apply_body="$(mktemp)"
 apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$apply_code" != "200" ]; then
     echo "deploy apply failed with HTTP $apply_code:" >&2
     cat "$apply_body" >&2
@@ -268,11 +277,20 @@ $COMPOSE stop mosquitto
 # the apply proceeds — but the verifier cannot reach the broker, so it
 # fails, then the rollback applier write succeeds (filesystem only),
 # and the deploy ends in rolled_back.
+PREVIEW_BODY="$(auth_curl POST /api/v1/deployments/preview)"
+REVISION_ID="$(printf '%s' "$PREVIEW_BODY" | jq -r '.revision_id // empty')"
+if [ -z "$REVISION_ID" ]; then
+    echo "second preview response did not include revision_id: $PREVIEW_BODY" >&2
+    exit 1
+fi
+
 echo "--- e2e-verify: POST /api/v1/deployments/apply (must fail and roll back) ---"
 fail_body="$(mktemp)"
 fail_code="$(curl -sS -o "$fail_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$fail_code" = "200" ]; then
     APPLY_STATUS_AFTER="$(jq -r '.status // empty' "$fail_body")"
     if [ "$APPLY_STATUS_AFTER" = "active_verified" ]; then

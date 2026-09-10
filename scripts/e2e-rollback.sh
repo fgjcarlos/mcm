@@ -187,9 +187,10 @@ fi
 rm -f "$acl_body"
 
 echo "--- e2e-rollback: POST /api/v1/deployments/preview ---"
-preview_code="$(auth_curl POST /api/v1/deployments/preview >/dev/null; echo $?)"
-if [ "$preview_code" != "0" ]; then
-    echo "deploy preview request failed" >&2
+PREVIEW_BODY="$(auth_curl POST /api/v1/deployments/preview)"
+REVISION_ID="$(printf '%s' "$PREVIEW_BODY" | jq -r '.revision_id // empty')"
+if [ -z "$REVISION_ID" ]; then
+    echo "deploy preview response did not include revision_id: $PREVIEW_BODY" >&2
     exit 1
 fi
 
@@ -197,7 +198,9 @@ echo "--- e2e-rollback: POST /api/v1/deployments/apply (initial) ---"
 apply_body="$(mktemp)"
 apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$apply_code" != "200" ]; then
     echo "initial deploy apply failed with HTTP $apply_code:" >&2
     cat "$apply_body" >&2
@@ -232,11 +235,21 @@ fi
 echo "--- e2e-rollback: stopping mosquitto container to force docker exec failure ---"
 $COMPOSE stop mosquitto
 
+echo "--- e2e-rollback: POST /api/v1/deployments/preview (failure revision) ---"
+PREVIEW_BODY="$(auth_curl POST /api/v1/deployments/preview)"
+REVISION_ID="$(printf '%s' "$PREVIEW_BODY" | jq -r '.revision_id // empty')"
+if [ -z "$REVISION_ID" ]; then
+    echo "failure preview response did not include revision_id: $PREVIEW_BODY" >&2
+    exit 1
+fi
+
 echo "--- e2e-rollback: POST /api/v1/deployments/apply (must fail and roll back) ---"
 fail_body="$(mktemp)"
 fail_code="$(curl -sS -o "$fail_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 # Either HTTP 500 (apply error) or some other error code is acceptable,
 # but the request MUST NOT return 200 with status=active_verified.
 if [ "$fail_code" = "200" ]; then
