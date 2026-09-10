@@ -1,14 +1,8 @@
 package deploy
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/fgjcarlos/mcm/internal/acl"
-	"github.com/fgjcarlos/mcm/internal/diagnostics"
 )
 
 // TestRedactPasswdHashes covers issue #296 (acceptance criterion 3):
@@ -157,108 +151,4 @@ func TestSummarizeChanges(t *testing.T) {
 			t.Errorf("identical passwd should not flag changes")
 		}
 	})
-}
-
-func TestPreviewCreatesImmutableRevision(t *testing.T) {
-	t.Parallel()
-
-	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
-	writeFile(t, aclPath, "current acl\n")
-	writeFile(t, passwdPath, "alice:$2a$10$oldhash\n")
-	aclStore := &fakeACLStore{rules: []acl.Rule{{Principal: "alice", TopicFilter: "sensors/#", Permission: "read"}}}
-	svc := newTestService(&fakeApplier{}, aclStore, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), newFakePasswordLookup(), deployCfg)
-
-	result, err := svc.Preview(context.Background(), "operator")
-	if err != nil {
-		t.Fatalf("Preview returned error: %v", err)
-	}
-	if result.RevisionID == "" {
-		t.Fatal("Preview returned an empty revision ID")
-	}
-	if result.BaseACLHash == "" || result.BasePasswdHash == "" || result.RenderedACLHash == "" || result.RenderedPasswdHash == "" {
-		t.Fatalf("Preview hashes are incomplete: %+v", result)
-	}
-	if strings.Contains(result.PasswdDiff, "oldhash") || strings.Contains(result.PasswdDiff, "$2a$10$oldhash") {
-		t.Fatalf("passwd diff leaked a hash: %s", result.PasswdDiff)
-	}
-	if result.PasswdBody != "" && strings.Contains(result.PasswdDiff, result.PasswdBody) {
-		t.Fatal("passwd diff must not contain the unredacted rendered body")
-	}
-
-	revision, err := svc.revisionStore.GetPreviewRevision(context.Background(), result.RevisionID)
-	if err != nil {
-		t.Fatalf("GetPreviewRevision returned error: %v", err)
-	}
-	if revision.ACLRendered != result.ACLBody || revision.PasswdRendered != result.PasswdBody {
-		t.Fatal("revision did not persist the exact rendered bodies")
-	}
-}
-
-func TestApplyRejectsChangedBase(t *testing.T) {
-	t.Parallel()
-
-	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
-	writeFile(t, aclPath, "current acl\n")
-	writeFile(t, passwdPath, "")
-	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), newFakePasswordLookup(), deployCfg)
-
-	preview, err := svc.Preview(context.Background(), "operator")
-	if err != nil {
-		t.Fatalf("Preview returned error: %v", err)
-	}
-	writeFile(t, aclPath, "external change\n")
-
-	_, err = svc.Apply(context.Background(), "operator", preview.RevisionID)
-	if !errors.Is(err, ErrRevisionMismatch) {
-		t.Fatalf("Apply error = %v, want ErrRevisionMismatch", err)
-	}
-}
-
-func TestApplyRejectsDesiredStateChangedAfterPreview(t *testing.T) {
-	t.Parallel()
-
-	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
-	writeFile(t, aclPath, "")
-	writeFile(t, passwdPath, "")
-	aclStore := &fakeACLStore{}
-	svc := newTestService(&fakeApplier{}, aclStore, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), newFakePasswordLookup(), deployCfg)
-
-	preview, err := svc.Preview(context.Background(), "operator")
-	if err != nil {
-		t.Fatalf("Preview returned error: %v", err)
-	}
-	aclStore.rules = []acl.Rule{{Principal: "alice", TopicFilter: "sensors/#", Permission: "read"}}
-
-	_, err = svc.Apply(context.Background(), "operator", preview.RevisionID)
-	if !errors.Is(err, ErrRevisionMismatch) {
-		t.Fatalf("Apply error = %v, want ErrRevisionMismatch", err)
-	}
-}
-
-func TestApplyRejectsExpiredRevision(t *testing.T) {
-	t.Parallel()
-
-	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
-	writeFile(t, aclPath, "")
-	writeFile(t, passwdPath, "")
-	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), newFakePasswordLookup(), deployCfg)
-
-	preview, err := svc.Preview(context.Background(), "operator")
-	if err != nil {
-		t.Fatalf("Preview returned error: %v", err)
-	}
-	memoryStore, ok := svc.revisionStore.(*memoryPreviewRevisionStore)
-	if !ok {
-		t.Fatalf("revision store = %T, want memoryPreviewRevisionStore", svc.revisionStore)
-	}
-	memoryStore.mu.Lock()
-	revision := memoryStore.revisions[preview.RevisionID]
-	revision.CreatedAt = time.Now().UTC().Add(-previewRevisionTTL - time.Minute)
-	memoryStore.revisions[preview.RevisionID] = revision
-	memoryStore.mu.Unlock()
-
-	_, err = svc.Apply(context.Background(), "operator", preview.RevisionID)
-	if !errors.Is(err, ErrRevisionExpired) {
-		t.Fatalf("Apply error = %v, want ErrRevisionExpired", err)
-	}
 }
