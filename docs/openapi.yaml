@@ -750,11 +750,17 @@ paths:
       tags: [Deployments]
       summary: Preview the next deploy
       description: |
-        Requires operator or higher. Returns the diff and the full rendered
-        bodies that the next apply would write, without touching the broker.
+        Requires operator or higher. Returns an immutable revision ID, safe
+        diffs, hashes and a summary of the rendered ACL/password changes
+        without touching the broker. The revision expires after one hour.
       responses:
         "200":
-          description: Rendered preview.
+          description: Immutable rendered preview. The `revision_id` must be
+            supplied to the apply endpoint.
+          headers:
+            Location:
+              description: Opaque preview revision resource.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeploymentPreview" }
@@ -770,9 +776,16 @@ paths:
       tags: [Deployments]
       summary: Apply pending changes
       description: |
-        Requires admin. Renders the current ACL + passwd state, persists the
-        resulting `Deployment` row, and (when configured) triggers a reload on
-        the broker. Returns 409 if a deploy is already in progress.
+        Requires admin. Applies exactly the immutable preview revision named
+        by `revision_id`, persists the resulting `Deployment` row, and (when
+        configured) triggers a reload on the broker. The revision is rejected
+        with 409 when it expired, was already consumed, or the desired/on-disk
+        base changed after Preview.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApplyDeploymentRequest" }
       responses:
         "200":
           description: Deployment record.
@@ -786,8 +799,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "400":
+          description: Missing or malformed revision_id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "409":
-          description: A deploy is already in progress.
+          description: The revision is stale/expired/consumed, or a deploy is already in progress.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1250,12 +1268,33 @@ components:
     DeploymentPreview:
       type: object
       properties:
+        revision_id: { type: string, minLength: 1 }
+        base_acl_hash: { type: string, minLength: 64, maxLength: 64 }
+        base_passwd_hash: { type: string, minLength: 64, maxLength: 64 }
+        rendered_acl_hash: { type: string, minLength: 64, maxLength: 64 }
+        rendered_passwd_hash: { type: string, minLength: 64, maxLength: 64 }
         has_changes: { type: boolean }
         acl_diff: { type: string }
         passwd_diff: { type: string }
         acl_body: { type: string }
-        passwd_body: { type: string }
-      required: [has_changes, acl_diff, passwd_diff, acl_body, passwd_body]
+        summary:
+          type: object
+          properties:
+            users_added: { type: integer, minimum: 0 }
+            users_removed: { type: integer, minimum: 0 }
+            users_rotated: { type: integer, minimum: 0 }
+            has_passwd_changes: { type: boolean }
+            topics_added: { type: integer, minimum: 0 }
+            topics_removed: { type: integer, minimum: 0 }
+            has_acl_changes: { type: boolean }
+          required: [users_added, users_removed, users_rotated, has_passwd_changes, topics_added, topics_removed, has_acl_changes]
+      required: [revision_id, base_acl_hash, base_passwd_hash, rendered_acl_hash, rendered_passwd_hash, has_changes, acl_diff, passwd_diff, acl_body, summary]
+    ApplyDeploymentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        revision_id: { type: string, minLength: 1 }
+      required: [revision_id]
     SettingsResponse:
       type: object
       properties:

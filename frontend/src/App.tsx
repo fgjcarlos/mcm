@@ -58,6 +58,7 @@ type Deployment = {
 }
 
 type DeployPreview = {
+  revision_id: string
   acl_diff: string
   passwd_diff: string
   has_changes: boolean
@@ -1144,6 +1145,8 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
         token,
         onUnauthorized: onLogout,
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision_id: preview?.revision_id }),
       })
       if (response.status === 404 || response.status === 422) {
         setUnavailable(true)

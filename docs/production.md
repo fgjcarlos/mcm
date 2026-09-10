@@ -17,7 +17,7 @@ MCM is alpha. The complete graphical configuration and recovery workflow is stil
 - Deploy currently writes only password/ACL files. It does not edit `mosquitto.conf` or manage broker listeners, certificates or bridges.
 - The supplied production broker template uses `passwords` and does not reference an `acl_file`. Align both file references with the paths MCM writes before relying on managed permissions.
 - File mode requires compatible filesystem ownership and an explicit activation path. Without a PID path it writes files without signaling; the current connectivity check does not prove that a new policy is active. A broker-side trigger is operator-provided, not a bundled MCM component. See [#293](https://github.com/fgjcarlos/mcm/issues/293) and [#294](https://github.com/fgjcarlos/mcm/issues/294).
-- Partial-write recovery and immutable preview/apply revisions remain open. Test changes and recovery on a disposable deployment before enabling production writes.
+- Preview and Apply are bound to an immutable one-hour revision. Test changes and recovery on a disposable deployment before enabling production writes.
 - The existing Taskfile backup/restore recipes are not a verified recovery mechanism. Read [section 6](#6-backup-and-restore) before upgrading or restoring.
 - SQLite is the only implemented database backend; PostgreSQL and multiple-writer HA are not available.
 
@@ -277,6 +277,26 @@ is not writable, the apply fails. To satisfy this in production:
 - Do NOT use `chmod 777` in production — it is a dev shortcut that
   the bootstrap script applies only for the local dev stack.
 
+##### Immutable Preview + Apply revisions (issue #296)
+
+Preview before every apply and pass the returned opaque `revision_id` back to
+the apply endpoint:
+
+```bash
+PREVIEW=$(curl -fsS -X POST http://localhost:8080/api/v1/deployments/preview \
+  -H "Authorization: Bearer $TOKEN")
+REVISION_ID=$(printf '%s' "$PREVIEW" | jq -r '.revision_id')
+
+curl -fsS -X POST http://localhost:8080/api/v1/deployments/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"revision_id\":\"$REVISION_ID\"}"
+```
+
+- A revision expires one hour after Preview and can be consumed only once.
+- HTTP 409 means the on-disk files or desired ACL/user state changed after Preview, the revision expired, or another apply consumed it. Preview again instead of retrying the stale ID.
+- Password diffs never include complete bcrypt hashes. They expose only a redacted algorithm/prefix/length marker and aggregate user/topic counts.
+- The `base_*_hash` and `rendered_*_hash` values are fingerprints, not credentials.
 
 #### Retention
 

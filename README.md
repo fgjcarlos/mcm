@@ -19,7 +19,7 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 | Capability | Current scope |
 | --- | --- |
 | MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
-| Preview, apply and history | Available for password/ACL files only; activation verification and rollback need hardening. |
+| Preview, apply and history | Available for password/ACL files with immutable one-hour revisions, activation verification and rollback. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
 | Broker configuration editor | Planned, including import and version-aware validation. |
@@ -45,6 +45,24 @@ task logs                # tail mcm logs; the bootstrap admin password prints he
 Open <http://localhost:8080> and sign in with `admin` + the password from `task logs`. Stop the stack with `task down`.
 
 > The dev stack now ships with Mosquitto authentication **enabled** (no anonymous clients). The bundled broker is seeded with a single dev admin user by `deploy/mosquitto/config/mosquitto-bootstrap.sh`; the matching credentials are hardcoded in `docker-compose.yml` so MCM can connect at startup. MCM's deploy service then writes the canonical passwd/acl files into a shared named volume (`mosquitto_config`) and SIGHUPs the broker on every successful apply, so user/ACL changes created via the UI/API reach the live broker without an operator running `mosquitto_passwd` by hand. This is a **dev-only** convenience — production requires adapting the [broker template](./deploy/mosquitto/config/mosquitto.prod.conf), aligning file paths and permissions, and providing a verified activation mechanism. Read the [known production limitations](./docs/production.md#current-limitations) first.
+
+### Deploy workflow
+
+Every Apply is tied to the exact Preview revision that an operator reviewed:
+
+```bash
+preview=$(curl -fsS -X POST http://localhost:8080/api/v1/deployments/preview \
+  -H "Authorization: Bearer $TOKEN")
+revision_id=$(printf '%s' "$preview" | jq -r '.revision_id')
+curl -fsS -X POST http://localhost:8080/api/v1/deployments/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"revision_id\":\"$revision_id\"}"
+```
+
+Revisions expire after one hour and become invalid when the desired state or
+on-disk ACL/password files change. The API returns `409` in those cases; run a
+new Preview. Password hashes are redacted from preview diffs.
 
 ---
 

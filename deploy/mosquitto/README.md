@@ -80,10 +80,12 @@ ADMIN_PW=$(docker compose logs --no-color mcm | sed -n 's/.*"password":"\([^"]*\
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
     -H 'Content-Type: application/json' \
     -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PW\"}" | jq -r .token)
-curl -s -X POST http://localhost:8080/api/v1/deployments/preview \
-    -H "Authorization: Bearer $TOKEN" | jq .
-curl -s -X POST http://localhost:8080/api/v1/deployments/apply \
-    -H "Authorization: Bearer $TOKEN" | jq .
+REVISION_ID=$(curl -fsS -X POST http://localhost:8080/api/v1/deployments/preview \
+    -H "Authorization: Bearer $TOKEN" | jq -r .revision_id)
+curl -fsS -X POST http://localhost:8080/api/v1/deployments/apply \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"revision_id\":\"$REVISION_ID\"}" | jq .
 ```
 
 `scripts/e2e-deploy.sh` exercises this end-to-end and is invoked from CI (`.github/workflows/ci.yml::e2e-deploy` job).
