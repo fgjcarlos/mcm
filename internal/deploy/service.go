@@ -4,6 +4,9 @@ package deploy
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -27,8 +30,18 @@ var ErrDeployDisabled = errors.New("deploy mode is not configured")
 // ErrDeployInProgress is returned when a deploy is already running.
 var ErrDeployInProgress = errors.New("deploy already in progress")
 
+// Revision errors are mapped to HTTP 400/409 by the deploy handler.
+var (
+	ErrRevisionMissing  = errors.New("preview revision is required")
+	ErrRevisionMismatch = errors.New("preview revision base no longer matches")
+	ErrRevisionExpired  = errors.New("preview revision expired")
+	ErrRevisionConsumed = errors.New("preview revision already consumed")
+)
+
 // maxDiffLines is the maximum number of lines in a returned unified diff.
 const maxDiffLines = 500
+
+const previewRevisionTTL = time.Hour
 
 // rollbackTimeout bounds the time the deploy service spends restoring
 // the broker's configuration from snapshot after a failed apply or
@@ -86,6 +99,15 @@ type DeploymentStore interface {
 	ListDeployments(ctx context.Context, limit, offset int) ([]storage.Deployment, error)
 }
 
+// previewRevisionStore is kept separate from DeploymentStore because preview
+// revisions are immutable, short-lived inputs to an apply, not deployment
+// lifecycle records.
+type previewRevisionStore interface {
+	InsertPreviewRevision(ctx context.Context, revision *storage.PreviewRevision) error
+	GetPreviewRevision(ctx context.Context, id string) (storage.PreviewRevision, error)
+	ConsumePreviewRevision(ctx context.Context, id string, appliedAt time.Time) error
+}
+
 // MQTTUserLister is the subset of storage.Store needed to list MQTT users.
 type MQTTUserLister interface {
 	ListMQTTUsers(ctx context.Context) ([]storage.MQTTUser, error)
@@ -99,11 +121,17 @@ type AuditFunc func(ctx context.Context, actor, action, resourceType, resourceID
 
 // PreviewResult contains the diff output and rendered content for a deploy preview.
 type PreviewResult struct {
-	ACLDiff    string `json:"acl_diff"`
-	PasswdDiff string `json:"passwd_diff"`
-	ACLBody    string `json:"acl_body"`
-	PasswdBody string `json:"passwd_body"`
-	HasChanges bool   `json:"has_changes"`
+	RevisionID         string        `json:"revision_id"`
+	BaseACLHash        string        `json:"base_acl_hash"`
+	BasePasswdHash     string        `json:"base_passwd_hash"`
+	RenderedACLHash    string        `json:"rendered_acl_hash"`
+	RenderedPasswdHash string        `json:"rendered_passwd_hash"`
+	ACLDiff            string        `json:"acl_diff"`
+	PasswdDiff         string        `json:"passwd_diff"`
+	ACLBody            string        `json:"acl_body"`
+	PasswdBody         string        `json:"-"`
+	Summary            ChangeSummary `json:"summary"`
+	HasChanges         bool          `json:"has_changes"`
 }
 
 // Service orchestrates deploy preview, apply, and history.
@@ -113,6 +141,7 @@ type Service struct {
 	aclStore       acl.Store
 	mqttStore      MQTTUserLister
 	deployStore    DeploymentStore
+	revisionStore  previewRevisionStore
 	verifier       ActiveVerifier
 	passwordLookup CleartextPasswordLookup
 	readFile       FileReader
@@ -138,11 +167,16 @@ func NewService(
 	deployCfg config.DeployConfig,
 	auditFn AuditFunc,
 ) *Service {
+	revisionStore, ok := deployStore.(previewRevisionStore)
+	if !ok {
+		revisionStore = newMemoryPreviewRevisionStore()
+	}
 	return &Service{
 		applier:        applier,
 		aclStore:       aclStore,
 		mqttStore:      mqttStore,
 		deployStore:    deployStore,
+		revisionStore:  revisionStore,
 		verifier:       verifier,
 		passwordLookup: passwordLookup,
 		readFile:       defaultFileReader,
@@ -162,6 +196,65 @@ func defaultFileReader(path string) (string, error) {
 		return "", fmt.Errorf("read file %q: %w", path, err)
 	}
 	return string(data), nil
+}
+
+// memoryPreviewRevisionStore keeps the existing service fakes useful while
+// production uses the SQLite-backed storage.Store implementation.
+type memoryPreviewRevisionStore struct {
+	mu        sync.Mutex
+	revisions map[string]storage.PreviewRevision
+}
+
+func newMemoryPreviewRevisionStore() *memoryPreviewRevisionStore {
+	return &memoryPreviewRevisionStore{revisions: make(map[string]storage.PreviewRevision)}
+}
+
+func (s *memoryPreviewRevisionStore) InsertPreviewRevision(_ context.Context, revision *storage.PreviewRevision) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.revisions[revision.ID]; exists {
+		return fmt.Errorf("preview revision %q already exists", revision.ID)
+	}
+	s.revisions[revision.ID] = *revision
+	return nil
+}
+
+func (s *memoryPreviewRevisionStore) GetPreviewRevision(_ context.Context, id string) (storage.PreviewRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	revision, ok := s.revisions[id]
+	if !ok {
+		return storage.PreviewRevision{}, storage.ErrPreviewRevisionNotFound
+	}
+	return revision, nil
+}
+
+func (s *memoryPreviewRevisionStore) ConsumePreviewRevision(_ context.Context, id string, appliedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	revision, ok := s.revisions[id]
+	if !ok {
+		return storage.ErrPreviewRevisionNotFound
+	}
+	if !revision.AppliedAt.IsZero() {
+		return storage.ErrPreviewRevisionConsumed
+	}
+	revision.AppliedAt = appliedAt
+	s.revisions[id] = revision
+	return nil
+}
+
+func newRevisionID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate preview revision id: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func contentHash(body string) string {
+	hash := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(hash[:])
 }
 
 // render fetches rules and users from the stores and produces rendered ACL and passwd bodies.
@@ -459,12 +552,33 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 		return PreviewResult{}, err
 	}
 
-	passwdDiff, err := unifiedDiff("current", "rendered", currentPasswd, passwdBody)
+	passwdDiff, err := unifiedDiff("current", "rendered",
+		redactPasswdHashes(currentPasswd), redactPasswdHashes(passwdBody))
 	if err != nil {
 		return PreviewResult{}, err
 	}
 
 	hasChanges := aclDiff != "" || passwdDiff != ""
+	revisionID, err := newRevisionID()
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	revision := &storage.PreviewRevision{
+		ID:                 revisionID,
+		Actor:              actor,
+		BaseACLHash:        contentHash(currentACL),
+		BasePasswdHash:     contentHash(currentPasswd),
+		RenderedACLHash:    contentHash(aclBody),
+		RenderedPasswdHash: contentHash(passwdBody),
+		ACLRendered:        aclBody,
+		PasswdRendered:     passwdBody,
+		CreatedAt:          time.Now().UTC(),
+	}
+	if err := s.revisionStore.InsertPreviewRevision(ctx, revision); err != nil {
+		return PreviewResult{}, fmt.Errorf("store preview revision: %w", err)
+	}
+	summary := summarizeChanges(currentPasswd, passwdBody, currentACL, aclBody)
+	hasChanges = hasChanges || summary.HasPasswdChanges || summary.HasACLChanges
 
 	if s.auditFn != nil {
 		result := "success"
@@ -472,41 +586,64 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 	}
 
 	return PreviewResult{
-		ACLDiff:    aclDiff,
-		PasswdDiff: passwdDiff,
-		ACLBody:    aclBody,
-		PasswdBody: passwdBody,
-		HasChanges: hasChanges,
+		RevisionID:         revisionID,
+		BaseACLHash:        revision.BaseACLHash,
+		BasePasswdHash:     revision.BasePasswdHash,
+		RenderedACLHash:    revision.RenderedACLHash,
+		RenderedPasswdHash: revision.RenderedPasswdHash,
+		ACLDiff:            aclDiff,
+		PasswdDiff:         passwdDiff,
+		ACLBody:            aclBody,
+		PasswdBody:         passwdBody,
+		Summary:            summary,
+		HasChanges:         hasChanges,
 	}, nil
 }
 
-// Apply applies the current rendered configuration, verifies the
-// broker is serving it (positive + negative tests with bounded
-// retries), and rolls back on any failure.
-//
-// Lifecycle (issue #293 P0):
-//
-//	saved              — record inserted with rendered content
-//	applying           — applier is writing files / signalling reload
-//	pending_activation — files written + reload signalled, awaiting verify
-//	active_verified    — verification passed (positive + negative)
-//	failed             — verification exhausted retries; rolled back to snapshot
-//	rolled_back        — (legacy alias kept for compatibility)
-//	rollback_failed    — restore from snapshot also failed
-//
-// The applier receives the on-disk snapshot (issue #292) and the verifier
-// is invoked with bounded retries + backoff. On any persistent failure
-// the rollback runs against a fresh bounded context derived from
-// context.Background() so a cancelled HTTP request cannot abort it.
-func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, error) {
+// Apply applies an immutable preview revision, verifies the broker is serving
+// it (positive + negative tests with bounded retries), and rolls back on any
+// failure. The variadic form keeps older in-process callers compiling while
+// the HTTP handler requires exactly one revision ID.
+func (s *Service) Apply(ctx context.Context, actor string, revisionIDs ...string) (storage.Deployment, error) {
 	if s.deployCfg.Mode == "" {
 		return storage.Deployment{}, ErrDeployDisabled
+	}
+	if len(revisionIDs) > 1 {
+		return storage.Deployment{}, ErrRevisionMissing
+	}
+	if len(revisionIDs) == 0 {
+		preview, err := s.Preview(ctx, actor)
+		if err != nil {
+			return storage.Deployment{}, err
+		}
+		revisionIDs = []string{preview.RevisionID}
+	}
+	return s.applyRevision(ctx, actor, revisionIDs[0])
+}
+
+func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (storage.Deployment, error) {
+	if revisionID == "" {
+		return storage.Deployment{}, ErrRevisionMissing
 	}
 
 	if !s.mu.TryLock() {
 		return storage.Deployment{}, ErrDeployInProgress
 	}
 	defer s.mu.Unlock()
+
+	revision, err := s.revisionStore.GetPreviewRevision(ctx, revisionID)
+	if errors.Is(err, storage.ErrPreviewRevisionNotFound) {
+		return storage.Deployment{}, fmt.Errorf("%w: %s", ErrRevisionMissing, revisionID)
+	}
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("get preview revision: %w", err)
+	}
+	if !revision.AppliedAt.IsZero() {
+		return storage.Deployment{}, ErrRevisionConsumed
+	}
+	if time.Now().UTC().After(revision.CreatedAt.Add(previewRevisionTTL)) {
+		return storage.Deployment{}, ErrRevisionExpired
+	}
 
 	// Snapshot current on-disk files.
 	aclSnapshot, err := s.readFile(s.deployCfg.ACLPath)
@@ -517,12 +654,17 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("snapshot passwd file: %w", err)
 	}
-
-	// Render new configuration.
-	aclRendered, passwdRendered, err := s.render(ctx)
-	if err != nil {
-		return storage.Deployment{}, fmt.Errorf("render config: %w", err)
+	if contentHash(aclSnapshot) != revision.BaseACLHash || contentHash(passwdSnapshot) != revision.BasePasswdHash {
+		return storage.Deployment{}, ErrRevisionMismatch
 	}
+	currentACLRendered, currentPasswdRendered, err := s.render(ctx)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("validate rendered revision: %w", err)
+	}
+	if contentHash(currentACLRendered) != revision.RenderedACLHash || contentHash(currentPasswdRendered) != revision.RenderedPasswdHash {
+		return storage.Deployment{}, ErrRevisionMismatch
+	}
+	aclRendered, passwdRendered := revision.ACLRendered, revision.PasswdRendered
 
 	// Issue #293: insert with status="saved" so the lifecycle starts
 	// at "rendered content exists, not yet applied to disk".
@@ -577,6 +719,12 @@ func (s *Service) Apply(ctx context.Context, actor string) (storage.Deployment, 
 		}
 		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "active_verified", msg)
 		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
+		if err := s.revisionStore.ConsumePreviewRevision(ctx, revisionID, time.Now().UTC()); err != nil {
+			if errors.Is(err, storage.ErrPreviewRevisionConsumed) {
+				return storage.Deployment{}, ErrRevisionConsumed
+			}
+			return storage.Deployment{}, fmt.Errorf("consume preview revision: %w", err)
+		}
 		return s.mustGetDeployment(ctx, d.ID), nil
 	}
 

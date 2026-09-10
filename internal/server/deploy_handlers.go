@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -15,8 +17,12 @@ import (
 // It allows injecting fakes in tests without importing the full deploy.Service.
 type deployServicer interface {
 	Preview(ctx context.Context, actor string) (deploy.PreviewResult, error)
-	Apply(ctx context.Context, actor string) (storage.Deployment, error)
+	Apply(ctx context.Context, actor string, revisionID ...string) (storage.Deployment, error)
 	List(ctx context.Context, limit, offset int) ([]storage.Deployment, error)
+}
+
+type applyRequest struct {
+	RevisionID string `json:"revision_id"`
 }
 
 // deployAPI groups the HTTP handlers for the deploy lifecycle feature.
@@ -57,16 +63,42 @@ func (d *deployAPI) handlePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if result.RevisionID != "" {
+		w.Header().Set("Location", "/api/v1/deployments/preview/"+result.RevisionID)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 // handleApply handles POST /api/v1/deployments/apply.
 func (d *deployAPI) handleApply(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromRequest(r)
+	var request applyRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+			return
+		}
+	}
 
-	deployment, err := d.svc.Apply(r.Context(), actor)
+	deployment, err := d.svc.Apply(r.Context(), actor, request.RevisionID)
 	if errors.Is(err, deploy.ErrDeployDisabled) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "deploy is not configured"})
+		return
+	}
+	if errors.Is(err, deploy.ErrRevisionMissing) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "revision_id is required; preview the deployment first"})
+		return
+	}
+	if errors.Is(err, deploy.ErrRevisionMismatch) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "preview revision no longer matches the on-disk configuration"})
+		return
+	}
+	if errors.Is(err, deploy.ErrRevisionExpired) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "preview revision has expired; preview the deployment again"})
+		return
+	}
+	if errors.Is(err, deploy.ErrRevisionConsumed) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "preview revision was already applied"})
 		return
 	}
 	if errors.Is(err, deploy.ErrDeployInProgress) {

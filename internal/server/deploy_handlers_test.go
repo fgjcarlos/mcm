@@ -151,6 +151,27 @@ func newTestAppWithDeploy(t *testing.T, deployEnabled bool) (*App, *storage.Stor
 	return app, store, svc
 }
 
+func previewRevisionForTest(t *testing.T, app *App, token string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPost, "/api/v1/deployments/preview", "", token)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Header().Get("Location") == "" {
+		t.Error("preview response must include a Location header")
+	}
+	var response deploy.PreviewResult
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode preview response: %v", err)
+	}
+	if response.RevisionID == "" {
+		t.Fatal("preview response did not include revision_id")
+	}
+	return response.RevisionID
+}
+
 // --- Tests ---
 
 // TestHandleDeployList covers GET /api/v1/deployments.
@@ -264,15 +285,31 @@ func TestHandleDeployPreview(t *testing.T) {
 
 // TestHandleDeployApply covers POST /api/v1/deployments/apply.
 func TestHandleDeployApply(t *testing.T) {
+	t.Run("returns 400 without a preview revision", func(t *testing.T) {
+		app, store, _ := newTestAppWithDeploy(t, true)
+		t.Cleanup(func() { _ = store.Close() })
+
+		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+		token := loginAs(t, app, "admin", "secret")
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		app.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+	})
+
 	t.Run("success returns 200 with deployment", func(t *testing.T) {
 		app, store, _ := newTestAppWithDeploy(t, true)
 		t.Cleanup(func() { _ = store.Close() })
 
 		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
 		token := loginAs(t, app, "admin", "secret")
+		revisionID := previewRevisionForTest(t, app, token)
 
 		rec := httptest.NewRecorder()
-		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"`+revisionID+`"}`, token)
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
@@ -334,9 +371,10 @@ func TestHandleDeployApply(t *testing.T) {
 			config.DeployConfig{Mode: "file", ACLPath: dir + "/acl", PasswdPath: dir + "/passwd"},
 			func(_ context.Context, _, _, _, _, _ string, _ []byte) {},
 		)
+		revisionID := previewRevisionForTest(t, app, token)
 
 		rec := httptest.NewRecorder()
-		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"`+revisionID+`"}`, token)
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -362,7 +400,7 @@ func TestHandleDeployApply(t *testing.T) {
 		app.deploySvc = &lockedDeployService{}
 
 		rec := httptest.NewRecorder()
-		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"locked"}`, token)
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusConflict {
@@ -385,7 +423,7 @@ func (l *lockedDeployService) Preview(_ context.Context, _ string) (deploy.Previ
 	return deploy.PreviewResult{}, nil
 }
 
-func (l *lockedDeployService) Apply(_ context.Context, _ string) (storage.Deployment, error) {
+func (l *lockedDeployService) Apply(_ context.Context, _ string, _ ...string) (storage.Deployment, error) {
 	return storage.Deployment{}, deploy.ErrDeployInProgress
 }
 

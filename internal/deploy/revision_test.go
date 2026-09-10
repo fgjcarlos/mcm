@@ -11,11 +11,6 @@ import (
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
 )
 
-// TestRedactPasswdHashes covers issue #296 (acceptance criterion 3):
-// the deploy passwd diff must NEVER leak bcrypt hashes back to the
-// HTTP client. The redactor replaces each line with a marker that
-// shows the hash prefix + length + algorithm — enough to identify the
-// hash on disk but useless for offline cracking.
 func TestRedactPasswdHashes(t *testing.T) {
 	t.Parallel()
 
@@ -23,18 +18,15 @@ func TestRedactPasswdHashes(t *testing.T) {
 		t.Parallel()
 		body := "alice:$2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV\n"
 		got := redactPasswdHashes(body)
-		// The hash itself must not appear in the output.
 		if strings.Contains(got, "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV") {
 			t.Errorf("redacted output still contains the original hash:\n%s", got)
 		}
-		// The username + a marker should be present.
 		if !strings.Contains(got, "alice:") {
 			t.Errorf("expected username preserved, got:\n%s", got)
 		}
 		if !strings.Contains(got, "REDACTED") {
 			t.Errorf("expected REDACTED marker, got:\n%s", got)
 		}
-		// Prefix should be visible (first 7 chars of the hash).
 		if !strings.Contains(got, "$2a$10$") {
 			t.Errorf("expected bcrypt prefix to be visible, got:\n%s", got)
 		}
@@ -53,14 +45,12 @@ func TestRedactPasswdHashes(t *testing.T) {
 		t.Parallel()
 		body := "alice:$2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV\nbob:$2b$12$zyxwvutsrqponmlkjihgfedcba9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA\n"
 		got := redactPasswdHashes(body)
-		// Neither original hash should appear in the output.
 		if strings.Contains(got, "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV") {
 			t.Errorf("redacted output still contains alice's hash:\n%s", got)
 		}
 		if strings.Contains(got, "zyxwvutsrqponmlkjihgfedcba9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA") {
 			t.Errorf("redacted output still contains bob's hash:\n%s", got)
 		}
-		// Both usernames should be present.
 		if !strings.Contains(got, "alice:") {
 			t.Errorf("alice username missing:\n%s", got)
 		}
@@ -71,8 +61,6 @@ func TestRedactPasswdHashes(t *testing.T) {
 
 	t.Run("preserves total user count for the summary caller", func(t *testing.T) {
 		t.Parallel()
-		// Three users — the count is exposed so the UI can render
-		// "3 users in passwd" without leaking the hashes themselves.
 		body := "u1:$2a$10$x\n" +
 			"u2:$2b$10$x\n" +
 			"u3:$2y$10$x\n"
@@ -83,10 +71,6 @@ func TestRedactPasswdHashes(t *testing.T) {
 	})
 }
 
-// TestSummarizeChanges covers issue #296 (acceptance criterion 3):
-// the deploy preview must summarise the change set (added / removed /
-// rotated users and topics) so the UI can render a one-line summary
-// without exposing the broker config in full.
 func TestSummarizeChanges(t *testing.T) {
 	t.Parallel()
 
