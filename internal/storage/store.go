@@ -238,6 +238,26 @@ CREATE INDEX idx_deployments_created_at ON deployments(created_at);
 ALTER TABLE admin_users ADD COLUMN mfa_last_totp_step INTEGER NOT NULL DEFAULT -1;
 `,
 	},
+	{
+		version: 15,
+		name:    "create_preview_revisions",
+		sql: `
+CREATE TABLE preview_revisions (
+	id TEXT PRIMARY KEY,
+	actor TEXT NOT NULL DEFAULT '',
+	base_acl_hash TEXT NOT NULL DEFAULT '',
+	base_passwd_hash TEXT NOT NULL DEFAULT '',
+	rendered_acl_hash TEXT NOT NULL DEFAULT '',
+	rendered_passwd_hash TEXT NOT NULL DEFAULT '',
+	acl_rendered TEXT NOT NULL DEFAULT '',
+	passwd_rendered TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	applied_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_preview_revisions_created_at ON preview_revisions(created_at);
+CREATE INDEX idx_preview_revisions_applied_at ON preview_revisions(applied_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
