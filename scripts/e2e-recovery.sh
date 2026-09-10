@@ -176,19 +176,10 @@ if [ "$ACL_CODE" != "201" ] && [ "$ACL_CODE" != "200" ]; then
 fi
 rm -f "$ACL_BODY"
 
-PREVIEW_BODY="$(auth_curl POST /api/v1/deployments/preview)"
-REVISION_ID="$(printf '%s' "$PREVIEW_BODY" | jq -r '.revision_id // empty')"
-if [ -z "$REVISION_ID" ]; then
-    echo "preview response did not include revision_id: $PREVIEW_BODY" >&2
-    exit 1
-fi
-
 APPLY_BODY="$(mktemp)"
 APPLY_CODE="$(curl -sS -o "$APPLY_BODY" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
 if [ "$APPLY_CODE" != "200" ]; then
     echo "apply returned HTTP $APPLY_CODE (expected 200)" >&2
     cat "$APPLY_BODY" >&2

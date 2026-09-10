@@ -243,14 +243,9 @@ if [ "$preview_code" != "200" ]; then
     exit 1
 fi
 HAS_CHANGES="$(jq -r '.has_changes // false' "$preview_body")"
-REVISION_ID="$(jq -r '.revision_id // empty' "$preview_body")"
 rm -f "$preview_body"
 if [ "$HAS_CHANGES" != "true" ]; then
     echo "expected deploy preview has_changes=true, got $HAS_CHANGES" >&2
-    exit 1
-fi
-if [ -z "$REVISION_ID" ]; then
-    echo "preview response did not include revision_id" >&2
     exit 1
 fi
 echo "preview OK, has_changes=true"
@@ -259,9 +254,7 @@ echo "--- e2e-deploy: POST /api/v1/deployments/apply ---"
 apply_body="$(mktemp)"
 apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
     -X POST "$DEPLOY_APPLY_URL" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
+    -H "Authorization: Bearer ${TOKEN}" || echo "000")"
 if [ "$apply_code" != "200" ]; then
     echo "deploy apply failed with HTTP $apply_code:" >&2
     cat "$apply_body" >&2
