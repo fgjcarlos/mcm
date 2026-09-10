@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -293,6 +294,142 @@ func unifiedDiff(fromFile, toFile, current, rendered string) (string, error) {
 	}
 
 	return strings.Join(lines, ""), nil
+}
+
+// bcryptHashRe matches the standard mosquitto_passwd format used by
+// `mosquitto_passwd`: username colon bcrypt-hash, where the bcrypt
+// prefix is $2a$, $2b$, $2y$, $2x$, or $2$ (legacy).
+var bcryptHashRe = regexp.MustCompile(`^([^:\s]+):(\$2[abxy\$][^\s]+)\s*$`)
+
+// redactPasswdHashes replaces every bcrypt hash in a passwd file body
+// with a redacted marker that shows the algorithm + prefix + length.
+// This is required by issue #296 (acceptance criterion 3): the deploy
+// API must NEVER leak the broker's password hashes back to the
+// operator or the UI — only the metadata needed to recognise the
+// change set.
+//
+// Output format per user line:
+//
+//	user:REDACTED  algo=$2a$  hash_len=60  prefix=$2a$10$
+//
+// Comments (lines starting with `#`) and blank lines are preserved
+// as-is. The trailing newline (if any) is preserved too.
+func redactPasswdHashes(body string) string {
+	lines := strings.Split(body, "\n")
+	trailingNL := false
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		trailingNL = true
+		lines = lines[:len(lines)-1]
+	}
+	redacted := make([]string, 0, len(lines))
+	for _, line := range lines {
+		m := bcryptHashRe.FindStringSubmatch(line)
+		if m == nil {
+			redacted = append(redacted, line)
+		} else {
+			username, hash := m[1], m[2]
+			prefix := hash
+			if len(prefix) > 7 {
+				prefix = prefix[:7]
+			}
+			redacted = append(redacted, fmt.Sprintf("%s:REDACTED  algo=%s  hash_len=%d  prefix=%s",
+				username, hash[:4], len(hash), prefix))
+		}
+	}
+	out := strings.Join(redacted, "\n")
+	if trailingNL {
+		out += "\n"
+	}
+	return out
+}
+
+// ChangeSummary is the per-preview summary of what would change if
+// the operator applied the rendered configuration. It is designed to
+// be safe to return over the API: only counts and rotation flags,
+// never the actual hash values.
+type ChangeSummary struct {
+	UsersAdded       int  `json:"users_added"`   // new username not in current
+	UsersRemoved     int  `json:"users_removed"` // username in current, not in rendered
+	UsersRotated     int  `json:"users_rotated"` // same username, different hash
+	HasPasswdChanges bool `json:"has_passwd_changes"`
+
+	TopicsAdded   int  `json:"topics_added"`
+	TopicsRemoved int  `json:"topics_removed"`
+	HasACLChanges bool `json:"has_acl_changes"`
+}
+
+// summarizeChanges diffs the passwd and ACL files and produces a
+// summary that does NOT leak hashes.
+func summarizeChanges(currentPasswd, renderedPasswd, currentACL, renderedACL string) ChangeSummary {
+	var s ChangeSummary
+
+	currentUsers := parsePasswdUsers(currentPasswd)
+	renderedUsers := parsePasswdUsers(renderedPasswd)
+	for u, curHash := range currentUsers {
+		newHash, ok := renderedUsers[u]
+		if !ok {
+			s.UsersRemoved++
+			continue
+		}
+		if newHash != curHash {
+			s.UsersRotated++
+		}
+		delete(renderedUsers, u)
+	}
+	for range renderedUsers {
+		s.UsersAdded++
+	}
+	if s.UsersAdded+s.UsersRemoved+s.UsersRotated > 0 {
+		s.HasPasswdChanges = true
+	}
+
+	currentTopics := parseACLTopics(currentACL)
+	renderedTopics := parseACLTopics(renderedACL)
+	for t := range currentTopics {
+		if _, ok := renderedTopics[t]; !ok {
+			s.TopicsRemoved++
+		}
+		delete(renderedTopics, t)
+	}
+	for range renderedTopics {
+		s.TopicsAdded++
+	}
+	if s.TopicsAdded+s.TopicsRemoved > 0 {
+		s.HasACLChanges = true
+	}
+	return s
+}
+
+// parsePasswdUsers returns username -> hash for each non-comment
+// non-blank line.
+func parsePasswdUsers(body string) map[string]string {
+	out := make(map[string]string)
+	for _, line := range strings.Split(body, "\n") {
+		m := bcryptHashRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+// parseACLTopics returns a set of "<principal> <topic> <perm>" tuples
+// that appear in the rendered ACL body.
+func parseACLTopics(body string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "topic" {
+			continue
+		}
+		out[strings.Join(fields, " ")] = struct{}{}
+	}
+	return out
 }
 
 // Preview returns unified diffs between on-disk files and the rendered configuration.
