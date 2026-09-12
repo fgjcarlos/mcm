@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -270,6 +271,14 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 		seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
 		token := loginAs(t, app, "ops", "secret")
 		user := seedMQTTUser(t, store, "device-old")
+		app.rememberMQTTPassword(user.Username, "device-password")
+		if _, err := store.ACLStore().CreateRule(context.Background(), acl.Rule{
+			Principal:   user.Username,
+			TopicFilter: "devices/#",
+			Permission:  acl.PermissionRead,
+		}); err != nil {
+			t.Fatalf("create ACL rule: %v", err)
+		}
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"username":"device-new"}`, token)
@@ -284,6 +293,19 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 		}
 		if resp.Username != "device-new" {
 			t.Errorf("username = %q, want device-new", resp.Username)
+		}
+		rules, err := store.ACLStore().ListRules(context.Background())
+		if err != nil {
+			t.Fatalf("list ACL rules: %v", err)
+		}
+		if len(rules) != 1 || rules[0].Principal != "device-new" {
+			t.Fatalf("renamed user ACL rules = %+v, want principal device-new", rules)
+		}
+		if password, ok := app.CleartextPassword("device-new"); !ok || password != "device-password" {
+			t.Fatalf("renamed user cleartext password = %q, %t; want device-password, true", password, ok)
+		}
+		if _, ok := app.CleartextPassword("device-old"); ok {
+			t.Fatal("old username retained a cleartext password after rename")
 		}
 	})
 
@@ -324,6 +346,30 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	})
+
+	t.Run("service account username is reserved", func(t *testing.T) {
+		app, store := newTestApp(t)
+		t.Cleanup(func() { _ = store.Close() })
+		app.mosquitto.Username = "svc-mcm"
+
+		seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+		token := loginAs(t, app, "ops", "secret")
+
+		createRec := httptest.NewRecorder()
+		createReq := authedRequest(http.MethodPost, "/api/v1/mqtt-users", `{"username":"svc-mcm"}`, token)
+		app.Handler().ServeHTTP(createRec, createReq)
+		if createRec.Code != http.StatusConflict || !strings.Contains(createRec.Body.String(), "reserved") {
+			t.Fatalf("reserved create status/body = %d/%s, want 409 with reservation error", createRec.Code, createRec.Body.String())
+		}
+
+		user := seedMQTTUser(t, store, "device-normal")
+		updateRec := httptest.NewRecorder()
+		updateReq := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"username":"svc-mcm"}`, token)
+		app.Handler().ServeHTTP(updateRec, updateReq)
+		if updateRec.Code != http.StatusConflict || !strings.Contains(updateRec.Body.String(), "reserved") {
+			t.Fatalf("reserved update status/body = %d/%s, want 409 with reservation error", updateRec.Code, updateRec.Body.String())
 		}
 	})
 }

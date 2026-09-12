@@ -113,6 +113,15 @@ type MQTTUserLister interface {
 	ListMQTTUsers(ctx context.Context) ([]storage.MQTTUser, error)
 }
 
+// OrphanRuleLister is the optional storage capability used to identify ACL
+// rules that would otherwise be rendered for disabled or deleted users. The
+// production storage.Store implements both MQTTUserLister and this interface;
+// keeping it optional preserves the small in-memory fakes used by older
+// callers.
+type OrphanRuleLister interface {
+	FindOrphanRules(ctx context.Context) ([]storage.ACLRuleRow, error)
+}
+
 // FileReader abstracts reading current on-disk config files (injectable for testing).
 type FileReader func(path string) (string, error)
 
@@ -121,33 +130,35 @@ type AuditFunc func(ctx context.Context, actor, action, resourceType, resourceID
 
 // PreviewResult contains the diff output and rendered content for a deploy preview.
 type PreviewResult struct {
-	RevisionID         string        `json:"revision_id"`
-	BaseACLHash        string        `json:"base_acl_hash"`
-	BasePasswdHash     string        `json:"base_passwd_hash"`
-	RenderedACLHash    string        `json:"rendered_acl_hash"`
-	RenderedPasswdHash string        `json:"rendered_passwd_hash"`
-	ACLDiff            string        `json:"acl_diff"`
-	PasswdDiff         string        `json:"passwd_diff"`
-	ACLBody            string        `json:"acl_body"`
-	PasswdBody         string        `json:"-"`
-	Summary            ChangeSummary `json:"summary"`
-	HasChanges         bool          `json:"has_changes"`
+	RevisionID         string               `json:"revision_id"`
+	BaseACLHash        string               `json:"base_acl_hash"`
+	BasePasswdHash     string               `json:"base_passwd_hash"`
+	RenderedACLHash    string               `json:"rendered_acl_hash"`
+	RenderedPasswdHash string               `json:"rendered_passwd_hash"`
+	OrphanRules        []storage.ACLRuleRow `json:"orphan_rules"`
+	ACLDiff            string               `json:"acl_diff"`
+	PasswdDiff         string               `json:"passwd_diff"`
+	ACLBody            string               `json:"acl_body"`
+	PasswdBody         string               `json:"-"`
+	Summary            ChangeSummary        `json:"summary"`
+	HasChanges         bool                 `json:"has_changes"`
 }
 
 // Service orchestrates deploy preview, apply, and history.
 type Service struct {
-	mu             sync.Mutex
-	applier        mosquitto.Applier
-	aclStore       acl.Store
-	mqttStore      MQTTUserLister
-	deployStore    DeploymentStore
-	revisionStore  previewRevisionStore
-	verifier       ActiveVerifier
-	passwordLookup CleartextPasswordLookup
-	readFile       FileReader
-	mosquittoCfg   config.MosquittoConfig
-	deployCfg      config.DeployConfig
-	auditFn        AuditFunc
+	mu               sync.Mutex
+	applier          mosquitto.Applier
+	aclStore         acl.Store
+	mqttStore        MQTTUserLister
+	orphanRuleLister OrphanRuleLister
+	deployStore      DeploymentStore
+	revisionStore    previewRevisionStore
+	verifier         ActiveVerifier
+	passwordLookup   CleartextPasswordLookup
+	readFile         FileReader
+	mosquittoCfg     config.MosquittoConfig
+	deployCfg        config.DeployConfig
+	auditFn          AuditFunc
 }
 
 // NewService constructs a deploy Service.
@@ -171,18 +182,20 @@ func NewService(
 	if !ok {
 		revisionStore = newMemoryPreviewRevisionStore()
 	}
+	orphanRuleLister, _ := mqttStore.(OrphanRuleLister)
 	return &Service{
-		applier:        applier,
-		aclStore:       aclStore,
-		mqttStore:      mqttStore,
-		deployStore:    deployStore,
-		revisionStore:  revisionStore,
-		verifier:       verifier,
-		passwordLookup: passwordLookup,
-		readFile:       defaultFileReader,
-		mosquittoCfg:   mosquittoCfg,
-		deployCfg:      deployCfg,
-		auditFn:        auditFn,
+		applier:          applier,
+		aclStore:         aclStore,
+		mqttStore:        mqttStore,
+		orphanRuleLister: orphanRuleLister,
+		deployStore:      deployStore,
+		revisionStore:    revisionStore,
+		verifier:         verifier,
+		passwordLookup:   passwordLookup,
+		readFile:         defaultFileReader,
+		mosquittoCfg:     mosquittoCfg,
+		deployCfg:        deployCfg,
+		auditFn:          auditFn,
 	}
 }
 
@@ -265,15 +278,26 @@ func contentHash(body string) string {
 // has_changes non-idempotent (salt is random), forcing the applier to
 // rewrite the file and SIGHUP the broker on every preview/apply cycle
 // even when nothing changed.
-func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err error) {
+func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orphanRules []storage.ACLRuleRow, err error) {
 	rules, err := s.aclStore.ListRules(ctx)
 	if err != nil {
-		return "", "", fmt.Errorf("list acl rules: %w", err)
+		return "", "", nil, fmt.Errorf("list acl rules: %w", err)
+	}
+
+	orphanRules = make([]storage.ACLRuleRow, 0)
+	if s.orphanRuleLister != nil {
+		orphanRules, err = s.orphanRuleLister.FindOrphanRules(ctx)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("find orphan acl rules: %w", err)
+		}
+		if orphanRules == nil {
+			orphanRules = make([]storage.ACLRuleRow, 0)
+		}
 	}
 
 	users, err := s.mqttStore.ListMQTTUsers(ctx)
 	if err != nil {
-		return "", "", fmt.Errorf("list mqtt users: %w", err)
+		return "", "", nil, fmt.Errorf("list mqtt users: %w", err)
 	}
 
 	// Read the on-disk passwd so we can preserve the service user's
@@ -282,7 +306,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 	// (first boot) we recompute the hash.
 	existingPasswd, err := s.readFile(s.deployCfg.PasswdPath)
 	if err != nil {
-		return "", "", fmt.Errorf("read current passwd file: %w", err)
+		return "", "", nil, fmt.Errorf("read current passwd file: %w", err)
 	}
 	existingEntries := mosquitto.ParsePasswdFile(existingPasswd)
 	existingHashByUser := make(map[string]string, len(existingEntries))
@@ -290,9 +314,25 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 		existingHashByUser[e.Username] = e.Hash
 	}
 
-	// Build the ACL body: managed rules + service user block.
-	allRules := make([]acl.Rule, 0, len(rules)+1)
-	allRules = append(allRules, rules...)
+	// Orphan rules are surfaced in the preview but excluded from the rendered
+	// broker configuration. They cannot authenticate because their user is
+	// disabled or absent, and retaining them would make the rendered state
+	// disagree with the active user set.
+	orphanPrincipals := make(map[string]struct{}, len(orphanRules))
+	for _, rule := range orphanRules {
+		orphanPrincipals[rule.Principal] = struct{}{}
+	}
+	activeRules := make([]acl.Rule, 0, len(rules))
+	for _, rule := range rules {
+		if _, orphan := orphanPrincipals[rule.Principal]; orphan {
+			continue
+		}
+		activeRules = append(activeRules, rule)
+	}
+
+	// Build the ACL body: active managed rules + service user block.
+	allRules := make([]acl.Rule, 0, len(activeRules)+1)
+	allRules = append(allRules, activeRules...)
 	if s.mosquittoCfg.Username != "" {
 		allRules = append(allRules, serviceUserACL(s.mosquittoCfg.Username)...)
 	}
@@ -326,7 +366,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 			var hashErr error
 			hash, hashErr = mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
 			if hashErr != nil {
-				return "", "", fmt.Errorf("hash service user password: %w", hashErr)
+				return "", "", nil, fmt.Errorf("hash service user password: %w", hashErr)
 			}
 		}
 		entries = append(entries, mosquitto.PasswdEntry{
@@ -336,7 +376,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, err e
 	}
 	passwdBody = mosquitto.RenderPasswdFile(entries)
 
-	return aclBody, passwdBody, nil
+	return aclBody, passwdBody, orphanRules, nil
 }
 
 // serviceUserACL returns the set of ACL rules MCM always emits for the
@@ -532,7 +572,7 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 		return PreviewResult{}, ErrDeployDisabled
 	}
 
-	aclBody, passwdBody, err := s.render(ctx)
+	aclBody, passwdBody, orphanRules, err := s.render(ctx)
 	if err != nil {
 		return PreviewResult{}, fmt.Errorf("render config: %w", err)
 	}
@@ -591,6 +631,7 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 		BasePasswdHash:     revision.BasePasswdHash,
 		RenderedACLHash:    revision.RenderedACLHash,
 		RenderedPasswdHash: revision.RenderedPasswdHash,
+		OrphanRules:        orphanRules,
 		ACLDiff:            aclDiff,
 		PasswdDiff:         passwdDiff,
 		ACLBody:            aclBody,
@@ -657,7 +698,7 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	if contentHash(aclSnapshot) != revision.BaseACLHash || contentHash(passwdSnapshot) != revision.BasePasswdHash {
 		return storage.Deployment{}, ErrRevisionMismatch
 	}
-	currentACLRendered, currentPasswdRendered, err := s.render(ctx)
+	currentACLRendered, currentPasswdRendered, _, err := s.render(ctx)
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("validate rendered revision: %w", err)
 	}

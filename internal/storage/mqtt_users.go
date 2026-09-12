@@ -11,17 +11,18 @@ import (
 
 // CreateMQTTUser creates a new MQTT user.
 func (s *Store) CreateMQTTUser(ctx context.Context, params CreateMQTTUserParams) (MQTTUser, error) {
-	if strings.TrimSpace(params.Username) == "" {
+	username := strings.TrimSpace(params.Username)
+	if username == "" {
 		return MQTTUser{}, fmt.Errorf("create mqtt user: username is required")
 	}
-	if strings.TrimSpace(params.Username) == params.ServiceReserved {
+	if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && username == reserved {
 		return MQTTUser{}, ErrMQTTUserServiceReserved
 	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO mqtt_users(username, password_hash, disabled, created_at, updated_at) VALUES(?, ?, 0, ?, ?)`,
-		strings.TrimSpace(params.Username),
+		username,
 		params.PasswordHash,
 		now.Format(time.RFC3339Nano),
 		now.Format(time.RFC3339Nano),
@@ -103,29 +104,46 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 // UpdateMQTTUser applies partial updates to an MQTT user.
 // Only non-nil fields in params are changed; updated_at is always refreshed.
 func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTUserParams) (MQTTUser, error) {
-	current, err := s.GetMQTTUser(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return MQTTUser{}, err
+		return MQTTUser{}, fmt.Errorf("begin update mqtt user transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		oldUsername  string
+		passwordHash string
+		disabledInt  int
+	)
+	if err := tx.QueryRowContext(ctx,
+		`SELECT username, password_hash, disabled FROM mqtt_users WHERE id = ?`, id,
+	).Scan(&oldUsername, &passwordHash, &disabledInt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MQTTUser{}, ErrMQTTUserNotFound
+		}
+		return MQTTUser{}, fmt.Errorf("lookup mqtt user for update: %w", err)
 	}
 
-	username := current.Username
+	username := oldUsername
 	if params.Username != nil {
 		newName := strings.TrimSpace(*params.Username)
-		if newName == params.ServiceReserved && params.ServiceReserved != "" {
+		if newName == "" {
+			return MQTTUser{}, fmt.Errorf("update mqtt user: username is required")
+		}
+		if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && newName == reserved {
 			return MQTTUser{}, ErrMQTTUserServiceReserved
 		}
 		username = newName
 	}
-	passwordHash := current.PasswordHash
 	if params.PasswordHash != nil {
 		passwordHash = *params.PasswordHash
 	}
-	disabled := current.Disabled
+	disabled := disabledInt == 1
 	if params.Disabled != nil {
 		disabled = *params.Disabled
 	}
 
-	if _, err := s.db.ExecContext(
+	if _, err := tx.ExecContext(
 		ctx,
 		`UPDATE mqtt_users SET username = ?, password_hash = ?, disabled = ?, updated_at = ? WHERE id = ?`,
 		username,
@@ -134,7 +152,28 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 		time.Now().UTC().Format(time.RFC3339Nano),
 		id,
 	); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return MQTTUser{}, ErrMQTTUserConflict
+		}
 		return MQTTUser{}, fmt.Errorf("update mqtt user: %w", err)
+	}
+
+	if username != oldUsername {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE acl_rules SET principal = ?, updated_at = ? WHERE principal = ?`,
+			username,
+			time.Now().UTC().Format(time.RFC3339Nano),
+			oldUsername,
+		); err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				return MQTTUser{}, ErrMQTTUserConflict
+			}
+			return MQTTUser{}, fmt.Errorf("cascade rename to acl_rules: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return MQTTUser{}, fmt.Errorf("commit update mqtt user transaction: %w", err)
 	}
 
 	return s.GetMQTTUser(ctx, id)
@@ -183,61 +222,8 @@ func (s *Store) RenameMQTTUser(ctx context.Context, id int64, newUsername string
 	if newUsername == "" {
 		return fmt.Errorf("rename mqtt user: username is required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin rename transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Look up the old username first so we can cascade the ACL rules even
-	// if the rename itself errors on UNIQUE collision.
-	var oldUsername string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT username FROM mqtt_users WHERE id = ?`, id,
-	).Scan(&oldUsername); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrMQTTUserNotFound
-		}
-		return fmt.Errorf("lookup username for rename: %w", err)
-	}
-
-	res, err := tx.ExecContext(ctx,
-		`UPDATE mqtt_users SET username = ?, updated_at = ? WHERE id = ?`,
-		newUsername,
-		time.Now().UTC().Format(time.RFC3339Nano),
-		id,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return ErrMQTTUserConflict
-		}
-		return fmt.Errorf("rename mqtt user: %w", err)
-	}
-	if affected, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("get rename mqtt user row count: %w", err)
-	} else if affected == 0 {
-		return ErrMQTTUserNotFound
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE acl_rules SET principal = ?, updated_at = ? WHERE principal = ?`,
-		newUsername,
-		time.Now().UTC().Format(time.RFC3339Nano),
-		oldUsername,
-	); err != nil {
-		// A UNIQUE constraint on (principal, topic_filter, permission)
-		// could trip here if the rename collides with an existing rule
-		// binding. Map it to ErrMQTTUserConflict so callers can react.
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return ErrMQTTUserConflict
-		}
-		return fmt.Errorf("cascade rename to acl_rules: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit rename transaction: %w", err)
-	}
-	return nil
+	_, err := s.UpdateMQTTUser(ctx, id, UpdateMQTTUserParams{Username: &newUsername})
+	return err
 }
 
 // scanMQTTUser scans a single mqtt_users row into an MQTTUser.

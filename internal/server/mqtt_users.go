@@ -90,10 +90,15 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := a.store.CreateMQTTUser(r.Context(), storage.CreateMQTTUserParams{
-		Username:     strings.TrimSpace(req.Username),
-		PasswordHash: hash,
+		Username:        strings.TrimSpace(req.Username),
+		PasswordHash:    hash,
+		ServiceReserved: a.mosquitto.Username,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "username is reserved for the broker service account"})
+			return
+		}
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			writeJSON(w, http.StatusConflict, errorResponse{Error: "username already exists"})
 			return
@@ -168,13 +173,27 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := storage.UpdateMQTTUserParams{
-		Username: req.Username,
-		Disabled: req.Disabled,
+		Username:        req.Username,
+		Disabled:        req.Disabled,
+		ServiceReserved: a.mosquitto.Username,
+	}
+	var previous storage.MQTTUser
+	var previousErr error
+	if req.Username != nil {
+		previous, previousErr = a.store.GetMQTTUser(r.Context(), id)
 	}
 
 	u, err := a.store.UpdateMQTTUser(r.Context(), id, params)
 	if errors.Is(err, storage.ErrMQTTUserNotFound) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
+		return
+	}
+	if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "username is reserved for the broker service account"})
+		return
+	}
+	if err != nil && (errors.Is(err, storage.ErrMQTTUserConflict) || strings.Contains(err.Error(), "UNIQUE constraint failed")) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "username already exists"})
 		return
 	}
 	if err != nil {
@@ -183,6 +202,12 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.recordAuditFromRequest(r, "mqtt_user.update", "mqtt_user", strconv.FormatInt(u.ID, 10), "success", map[string]any{"username": u.Username, "disabled": u.Disabled})
+	if req.Username != nil && previousErr == nil && previous.Username != u.Username {
+		if password, ok := a.CleartextPassword(previous.Username); ok {
+			a.rememberMQTTPassword(u.Username, password)
+			a.forgetMQTTPassword(previous.Username)
+		}
+	}
 	if u.Disabled {
 		a.forgetMQTTPassword(u.Username)
 	}

@@ -15,11 +15,11 @@ import (
 // The ID is the integer primary key surfaced as a string for compatibility
 // with the existing acl.Store interface.
 type ACLRuleRow struct {
-	ID          string
-	Principal   string
-	TopicFilter string
-	Permission  acl.Permission
-	Description string
+	ID          string         `json:"id"`
+	Principal   string         `json:"principal"`
+	TopicFilter string         `json:"topic_filter"`
+	Permission  acl.Permission `json:"permission"`
+	Description string         `json:"description,omitempty"`
 }
 
 // CreateRule persists an acl.Rule and returns the row with its assigned ID.

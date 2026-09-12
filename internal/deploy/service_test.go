@@ -179,11 +179,17 @@ func (f *fakeACLStore) DeleteRule(_ context.Context, id string) error {
 
 // fakeMQTTUserLister is a minimal MQTTUserLister.
 type fakeMQTTUserLister struct {
-	users []storage.MQTTUser
+	users       []storage.MQTTUser
+	orphanRules []storage.ACLRuleRow
+	orphanErr   error
 }
 
 func (f *fakeMQTTUserLister) ListMQTTUsers(_ context.Context) ([]storage.MQTTUser, error) {
 	return f.users, nil
+}
+
+func (f *fakeMQTTUserLister) FindOrphanRules(_ context.Context) ([]storage.ACLRuleRow, error) {
+	return f.orphanRules, f.orphanErr
 }
 
 // --- Helpers ---
@@ -352,6 +358,106 @@ func TestPreview_HappyPath(t *testing.T) {
 	}
 	if result.ACLDiff == "" {
 		t.Error("want non-empty ACLDiff")
+	}
+}
+
+func TestPreview_SurfacesAndFiltersOrphanRules(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "")
+
+	aclStore := &fakeACLStore{rules: []acl.Rule{
+		{ID: "1", Principal: "active-user", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
+		{ID: "2", Principal: "deleted-user", TopicFilter: "legacy/#", Permission: acl.PermissionWrite},
+	}}
+	mqttStore := &fakeMQTTUserLister{
+		users: []storage.MQTTUser{{Username: "active-user"}},
+		orphanRules: []storage.ACLRuleRow{{
+			ID:          "2",
+			Principal:   "deleted-user",
+			TopicFilter: "legacy/#",
+			Permission:  acl.PermissionWrite,
+		}},
+	}
+
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	if len(result.OrphanRules) != 1 || result.OrphanRules[0].Principal != "deleted-user" {
+		t.Fatalf("OrphanRules = %+v, want deleted-user rule", result.OrphanRules)
+	}
+	if !strings.Contains(result.ACLBody, "user active-user\ntopic read sensors/#") {
+		t.Fatalf("ACLBody missing active rule:\n%s", result.ACLBody)
+	}
+	if strings.Contains(result.ACLBody, "deleted-user") || strings.Contains(result.ACLBody, "legacy/#") {
+		t.Fatalf("ACLBody rendered orphan rule:\n%s", result.ACLBody)
+	}
+}
+
+func TestPreview_ReturnsOrphanRuleLookupError(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "")
+	lookupErr := errors.New("orphan lookup failed")
+	mqttStore := &fakeMQTTUserLister{orphanErr: lookupErr}
+	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, mqttStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+
+	_, err := svc.Preview(context.Background(), "operator")
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("Preview error = %v, want lookup error", err)
+	}
+	if !strings.Contains(err.Error(), "find orphan acl rules") {
+		t.Fatalf("Preview error = %v, want orphan lookup context", err)
+	}
+}
+
+func TestPreview_UsesStorageOrphanRules(t *testing.T) {
+	t.Parallel()
+
+	store, err := storage.Open(filepath.Join(t.TempDir(), "mcm.db"))
+	if err != nil {
+		t.Fatalf("storage.Open returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	user, err := store.CreateMQTTUser(ctx, storage.CreateMQTTUserParams{Username: "disabled-user"})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+	if _, err := store.ACLStore().CreateRule(ctx, acl.Rule{
+		Principal:   user.Username,
+		TopicFilter: "legacy/#",
+		Permission:  acl.PermissionRead,
+	}); err != nil {
+		t.Fatalf("CreateRule returned error: %v", err)
+	}
+	disabled := true
+	if _, err := store.UpdateMQTTUser(ctx, user.ID, storage.UpdateMQTTUserParams{Disabled: &disabled}); err != nil {
+		t.Fatalf("UpdateMQTTUser returned error: %v", err)
+	}
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "")
+	svc := newTestService(&fakeApplier{}, store.ACLStore(), store, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+
+	result, err := svc.Preview(ctx, "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	if len(result.OrphanRules) != 1 || result.OrphanRules[0].Principal != "disabled-user" {
+		t.Fatalf("OrphanRules = %+v, want disabled-user rule", result.OrphanRules)
+	}
+	if result.ACLBody != "" {
+		t.Fatalf("ACLBody = %q, want orphan rule excluded", result.ACLBody)
 	}
 }
 
