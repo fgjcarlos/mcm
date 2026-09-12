@@ -51,15 +51,17 @@ type ACLRule = {
 }
 
 type Deployment = {
-  id: string
+  id: number | string
   status: 'applied' | 'rolled_back' | 'rollback_failed' | string
   message?: string
   created_at: string
 }
 
 type DeployPreview = {
+  revision_id: string
   acl_diff: string
   passwd_diff: string
+  orphan_rules?: ACLRule[]
   has_changes: boolean
 }
 
@@ -184,6 +186,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   const [securityError, setSecurityError] = useState<string>('')
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditError, setAuditError] = useState<string>('')
+  const [deployPending, setDeployPending] = useState(false)
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
   const visibleNavItems = navItems.filter((item) => {
     if (!item.minRole) return true
@@ -207,6 +210,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     }
     setActiveId(item.id)
   }, [])
+
+  const markDeployPending = useCallback(() => setDeployPending(true), [])
+  const clearDeployPending = useCallback(() => setDeployPending(false), [])
 
   useEffect(() => {
     const handlePopState = () => setActiveId(navIdFromPath(window.location.pathname))
@@ -269,6 +275,13 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       onSelectNav={handleSelectNav}
       onLogout={onLogout}
     >
+      {deployPending ? (
+        <div role="status" aria-live="polite" className="mt-8 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Pending deploy</p>
+          <p className="mt-2 text-sm text-amber-50">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
+        </div>
+      ) : null}
+
       {activeId === 'logs' ? (
         <LogsPanel logs={logs} streamState={streamState} />
       ) : activeId === 'security' ? (
@@ -278,11 +291,11 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : activeId === 'dashboard' ? (
         <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
       ) : activeId === 'acls' ? (
-        <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} />
+        <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} onMutation={markDeployPending} />
       ) : activeId === 'users' ? (
-        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} />
+        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutation={markDeployPending} />
       ) : activeId === 'deploy' ? (
-        <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} />
+        <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplySuccess={clearDeployPending} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : activeId === 'admin-users' ? (
@@ -769,7 +782,7 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: Brok
   )
 }
 
-function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; onLogout: () => void; role?: string; onMutation?: () => void }) {
   const canWrite = can(role, 'acl.write')
   const [rules, setRules] = useState<ACLRule[]>([])
   const [loading, setLoading] = useState(true)
@@ -857,6 +870,7 @@ function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () 
         return
       }
       setShowForm(false)
+      onMutation?.()
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -880,6 +894,7 @@ function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () 
         return
       }
       setDeleteConfirmId(null)
+      onMutation?.()
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -921,9 +936,10 @@ function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () 
                 required
                 value={formPrincipal}
                 onChange={(e) => setFormPrincipal(e.target.value)}
-                placeholder="username or $client_id"
+                placeholder="mqtt-username"
                 className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
               />
+              <span className="mt-1 block text-xs text-slate-400">Use an MQTT username from the Users panel. MCM renders this as Mosquitto&apos;s <code>user &lt;username&gt;</code> directive; client-ID placeholders are not supported.</span>
             </label>
             <label className="block">
               <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Topic filter</span>
@@ -1058,7 +1074,7 @@ function ACLPanel({ token, onLogout, role = '' }: { token: string; onLogout: () 
   )
 }
 
-function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+function DeployPanel({ token, onLogout, role = '', onApplySuccess }: { token: string; onLogout: () => void; role?: string; onApplySuccess?: () => void }) {
   const canPreview = can(role, 'deploy.preview')
   const canApply = can(role, 'deploy.apply')
   const [preview, setPreview] = useState<DeployPreview | null>(null)
@@ -1135,6 +1151,11 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
   }
 
   const handleApply = async () => {
+    if (!preview?.revision_id) {
+      setApplyError('Preview revision is missing. Generate a new preview before applying.')
+      return
+    }
+
     setApplying(true)
     setApplyError('')
     setApplyResult(null)
@@ -1144,6 +1165,8 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
         token,
         onUnauthorized: onLogout,
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision_id: preview.revision_id }),
       })
       if (response.status === 404 || response.status === 422) {
         setUnavailable(true)
@@ -1157,6 +1180,9 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
       const result = (await response.json()) as Deployment
       setApplyResult(result)
       setPreview(null)
+      if (result.status === 'active_verified' || result.status === 'applied') {
+        onApplySuccess?.()
+      }
       fetchHistory()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -1241,8 +1267,8 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
         ) : null}
 
         {applyResult ? (
-          <div className={`mt-5 rounded-2xl border p-5 ${applyResult.status === 'applied' ? 'border-emerald-300/30 bg-emerald-400/10' : 'border-amber-300/30 bg-amber-400/10'}`}>
-            <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${applyResult.status === 'applied' ? 'text-emerald-200' : 'text-amber-200'}`}>
+          <div className={`mt-5 rounded-2xl border p-5 ${isSuccessfulDeployment(applyResult.status) ? 'border-emerald-300/30 bg-emerald-400/10' : 'border-amber-300/30 bg-amber-400/10'}`}>
+            <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${isSuccessfulDeployment(applyResult.status) ? 'text-emerald-200' : 'text-amber-200'}`}>
               {applyResult.status}
             </p>
             {applyResult.message ? <p className="mt-2 text-sm text-slate-300">{applyResult.message}</p> : null}
@@ -1251,8 +1277,37 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
 
         {preview ? (
           <div className="mt-5 space-y-4">
-            {!preview.has_changes ? (
+            {!preview.has_changes && !(preview.orphan_rules?.length) ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No pending changes — configuration is up to date.</div>
+            ) : null}
+            {preview.orphan_rules?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Orphan ACL rules</p>
+                  <span className="rounded-full bg-amber-300/15 px-2.5 py-1 text-xs font-semibold text-amber-100">{preview.orphan_rules.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-amber-50">These rules reference missing or disabled MQTT users and will be excluded from the rendered Mosquitto ACL file. Delete or reassign them before applying.</p>
+                <div className="mt-4 overflow-x-auto rounded-xl border border-amber-300/20 bg-slate-950/40">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-amber-300/20">
+                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Principal</th>
+                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Topic filter</th>
+                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Permission</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.orphan_rules.map((rule) => (
+                        <tr key={rule.id} className="border-b border-amber-300/10 last:border-0">
+                          <td className="break-all px-3 py-2 font-mono text-amber-50">{rule.principal}</td>
+                          <td className="break-all px-3 py-2 font-mono text-amber-100">{rule.topic_filter}</td>
+                          <td className="px-3 py-2 text-amber-100/80">{rule.permission}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             ) : null}
             {preview.acl_diff ? (
               <div>
@@ -1292,9 +1347,9 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
             <tbody>
               {deployments.map((dep) => (
                 <tr key={dep.id} className="border-b border-white/5 last:border-0">
-                  <td className="py-3 pr-4 font-mono text-xs text-slate-400">{dep.id.slice(0, 8)}</td>
+                  <td className="py-3 pr-4 font-mono text-xs text-slate-400">{String(dep.id).slice(0, 8)}</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${dep.status === 'applied' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-amber-400/10 text-amber-200'}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${isSuccessfulDeployment(dep.status) ? 'bg-emerald-400/10 text-emerald-200' : 'bg-amber-400/10 text-amber-200'}`}>
                       {dep.status}
                     </span>
                   </td>
@@ -1308,6 +1363,10 @@ function DeployPanel({ token, onLogout, role = '' }: { token: string; onLogout: 
       </div>
     </section>
   )
+}
+
+function isSuccessfulDeployment(status: string) {
+  return status === 'active_verified' || status === 'applied'
 }
 
 function DiffBlock({ content }: { content: string }) {

@@ -10,7 +10,7 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
+function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: string; onLogout: () => void; role?: string; onMutation?: () => void }) {
   const canWrite = can(role, 'mqttUser.write')
   const [users, setUsers] = useState<MQTTUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,6 +77,7 @@ function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogou
       setCreatedPassword({ userId: created.id, password: created.password })
       setCreateUsername('')
       setShowCreateForm(false)
+      onMutation?.()
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -102,6 +103,7 @@ function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogou
         setError(errBody?.error ?? 'Update failed.')
         return
       }
+      onMutation?.()
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -127,6 +129,7 @@ function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogou
       const result = (await response.json()) as MQTTUser & { password: string }
       setResetPassword(result.password)
       setResetUserId(userId)
+      onMutation?.()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
       if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
@@ -152,6 +155,7 @@ function MQTTUsersPanel({ token, onLogout, role = '' }: { token: string; onLogou
         setResetUserId(null)
         setResetPassword(null)
       }
+      onMutation?.()
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return

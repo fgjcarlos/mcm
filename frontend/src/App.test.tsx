@@ -896,7 +896,7 @@ describe('App', () => {
 
       // Fill in required fields and submit
       const user = userEvent.setup()
-      await user.type(screen.getByPlaceholderText('username or $client_id'), 'test-client')
+      await user.type(screen.getByPlaceholderText('mqtt-username'), 'test-client')
       await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'sensors/#')
       await user.click(screen.getByRole('button', { name: 'Create rule' }))
 
@@ -905,6 +905,90 @@ describe('App', () => {
 
       // Must still be signed in (not logged out)
       expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows ACL guidance and orphan rules, then clears pending deploy after a verified apply', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'issue-297-token')
+    const applyRequest = vi.fn()
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('issue-297-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({
+        id: 9,
+        username: 'issue-297-admin',
+        disabled: false,
+        role: 'admin',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      }),
+      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'POST /api/v1/acls': () => jsonResponse({
+        id: 'rule-new',
+        principal: 'new-device',
+        topic_filter: 'factory/#',
+        permission: 'read',
+      }, { status: 201 }),
+      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-297',
+        acl_diff: '-user retired-device\n+user new-device',
+        passwd_diff: '',
+        orphan_rules: [
+          {
+            id: 'orphan-1',
+            principal: 'retired-device',
+            topic_filter: 'factory/retired/#',
+            permission: 'read',
+            description: 'Retired device rule',
+          },
+        ],
+        has_changes: true,
+      }),
+      'POST /api/v1/deployments/apply': (init) => {
+        applyRequest(init)
+        return jsonResponse({
+          id: 17,
+          status: 'active_verified',
+          message: 'Configuration verified successfully.',
+          created_at: '2026-01-01T00:00:00Z',
+        })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /acls/i }))
+    await screen.findByRole('heading', { name: 'ACL policy workspace' })
+    await user.click(screen.getByRole('button', { name: 'Add Rule' }))
+
+    expect(screen.getByText(/Use an MQTT username from the Users panel/)).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('username or $client_id')).not.toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('mqtt-username'), 'new-device')
+    await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'factory/#')
+    await user.click(screen.getByRole('button', { name: 'Create rule' }))
+
+    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    expect(screen.getByText('Pending deploy')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    expect(await screen.findByText('Orphan ACL rules')).toBeInTheDocument()
+    expect(screen.getByText('retired-device')).toBeInTheDocument()
+    expect(screen.getByText('factory/retired/#')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    await screen.findByText('Configuration verified successfully.')
+    expect(applyRequest).toHaveBeenCalledWith(expect.objectContaining({
+      body: JSON.stringify({ revision_id: 'revision-297' }),
+    }))
+    await waitFor(() => {
+      expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
     })
   })
 
