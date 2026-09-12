@@ -136,6 +136,18 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 // UpdateMQTTUser applies partial updates to an MQTT user.
 // Only non-nil fields in params are changed; updated_at is always refreshed.
 func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTUserParams) (MQTTUser, error) {
+	return s.updateMQTTUser(ctx, id, params, nil)
+}
+
+// UpdateMQTTUserAndRun updates a user and invokes afterUpdate before releasing
+// the managed mutation lock. This is used when a successful database mutation
+// must become visible to another in-process verifier atomically with the
+// mutation (for example, a password reset's cleartext verifier entry).
+func (s *Store) UpdateMQTTUserAndRun(ctx context.Context, id int64, params UpdateMQTTUserParams, afterUpdate func(MQTTUser)) (MQTTUser, error) {
+	return s.updateMQTTUser(ctx, id, params, afterUpdate)
+}
+
+func (s *Store) updateMQTTUser(ctx context.Context, id int64, params UpdateMQTTUserParams, afterUpdate func(MQTTUser)) (MQTTUser, error) {
 	if params.Username != nil {
 		if err := ValidateMQTTUsername(*params.Username); err != nil {
 			return MQTTUser{}, err
@@ -216,7 +228,19 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 		return MQTTUser{}, fmt.Errorf("commit update mqtt user transaction: %w", err)
 	}
 
-	return s.GetMQTTUser(ctx, id)
+	if afterUpdate != nil {
+		afterUpdate(MQTTUser{
+			ID:           id,
+			Username:     username,
+			PasswordHash: passwordHash,
+			Disabled:     disabled,
+		})
+	}
+	updated, err := s.GetMQTTUser(ctx, id)
+	if err != nil {
+		return MQTTUser{}, err
+	}
+	return updated, nil
 }
 
 // DeleteMQTTUser removes an MQTT user by ID.

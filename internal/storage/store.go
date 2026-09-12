@@ -469,8 +469,9 @@ type Store struct {
 }
 
 // LockMutations serializes managed MQTT and ACL mutations with deploy apply.
-// The lock intentionally does not cover deployment/revision bookkeeping so an
-// apply can keep its state recordable while holding the configuration lock.
+// Deployment code may also hold it while assembling a preview revision so the
+// rendered configuration and its immutable base hashes share one snapshot.
+// The lock itself does not impose ordering on deployment bookkeeping.
 func (s *Store) LockMutations() {
 	s.mutationMu.Lock()
 }

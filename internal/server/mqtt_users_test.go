@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -506,6 +507,28 @@ func TestHandleConfiguredLegacyMQTTServiceUserCannotBeDeleted(t *testing.T) {
 	}
 	if _, err := store.GetMQTTUser(context.Background(), user.ID); err != nil {
 		t.Fatalf("service user lookup after rejected delete: %v", err)
+	}
+}
+
+func TestHandleDeleteMQTTUserLookupFailureDoesNotDelete(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+	user := seedMQTTUser(t, store, "device-delete-lookup-error")
+	lookupErr := errors.New("lookup failed")
+	app.lookupMQTTUser = func(context.Context, int64) (storage.MQTTUser, error) {
+		return storage.MQTTUser{}, lookupErr
+	}
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodDelete, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), "", token)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if _, err := store.GetMQTTUser(context.Background(), user.ID); err != nil {
+		t.Fatalf("user lookup after failed pre-delete lookup: %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestCreateMQTTUser(t *testing.T) {
@@ -320,6 +321,59 @@ func TestUpdateMQTTUser(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateMQTTUserAndRunKeepsCallbackUnderMutationLock(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "reset-user",
+		PasswordHash: "old-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	updateDone := make(chan error, 1)
+	go func() {
+		_, updateErr := store.UpdateMQTTUserAndRun(context.Background(), created.ID, UpdateMQTTUserParams{
+			PasswordHash: stringPointer("new-hash"),
+		}, func(updated MQTTUser) {
+			if updated.PasswordHash != "new-hash" {
+				t.Errorf("callback password hash = %q, want new-hash", updated.PasswordHash)
+			}
+			close(callbackEntered)
+			<-releaseCallback
+		})
+		updateDone <- updateErr
+	}()
+	<-callbackEntered
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		store.LockMutations()
+		close(lockAcquired)
+		store.UnlockMutations()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("mutation lock was released before the callback completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseCallback)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateMQTTUserAndRun returned error: %v", err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after callback completed")
+	}
+}
+
+func stringPointer(value string) *string { return &value }
 
 func TestDeleteMQTTUser(t *testing.T) {
 	t.Parallel()

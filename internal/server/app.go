@@ -48,6 +48,7 @@ type App struct {
 	frontendFS         fs.FS
 	logger             *slog.Logger
 	now                func() time.Time
+	lookupMQTTUser     func(context.Context, int64) (storage.MQTTUser, error)
 
 	// userPasswords holds cleartext MQTT passwords in memory keyed by
 	// username. Populated by handleCreateMQTTUser when a new user is
@@ -113,6 +114,7 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		trustedProxies:     trustedProxies,
 		logger:             logger,
 		now:                time.Now,
+		lookupMQTTUser:     store.GetMQTTUser,
 		userPasswords:      make(map[string]string),
 	}, nil
 }

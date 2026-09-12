@@ -242,7 +242,15 @@ func (a *App) handleDeleteMQTTUser(w http.ResponseWriter, r *http.Request) {
 	resourceID := strconv.FormatInt(id, 10)
 
 	// Look up the user first so we can forget its cleartext on success.
-	u, lookupErr := a.store.GetMQTTUser(r.Context(), id)
+	lookupMQTTUser := a.lookupMQTTUser
+	if lookupMQTTUser == nil {
+		lookupMQTTUser = a.store.GetMQTTUser
+	}
+	u, lookupErr := lookupMQTTUser(r.Context(), id)
+	if lookupErr != nil && !errors.Is(lookupErr, storage.ErrMQTTUserNotFound) {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
 	if lookupErr == nil && a.isConfiguredMQTTServiceUser(u.Username) {
 		writeJSON(w, http.StatusConflict, errorResponse{Error: mqttServiceUserProtectedMessage})
 		return
@@ -294,9 +302,12 @@ func (a *App) handleResetMQTTUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	u, err = a.store.UpdateMQTTUser(r.Context(), id, storage.UpdateMQTTUserParams{
+	updateParams := storage.UpdateMQTTUserParams{
 		PasswordHash:    &hash,
 		ServiceReserved: a.mosquitto.Username,
+	}
+	u, err = a.store.UpdateMQTTUserAndRun(r.Context(), id, updateParams, func(updated storage.MQTTUser) {
+		a.rememberMQTTPassword(updated.Username, password)
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
@@ -307,7 +318,6 @@ func (a *App) handleResetMQTTUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	a.rememberMQTTPassword(u.Username, password)
 	a.recordAuditFromRequest(r, "mqtt_user.reset_password", "mqtt_user", strconv.FormatInt(u.ID, 10), "success", map[string]any{"username": u.Username})
 	writeJSON(w, http.StatusOK, mqttUserWithPasswordResponse{
 		mqttUserResponse: toMQTTUserResponse(u),
