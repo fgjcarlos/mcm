@@ -30,6 +30,8 @@ func (s *Store) CreateRule(ctx context.Context, rule acl.Rule) (ACLRuleRow, erro
 	if err := acl.ValidateRule(rule); err != nil {
 		return ACLRuleRow{}, err
 	}
+	s.LockMutations()
+	defer s.UnlockMutations()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO acl_rules(principal, topic_filter, permission, description, created_at, updated_at)

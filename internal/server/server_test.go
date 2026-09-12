@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -91,6 +92,48 @@ func TestACLAPI_RejectsInvalidTopicFilter(t *testing.T) {
 	}
 	if !bytes.Contains(resp.Body.Bytes(), []byte(`must only appear in the final topic level`)) {
 		t.Fatalf("response missing topic filter detail; body=%s", resp.Body.String())
+	}
+}
+
+func TestACLAPI_RejectsControlCharactersWithoutPersistingRule(t *testing.T) {
+	t.Parallel()
+
+	store := acl.NewMemoryStore()
+	handler := NewHandler(store)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "principal newline",
+			body: `{"principal":"operator\nforged","topic_filter":"factory/#","permission":"read"}`,
+		},
+		{
+			name: "topic filter NUL",
+			body: `{"principal":"operator","topic_filter":"factory/\u0000/#","permission":"read"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/acls", bytes.NewReader([]byte(tt.body)))
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusBadRequest, resp.Body.String())
+			}
+			if !bytes.Contains(resp.Body.Bytes(), []byte(`"acl validation failed"`)) {
+				t.Fatalf("response missing validation error; body=%s", resp.Body.String())
+			}
+			rules, err := store.ListRules(context.Background())
+			if err != nil {
+				t.Fatalf("ListRules returned error: %v", err)
+			}
+			if len(rules) != 0 {
+				t.Fatalf("invalid rule was persisted: %+v", rules)
+			}
+		})
 	}
 }
 

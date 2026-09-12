@@ -122,6 +122,14 @@ type OrphanRuleLister interface {
 	FindOrphanRules(ctx context.Context) ([]storage.ACLRuleRow, error)
 }
 
+// MutationCoordinator serializes managed MQTT/ACL mutations with the
+// validation-to-apply window. Production storage implements this so a
+// revision cannot become stale after it has been validated for apply.
+type MutationCoordinator interface {
+	LockMutations()
+	UnlockMutations()
+}
+
 // FileReader abstracts reading current on-disk config files (injectable for testing).
 type FileReader func(path string) (string, error)
 
@@ -146,19 +154,20 @@ type PreviewResult struct {
 
 // Service orchestrates deploy preview, apply, and history.
 type Service struct {
-	mu               sync.Mutex
-	applier          mosquitto.Applier
-	aclStore         acl.Store
-	mqttStore        MQTTUserLister
-	orphanRuleLister OrphanRuleLister
-	deployStore      DeploymentStore
-	revisionStore    previewRevisionStore
-	verifier         ActiveVerifier
-	passwordLookup   CleartextPasswordLookup
-	readFile         FileReader
-	mosquittoCfg     config.MosquittoConfig
-	deployCfg        config.DeployConfig
-	auditFn          AuditFunc
+	mu                  sync.Mutex
+	applier             mosquitto.Applier
+	aclStore            acl.Store
+	mqttStore           MQTTUserLister
+	orphanRuleLister    OrphanRuleLister
+	mutationCoordinator MutationCoordinator
+	deployStore         DeploymentStore
+	revisionStore       previewRevisionStore
+	verifier            ActiveVerifier
+	passwordLookup      CleartextPasswordLookup
+	readFile            FileReader
+	mosquittoCfg        config.MosquittoConfig
+	deployCfg           config.DeployConfig
+	auditFn             AuditFunc
 }
 
 // NewService constructs a deploy Service.
@@ -183,19 +192,21 @@ func NewService(
 		revisionStore = newMemoryPreviewRevisionStore()
 	}
 	orphanRuleLister, _ := mqttStore.(OrphanRuleLister)
+	mutationCoordinator, _ := mqttStore.(MutationCoordinator)
 	return &Service{
-		applier:          applier,
-		aclStore:         aclStore,
-		mqttStore:        mqttStore,
-		orphanRuleLister: orphanRuleLister,
-		deployStore:      deployStore,
-		revisionStore:    revisionStore,
-		verifier:         verifier,
-		passwordLookup:   passwordLookup,
-		readFile:         defaultFileReader,
-		mosquittoCfg:     mosquittoCfg,
-		deployCfg:        deployCfg,
-		auditFn:          auditFn,
+		applier:             applier,
+		aclStore:            aclStore,
+		mqttStore:           mqttStore,
+		orphanRuleLister:    orphanRuleLister,
+		mutationCoordinator: mutationCoordinator,
+		deployStore:         deployStore,
+		revisionStore:       revisionStore,
+		verifier:            verifier,
+		passwordLookup:      passwordLookup,
+		readFile:            defaultFileReader,
+		mosquittoCfg:        mosquittoCfg,
+		deployCfg:           deployCfg,
+		auditFn:             auditFn,
 	}
 }
 
@@ -429,12 +440,12 @@ func unifiedDiff(fromFile, toFile, current, rendered string) (string, error) {
 	return strings.Join(lines, ""), nil
 }
 
-// bcryptHashRe matches the standard mosquitto_passwd format used by
-// `mosquitto_passwd`: username colon bcrypt-hash, where the bcrypt
-// prefix is $2a$, $2b$, $2y$, $2x$, or $2$ (legacy).
-var bcryptHashRe = regexp.MustCompile(`^([^:\s]+):(\$2[abxy\$][^\s]+)\s*$`)
+// supportedPasswdHashRe matches the password formats supported by this
+// project: Mosquitto's $7$ PBKDF2-SHA512 format and the bcrypt formats
+// emitted by mosquitto_passwd ($2a$, $2b$, $2y$, $2x$, or legacy $2$).
+var supportedPasswdHashRe = regexp.MustCompile(`^([^:\s]+):((?:\$7\$|\$2[abxy\$])[^\s]+)\s*$`)
 
-// redactPasswdHashes replaces every bcrypt hash in a passwd file body
+// redactPasswdHashes replaces every supported password hash in a passwd file body
 // with a redacted marker that shows the algorithm + prefix + length.
 // This is required by issue #296 (acceptance criterion 3): the deploy
 // API must NEVER leak the broker's password hashes back to the
@@ -456,17 +467,14 @@ func redactPasswdHashes(body string) string {
 	}
 	redacted := make([]string, 0, len(lines))
 	for _, line := range lines {
-		m := bcryptHashRe.FindStringSubmatch(line)
+		m := supportedPasswdHashRe.FindStringSubmatch(line)
 		if m == nil {
 			redacted = append(redacted, line)
 		} else {
 			username, hash := m[1], m[2]
-			prefix := hash
-			if len(prefix) > 7 {
-				prefix = prefix[:7]
-			}
+			algorithm, prefix := passwdHashMetadata(hash)
 			redacted = append(redacted, fmt.Sprintf("%s:REDACTED  algo=%s  hash_len=%d  prefix=%s",
-				username, hash[:4], len(hash), prefix))
+				username, algorithm, len(hash), prefix))
 		}
 	}
 	out := strings.Join(redacted, "\n")
@@ -474,6 +482,27 @@ func redactPasswdHashes(body string) string {
 		out += "\n"
 	}
 	return out
+}
+
+func passwdHashMetadata(hash string) (algorithm, prefix string) {
+	if strings.HasPrefix(hash, "$7$") {
+		algorithm = "$7$"
+		prefix = algorithm
+		if end := strings.IndexByte(hash[3:], '$'); end >= 0 {
+			prefix = hash[:4+end]
+		}
+		return algorithm, prefix
+	}
+
+	algorithm = hash[:4]
+	if strings.HasPrefix(hash, "$2$") {
+		algorithm = "$2$"
+	}
+	prefix = algorithm
+	if end := strings.IndexByte(hash[len(algorithm):], '$'); end >= 0 {
+		prefix = hash[:len(algorithm)+end+1]
+	}
+	return algorithm, prefix
 }
 
 // ChangeSummary is the per-preview summary of what would change if
@@ -538,7 +567,7 @@ func summarizeChanges(currentPasswd, renderedPasswd, currentACL, renderedACL str
 func parsePasswdUsers(body string) map[string]string {
 	out := make(map[string]string)
 	for _, line := range strings.Split(body, "\n") {
-		m := bcryptHashRe.FindStringSubmatch(line)
+		m := supportedPasswdHashRe.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
@@ -671,6 +700,10 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		return storage.Deployment{}, ErrDeployInProgress
 	}
 	defer s.mu.Unlock()
+	if s.mutationCoordinator != nil {
+		s.mutationCoordinator.LockMutations()
+		defer s.mutationCoordinator.UnlockMutations()
+	}
 
 	revision, err := s.revisionStore.GetPreviewRevision(ctx, revisionID)
 	if errors.Is(err, storage.ErrPreviewRevisionNotFound) {

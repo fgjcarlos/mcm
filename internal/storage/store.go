@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -463,7 +464,20 @@ type UpdateJSONSchemaParams struct {
 
 // Store wraps SQLite persistence.
 type Store struct {
-	db *sql.DB
+	db         *sql.DB
+	mutationMu sync.Mutex
+}
+
+// LockMutations serializes managed MQTT and ACL mutations with deploy apply.
+// The lock intentionally does not cover deployment/revision bookkeeping so an
+// apply can keep its state recordable while holding the configuration lock.
+func (s *Store) LockMutations() {
+	s.mutationMu.Lock()
+}
+
+// UnlockMutations releases the managed configuration mutation lock.
+func (s *Store) UnlockMutations() {
+	s.mutationMu.Unlock()
 }
 
 // sqliteDSNBase returns the "file:" URI form of path with the given query

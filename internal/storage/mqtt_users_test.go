@@ -57,6 +57,60 @@ func TestCreateMQTTUser(t *testing.T) {
 	})
 }
 
+func TestCreateMQTTUserRejectsControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	for _, username := range []string{"device\nforged", "device\rforged", "device\x00forged", "device\tforged"} {
+		_, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+			Username:     username,
+			PasswordHash: "hash",
+		})
+		var validationErr *MQTTUserValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("CreateMQTTUser(%q) error = %v, want MQTTUserValidationError", username, err)
+		}
+	}
+
+	users, err := store.ListMQTTUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListMQTTUsers returned error: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("invalid users were persisted: %+v", users)
+	}
+}
+
+func TestUpdateMQTTUserRejectsControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "client-id_01",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+	invalid := "client-id_01\nforged"
+	_, err = store.UpdateMQTTUser(context.Background(), created.ID, UpdateMQTTUserParams{Username: &invalid})
+	var validationErr *MQTTUserValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("UpdateMQTTUser error = %v, want MQTTUserValidationError", err)
+	}
+
+	got, err := store.GetMQTTUser(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Username != "client-id_01" {
+		t.Fatalf("username after rejected update = %q, want client-id_01", got.Username)
+	}
+}
+
 func TestGetMQTTUser(t *testing.T) {
 	t.Parallel()
 
@@ -296,4 +350,34 @@ func TestDeleteMQTTUser(t *testing.T) {
 			t.Errorf("error = %v, want ErrMQTTUserNotFound", err)
 		}
 	})
+}
+
+func TestUpdateMQTTUserRejectsDisablingConfiguredServiceUser(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "svc-mcm",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+	disabled := true
+	_, err = store.UpdateMQTTUser(context.Background(), created.ID, UpdateMQTTUserParams{
+		Disabled:        &disabled,
+		ServiceReserved: "svc-mcm",
+	})
+	if !errors.Is(err, ErrMQTTUserServiceReserved) {
+		t.Fatalf("UpdateMQTTUser error = %v, want ErrMQTTUserServiceReserved", err)
+	}
+
+	got, err := store.GetMQTTUser(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Disabled {
+		t.Fatal("configured service user was disabled")
+	}
 }

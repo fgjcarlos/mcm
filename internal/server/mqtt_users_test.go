@@ -120,6 +120,32 @@ func TestHandleCreateMQTTUser(t *testing.T) {
 	})
 }
 
+func TestHandleCreateMQTTUserRejectsControlCharacters(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPost, "/api/v1/mqtt-users", `{"username":"device\nforged"}`, token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "control characters") {
+		t.Fatalf("response missing validation detail: %s", rec.Body.String())
+	}
+	users, err := store.ListMQTTUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListMQTTUsers returned error: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("invalid user was persisted: %+v", users)
+	}
+}
+
 // TestHandleListMQTTUsers covers GET /api/v1/mqtt-users.
 func TestHandleListMQTTUsers(t *testing.T) {
 	t.Run("empty list returns [] not null", func(t *testing.T) {
@@ -331,6 +357,13 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 		if !resp.Disabled {
 			t.Error("disabled = false, want true")
 		}
+
+		reenableRec := httptest.NewRecorder()
+		reenableReq := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"disabled":false}`, token)
+		app.Handler().ServeHTTP(reenableRec, reenableReq)
+		if reenableRec.Code != http.StatusOK {
+			t.Fatalf("re-enable status = %d, want %d, body = %s", reenableRec.Code, http.StatusOK, reenableRec.Body.String())
+		}
 	})
 
 	t.Run("not found returns 404", func(t *testing.T) {
@@ -374,6 +407,30 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 	})
 }
 
+func TestHandleMQTTUserUpdateRejectsControlCharacters(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+	user := seedMQTTUser(t, store, "device-update")
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"username":"device\rforged"}`, token)
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "control characters") {
+		t.Fatalf("status/body = %d/%s, want 400 with validation detail", rec.Code, rec.Body.String())
+	}
+	got, err := store.GetMQTTUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Username != "device-update" {
+		t.Fatalf("username after rejected update = %q, want device-update", got.Username)
+	}
+}
+
 // TestHandleDeleteMQTTUser covers DELETE /api/v1/mqtt-users/{id}.
 func TestHandleDeleteMQTTUser(t *testing.T) {
 	t.Run("success returns 204", func(t *testing.T) {
@@ -410,6 +467,48 @@ func TestHandleDeleteMQTTUser(t *testing.T) {
 	})
 }
 
+func TestHandleConfiguredLegacyMQTTServiceUserCannotBeDisabled(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	app.mosquitto.Username = "svc-mcm"
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+	user := seedMQTTUser(t, store, "svc-mcm")
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"disabled":true}`, token)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "cannot be disabled, deleted, or reset") {
+		t.Fatalf("status/body = %d/%s, want 409 with service-user protection", rec.Code, rec.Body.String())
+	}
+	got, err := store.GetMQTTUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Disabled {
+		t.Fatal("configured service user was disabled")
+	}
+}
+
+func TestHandleConfiguredLegacyMQTTServiceUserCannotBeDeleted(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	app.mosquitto.Username = "svc-mcm"
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+	user := seedMQTTUser(t, store, "svc-mcm")
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodDelete, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), "", token)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "cannot be disabled, deleted, or reset") {
+		t.Fatalf("status/body = %d/%s, want 409 with service-user protection", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetMQTTUser(context.Background(), user.ID); err != nil {
+		t.Fatalf("service user lookup after rejected delete: %v", err)
+	}
+}
+
 // TestHandleResetMQTTUserPassword covers POST /api/v1/mqtt-users/{id}/reset-password.
 func TestHandleResetMQTTUserPassword(t *testing.T) {
 	t.Run("success returns 200 with new password", func(t *testing.T) {
@@ -442,6 +541,9 @@ func TestHandleResetMQTTUserPassword(t *testing.T) {
 		if strings.Contains(raw, "password_hash") {
 			t.Errorf("response must not contain password_hash: %s", raw)
 		}
+		if password, ok := app.CleartextPassword(user.Username); !ok || password != resp.Password {
+			t.Fatalf("reset cleartext lookup = %q, %t; want returned password", password, ok)
+		}
 	})
 
 	t.Run("not found returns 404", func(t *testing.T) {
@@ -457,6 +559,22 @@ func TestHandleResetMQTTUserPassword(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	})
+
+	t.Run("configured legacy service user cannot be reset", func(t *testing.T) {
+		app, store := newTestApp(t)
+		t.Cleanup(func() { _ = store.Close() })
+		app.mosquitto.Username = "svc-mcm"
+		seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+		token := loginAs(t, app, "ops", "secret")
+		user := seedMQTTUser(t, store, "svc-mcm")
+
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodPost, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10)+"/reset-password", "", token)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "cannot be disabled, deleted, or reset") {
+			t.Fatalf("status/body = %d/%s, want 409 with service-user protection", rec.Code, rec.Body.String())
 		}
 	})
 }

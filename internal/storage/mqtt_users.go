@@ -7,17 +7,49 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
+
+// MQTTUserValidationError holds validation failures for an MQTT username.
+type MQTTUserValidationError struct {
+	Problems []string
+}
+
+func (e *MQTTUserValidationError) Error() string {
+	return fmt.Sprintf("mqtt user validation failed: %s", strings.Join(e.Problems, "; "))
+}
+
+// ValidateMQTTUsername validates the value before it is trimmed or persisted.
+// Mosquitto passwd files are line-oriented, so control characters cannot be
+// accepted even though ordinary MQTT client-id/username syntax remains valid.
+func ValidateMQTTUsername(username string) error {
+	var problems []string
+	if strings.TrimSpace(username) == "" {
+		problems = append(problems, "username is required")
+	}
+	for _, r := range username {
+		if unicode.IsControl(r) {
+			problems = append(problems, "username must not contain control characters")
+			break
+		}
+	}
+	if len(problems) > 0 {
+		return &MQTTUserValidationError{Problems: problems}
+	}
+	return nil
+}
 
 // CreateMQTTUser creates a new MQTT user.
 func (s *Store) CreateMQTTUser(ctx context.Context, params CreateMQTTUserParams) (MQTTUser, error) {
-	username := strings.TrimSpace(params.Username)
-	if username == "" {
-		return MQTTUser{}, fmt.Errorf("create mqtt user: username is required")
+	if err := ValidateMQTTUsername(params.Username); err != nil {
+		return MQTTUser{}, err
 	}
+	username := strings.TrimSpace(params.Username)
 	if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && username == reserved {
 		return MQTTUser{}, ErrMQTTUserServiceReserved
 	}
+	s.LockMutations()
+	defer s.UnlockMutations()
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
@@ -104,6 +136,14 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 // UpdateMQTTUser applies partial updates to an MQTT user.
 // Only non-nil fields in params are changed; updated_at is always refreshed.
 func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTUserParams) (MQTTUser, error) {
+	if params.Username != nil {
+		if err := ValidateMQTTUsername(*params.Username); err != nil {
+			return MQTTUser{}, err
+		}
+	}
+	s.LockMutations()
+	defer s.UnlockMutations()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MQTTUser{}, fmt.Errorf("begin update mqtt user transaction: %w", err)
@@ -127,9 +167,6 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 	username := oldUsername
 	if params.Username != nil {
 		newName := strings.TrimSpace(*params.Username)
-		if newName == "" {
-			return MQTTUser{}, fmt.Errorf("update mqtt user: username is required")
-		}
 		if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && newName == reserved {
 			return MQTTUser{}, ErrMQTTUserServiceReserved
 		}
@@ -141,6 +178,9 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 	disabled := disabledInt == 1
 	if params.Disabled != nil {
 		disabled = *params.Disabled
+		if disabled && strings.TrimSpace(params.ServiceReserved) != "" && oldUsername == strings.TrimSpace(params.ServiceReserved) {
+			return MQTTUser{}, ErrMQTTUserServiceReserved
+		}
 	}
 
 	if _, err := tx.ExecContext(
@@ -181,6 +221,9 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 
 // DeleteMQTTUser removes an MQTT user by ID.
 func (s *Store) DeleteMQTTUser(ctx context.Context, id int64) error {
+	s.LockMutations()
+	defer s.UnlockMutations()
+
 	result, err := s.db.ExecContext(ctx, `DELETE FROM mqtt_users WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete mqtt user: %w", err)
@@ -200,6 +243,9 @@ func (s *Store) DeleteMQTTUser(ctx context.Context, id int64) error {
 // rendered output, so the storage layer exposes a helper for that path
 // (issue #297).
 func (s *Store) DeleteMQTTUserByUsername(ctx context.Context, username string) error {
+	s.LockMutations()
+	defer s.UnlockMutations()
+
 	result, err := s.db.ExecContext(ctx, `DELETE FROM mqtt_users WHERE username = ?`, strings.TrimSpace(username))
 	if err != nil {
 		return fmt.Errorf("delete mqtt user by username: %w", err)

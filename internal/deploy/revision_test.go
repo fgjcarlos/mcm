@@ -9,6 +9,8 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
+	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
 func TestRedactPasswdHashes(t *testing.T) {
@@ -29,6 +31,21 @@ func TestRedactPasswdHashes(t *testing.T) {
 		}
 		if !strings.Contains(got, "$2a$10$") {
 			t.Errorf("expected bcrypt prefix to be visible, got:\n%s", got)
+		}
+	})
+
+	t.Run("replaces Mosquitto $7$ hash with redacted marker", func(t *testing.T) {
+		t.Parallel()
+		hash := "$7$101$raw-salt$raw-key-material"
+		got := redactPasswdHashes("alice:" + hash + "\n")
+		if strings.Contains(got, hash) || strings.Contains(got, "raw-key-material") {
+			t.Errorf("redacted output still contains the original Mosquitto hash:\n%s", got)
+		}
+		if !strings.Contains(got, "alice:REDACTED") || !strings.Contains(got, "algo=$7$") {
+			t.Errorf("expected Mosquitto redaction metadata, got:\n%s", got)
+		}
+		if !strings.Contains(got, "prefix=$7$101$") {
+			t.Errorf("expected safe Mosquitto prefix, got:\n%s", got)
 		}
 	})
 
@@ -69,6 +86,42 @@ func TestRedactPasswdHashes(t *testing.T) {
 			t.Errorf("expected 3 REDACTED markers, got %d in:\n%s", strings.Count(got, "REDACTED"), got)
 		}
 	})
+}
+
+func TestPreview_RedactsMosquittoHashFromPasswdDiff(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	oldHash, err := mosquitto.HashPassword("old-password", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword(old) returned error: %v", err)
+	}
+	newHash, err := mosquitto.HashPassword("new-password", mosquitto.DefaultIterations)
+	if err != nil {
+		t.Fatalf("HashPassword(new) returned error: %v", err)
+	}
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "alice:"+oldHash+"\n")
+
+	svc := newTestService(
+		&fakeApplier{},
+		&fakeACLStore{},
+		&fakeMQTTUserLister{users: []storage.MQTTUser{{Username: "alice", PasswordHash: newHash}}},
+		newFakeDeploymentStore(),
+		diagnostics.VerifierFunc(okVerifier),
+		newFakePasswordLookup(),
+		deployCfg,
+	)
+	result, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	if strings.Contains(result.PasswdDiff, oldHash) || strings.Contains(result.PasswdDiff, newHash) {
+		t.Fatalf("PasswdDiff leaked a Mosquitto hash: %s", result.PasswdDiff)
+	}
+	if result.Summary.UsersRotated != 1 {
+		t.Fatalf("summary.UsersRotated = %d, want 1", result.Summary.UsersRotated)
+	}
 }
 
 func TestSummarizeChanges(t *testing.T) {

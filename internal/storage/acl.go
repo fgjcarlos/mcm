@@ -13,11 +13,12 @@ import (
 
 // ACLStore returns an acl.Store backed by this SQLite database.
 func (s *Store) ACLStore() acl.Store {
-	return &aclSQLStore{db: s.db}
+	return &aclSQLStore{store: s, db: s.db}
 }
 
 type aclSQLStore struct {
-	db *sql.DB
+	store *Store
+	db    *sql.DB
 }
 
 func (s *aclSQLStore) ListRules(ctx context.Context) ([]acl.Rule, error) {
@@ -45,6 +46,8 @@ func (s *aclSQLStore) CreateRule(ctx context.Context, rule acl.Rule) (acl.Rule, 
 	if err := acl.ValidateRule(rule); err != nil {
 		return acl.Rule{}, err
 	}
+	s.store.LockMutations()
+	defer s.store.UnlockMutations()
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.ExecContext(ctx, `
@@ -73,6 +76,8 @@ func (s *aclSQLStore) UpdateRule(ctx context.Context, id string, rule acl.Rule) 
 	if err := acl.ValidateRule(rule); err != nil {
 		return acl.Rule{}, err
 	}
+	s.store.LockMutations()
+	defer s.store.UnlockMutations()
 
 	numericID, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
@@ -108,6 +113,8 @@ func (s *aclSQLStore) DeleteRule(ctx context.Context, id string) error {
 	if err != nil {
 		return acl.ErrRuleNotFound
 	}
+	s.store.LockMutations()
+	defer s.store.UnlockMutations()
 
 	result, err := s.db.ExecContext(ctx, `DELETE FROM acl_rules WHERE id = ?`, numericID)
 	if err != nil {

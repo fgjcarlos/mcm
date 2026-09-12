@@ -192,6 +192,19 @@ func (f *fakeMQTTUserLister) FindOrphanRules(_ context.Context) ([]storage.ACLRu
 	return f.orphanRules, f.orphanErr
 }
 
+type coordinatedMQTTUserLister struct {
+	*fakeMQTTUserLister
+	mu sync.Mutex
+}
+
+func (f *coordinatedMQTTUserLister) LockMutations() {
+	f.mu.Lock()
+}
+
+func (f *coordinatedMQTTUserLister) UnlockMutations() {
+	f.mu.Unlock()
+}
+
 // --- Helpers ---
 
 // enabledDeployCfg returns a DeployConfig with deploy enabled pointing at temp files.
@@ -1302,6 +1315,49 @@ func TestApply_ConcurrentApplyReturnsInProgress(t *testing.T) {
 	}
 	if store.count() != 1 {
 		t.Fatalf("deployment records after first apply completes = %d, want 1", store.count())
+	}
+}
+
+func TestApply_HoldsMutationLockThroughExternalApply(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	coordinatedStore := &coordinatedMQTTUserLister{fakeMQTTUserLister: mqttStore}
+	applier := newBlockingApplier()
+	svc := newTestService(applier, aclStore, coordinatedStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.Apply(context.Background(), "operator")
+		done <- err
+	}()
+	<-applier.started
+
+	mutationAcquired := make(chan struct{})
+	go func() {
+		coordinatedStore.LockMutations()
+		close(mutationAcquired)
+		coordinatedStore.UnlockMutations()
+	}()
+
+	select {
+	case <-mutationAcquired:
+		t.Fatal("mutation lock was released before external apply completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	applier.release()
+	if err := <-done; err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	select {
+	case <-mutationAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after apply completed")
 	}
 }
 

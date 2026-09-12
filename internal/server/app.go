@@ -373,7 +373,8 @@ type adminUserResponse struct {
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	Error   string   `json:"error"`
+	Details []string `json:"details,omitempty"`
 }
 
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {

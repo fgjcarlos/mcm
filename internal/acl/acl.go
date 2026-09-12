@@ -3,6 +3,7 @@ package acl
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Permission describes the allowed MQTT action for an ACL rule.
@@ -44,6 +45,8 @@ func ValidateRule(rule Rule) error {
 
 	if strings.TrimSpace(rule.Principal) == "" {
 		problems = append(problems, "principal is required")
+	} else if containsControlCharacter(rule.Principal) {
+		problems = append(problems, "principal must not contain control characters")
 	}
 	if strings.TrimSpace(rule.TopicFilter) == "" {
 		problems = append(problems, "topic_filter is required")
@@ -69,6 +72,9 @@ func ValidateTopicFilter(filter string) error {
 	if strings.ContainsRune(filter, '\x00') {
 		return fmt.Errorf("topic_filter must not contain NUL")
 	}
+	if containsControlCharacter(filter) {
+		return fmt.Errorf("topic_filter must not contain control characters")
+	}
 
 	levels := strings.Split(filter, "/")
 	for idx, level := range levels {
@@ -87,6 +93,15 @@ func ValidateTopicFilter(filter string) error {
 	}
 
 	return nil
+}
+
+func containsControlCharacter(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // MosquittoACL returns the Mosquitto ACL line for a rule.

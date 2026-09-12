@@ -122,6 +122,17 @@ logging:
 	}
 }
 
+func TestValidateRejectsControlCharactersInMosquittoUsername(t *testing.T) {
+	cfg := Default()
+	cfg.Mosquitto.Username = "service\nforged"
+	cfg.Mosquitto.Password = "broker-password"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "mosquitto.username must not contain control characters") {
+		t.Fatalf("Validate() error = %v, want control-character validation", err)
+	}
+}
+
 func TestParseInvalidPortValues(t *testing.T) {
 	_, err := Parse([]byte(`
 http:
