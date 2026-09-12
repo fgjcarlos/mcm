@@ -11,6 +11,12 @@ import (
 
 // CreateMQTTUser creates a new MQTT user.
 func (s *Store) CreateMQTTUser(ctx context.Context, params CreateMQTTUserParams) (MQTTUser, error) {
+	if strings.TrimSpace(params.Username) == "" {
+		return MQTTUser{}, fmt.Errorf("create mqtt user: username is required")
+	}
+	if strings.TrimSpace(params.Username) == params.ServiceReserved {
+		return MQTTUser{}, ErrMQTTUserServiceReserved
+	}
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
@@ -104,7 +110,11 @@ func (s *Store) UpdateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 
 	username := current.Username
 	if params.Username != nil {
-		username = strings.TrimSpace(*params.Username)
+		newName := strings.TrimSpace(*params.Username)
+		if newName == params.ServiceReserved && params.ServiceReserved != "" {
+			return MQTTUser{}, ErrMQTTUserServiceReserved
+		}
+		username = newName
 	}
 	passwordHash := current.PasswordHash
 	if params.PasswordHash != nil {
@@ -142,6 +152,90 @@ func (s *Store) DeleteMQTTUser(ctx context.Context, id int64) error {
 	}
 	if affected == 0 {
 		return ErrMQTTUserNotFound
+	}
+	return nil
+}
+
+// DeleteMQTTUserByUsername removes an MQTT user by username lookup.
+// The deploy service consumes usernames (not IDs) when reconciling the
+// rendered output, so the storage layer exposes a helper for that path
+// (issue #297).
+func (s *Store) DeleteMQTTUserByUsername(ctx context.Context, username string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM mqtt_users WHERE username = ?`, strings.TrimSpace(username))
+	if err != nil {
+		return fmt.Errorf("delete mqtt user by username: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get deleted mqtt user by username row count: %w", err)
+	}
+	if affected == 0 {
+		return ErrMQTTUserNotFound
+	}
+	return nil
+}
+
+// RenameMQTTUser updates the username of an MQTT user and cascades the new
+// value into acl_rules.principal inside a single SQLite transaction so a
+// failed rename never leaves an orphan ACL rule behind (issue #297).
+func (s *Store) RenameMQTTUser(ctx context.Context, id int64, newUsername string) error {
+	newUsername = strings.TrimSpace(newUsername)
+	if newUsername == "" {
+		return fmt.Errorf("rename mqtt user: username is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rename transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Look up the old username first so we can cascade the ACL rules even
+	// if the rename itself errors on UNIQUE collision.
+	var oldUsername string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT username FROM mqtt_users WHERE id = ?`, id,
+	).Scan(&oldUsername); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrMQTTUserNotFound
+		}
+		return fmt.Errorf("lookup username for rename: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE mqtt_users SET username = ?, updated_at = ? WHERE id = ?`,
+		newUsername,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		id,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return ErrMQTTUserConflict
+		}
+		return fmt.Errorf("rename mqtt user: %w", err)
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("get rename mqtt user row count: %w", err)
+	} else if affected == 0 {
+		return ErrMQTTUserNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE acl_rules SET principal = ?, updated_at = ? WHERE principal = ?`,
+		newUsername,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		oldUsername,
+	); err != nil {
+		// A UNIQUE constraint on (principal, topic_filter, permission)
+		// could trip here if the rename collides with an existing rule
+		// binding. Map it to ErrMQTTUserConflict so callers can react.
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return ErrMQTTUserConflict
+		}
+		return fmt.Errorf("cascade rename to acl_rules: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit rename transaction: %w", err)
 	}
 	return nil
 }
