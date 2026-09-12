@@ -52,6 +52,11 @@ const previewRevisionTTL = time.Hour
 // alive (issue #292, acceptance criterion 3).
 const rollbackTimeout = 10 * time.Second
 
+// persistenceTimeout bounds lifecycle bookkeeping after an external broker
+// operation. It is deliberately detached from the HTTP request so a client
+// disconnect cannot make a successful broker operation look untracked.
+const persistenceTimeout = 5 * time.Second
+
 // verifyAttempts and verifyBackoff schedule the bounded retry loop for
 // the post-apply active verification (issue #293, acceptance criterion 4).
 //
@@ -595,12 +600,33 @@ func parseACLTopics(body string) map[string]struct{} {
 }
 
 // Preview returns unified diffs between on-disk files and the rendered configuration.
-// Preview is read-only and does not acquire the apply mutex.
+// Preview acquires the managed mutation lock for the complete render/read/revision
+// operation so its revision represents one coherent configuration snapshot.
 func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, error) {
 	if s.deployCfg.Mode == "" {
 		return PreviewResult{}, ErrDeployDisabled
 	}
+	var (
+		preview PreviewResult
+		err     error
+	)
+	if s.mutationCoordinator != nil {
+		s.mutationCoordinator.LockMutations()
+		preview, err = s.previewLocked(ctx, actor)
+		s.mutationCoordinator.UnlockMutations()
+	} else {
+		preview, err = s.previewLocked(ctx, actor)
+	}
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	if s.auditFn != nil {
+		s.auditFn(ctx, actor, "deployment.preview", "deployment", "", "success", nil)
+	}
+	return preview, nil
+}
 
+func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResult, error) {
 	aclBody, passwdBody, orphanRules, err := s.render(ctx)
 	if err != nil {
 		return PreviewResult{}, fmt.Errorf("render config: %w", err)
@@ -649,11 +675,6 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 	summary := summarizeChanges(currentPasswd, passwdBody, currentACL, aclBody)
 	hasChanges = hasChanges || summary.HasPasswdChanges || summary.HasACLChanges
 
-	if s.auditFn != nil {
-		result := "success"
-		s.auditFn(ctx, actor, "deployment.preview", "deployment", "", result, nil)
-	}
-
 	return PreviewResult{
 		RevisionID:         revisionID,
 		BaseACLHash:        revision.BaseACLHash,
@@ -670,25 +691,17 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 	}, nil
 }
 
-// Apply applies an immutable preview revision, verifies the broker is serving
-// it (positive + negative tests with bounded retries), and rolls back on any
-// failure. The variadic form keeps older in-process callers compiling while
-// the HTTP handler requires exactly one revision ID.
-func (s *Service) Apply(ctx context.Context, actor string, revisionIDs ...string) (storage.Deployment, error) {
+// Apply applies the supplied immutable preview revision, verifies the broker is
+// serving it (positive + negative tests with bounded retries), and rolls back
+// on any failure. Callers must preview first and pass the returned revision ID.
+func (s *Service) Apply(ctx context.Context, actor, revisionID string) (storage.Deployment, error) {
 	if s.deployCfg.Mode == "" {
 		return storage.Deployment{}, ErrDeployDisabled
 	}
-	if len(revisionIDs) > 1 {
+	if revisionID == "" {
 		return storage.Deployment{}, ErrRevisionMissing
 	}
-	if len(revisionIDs) == 0 {
-		preview, err := s.Preview(ctx, actor)
-		if err != nil {
-			return storage.Deployment{}, err
-		}
-		revisionIDs = []string{preview.RevisionID}
-	}
-	return s.applyRevision(ctx, actor, revisionIDs[0])
+	return s.applyRevision(ctx, actor, revisionID)
 }
 
 func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (storage.Deployment, error) {
@@ -756,8 +769,22 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	s.emitAudit(ctx, actor, "deployment.saved", d.ID, "success")
 
 	// Move to "applying" before touching disk.
-	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "applying", "")
+	if err := s.updateDeploymentStatus(d.ID, "applying", ""); err != nil {
+		return storage.Deployment{}, fmt.Errorf("update deployment status to applying: %w", err)
+	}
 	s.emitAudit(ctx, actor, "deployment.applying", d.ID, "success")
+
+	// Consume before the external side effect. This is the smallest durable
+	// guard against a successful broker apply followed by a failed consume:
+	// no revision that reaches the applier can remain reusable. The tradeoff is
+	// that a failed applier burns the revision and requires a fresh preview.
+	if err := s.consumePreviewRevision(revisionID, time.Now().UTC()); err != nil {
+		statusErr := s.updateDeploymentStatus(d.ID, "failed", fmt.Sprintf("consume preview revision: %s", err))
+		if statusErr != nil {
+			return storage.Deployment{}, fmt.Errorf("consume preview revision: %w; persist failed status: %v", err, statusErr)
+		}
+		return storage.Deployment{}, fmt.Errorf("consume preview revision: %w", err)
+	}
 
 	// Apply rendered configuration. The applier restores from snapshot
 	// internally on partial failure (issue #292).
@@ -768,7 +795,9 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 
 	// Move to "pending_activation" — files on disk, reload signalled,
 	// awaiting verification.
-	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "pending_activation", "")
+	if err := s.updateDeploymentStatus(d.ID, "pending_activation", ""); err != nil {
+		return storage.Deployment{}, fmt.Errorf("update deployment status to pending_activation: %w", err)
+	}
 	s.emitAudit(ctx, actor, "deployment.pending_activation", d.ID, "success")
 
 	// Mosquitto processes SIGHUP asynchronously; wait a moment before
@@ -791,15 +820,15 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		if attempts > 1 {
 			msg = fmt.Sprintf("verified after %d attempts", attempts)
 		}
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "active_verified", msg)
-		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
-		if err := s.revisionStore.ConsumePreviewRevision(ctx, revisionID, time.Now().UTC()); err != nil {
-			if errors.Is(err, storage.ErrPreviewRevisionConsumed) {
-				return storage.Deployment{}, ErrRevisionConsumed
-			}
-			return storage.Deployment{}, fmt.Errorf("consume preview revision: %w", err)
+		if err := s.updateDeploymentStatus(d.ID, "active_verified", msg); err != nil {
+			return storage.Deployment{}, fmt.Errorf("update deployment status to active_verified: %w", err)
 		}
-		return s.mustGetDeployment(ctx, d.ID), nil
+		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
+		deployment, err := s.getDeployment(d.ID)
+		if err != nil {
+			return storage.Deployment{}, fmt.Errorf("get deployment after active verification: %w", err)
+		}
+		return deployment, nil
 	}
 
 	// Verification exhausted retries — rollback from snapshot.
@@ -907,13 +936,26 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 	rollbackErr := s.applier.Apply(rollbackCtx, aclSnapshot, passwdSnapshot, "", "")
 	if rollbackErr != nil {
 		full := fmt.Sprintf("%s; rollback also failed: %s", msg, rollbackErr.Error())
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", full)
+		statusErr := s.updateDeploymentStatus(d.ID, "rollback_failed", full)
 		s.emitAudit(ctx, actor, "deployment.rollback_failed", d.ID, "failure")
-		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("verification rollback failed: %w", rollbackErr)
+		deployment, getErr := s.getDeployment(d.ID)
+		if statusErr != nil {
+			return storage.Deployment{}, fmt.Errorf("verification rollback failed: %w; persist rollback_failed status: %v", rollbackErr, statusErr)
+		}
+		if getErr != nil {
+			return storage.Deployment{}, fmt.Errorf("verification rollback failed: %w; get deployment: %v", rollbackErr, getErr)
+		}
+		return deployment, fmt.Errorf("verification rollback failed: %w", rollbackErr)
 	}
-	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rolled_back", msg)
+	if err := s.updateDeploymentStatus(d.ID, "rolled_back", msg); err != nil {
+		return storage.Deployment{}, fmt.Errorf("persist rolled_back status: %w", err)
+	}
 	s.emitAudit(ctx, actor, "deployment.rolled_back", d.ID, "failure")
-	return s.mustGetDeployment(ctx, d.ID), nil
+	deployment, err := s.getDeployment(d.ID)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("get deployment after rollback: %w", err)
+	}
+	return deployment, nil
 }
 
 // recordApplyFailure persists the appropriate status and audit event for
@@ -924,13 +966,27 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 func (s *Service) recordApplyFailure(ctx context.Context, actor string, d *storage.Deployment, applyErr error) (storage.Deployment, error) {
 	msg := applyErr.Error()
 	if errors.Is(applyErr, mosquitto.ErrRollbackFailed) {
-		_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "rollback_failed", msg)
+		statusErr := s.updateDeploymentStatus(d.ID, "rollback_failed", msg)
 		s.emitAudit(ctx, actor, "deployment.rollback_failed", d.ID, "failure")
-		return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("apply failed and rollback failed: %w", applyErr)
+		if statusErr != nil {
+			return storage.Deployment{}, fmt.Errorf("apply failed and rollback failed: %w; persist rollback_failed status: %v", applyErr, statusErr)
+		}
+		deployment, getErr := s.getDeployment(d.ID)
+		if getErr != nil {
+			return storage.Deployment{}, fmt.Errorf("apply failed and rollback failed: %w; get deployment: %v", applyErr, getErr)
+		}
+		return deployment, fmt.Errorf("apply failed and rollback failed: %w", applyErr)
 	}
-	_ = s.deployStore.UpdateDeploymentStatus(ctx, d.ID, "failed", msg)
+	statusErr := s.updateDeploymentStatus(d.ID, "failed", msg)
 	s.emitAudit(ctx, actor, "deployment.failed", d.ID, "failure")
-	return s.mustGetDeployment(ctx, d.ID), fmt.Errorf("apply config: %w", applyErr)
+	if statusErr != nil {
+		return storage.Deployment{}, fmt.Errorf("apply config: %w; persist failed status: %v", applyErr, statusErr)
+	}
+	deployment, getErr := s.getDeployment(d.ID)
+	if getErr != nil {
+		return storage.Deployment{}, fmt.Errorf("apply config: %w; get deployment: %v", applyErr, getErr)
+	}
+	return deployment, fmt.Errorf("apply config: %w", applyErr)
 }
 
 // List returns deployment records ordered newest first.
@@ -951,9 +1007,26 @@ func (s *Service) emitAudit(ctx context.Context, actor, action string, deploymen
 	s.auditFn(ctx, actor, action, "deployment", fmt.Sprintf("%d", deploymentID), result, metadata)
 }
 
-// mustGetDeployment fetches the deployment record; returns a zero value on error
-// (errors here are non-critical; the caller already has the outcome).
-func (s *Service) mustGetDeployment(ctx context.Context, id int64) storage.Deployment {
-	d, _ := s.deployStore.GetDeployment(ctx, id)
-	return d
+func (s *Service) updateDeploymentStatus(id int64, status, message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	return s.deployStore.UpdateDeploymentStatus(ctx, id, status, message)
+}
+
+func (s *Service) consumePreviewRevision(id string, appliedAt time.Time) error {
+	ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	if err := s.revisionStore.ConsumePreviewRevision(ctx, id, appliedAt); err != nil {
+		if errors.Is(err, storage.ErrPreviewRevisionConsumed) {
+			return ErrRevisionConsumed
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) getDeployment(id int64) (storage.Deployment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	return s.deployStore.GetDeployment(ctx, id)
 }

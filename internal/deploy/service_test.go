@@ -53,6 +53,15 @@ type fakeApplier struct {
 	failAll  bool // fail all Apply calls
 }
 
+type cancelingApplier struct {
+	cancel context.CancelFunc
+}
+
+func (a *cancelingApplier) Apply(_ context.Context, _, _, _, _ string) error {
+	a.cancel()
+	return nil
+}
+
 type applyCall struct {
 	aclBody        string
 	passwdBody     string
@@ -95,6 +104,40 @@ type fakeDeploymentStore struct {
 	mu          sync.Mutex
 	deployments map[int64]*storage.Deployment
 	nextID      int64
+}
+
+type persistenceRecordingDeploymentStore struct {
+	*fakeDeploymentStore
+	failStatus string
+	failGet    bool
+	mu         sync.Mutex
+	ctxErrs    []error
+}
+
+func (f *persistenceRecordingDeploymentStore) UpdateDeploymentStatus(ctx context.Context, id int64, status, message string) error {
+	f.mu.Lock()
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
+	f.mu.Unlock()
+	if status == f.failStatus {
+		return errors.New("deployment status persistence failed")
+	}
+	return f.fakeDeploymentStore.UpdateDeploymentStatus(ctx, id, status, message)
+}
+
+func (f *persistenceRecordingDeploymentStore) GetDeployment(ctx context.Context, id int64) (storage.Deployment, error) {
+	f.mu.Lock()
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
+	f.mu.Unlock()
+	if f.failGet {
+		return storage.Deployment{}, errors.New("deployment retrieval failed")
+	}
+	return f.fakeDeploymentStore.GetDeployment(ctx, id)
+}
+
+func (f *persistenceRecordingDeploymentStore) contextErrors() []error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]error(nil), f.ctxErrs...)
 }
 
 func newFakeDeploymentStore() *fakeDeploymentStore {
@@ -194,7 +237,17 @@ func (f *fakeMQTTUserLister) FindOrphanRules(_ context.Context) ([]storage.ACLRu
 
 type coordinatedMQTTUserLister struct {
 	*fakeMQTTUserLister
-	mu sync.Mutex
+	mu          sync.Mutex
+	listStarted chan struct{}
+	releaseList chan struct{}
+}
+
+func (f *coordinatedMQTTUserLister) ListMQTTUsers(ctx context.Context) ([]storage.MQTTUser, error) {
+	if f.listStarted != nil {
+		close(f.listStarted)
+		<-f.releaseList
+	}
+	return f.fakeMQTTUserLister.ListMQTTUsers(ctx)
 }
 
 func (f *coordinatedMQTTUserLister) LockMutations() {
@@ -291,6 +344,15 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("writeFile %q: %v", path, err)
 	}
+}
+
+func applyPreview(t *testing.T, svc *Service, ctx context.Context, actor string) (storage.Deployment, error) {
+	t.Helper()
+	preview, err := svc.Preview(context.Background(), actor)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+	return svc.Apply(ctx, actor, preview.RevisionID)
 }
 
 // --- Tests ---
@@ -620,7 +682,7 @@ func TestApply_Disabled(t *testing.T) {
 		config.DeployConfig{Mode: ""},
 	)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := svc.Apply(context.Background(), "operator", "")
 	if !errors.Is(err, ErrDeployDisabled) {
 		t.Errorf("error = %v, want ErrDeployDisabled", err)
 	}
@@ -642,7 +704,7 @@ func TestApply_Success(t *testing.T) {
 
 	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
@@ -654,6 +716,132 @@ func TestApply_Success(t *testing.T) {
 	}
 	if store.count() != 1 {
 		t.Error("want exactly 1 deployment record")
+	}
+}
+
+func TestApplyRequiresRevisionID(t *testing.T) {
+	t.Parallel()
+	deployCfg, _, _ := enabledDeployCfg(t)
+	store := newFakeDeploymentStore()
+	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+
+	_, err := svc.Apply(context.Background(), "operator", "")
+	if !errors.Is(err, ErrRevisionMissing) {
+		t.Fatalf("Apply without revision ID error = %v, want ErrRevisionMissing", err)
+	}
+	if store.count() != 0 {
+		t.Fatalf("Apply without revision ID created %d deployment records", store.count())
+	}
+}
+
+func TestApplyConsumesRevisionBeforeExternalApply(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	applier := &fakeApplier{}
+	store := newFakeDeploymentStore()
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	if _, err := svc.Apply(context.Background(), "operator", preview.RevisionID); err != nil {
+		t.Fatalf("first Apply returned error: %v", err)
+	}
+	if _, err := svc.Apply(context.Background(), "operator", preview.RevisionID); !errors.Is(err, ErrRevisionConsumed) {
+		t.Fatalf("second Apply error = %v, want ErrRevisionConsumed", err)
+	}
+	if applier.callCount() != 1 {
+		t.Fatalf("applier calls = %d, want 1", applier.callCount())
+	}
+}
+
+func TestApplyPostExternalPersistenceUsesDetachedContext(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	applier := &cancelingApplier{}
+	store := &persistenceRecordingDeploymentStore{fakeDeploymentStore: newFakeDeploymentStore()}
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	applier.cancel = cancel
+	deployment, err := svc.Apply(ctx, "operator", preview.RevisionID)
+	if err != nil {
+		t.Fatalf("Apply returned error after request cancellation: %v", err)
+	}
+	if deployment.Status != "active_verified" {
+		t.Fatalf("deployment status = %q, want active_verified", deployment.Status)
+	}
+	for _, ctxErr := range store.contextErrors() {
+		if ctxErr != nil {
+			t.Fatalf("persistence operation used canceled context: %v", ctxErr)
+		}
+	}
+}
+
+func TestApplyReportsStatusPersistenceFailure(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	store := &persistenceRecordingDeploymentStore{
+		fakeDeploymentStore: newFakeDeploymentStore(),
+		failStatus:          "active_verified",
+	}
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	deployment, err := svc.Apply(context.Background(), "operator", preview.RevisionID)
+	if err == nil {
+		t.Fatal("Apply returned nil error after active status persistence failure")
+	}
+	if deployment.Status == "active_verified" {
+		t.Fatal("Apply returned active_verified after status persistence failure")
+	}
+	if !strings.Contains(err.Error(), "active_verified") {
+		t.Fatalf("Apply error = %v, want active_verified persistence context", err)
+	}
+}
+
+func TestApplyReportsDeploymentRetrievalFailure(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	store := &persistenceRecordingDeploymentStore{
+		fakeDeploymentStore: newFakeDeploymentStore(),
+		failGet:             true,
+	}
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	deployment, err := svc.Apply(context.Background(), "operator", preview.RevisionID)
+	if err == nil {
+		t.Fatal("Apply returned nil error after deployment retrieval failure")
+	}
+	if deployment.ID != 0 {
+		t.Fatalf("Apply returned deployment ID %d after retrieval failure", deployment.ID)
+	}
+	if !strings.Contains(err.Error(), "get deployment") {
+		t.Fatalf("Apply error = %v, want deployment retrieval context", err)
 	}
 }
 
@@ -669,7 +857,7 @@ func TestApply_ApplierError(t *testing.T) {
 
 	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := applyPreview(t, svc, context.Background(), "operator")
 	if err == nil {
 		t.Fatal("Apply: want error, got nil")
 	}
@@ -707,7 +895,7 @@ func TestApply_LifecycleSavedApplyingPendingActivationActiveVerified(t *testing.
 
 	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
@@ -745,7 +933,7 @@ func TestApply_VerifierRetriesThenSucceeds(t *testing.T) {
 
 	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(verifier.VerifyActive), pwLookup, deployCfg)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
@@ -775,7 +963,7 @@ func TestApply_VerifierExhaustsRetries(t *testing.T) {
 
 	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(verifier.VerifyActive), pwLookup, deployCfg)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
@@ -804,7 +992,7 @@ func TestApply_HealthcheckFailure_Rollback(t *testing.T) {
 
 	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	// rolled_back is not an error to the caller according to spec scenarios; the
 	// deployment record should be returned with status rolled_back.
 	if err != nil {
@@ -841,7 +1029,7 @@ func TestApply_RollbackFailure(t *testing.T) {
 
 	svc := newTestService(rollbackFailApplier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := applyPreview(t, svc, context.Background(), "operator")
 	if err == nil {
 		t.Fatal("Apply with rollback failure: want error, got nil")
 	}
@@ -999,7 +1187,7 @@ func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
 
 	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
-	d, err := svc.Apply(context.Background(), "operator")
+	d, err := applyPreview(t, svc, context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Apply returned unexpected error: %v", err)
 	}
@@ -1070,7 +1258,7 @@ func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
 
 	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(failVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := applyPreview(t, svc, context.Background(), "operator")
 	if err == nil {
 		t.Fatal("Apply with rollback failure: want error, got nil")
 	}
@@ -1141,7 +1329,11 @@ func TestApply_RollbackUsesIndependentContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := svc.Apply(ctx, "operator")
+	preview, previewErr := svc.Preview(context.Background(), "operator")
+	if previewErr != nil {
+		t.Fatalf("Preview returned error: %v", previewErr)
+	}
+	_, err := svc.Apply(ctx, "operator", preview.RevisionID)
 	if err == nil {
 		t.Fatal("Apply: want error (rollback failure), got nil")
 	}
@@ -1189,7 +1381,7 @@ func TestApply_ApplierRolledBack_StatusFailed(t *testing.T) {
 
 	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := applyPreview(t, svc, context.Background(), "operator")
 	if err == nil {
 		t.Fatal("Apply: want error (apply failed), got nil")
 	}
@@ -1246,7 +1438,7 @@ func TestApply_ApplierRollbackFailed_StatusRollbackFailed(t *testing.T) {
 
 	svc := newTestServiceWithAudit(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg, audit)
 
-	_, err := svc.Apply(context.Background(), "operator")
+	_, err := applyPreview(t, svc, context.Background(), "operator")
 	if err == nil {
 		t.Fatal("Apply: want error, got nil")
 	}
@@ -1290,15 +1482,19 @@ func TestApply_ConcurrentApplyReturnsInProgress(t *testing.T) {
 	applier := newBlockingApplier()
 	store := newFakeDeploymentStore()
 	svc := newTestService(applier, &fakeACLStore{}, &fakeMQTTUserLister{}, store, diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+	preview, err := svc.Preview(context.Background(), "first")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := svc.Apply(context.Background(), "first")
+		_, err := svc.Apply(context.Background(), "first", preview.RevisionID)
 		done <- err
 	}()
 	<-applier.started
 
-	_, err := svc.Apply(context.Background(), "second")
+	_, err = svc.Apply(context.Background(), "second", preview.RevisionID)
 	if !errors.Is(err, ErrDeployInProgress) {
 		t.Fatalf("concurrent Apply error = %v, want ErrDeployInProgress", err)
 	}
@@ -1329,10 +1525,14 @@ func TestApply_HoldsMutationLockThroughExternalApply(t *testing.T) {
 	coordinatedStore := &coordinatedMQTTUserLister{fakeMQTTUserLister: mqttStore}
 	applier := newBlockingApplier()
 	svc := newTestService(applier, aclStore, coordinatedStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := svc.Apply(context.Background(), "operator")
+		_, err := svc.Apply(context.Background(), "operator", preview.RevisionID)
 		done <- err
 	}()
 	<-applier.started
@@ -1358,6 +1558,49 @@ func TestApply_HoldsMutationLockThroughExternalApply(t *testing.T) {
 	case <-mutationAcquired:
 	case <-time.After(time.Second):
 		t.Fatal("mutation lock was not released after apply completed")
+	}
+}
+
+func TestPreview_HoldsMutationLockAcrossSnapshot(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	coordinatedStore := &coordinatedMQTTUserLister{
+		fakeMQTTUserLister: &fakeMQTTUserLister{},
+		listStarted:        make(chan struct{}),
+		releaseList:        make(chan struct{}),
+	}
+	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, coordinatedStore, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+
+	previewDone := make(chan error, 1)
+	go func() {
+		_, err := svc.Preview(context.Background(), "operator")
+		previewDone <- err
+	}()
+	<-coordinatedStore.listStarted
+
+	mutationAcquired := make(chan struct{})
+	go func() {
+		coordinatedStore.LockMutations()
+		close(mutationAcquired)
+		coordinatedStore.UnlockMutations()
+	}()
+	select {
+	case <-mutationAcquired:
+		t.Fatal("mutation lock was released while Preview was assembling its snapshot")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(coordinatedStore.releaseList)
+	if err := <-previewDone; err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+	select {
+	case <-mutationAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after Preview completed")
 	}
 }
 
