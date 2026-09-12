@@ -10,7 +10,7 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: string; onLogout: () => void; role?: string; onMutation?: () => void }) {
+function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
   const canWrite = can(role, 'mqttUser.write')
   const [users, setUsers] = useState<MQTTUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -60,6 +60,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
     if (createSubmitting) return
     setCreateSubmitting(true)
     setCreateError('')
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch('/api/v1/mqtt-users', {
         token,
@@ -77,7 +78,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
       setCreatedPassword({ userId: created.id, password: created.password })
       setCreateUsername('')
       setShowCreateForm(false)
-      onMutation?.()
+      onMutation?.(mutationID)
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -90,6 +91,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
 
   const handleToggle = async (user: MQTTUser) => {
     setTogglingId(user.id)
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch(`/api/v1/mqtt-users/${user.id}`, {
         token,
@@ -103,7 +105,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
         setError(errBody?.error ?? 'Update failed.')
         return
       }
-      onMutation?.()
+      onMutation?.(mutationID)
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -115,6 +117,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
   }
 
   const handleResetPassword = async (userId: number) => {
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch(`/api/v1/mqtt-users/${userId}/reset-password`, {
         token,
@@ -129,7 +132,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
       const result = (await response.json()) as MQTTUser & { password: string }
       setResetPassword(result.password)
       setResetUserId(userId)
-      onMutation?.()
+      onMutation?.(mutationID)
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
       if (isForbiddenResponseError(err)) { setError((err as Error).message); return }
@@ -138,6 +141,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
   }
 
   const handleDelete = async (id: number) => {
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch(`/api/v1/mqtt-users/${id}`, {
         token,
@@ -155,7 +159,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutation }: { token: str
         setResetUserId(null)
         setResetPassword(null)
       }
-      onMutation?.()
+      onMutation?.(mutationID)
       fetchUsers()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return

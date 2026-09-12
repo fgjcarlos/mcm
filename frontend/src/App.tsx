@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
@@ -63,6 +63,28 @@ type DeployPreview = {
   passwd_diff: string
   orphan_rules?: ACLRule[]
   has_changes: boolean
+}
+
+const deployPendingStorageKey = 'mcm_deploy_pending'
+
+function readDeployPending() {
+  try {
+    return window.localStorage.getItem(deployPendingStorageKey) === '1'
+  } catch {
+    return false
+  }
+}
+
+function persistDeployPending(pending: boolean) {
+  try {
+    if (pending) {
+      window.localStorage.setItem(deployPendingStorageKey, '1')
+    } else {
+      window.localStorage.removeItem(deployPendingStorageKey)
+    }
+  } catch {
+    // The in-memory state remains authoritative when storage is unavailable.
+  }
 }
 
 type LoginResponse = {
@@ -186,7 +208,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   const [securityError, setSecurityError] = useState<string>('')
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditError, setAuditError] = useState<string>('')
-  const [deployPending, setDeployPending] = useState(false)
+  const [deployPending, setDeployPending] = useState(readDeployPending)
+  const nextMutationID = useRef(0)
+  const appliedMutationID = useRef(0)
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
   const visibleNavItems = navItems.filter((item) => {
     if (!item.minRole) return true
@@ -211,8 +235,20 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     setActiveId(item.id)
   }, [])
 
-  const markDeployPending = useCallback(() => setDeployPending(true), [])
-  const clearDeployPending = useCallback(() => setDeployPending(false), [])
+  const beginDeployMutation = useCallback(() => {
+    nextMutationID.current += 1
+    return nextMutationID.current
+  }, [])
+  const markDeployPending = useCallback((mutationID: number) => {
+    if (mutationID <= appliedMutationID.current) return
+    setDeployPending(true)
+    persistDeployPending(true)
+  }, [])
+  const clearDeployPending = useCallback(() => {
+    appliedMutationID.current = nextMutationID.current
+    setDeployPending(false)
+    persistDeployPending(false)
+  }, [])
 
   useEffect(() => {
     const handlePopState = () => setActiveId(navIdFromPath(window.location.pathname))
@@ -291,9 +327,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : activeId === 'dashboard' ? (
         <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
       ) : activeId === 'acls' ? (
-        <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} onMutation={markDeployPending} />
+        <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'users' ? (
-        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutation={markDeployPending} />
+        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplySuccess={clearDeployPending} />
       ) : activeId === 'account' ? (
@@ -782,7 +818,7 @@ function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: Brok
   )
 }
 
-function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; onLogout: () => void; role?: string; onMutation?: () => void }) {
+function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
   const canWrite = can(role, 'acl.write')
   const [rules, setRules] = useState<ACLRule[]>([])
   const [loading, setLoading] = useState(true)
@@ -847,6 +883,7 @@ function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; o
     if (submitting) return
     setSubmitting(true)
     setFormError('')
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const body = JSON.stringify({
         principal: formPrincipal.trim(),
@@ -870,7 +907,7 @@ function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; o
         return
       }
       setShowForm(false)
-      onMutation?.()
+      onMutation?.(mutationID)
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -882,6 +919,7 @@ function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; o
   }
 
   const handleDelete = async (id: string) => {
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch(`/api/v1/acls/${id}`, {
         token,
@@ -894,7 +932,7 @@ function ACLPanel({ token, onLogout, role = '', onMutation }: { token: string; o
         return
       }
       setDeleteConfirmId(null)
-      onMutation?.()
+      onMutation?.(mutationID)
       fetchRules()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
