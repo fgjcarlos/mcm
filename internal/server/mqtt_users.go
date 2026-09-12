@@ -199,7 +199,14 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 		ServiceReserved: a.mosquitto.Username,
 	}
 
-	u, err := a.store.UpdateMQTTUser(r.Context(), id, params)
+	u, err := a.store.UpdateMQTTUserAndRun(r.Context(), id, params, func(updated storage.MQTTUser) {
+		if req.Username != nil && previous.Username != updated.Username {
+			if password, ok := a.CleartextPassword(previous.Username); ok {
+				a.rememberMQTTPassword(updated.Username, password)
+				a.forgetMQTTPassword(previous.Username)
+			}
+		}
+	})
 	if errors.Is(err, storage.ErrMQTTUserNotFound) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
 		return
@@ -221,12 +228,6 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.recordAuditFromRequest(r, "mqtt_user.update", "mqtt_user", strconv.FormatInt(u.ID, 10), "success", map[string]any{"username": u.Username, "disabled": u.Disabled})
-	if req.Username != nil && previous.Username != u.Username {
-		if password, ok := a.CleartextPassword(previous.Username); ok {
-			a.rememberMQTTPassword(u.Username, password)
-			a.forgetMQTTPassword(previous.Username)
-		}
-	}
 	if u.Disabled {
 		a.forgetMQTTPassword(u.Username)
 	}

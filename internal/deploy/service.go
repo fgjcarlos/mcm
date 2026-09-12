@@ -36,6 +36,14 @@ var (
 	ErrRevisionMismatch = errors.New("preview revision base no longer matches")
 	ErrRevisionExpired  = errors.New("preview revision expired")
 	ErrRevisionConsumed = errors.New("preview revision already consumed")
+
+	// ErrDeploymentPersistence reports a lifecycle persistence failure after
+	// the broker side effect. The service still completes verification and
+	// rollback before returning this error whenever possible.
+	ErrDeploymentPersistence = errors.New("deployment lifecycle persistence failed")
+	// ErrDeploymentStateIndeterminate reports that the broker or its lifecycle
+	// record could not be brought to a known, persisted state.
+	ErrDeploymentStateIndeterminate = errors.New("deployment state is indeterminate")
 )
 
 // maxDiffLines is the maximum number of lines in a returned unified diff.
@@ -794,11 +802,14 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Move to "pending_activation" — files on disk, reload signalled,
-	// awaiting verification.
+	// awaiting verification. A bookkeeping failure must not prevent the
+	// verifier from determining whether the broker accepted the change.
+	var pendingActivationErr error
 	if err := s.updateDeploymentStatus(d.ID, "pending_activation", ""); err != nil {
-		return storage.Deployment{}, fmt.Errorf("update deployment status to pending_activation: %w", err)
+		pendingActivationErr = fmt.Errorf("persist pending_activation status: %w", err)
+	} else {
+		s.emitAudit(ctx, actor, "deployment.pending_activation", d.ID, "success")
 	}
-	s.emitAudit(ctx, actor, "deployment.pending_activation", d.ID, "success")
 
 	// Mosquitto processes SIGHUP asynchronously; wait a moment before
 	// the verifier races the reload against the new config (issue #293).
@@ -820,8 +831,18 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		if attempts > 1 {
 			msg = fmt.Sprintf("verified after %d attempts", attempts)
 		}
+		if pendingActivationErr != nil {
+			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr)
+		}
 		if err := s.updateDeploymentStatus(d.ID, "active_verified", msg); err != nil {
-			return storage.Deployment{}, fmt.Errorf("update deployment status to active_verified: %w", err)
+			return s.rollbackAfterPersistenceFailure(
+				ctx,
+				actor,
+				d,
+				aclSnapshot,
+				passwdSnapshot,
+				fmt.Errorf("persist active_verified status: %w", err),
+			)
 		}
 		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
 		deployment, err := s.getDeployment(d.ID)
@@ -833,6 +854,9 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 
 	// Verification exhausted retries — rollback from snapshot.
 	msg := fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
+	if pendingActivationErr != nil {
+		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr))
+	}
 	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg)
 }
 
@@ -956,6 +980,20 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 		return storage.Deployment{}, fmt.Errorf("get deployment after rollback: %w", err)
 	}
 	return deployment, nil
+}
+
+// rollbackAfterPersistenceFailure restores the broker after a lifecycle
+// status could not be persisted. Verification has already run before this
+// helper is called, so a bookkeeping failure cannot skip the operational
+// safety path. A successful rollback leaves a known broker state but still
+// reports the persistence failure; a failed rollback makes the full state
+// indeterminate.
+func (s *Service) rollbackAfterPersistenceFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot string, persistenceErr error) (storage.Deployment, error) {
+	deployment, rollbackErr := s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, persistenceErr.Error())
+	if rollbackErr != nil {
+		return deployment, fmt.Errorf("%w: %w; rollback: %w", ErrDeploymentStateIndeterminate, persistenceErr, rollbackErr)
+	}
+	return deployment, fmt.Errorf("%w: %w", ErrDeploymentPersistence, persistenceErr)
 }
 
 // recordApplyFailure persists the appropriate status and audit event for

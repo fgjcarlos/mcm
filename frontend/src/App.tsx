@@ -244,8 +244,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     setDeployPending(true)
     persistDeployPending(true)
   }, [])
-  const clearDeployPending = useCallback(() => {
-    appliedMutationID.current = nextMutationID.current
+  const clearDeployPending = useCallback((mutationWatermark: number) => {
+    if (nextMutationID.current !== mutationWatermark) return
+    appliedMutationID.current = mutationWatermark
     setDeployPending(false)
     persistDeployPending(false)
   }, [])
@@ -331,7 +332,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : activeId === 'users' ? (
         <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'deploy' ? (
-        <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplySuccess={clearDeployPending} />
+        <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : activeId === 'admin-users' ? (
@@ -1112,7 +1113,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
   )
 }
 
-function DeployPanel({ token, onLogout, role = '', onApplySuccess }: { token: string; onLogout: () => void; role?: string; onApplySuccess?: () => void }) {
+function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
   const canPreview = can(role, 'deploy.preview')
   const canApply = can(role, 'deploy.apply')
   const [preview, setPreview] = useState<DeployPreview | null>(null)
@@ -1194,6 +1195,7 @@ function DeployPanel({ token, onLogout, role = '', onApplySuccess }: { token: st
       return
     }
 
+    const mutationWatermark = onApplyStart?.() ?? 0
     setApplying(true)
     setApplyError('')
     setApplyResult(null)
@@ -1219,7 +1221,7 @@ function DeployPanel({ token, onLogout, role = '', onApplySuccess }: { token: st
       setApplyResult(result)
       setPreview(null)
       if (result.status === 'active_verified' || result.status === 'applied') {
-        onApplySuccess?.()
+        onApplySuccess?.(mutationWatermark)
       }
       fetchHistory()
     } catch (err) {

@@ -373,6 +373,57 @@ func TestUpdateMQTTUserAndRunKeepsCallbackUnderMutationLock(t *testing.T) {
 	}
 }
 
+func TestUpdateMQTTUserAndRunRenameCallbackKeepsVerifierOrdering(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "rename-before",
+		PasswordHash: "old-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	updateDone := make(chan error, 1)
+	go func() {
+		_, updateErr := store.UpdateMQTTUserAndRun(context.Background(), created.ID, UpdateMQTTUserParams{
+			Username: stringPointer("rename-after"),
+		}, func(updated MQTTUser) {
+			if updated.Username != "rename-after" {
+				t.Errorf("callback username = %q, want rename-after", updated.Username)
+			}
+			close(callbackEntered)
+			<-releaseCallback
+		})
+		updateDone <- updateErr
+	}()
+	<-callbackEntered
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		store.LockMutations()
+		close(lockAcquired)
+		store.UnlockMutations()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("mutation lock was released before the rename verifier callback completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseCallback)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateMQTTUserAndRun returned error: %v", err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after rename verifier callback completed")
+	}
+}
+
 func stringPointer(value string) *string { return &value }
 
 func TestDeleteMQTTUser(t *testing.T) {

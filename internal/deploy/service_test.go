@@ -789,7 +789,7 @@ func TestApplyPostExternalPersistenceUsesDetachedContext(t *testing.T) {
 	}
 }
 
-func TestApplyReportsStatusPersistenceFailure(t *testing.T) {
+func TestApplyReportsStatusPersistenceFailureAndRollsBack(t *testing.T) {
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
@@ -799,21 +799,63 @@ func TestApplyReportsStatusPersistenceFailure(t *testing.T) {
 		failStatus:          "active_verified",
 	}
 	aclStore, mqttStore, pwLookup := withSeedUsers(t)
-	svc := newTestService(&fakeApplier{}, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
+	applier := &fakeApplier{}
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(okVerifier), pwLookup, deployCfg)
 	preview, err := svc.Preview(context.Background(), "operator")
 	if err != nil {
 		t.Fatalf("Preview returned error: %v", err)
 	}
 
 	deployment, err := svc.Apply(context.Background(), "operator", preview.RevisionID)
-	if err == nil {
-		t.Fatal("Apply returned nil error after active status persistence failure")
+	if !errors.Is(err, ErrDeploymentPersistence) {
+		t.Fatalf("Apply error = %v, want ErrDeploymentPersistence", err)
 	}
-	if deployment.Status == "active_verified" {
-		t.Fatal("Apply returned active_verified after status persistence failure")
+	if deployment.Status != "rolled_back" {
+		t.Fatalf("deployment status = %q, want rolled_back after status persistence failure", deployment.Status)
 	}
 	if !strings.Contains(err.Error(), "active_verified") {
 		t.Fatalf("Apply error = %v, want active_verified persistence context", err)
+	}
+	if applier.callCount() != 2 {
+		t.Fatalf("applier calls = %d, want 2 (apply + rollback)", applier.callCount())
+	}
+}
+
+func TestApplyPendingActivationPersistenceFailureStillVerifiesAndRollsBack(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "old acl")
+	writeFile(t, passwdPath, "old passwd")
+	store := &persistenceRecordingDeploymentStore{
+		fakeDeploymentStore: newFakeDeploymentStore(),
+		failStatus:          "pending_activation",
+	}
+	aclStore, mqttStore, pwLookup := withSeedUsers(t)
+	applier := &fakeApplier{}
+	verifier := &flakyVerifier{failUntil: verifyAttempts}
+	svc := newTestService(applier, aclStore, mqttStore, store, diagnostics.VerifierFunc(verifier.VerifyActive), pwLookup, deployCfg)
+	preview, err := svc.Preview(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("Preview returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deployment, err := svc.Apply(ctx, "operator", preview.RevisionID)
+	if !errors.Is(err, ErrDeploymentPersistence) {
+		t.Fatalf("Apply error = %v, want ErrDeploymentPersistence", err)
+	}
+	if deployment.Status != "rolled_back" {
+		t.Fatalf("deployment status = %q, want rolled_back", deployment.Status)
+	}
+	if verifier.callCount() != 1 {
+		t.Fatalf("verifier calls = %d, want 1 after cancelled request context", verifier.callCount())
+	}
+	if applier.callCount() != 2 {
+		t.Fatalf("applier calls = %d, want 2 (apply + rollback)", applier.callCount())
+	}
+	if !strings.Contains(deployment.Message, "pending_activation") {
+		t.Fatalf("deployment message = %q, want pending_activation persistence context", deployment.Message)
 	}
 }
 

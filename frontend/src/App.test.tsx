@@ -1118,6 +1118,70 @@ describe('App', () => {
     expect(window.localStorage.getItem('mcm_deploy_pending')).toBeNull()
   })
 
+  it('keeps the pending deploy banner when a mutation starts during apply', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'during-apply-token')
+    let resolveApply: ((response: Response) => void) | undefined
+    const pendingApply = new Promise<Response>((resolve) => { resolveApply = resolve })
+    const applyRequest = vi.fn()
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('during-apply-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({
+        id: 9,
+        username: 'during-apply-admin',
+        disabled: false,
+        role: 'admin',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      }),
+      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'POST /api/v1/acls': () => jsonResponse({
+        id: 'rule-during-apply',
+        principal: 'new-device',
+        topic_filter: 'factory/#',
+        permission: 'read',
+      }, { status: 201 }),
+      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-during-apply',
+        acl_diff: '+user new-device',
+        passwd_diff: '',
+        orphan_rules: [],
+        has_changes: true,
+      }),
+      'POST /api/v1/deployments/apply': (init) => {
+        applyRequest(init)
+        return pendingApply
+      },
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await screen.findByRole('button', { name: 'Apply' })
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+    await waitFor(() => expect(applyRequest).toHaveBeenCalled())
+
+    await user.click(screen.getByRole('link', { name: /acls/i }))
+    await screen.findByRole('heading', { name: 'ACL policy workspace' })
+    await user.click(screen.getByRole('button', { name: 'Add Rule' }))
+    await user.type(screen.getByPlaceholderText('mqtt-username'), 'new-device')
+    await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'factory/#')
+    await user.click(screen.getByRole('button', { name: 'Create rule' }))
+    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+
+    resolveApply?.(jsonResponse({
+      id: 19,
+      status: 'active_verified',
+      created_at: '2026-01-01T00:00:00Z',
+    }))
+    await waitFor(() => expect(window.localStorage.getItem('mcm_deploy_pending')).toBe('1'))
+    expect(screen.getByText('Pending deploy')).toBeInTheDocument()
+  })
+
   // FIX 2: Deploy panel shows friendly 403 message, does not log out
   describe('Deploy panel 403 forbidden handling', () => {
     function deployRoutesWithForbiddenPreview(): Record<string, RouteHandler> {

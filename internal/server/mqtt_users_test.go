@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/auth"
@@ -406,6 +407,84 @@ func TestHandleUpdateMQTTUser(t *testing.T) {
 			t.Fatalf("reserved update status/body = %d/%s, want 409 with reservation error", updateRec.Code, updateRec.Body.String())
 		}
 	})
+}
+
+func TestHandleUpdateMQTTUserKeepsVerifierMigrationUnderMutationLock(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+
+	seedAdminUserWithRole(t, store, "ops", "secret", auth.RoleOperator)
+	token := loginAs(t, app, "ops", "secret")
+	user := seedMQTTUser(t, store, "device-before")
+	app.rememberMQTTPassword(user.Username, "device-password")
+
+	// Hold the verifier map lock after the database commit point. The rename
+	// handler must still hold the storage mutation lock while it migrates the
+	// cleartext entry, otherwise Apply could acquire the mutation lock and
+	// render the new username before its verifier is available.
+	app.userPasswordsMu.Lock()
+	verifierLockHeld := true
+	defer func() {
+		if verifierLockHeld {
+			app.userPasswordsMu.Unlock()
+		}
+	}()
+
+	record := httptest.NewRecorder()
+	request := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"username":"device-after"}`, token)
+	renameDone := make(chan struct{})
+	go func() {
+		app.Handler().ServeHTTP(record, request)
+		close(renameDone)
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		updated, err := store.GetMQTTUser(context.Background(), user.ID)
+		if err != nil {
+			t.Fatalf("get renamed MQTT user: %v", err)
+		}
+		if updated.Username == "device-after" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("rename did not commit while verifier migration was blocked")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	mutationLockAcquired := make(chan struct{})
+	go func() {
+		store.LockMutations()
+		close(mutationLockAcquired)
+		store.UnlockMutations()
+	}()
+	select {
+	case <-mutationLockAcquired:
+		t.Fatal("mutation lock was released before the rename verifier migration completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	app.userPasswordsMu.Unlock()
+	verifierLockHeld = false
+	select {
+	case <-renameDone:
+	case <-time.After(time.Second):
+		t.Fatal("rename did not complete after verifier migration was released")
+	}
+	select {
+	case <-mutationLockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after rename completed")
+	}
+	if record.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want %d, body = %s", record.Code, http.StatusOK, record.Body.String())
+	}
+	if password, ok := app.CleartextPassword("device-after"); !ok || password != "device-password" {
+		t.Fatalf("renamed user cleartext password = %q, %t; want device-password, true", password, ok)
+	}
 }
 
 func TestHandleMQTTUserUpdateRejectsControlCharacters(t *testing.T) {
