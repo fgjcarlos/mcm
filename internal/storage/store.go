@@ -286,6 +286,17 @@ CREATE TABLE broker_config_adoptions (
 CREATE INDEX idx_broker_config_adoptions_source_path ON broker_config_adoptions(source_path, adopted_at);
 `,
 	},
+	{
+		version: 17,
+		name:    "add_deployments_kind_reload_kind_conf",
+		sql: `
+ALTER TABLE deployments ADD COLUMN kind TEXT NOT NULL DEFAULT 'passwd_acl';
+ALTER TABLE deployments ADD COLUMN reload_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN conf_rendered TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN base_conf_hash TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_deployments_kind ON deployments(kind);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

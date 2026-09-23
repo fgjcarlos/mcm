@@ -101,6 +101,8 @@ func (f *fakeDeployApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 
+func (f *fakeDeployApplier) ReloadBrokerOnly() error { return nil }
+
 func okDeployVerifier(_ context.Context, _ diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult {
 	return diagnostics.VerifyActiveResult{OK: true, Stage: "ok", Message: "ok"}
 }
