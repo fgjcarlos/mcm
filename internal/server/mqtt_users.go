@@ -76,6 +76,10 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "username is required"})
 		return
 	}
+	if err := storage.ValidateMQTTUsername(req.Username); err != nil {
+		writeMQTTUserError(w, err)
+		return
+	}
 
 	password, err := generateMQTTPassword()
 	if err != nil {
@@ -90,10 +94,18 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := a.store.CreateMQTTUser(r.Context(), storage.CreateMQTTUserParams{
-		Username:     strings.TrimSpace(req.Username),
-		PasswordHash: hash,
+		Username:        req.Username,
+		PasswordHash:    hash,
+		ServiceReserved: a.mosquitto.Username,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "username is reserved for the broker service account"})
+			return
+		}
+		if writeMQTTUserValidationError(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			writeJSON(w, http.StatusConflict, errorResponse{Error: "username already exists"})
 			return
@@ -167,14 +179,47 @@ func (a *App) handleUpdateMQTTUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := storage.UpdateMQTTUserParams{
-		Username: req.Username,
-		Disabled: req.Disabled,
-	}
-
-	u, err := a.store.UpdateMQTTUser(r.Context(), id, params)
+	previous, err := a.store.GetMQTTUser(r.Context(), id)
 	if errors.Is(err, storage.ErrMQTTUserNotFound) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	if req.Disabled != nil && *req.Disabled && a.isConfiguredMQTTServiceUser(previous.Username) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: mqttServiceUserProtectedMessage})
+		return
+	}
+
+	params := storage.UpdateMQTTUserParams{
+		Username:        req.Username,
+		Disabled:        req.Disabled,
+		ServiceReserved: a.mosquitto.Username,
+	}
+
+	u, err := a.store.UpdateMQTTUserAndRun(r.Context(), id, params, func(updated storage.MQTTUser) {
+		if req.Username != nil && previous.Username != updated.Username {
+			if password, ok := a.CleartextPassword(previous.Username); ok {
+				a.rememberMQTTPassword(updated.Username, password)
+				a.forgetMQTTPassword(previous.Username)
+			}
+		}
+	})
+	if errors.Is(err, storage.ErrMQTTUserNotFound) {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
+		return
+	}
+	if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "username is reserved for the broker service account"})
+		return
+	}
+	if writeMQTTUserValidationError(w, err) {
+		return
+	}
+	if err != nil && (errors.Is(err, storage.ErrMQTTUserConflict) || strings.Contains(err.Error(), "UNIQUE constraint failed")) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "username already exists"})
 		return
 	}
 	if err != nil {
@@ -198,7 +243,19 @@ func (a *App) handleDeleteMQTTUser(w http.ResponseWriter, r *http.Request) {
 	resourceID := strconv.FormatInt(id, 10)
 
 	// Look up the user first so we can forget its cleartext on success.
-	u, lookupErr := a.store.GetMQTTUser(r.Context(), id)
+	lookupMQTTUser := a.lookupMQTTUser
+	if lookupMQTTUser == nil {
+		lookupMQTTUser = a.store.GetMQTTUser
+	}
+	u, lookupErr := lookupMQTTUser(r.Context(), id)
+	if lookupErr != nil && !errors.Is(lookupErr, storage.ErrMQTTUserNotFound) {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	if lookupErr == nil && a.isConfiguredMQTTServiceUser(u.Username) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: mqttServiceUserProtectedMessage})
+		return
+	}
 
 	if err := a.store.DeleteMQTTUser(r.Context(), id); errors.Is(err, storage.ErrMQTTUserNotFound) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "mqtt user not found"})
@@ -229,6 +286,10 @@ func (a *App) handleResetMQTTUserPassword(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}
+	if a.isConfiguredMQTTServiceUser(u.Username) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: mqttServiceUserProtectedMessage})
+		return
+	}
 
 	password, err := generateMQTTPassword()
 	if err != nil {
@@ -242,10 +303,18 @@ func (a *App) handleResetMQTTUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	u, err = a.store.UpdateMQTTUser(r.Context(), id, storage.UpdateMQTTUserParams{
-		PasswordHash: &hash,
+	updateParams := storage.UpdateMQTTUserParams{
+		PasswordHash:    &hash,
+		ServiceReserved: a.mosquitto.Username,
+	}
+	u, err = a.store.UpdateMQTTUserAndRun(r.Context(), id, updateParams, func(updated storage.MQTTUser) {
+		a.rememberMQTTPassword(updated.Username, password)
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrMQTTUserServiceReserved) {
+			writeJSON(w, http.StatusConflict, errorResponse{Error: mqttServiceUserProtectedMessage})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}
@@ -255,4 +324,30 @@ func (a *App) handleResetMQTTUserPassword(w http.ResponseWriter, r *http.Request
 		mqttUserResponse: toMQTTUserResponse(u),
 		Password:         password,
 	})
+}
+
+const mqttServiceUserProtectedMessage = "broker service account cannot be disabled, deleted, or reset"
+
+func (a *App) isConfiguredMQTTServiceUser(username string) bool {
+	serviceUsername := strings.TrimSpace(a.mosquitto.Username)
+	return serviceUsername != "" && username == serviceUsername
+}
+
+func writeMQTTUserError(w http.ResponseWriter, err error) {
+	if writeMQTTUserValidationError(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+}
+
+func writeMQTTUserValidationError(w http.ResponseWriter, err error) bool {
+	var validationErr *storage.MQTTUserValidationError
+	if !errors.As(err, &validationErr) {
+		return false
+	}
+	writeJSON(w, http.StatusBadRequest, errorResponse{
+		Error:   "mqtt user validation failed",
+		Details: validationErr.Problems,
+	})
+	return true
 }

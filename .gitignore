@@ -9,3 +9,5 @@ frontend/node_modules/
 # Go test artifacts
 *.test
 coverage.out
+# Local Pi runtime state
+.atl/

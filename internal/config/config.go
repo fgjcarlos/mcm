@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -614,6 +615,9 @@ func (c Config) Validate() error {
 	if (c.Mosquitto.Username == "") != (c.Mosquitto.Password == "") {
 		problems = append(problems, "mosquitto.username and mosquitto.password must both be set or both be empty")
 	}
+	if containsControlCharacter(c.Mosquitto.Username) {
+		problems = append(problems, "mosquitto.username must not contain control characters")
+	}
 	if c.Mosquitto.TLS.Enabled {
 		if strings.TrimSpace(c.Mosquitto.TLS.CACertFile) == "" {
 			problems = append(problems, "mosquitto.tls.ca_cert_file is required when mosquitto.tls.enabled is true")
@@ -715,6 +719,15 @@ func validatePort(name string, port int) error {
 		return fmt.Errorf("%s must be between 1 and 65535; got %d", name, port)
 	}
 	return nil
+}
+
+func containsControlCharacter(value string) bool {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // WriteExample writes the documented example config to path.

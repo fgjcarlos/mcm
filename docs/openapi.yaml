@@ -770,9 +770,16 @@ paths:
       tags: [Deployments]
       summary: Apply pending changes
       description: |
-        Requires admin. Renders the current ACL + passwd state, persists the
-        resulting `Deployment` row, and (when configured) triggers a reload on
-        the broker. Returns 409 if a deploy is already in progress.
+        Requires admin. Apply the exact immutable preview identified by the
+        required `revision_id`; callers must preview first. Persists the
+        resulting `Deployment` row and (when configured) triggers a reload on
+        the broker. Returns 409 if a deploy is already in progress or the
+        preview revision has already been consumed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeploymentApplyRequest" }
       responses:
         "200":
           description: Deployment record.
@@ -1250,12 +1257,37 @@ components:
     DeploymentPreview:
       type: object
       properties:
+        revision_id: { type: string }
+        base_acl_hash: { type: string }
+        base_passwd_hash: { type: string }
+        rendered_acl_hash: { type: string }
+        rendered_passwd_hash: { type: string }
+        orphan_rules:
+          type: array
+          items: { $ref: "#/components/schemas/ACLRule" }
         has_changes: { type: boolean }
         acl_diff: { type: string }
         passwd_diff: { type: string }
         acl_body: { type: string }
-        passwd_body: { type: string }
-      required: [has_changes, acl_diff, passwd_diff, acl_body, passwd_body]
+        summary: { $ref: "#/components/schemas/DeploymentChangeSummary" }
+      required: [revision_id, base_acl_hash, base_passwd_hash, rendered_acl_hash, rendered_passwd_hash, orphan_rules, has_changes, acl_diff, passwd_diff, acl_body, summary]
+    DeploymentChangeSummary:
+      type: object
+      properties:
+        users_added: { type: integer }
+        users_removed: { type: integer }
+        users_rotated: { type: integer }
+        has_passwd_changes: { type: boolean }
+        topics_added: { type: integer }
+        topics_removed: { type: integer }
+        has_acl_changes: { type: boolean }
+      required: [users_added, users_removed, users_rotated, has_passwd_changes, topics_added, topics_removed, has_acl_changes]
+    DeploymentApplyRequest:
+      type: object
+      properties:
+        revision_id: { type: string, minLength: 1 }
+      required: [revision_id]
+      additionalProperties: false
     SettingsResponse:
       type: object
       properties:

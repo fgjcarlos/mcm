@@ -17,7 +17,7 @@ import (
 // It allows injecting fakes in tests without importing the full deploy.Service.
 type deployServicer interface {
 	Preview(ctx context.Context, actor string) (deploy.PreviewResult, error)
-	Apply(ctx context.Context, actor string, revisionID ...string) (storage.Deployment, error)
+	Apply(ctx context.Context, actor, revisionID string) (storage.Deployment, error)
 	List(ctx context.Context, limit, offset int) ([]storage.Deployment, error)
 }
 

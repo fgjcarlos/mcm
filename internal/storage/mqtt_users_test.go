@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestCreateMQTTUser(t *testing.T) {
@@ -55,6 +56,60 @@ func TestCreateMQTTUser(t *testing.T) {
 			t.Error("second CreateMQTTUser with duplicate username: want error, got nil")
 		}
 	})
+}
+
+func TestCreateMQTTUserRejectsControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	for _, username := range []string{"device\nforged", "device\rforged", "device\x00forged", "device\tforged"} {
+		_, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+			Username:     username,
+			PasswordHash: "hash",
+		})
+		var validationErr *MQTTUserValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("CreateMQTTUser(%q) error = %v, want MQTTUserValidationError", username, err)
+		}
+	}
+
+	users, err := store.ListMQTTUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListMQTTUsers returned error: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("invalid users were persisted: %+v", users)
+	}
+}
+
+func TestUpdateMQTTUserRejectsControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "client-id_01",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+	invalid := "client-id_01\nforged"
+	_, err = store.UpdateMQTTUser(context.Background(), created.ID, UpdateMQTTUserParams{Username: &invalid})
+	var validationErr *MQTTUserValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("UpdateMQTTUser error = %v, want MQTTUserValidationError", err)
+	}
+
+	got, err := store.GetMQTTUser(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Username != "client-id_01" {
+		t.Fatalf("username after rejected update = %q, want client-id_01", got.Username)
+	}
 }
 
 func TestGetMQTTUser(t *testing.T) {
@@ -267,6 +322,110 @@ func TestUpdateMQTTUser(t *testing.T) {
 	})
 }
 
+func TestUpdateMQTTUserAndRunKeepsCallbackUnderMutationLock(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "reset-user",
+		PasswordHash: "old-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	updateDone := make(chan error, 1)
+	go func() {
+		_, updateErr := store.UpdateMQTTUserAndRun(context.Background(), created.ID, UpdateMQTTUserParams{
+			PasswordHash: stringPointer("new-hash"),
+		}, func(updated MQTTUser) {
+			if updated.PasswordHash != "new-hash" {
+				t.Errorf("callback password hash = %q, want new-hash", updated.PasswordHash)
+			}
+			close(callbackEntered)
+			<-releaseCallback
+		})
+		updateDone <- updateErr
+	}()
+	<-callbackEntered
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		store.LockMutations()
+		close(lockAcquired)
+		store.UnlockMutations()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("mutation lock was released before the callback completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseCallback)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateMQTTUserAndRun returned error: %v", err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after callback completed")
+	}
+}
+
+func TestUpdateMQTTUserAndRunRenameCallbackKeepsVerifierOrdering(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "rename-before",
+		PasswordHash: "old-hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	updateDone := make(chan error, 1)
+	go func() {
+		_, updateErr := store.UpdateMQTTUserAndRun(context.Background(), created.ID, UpdateMQTTUserParams{
+			Username: stringPointer("rename-after"),
+		}, func(updated MQTTUser) {
+			if updated.Username != "rename-after" {
+				t.Errorf("callback username = %q, want rename-after", updated.Username)
+			}
+			close(callbackEntered)
+			<-releaseCallback
+		})
+		updateDone <- updateErr
+	}()
+	<-callbackEntered
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		store.LockMutations()
+		close(lockAcquired)
+		store.UnlockMutations()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("mutation lock was released before the rename verifier callback completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseCallback)
+	if err := <-updateDone; err != nil {
+		t.Fatalf("UpdateMQTTUserAndRun returned error: %v", err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("mutation lock was not released after rename verifier callback completed")
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 func TestDeleteMQTTUser(t *testing.T) {
 	t.Parallel()
 	store := newTestStore(t)
@@ -296,4 +455,34 @@ func TestDeleteMQTTUser(t *testing.T) {
 			t.Errorf("error = %v, want ErrMQTTUserNotFound", err)
 		}
 	})
+}
+
+func TestUpdateMQTTUserRejectsDisablingConfiguredServiceUser(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{
+		Username:     "svc-mcm",
+		PasswordHash: "hash",
+	})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser returned error: %v", err)
+	}
+	disabled := true
+	_, err = store.UpdateMQTTUser(context.Background(), created.ID, UpdateMQTTUserParams{
+		Disabled:        &disabled,
+		ServiceReserved: "svc-mcm",
+	})
+	if !errors.Is(err, ErrMQTTUserServiceReserved) {
+		t.Fatalf("UpdateMQTTUser error = %v, want ErrMQTTUserServiceReserved", err)
+	}
+
+	got, err := store.GetMQTTUser(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMQTTUser returned error: %v", err)
+	}
+	if got.Disabled {
+		t.Fatal("configured service user was disabled")
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -301,20 +302,36 @@ type MQTTUser struct {
 }
 
 // CreateMQTTUserParams holds fields for MQTT user creation.
+// ServiceReserved lets the caller reject usernames that would shadow the
+// broker service account (issue #297). The HTTP layer is the only caller
+// that sets it today; tests can opt in to exercise the storage-layer guard.
 type CreateMQTTUserParams struct {
-	Username     string
-	PasswordHash string
+	Username        string
+	PasswordHash    string
+	ServiceReserved string
 }
 
 // UpdateMQTTUserParams holds mutable fields for MQTT user updates.
+// ServiceReserved applies the same shadowing guard as in CreateMQTTUserParams.
 type UpdateMQTTUserParams struct {
-	Username     *string
-	PasswordHash *string
-	Disabled     *bool
+	Username        *string
+	PasswordHash    *string
+	Disabled        *bool
+	ServiceReserved string
 }
 
 // ErrMQTTUserNotFound is returned when an MQTT user does not exist.
 var ErrMQTTUserNotFound = errors.New("mqtt user not found")
+
+// ErrMQTTUserConflict is returned when a rename collides with another
+// existing username (issue #297). The transaction is rolled back so the
+// cascaded ACL changes are not left half-applied.
+var ErrMQTTUserConflict = errors.New("mqtt user conflict")
+
+// ErrMQTTUserServiceReserved is returned when a caller tries to create or
+// rename an MQTT user to a username reserved for the broker service account
+// (issue #297).
+var ErrMQTTUserServiceReserved = errors.New("mqtt user reserved for broker service account")
 
 // BrokerMetricEvent is a persisted broker metric/event without raw payload data.
 type BrokerMetricEvent struct {
@@ -447,7 +464,21 @@ type UpdateJSONSchemaParams struct {
 
 // Store wraps SQLite persistence.
 type Store struct {
-	db *sql.DB
+	db         *sql.DB
+	mutationMu sync.Mutex
+}
+
+// LockMutations serializes managed MQTT and ACL mutations with deploy apply.
+// Deployment code may also hold it while assembling a preview revision so the
+// rendered configuration and its immutable base hashes share one snapshot.
+// The lock itself does not impose ordering on deployment bookkeeping.
+func (s *Store) LockMutations() {
+	s.mutationMu.Lock()
+}
+
+// UnlockMutations releases the managed configuration mutation lock.
+func (s *Store) UnlockMutations() {
+	s.mutationMu.Unlock()
 }
 
 // sqliteDSNBase returns the "file:" URI form of path with the given query

@@ -136,3 +136,80 @@ func TestRouterOpenAPISync(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestDeploymentOpenAPIContract(t *testing.T) {
+	cfg := defaultOpenAPISyncConfig(t)
+	data, err := os.ReadFile(cfg.openAPIPath)
+	if err != nil {
+		t.Fatalf("read openapi: %v", err)
+	}
+	var doc struct {
+		Paths      map[string]map[string]any `yaml:"paths"`
+		Components struct {
+			Schemas map[string]map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse openapi: %v", err)
+	}
+
+	preview := doc.Components.Schemas["DeploymentPreview"]
+	previewProperties, ok := preview["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("DeploymentPreview.properties is missing")
+	}
+	if _, ok := previewProperties["passwd_body"]; ok {
+		t.Fatal("DeploymentPreview must not document the JSON-hidden passwd_body field")
+	}
+	for _, required := range []string{"revision_id", "orphan_rules", "summary", "acl_body", "passwd_diff"} {
+		if !containsOpenAPIRequired(preview["required"], required) {
+			t.Errorf("DeploymentPreview.required is missing %q", required)
+		}
+	}
+
+	applyPost, ok := doc.Paths["/api/v1/deployments/apply"]["post"].(map[string]any)
+	if !ok {
+		t.Fatal("deployment apply operation is missing")
+	}
+	requestBody, ok := applyPost["requestBody"].(map[string]any)
+	if !ok || requestBody["required"] != true {
+		t.Fatal("deployment apply requestBody must be required")
+	}
+	if ref := requestBodySchemaRef(requestBody); ref != "#/components/schemas/DeploymentApplyRequest" {
+		t.Fatalf("deployment apply request schema ref = %q", ref)
+	}
+	applySchema := doc.Components.Schemas["DeploymentApplyRequest"]
+	if !containsOpenAPIRequired(applySchema["required"], "revision_id") {
+		t.Fatal("DeploymentApplyRequest.required is missing revision_id")
+	}
+}
+
+func containsOpenAPIRequired(value any, want string) bool {
+	values, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func requestBodySchemaRef(requestBody map[string]any) string {
+	content, ok := requestBody["content"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	jsonBody, ok := content["application/json"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	schema, ok := jsonBody["schema"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	ref, _ := schema["$ref"].(string)
+	return ref
+}

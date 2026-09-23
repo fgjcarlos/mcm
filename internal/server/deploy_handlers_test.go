@@ -423,7 +423,7 @@ func (l *lockedDeployService) Preview(_ context.Context, _ string) (deploy.Previ
 	return deploy.PreviewResult{}, nil
 }
 
-func (l *lockedDeployService) Apply(_ context.Context, _ string, _ ...string) (storage.Deployment, error) {
+func (l *lockedDeployService) Apply(_ context.Context, _, _ string) (storage.Deployment, error) {
 	return storage.Deployment{}, deploy.ErrDeployInProgress
 }
 

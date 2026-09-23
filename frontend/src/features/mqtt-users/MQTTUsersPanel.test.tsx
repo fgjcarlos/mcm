@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import MQTTUsersPanel from './MQTTUsersPanel'
@@ -224,6 +224,25 @@ describe('MQTTUsersPanel 403 forbidden handling', () => {
     expect(await screen.findByText("You don't have permission to perform this action.")).toBeInTheDocument()
     expect(onLogout).not.toHaveBeenCalled()
 
+    vi.unstubAllGlobals()
+  })
+
+  it('notifies the dashboard after a successful user mutation', async () => {
+    const onMutation = vi.fn()
+    const routesWithSuccessfulToggle: Record<string, RouteHandler> = {
+      ...baseRoutes,
+      'PUT /api/v1/mqtt-users/1': () => jsonResponse({}),
+    }
+    vi.stubGlobal('fetch', installFetchMock(routesWithSuccessfulToggle))
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" onMutation={onMutation} />)
+
+    await screen.findByText('sensor-01')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Disable' }))
+
+    await waitFor(() => {
+      expect(onMutation).toHaveBeenCalledTimes(1)
+    })
     vi.unstubAllGlobals()
   })
 })
