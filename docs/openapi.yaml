@@ -813,10 +813,10 @@ paths:
               schema:
                 type: object
                 properties:
-                  listeners:
+                  specs:
                     type: array
                     items: { $ref: "#/components/schemas/ListenerSpec" }
-                required: [listeners]
+                required: [specs]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/listeners/preview:
