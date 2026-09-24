@@ -32,7 +32,7 @@ P0 fixes precede expansion of configuration writes. P1 completes the core admini
 | P1 | Immutable preview/apply revisions | [#296](https://github.com/fgjcarlos/mcm/issues/296) |
 | P1 | MQTT identity and ACL consistency | [#297](https://github.com/fgjcarlos/mcm/issues/297) |
 | P1 | Versioned configuration model and lossless import | [#298](https://github.com/fgjcarlos/mcm/issues/298) |
-| P1 | MQTT and WebSocket listeners | [#299](https://github.com/fgjcarlos/mcm/issues/299) |
+| P1 | MQTT and WebSocket listeners (in progress) | [#299](https://github.com/fgjcarlos/mcm/issues/299) |
 | P1 | Broker TLS and certificate lifecycle | [#300](https://github.com/fgjcarlos/mcm/issues/300) |
 | P1 | Native authentication and ACL coverage | [#301](https://github.com/fgjcarlos/mcm/issues/301) |
 | P1 | Persistence, limits, sessions and logging | [#302](https://github.com/fgjcarlos/mcm/issues/302) |
