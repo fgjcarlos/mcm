@@ -94,8 +94,20 @@ while true; do
     sleep 3
 done
 
-# The bootstrap admin password is logged once on first boot.
-BOOTSTRAP_PASSWORD="$($COMPOSE logs mcm 2>/dev/null | grep -oP 'bootstrap admin password[: ]+\K\S+' | tail -1 || true)"
+# The bootstrap admin password is logged once on first boot, but the line
+# lands in `docker compose logs mcm` slightly after /livez returns 200.
+# Retry until it appears or we exhaust the budget (the same approach as
+# scripts/e2e-deploy.sh:138 but with the regex corrected to match the
+# actual JSON log payload).
+BOOTSTRAP_PASSWORD=""
+for _ in $(seq 1 30); do
+    BOOTSTRAP_PASSWORD="$($COMPOSE logs --no-color mcm 2>/dev/null \
+        | grep '"msg":"bootstrap admin created' \
+        | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' \
+        | tail -1 || true)"
+    [ -n "$BOOTSTRAP_PASSWORD" ] && break
+    sleep 1
+done
 if [ -z "$BOOTSTRAP_PASSWORD" ]; then
     echo "could not extract bootstrap admin password from mcm logs" >&2
     $COMPOSE logs mcm --tail 50 >&2 || true
