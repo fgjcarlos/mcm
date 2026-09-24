@@ -145,6 +145,11 @@ type MosquittoConfig struct {
 	// DataDir is the broker's persistent data directory (retained
 	// messages, persistence file). Empty means broker default.
 	DataDir string `yaml:"data_dir"`
+	// ComposePath is the Docker Compose file used to discover broker host ports.
+	// Empty disables Compose port discovery.
+	ComposePath string `yaml:"compose_path"`
+	// ComposeService is the service name in ComposePath that runs Mosquitto.
+	ComposeService string `yaml:"compose_service"`
 }
 
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and
@@ -250,8 +255,9 @@ func Default() Config {
 			},
 		},
 		Mosquitto: MosquittoConfig{
-			Host: "mosquitto",
-			Port: 1883,
+			Host:           "mosquitto",
+			Port:           1883,
+			ComposeService: "mosquitto",
 			TLS: MosquittoTLSConfig{
 				Enabled:            false,
 				InsecureSkipVerify: false,
@@ -376,6 +382,10 @@ mosquitto:
   #   passwd_path: /etc/mosquitto/passwd
   #   pid_path: /var/run/mosquitto/mosquitto.pid
   #   container_name: ""   # only required for docker mode
+  # compose_path optionally enables host-port discovery from a Compose file.
+  # compose_service defaults to "mosquitto" when compose_path is configured.
+  # compose_path: /path/to/docker-compose.yml
+  # compose_service: mosquitto
 
 # Broker metric/event persistence. Raw message payloads are not stored.
 # Audit and security event retention defaults to 90 days.

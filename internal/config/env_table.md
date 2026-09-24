@@ -45,6 +45,8 @@ Regenerate with `go run ./scripts/gen-env-table`.
 | `MCM_MOSQUITTO_DEPLOY_WORKDIR` | `mosquitto.deploy.workdir` | Working directory for the deploy service when writing passwd/acl files. Defaults to the deploy service's CWD. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | `mosquitto.config_dir` | Directory containing the Mosquitto configuration. Surfaced for operators that pin the broker config dir separately from deploy paths. |
 | `MCM_MOSQUITTO_DATA_DIR` | `mosquitto.data_dir` | Directory for Mosquitto persistent data (e.g. retained messages, persistence file). |
+| `MCM_MOSQUITTO_COMPOSE_PATH` | `mosquitto.compose_path` | Docker Compose file used to discover Mosquitto host ports. Empty disables discovery. |
+| `MCM_MOSQUITTO_COMPOSE_SERVICE` | `mosquitto.compose_service` | Compose service name for Mosquitto host-port discovery. Default "mosquitto". |
 | `MCM_MOSQUITTO_SPARKPLUG_PAYLOAD_DECODE` | `mosquitto.sparkplug_payload_decode` | Decode Sparkplug B payloads into typed metrics on the broker events stream. Default false. |
 | `MCM_MOSQUITTO_SPARKPLUG_MAX_METRICS` | `mosquitto.sparkplug_max_metrics` | Cap on the number of metrics kept per Sparkplug payload (defends against unbounded payloads). >=1. Default 50. |
 | `MCM_METRICS_BROKER_RETENTION` | `metrics.broker_retention` | How long broker events are persisted. Go duration. Default 168h (7d). |
