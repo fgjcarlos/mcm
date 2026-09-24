@@ -12,10 +12,10 @@ import (
 // keeps the shape deliberately flat so the HTTP layer can render it as
 // a JSON array without a separate "details" object.
 type ValidationIssue struct {
-	Kind     string `json:"kind"`               // "unknown" | "type" | "scope" | "multiplicity" | "dependency" | "since_version"
-	Line     int    `json:"line"`
+	Kind      string `json:"kind"` // "unknown" | "type" | "scope" | "multiplicity" | "dependency" | "since_version"
+	Line      int    `json:"line"`
 	Directive string `json:"directive"`
-	Message  string `json:"message"`
+	Message   string `json:"message"`
 }
 
 // Validate runs the catalog-driven checks against a parsed File. Issues

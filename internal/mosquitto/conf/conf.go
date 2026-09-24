@@ -49,8 +49,8 @@ type Item struct {
 	Key    string
 	Values []string
 	Text   string
-	Line   int    // 1-indexed source line; -1 when synthesised
-	Indent int    // column at which the token begins (0 = no leading space)
+	Line   int // 1-indexed source line; -1 when synthesised
+	Indent int // column at which the token begins (0 = no leading space)
 }
 
 // File is an ordered list of Items plus the source path. The order is the

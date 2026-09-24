@@ -43,7 +43,7 @@ type Deployment struct {
 	ID             int64     `json:"id"`
 	Actor          string    `json:"actor"`
 	Status         string    `json:"status"`
-	Kind           string    `json:"kind"`                 // "passwd_acl" (legacy) or "broker_config" (issue #298)
+	Kind           string    `json:"kind"`                  // "passwd_acl" (legacy) or "broker_config" (issue #298)
 	ReloadKind     string    `json:"reload_kind,omitempty"` // empty for passwd/ACL, "reload"/"restart"/"both" for broker_config
 	ACLSnapshot    string    `json:"-"`
 	PasswdSnapshot string    `json:"-"`

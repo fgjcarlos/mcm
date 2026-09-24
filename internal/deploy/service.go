@@ -191,22 +191,22 @@ type AuditFunc func(ctx context.Context, actor, action, resourceType, resourceID
 
 // PreviewResult contains the diff output and rendered content for a deploy preview.
 type PreviewResult struct {
-	RevisionID         string               `json:"revision_id"`
-	Kind               string               `json:"kind"` // "passwd_acl" or "broker_config"
-	BaseACLHash        string               `json:"base_acl_hash"`
-	BasePasswdHash     string               `json:"base_passwd_hash"`
-	RenderedACLHash    string               `json:"rendered_acl_hash"`
-	RenderedPasswdHash string               `json:"rendered_passwd_hash"`
+	RevisionID         string `json:"revision_id"`
+	Kind               string `json:"kind"` // "passwd_acl" or "broker_config"
+	BaseACLHash        string `json:"base_acl_hash"`
+	BasePasswdHash     string `json:"base_passwd_hash"`
+	RenderedACLHash    string `json:"rendered_acl_hash"`
+	RenderedPasswdHash string `json:"rendered_passwd_hash"`
 
 	// Broker-config preview fields (issue #298). Empty for passwd/ACL previews.
-	BaseConfHash     string             `json:"base_conf_hash,omitempty"`
-	RenderedConfHash string             `json:"rendered_conf_hash,omitempty"`
-	ConfDiff         string             `json:"conf_diff,omitempty"`
-	ConfBody         string             `json:"conf_body,omitempty"`
-	ReloadKind       string             `json:"reload_kind,omitempty"`
-	RequiresRestart  bool               `json:"requires_restart,omitempty"`
+	BaseConfHash     string                 `json:"base_conf_hash,omitempty"`
+	RenderedConfHash string                 `json:"rendered_conf_hash,omitempty"`
+	ConfDiff         string                 `json:"conf_diff,omitempty"`
+	ConfBody         string                 `json:"conf_body,omitempty"`
+	ReloadKind       string                 `json:"reload_kind,omitempty"`
+	RequiresRestart  bool                   `json:"requires_restart,omitempty"`
 	ValidationIssues []conf.ValidationIssue `json:"validation_issues,omitempty"`
-	IncludeSnapshot  conf.IncludeSnapshot `json:"include_snapshot,omitempty"`
+	IncludeSnapshot  conf.IncludeSnapshot   `json:"include_snapshot,omitempty"`
 
 	OrphanRules []storage.ACLRuleRow `json:"orphan_rules"`
 	ACLDiff     string               `json:"acl_diff"`
@@ -1249,17 +1249,17 @@ func (s *Service) previewBrokerConfigLocked(ctx context.Context, actor string) (
 	}
 
 	return PreviewResult{
-		RevisionID:        revisionID,
-		Kind:              "broker_config",
-		BaseConfHash:      baseHash,
-		RenderedConfHash:  renderedHash,
-		ConfDiff:          diffStr,
-		ConfBody:          rendered,
-		ReloadKind:        reloadKind,
-		RequiresRestart:   requiresRestart,
-		ValidationIssues:  issues,
-		IncludeSnapshot:   snapshot,
-		HasChanges:        baseHash != renderedHash,
+		RevisionID:       revisionID,
+		Kind:             "broker_config",
+		BaseConfHash:     baseHash,
+		RenderedConfHash: renderedHash,
+		ConfDiff:         diffStr,
+		ConfBody:         rendered,
+		ReloadKind:       reloadKind,
+		RequiresRestart:  requiresRestart,
+		ValidationIssues: issues,
+		IncludeSnapshot:  snapshot,
+		HasChanges:       baseHash != renderedHash,
 	}, nil
 }
 

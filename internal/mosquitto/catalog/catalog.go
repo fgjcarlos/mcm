@@ -28,8 +28,8 @@ const (
 type Multiplicity string
 
 const (
-	Once  Multiplicity = "once"
-	Many  Multiplicity = "many"
+	Once         Multiplicity = "once"
+	Many         Multiplicity = "many"
 	OncePerBlock Multiplicity = "once_per_block"
 )
 
@@ -40,9 +40,9 @@ const (
 type ReloadKind string
 
 const (
-	ReloadOK   ReloadKind = "reload"   // picked up by SIGHUP
-	Restart    ReloadKind = "restart"  // only by full restart
-	ReloadOrRestart ReloadKind = "both" // reload normally, restart on reload_required directive
+	ReloadOK        ReloadKind = "reload"  // picked up by SIGHUP
+	Restart         ReloadKind = "restart" // only by full restart
+	ReloadOrRestart ReloadKind = "both"    // reload normally, restart on reload_required directive
 )
 
 // Scope is the namespace the directive lives in. Most are global; a
@@ -50,33 +50,33 @@ const (
 type Scope string
 
 const (
-	ScopeGlobal    Scope = "global"
-	ScopeListener  Scope = "listener"
-	ScopeBridge    Scope = "bridge"
+	ScopeGlobal   Scope = "global"
+	ScopeListener Scope = "listener"
+	ScopeBridge   Scope = "bridge"
 )
 
 // DirectiveSpec is the catalog entry for one directive in one Mosquitto
 // version. SinceVersion is the earliest broker version that recognises
 // the directive; later versions keep the entry and may add new ones.
 type DirectiveSpec struct {
-	Name           string       `yaml:"name" json:"name"`
-	Type           DirectiveType `yaml:"type" json:"type"`
-	Scope          Scope        `yaml:"scope" json:"scope"`
-	Multiplicity   Multiplicity `yaml:"multiplicity" json:"multiplicity"`
-	ReloadKind     ReloadKind   `yaml:"reload_kind" json:"reload_kind"`
-	SinceVersion   string       `yaml:"since_version" json:"since_version"`
-	AllowedValues  []string     `yaml:"allowed_values,omitempty" json:"allowed_values,omitempty"`
-	Deps           []string     `yaml:"deps,omitempty" json:"deps,omitempty"`
-	Description    string       `yaml:"description,omitempty" json:"description,omitempty"`
+	Name          string        `yaml:"name" json:"name"`
+	Type          DirectiveType `yaml:"type" json:"type"`
+	Scope         Scope         `yaml:"scope" json:"scope"`
+	Multiplicity  Multiplicity  `yaml:"multiplicity" json:"multiplicity"`
+	ReloadKind    ReloadKind    `yaml:"reload_kind" json:"reload_kind"`
+	SinceVersion  string        `yaml:"since_version" json:"since_version"`
+	AllowedValues []string      `yaml:"allowed_values,omitempty" json:"allowed_values,omitempty"`
+	Deps          []string      `yaml:"deps,omitempty" json:"deps,omitempty"`
+	Description   string        `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 // Catalog is the immutable set of directive specs known for one broker
 // version. Lookups are O(1) and case-insensitive (Mosquitto itself
 // lowercases directive names at parse time).
 type Catalog struct {
-	Version     string
-	specs       map[string]DirectiveSpec
-	knownNames  []string
+	Version    string
+	specs      map[string]DirectiveSpec
+	knownNames []string
 }
 
 // Lookup returns the spec for directive (lower-cased) and whether it is
@@ -143,8 +143,8 @@ func lower(s string) string {
 type ValidateSentinels struct {
 	AllowedScopes map[Scope]struct{}
 	AllowedTypes  map[DirectiveType]struct{}
-	AllowedRel   map[ReloadKind]struct{}
-	AllowedMul   map[Multiplicity]struct{}
+	AllowedRel    map[ReloadKind]struct{}
+	AllowedMul    map[Multiplicity]struct{}
 }
 
 // Validate runs the cross-field sanity checks every catalog entry should
