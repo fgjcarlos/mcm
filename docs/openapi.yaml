@@ -798,6 +798,103 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/listeners:
+    get:
+      tags: [Listeners]
+      summary: List currently active listener specs
+      description: |
+        Requires viewer or higher. Returns the persisted listener specs
+        ordered by bind then port.
+      responses:
+        "200":
+          description: Listener page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  listeners:
+                    type: array
+                    items: { $ref: "#/components/schemas/ListenerSpec" }
+                required: [listeners]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/listeners/preview:
+    post:
+      tags: [Listeners]
+      summary: Preview the next listener apply
+      description: |
+        Requires operator or higher. Validates the desired listener specs,
+        returns a rendered `mosquitto.conf` diff, and reserves an immutable
+        revision id. To bypass the docker-compose port coexistence check,
+        send `confirm: true`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                specs:
+                  type: array
+                  items: { $ref: "#/components/schemas/ListenerSpec" }
+                confirm: { type: boolean, default: false }
+              required: [specs]
+      responses:
+        "200":
+          description: Preview result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListenerPreviewResult" }
+        "400":
+          description: Validation failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: 'Compose port coexistence failed; pass confirm=true to override.'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/listeners/apply:
+    post:
+      tags: [Listeners]
+      summary: Apply the previewed listener change
+      description: |
+        Requires admin. Triggers the broker restart implied by the previewed
+        listener set; persists the new specs on success. Returns 409 on
+        immutable-revision errors, on `confirm` rejection when a restart is
+        required, or while another apply is in flight.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ListenerApplyRequest" }
+      responses:
+        "200":
+          description: Listener revision applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListenerApplyResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Preview revision not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Preview revision expired, consumed, confirmation required, or another apply is in flight.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Broker restart failed; state preserved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/settings:
     get:
       tags: [Settings]
