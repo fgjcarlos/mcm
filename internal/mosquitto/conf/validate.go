@@ -90,12 +90,13 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 
 			// Type check (best-effort; we do not understand quoted
 			// args that contain commas etc.).
-			if len(it.Values) == 0 && spec.Type != catalog.TypeBoolean {
+			switch {
+			case len(it.Values) == 0 && spec.Type != catalog.TypeBoolean:
 				issues = append(issues, ValidationIssue{
 					Kind: "type", Line: it.Line, Directive: it.Key,
 					Message: fmt.Sprintf("%q expects at least one value", it.Key),
 				})
-			} else if spec.Type == catalog.TypeInteger {
+			case spec.Type == catalog.TypeInteger:
 				// Mosquitto's listener directive takes a port plus an
 				// optional bind address; only the first value must be
 				// integer. Other integer-scope directives always
@@ -113,7 +114,7 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 						break
 					}
 				}
-			} else if spec.Type == catalog.TypeEnum && len(spec.AllowedValues) > 0 {
+			case spec.Type == catalog.TypeEnum && len(spec.AllowedValues) > 0:
 				allowed := false
 				for _, av := range spec.AllowedValues {
 					if len(it.Values) > 0 && it.Values[0] == av {
@@ -134,14 +135,11 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	// Multiplicity post-pass.
 	for _, spec := range cat.Specs() {
 		count := counts[strings.ToLower(spec.Name)]
-		switch spec.Multiplicity {
-		case catalog.Once:
-			if count > 1 {
-				issues = append(issues, ValidationIssue{
-					Kind: "multiplicity", Directive: spec.Name,
-					Message: fmt.Sprintf("%q must appear at most once but appeared %d times", spec.Name, count),
-				})
-			}
+		if spec.Multiplicity == catalog.Once && count > 1 {
+			issues = append(issues, ValidationIssue{
+				Kind: "multiplicity", Directive: spec.Name,
+				Message: fmt.Sprintf("%q must appear at most once but appeared %d times", spec.Name, count),
+			})
 		}
 	}
 

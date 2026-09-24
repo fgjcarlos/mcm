@@ -89,18 +89,6 @@ type Block struct {
 	Close  Item
 }
 
-// directives returns a flat slice of every ItemDirective in source order.
-// This is what the catalog-validator iterates over.
-func (f *File) directives() []Item {
-	out := make([]Item, 0, len(f.Items))
-	for _, it := range f.Items {
-		if it.Kind == ItemDirective {
-			out = append(out, it)
-		}
-	}
-	return out
-}
-
 // Parse reads r and produces a *File. The parser is lenient about
 // blank lines and trailing whitespace. It DOES NOT perform any catalog
 // validation — callers that want validation should run Validate(file, cat)
