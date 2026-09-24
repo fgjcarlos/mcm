@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ import (
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/deploy"
+	"github.com/fgjcarlos/mcm/internal/listener"
 	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -30,25 +33,27 @@ const currentUserContextKey contextKey = "current_user"
 
 // App wires the HTTP API to storage and auth dependencies.
 type App struct {
-	store              *storage.Store
-	aclStore           acl.Store
-	tokens             *auth.TokenManager
-	brokerEvents       *BrokerEventHub
-	schemaCache        *jsonSchemaCache
-	alerts             *alerting.WebhookAlerter
-	metrics            *metrics.Registry
-	mosquitto          config.MosquittoConfig
-	cfg                config.Config
-	deploySvc          deployServicer
-	loginLockoutWindow time.Duration
-	loginMaxAttempts   int
-	auditRetention     time.Duration
-	securityRetention  time.Duration
-	trustedProxies     []*net.IPNet
-	frontendFS         fs.FS
-	logger             *slog.Logger
-	now                func() time.Time
-	lookupMQTTUser     func(context.Context, int64) (storage.MQTTUser, error)
+	store                 *storage.Store
+	aclStore              acl.Store
+	tokens                *auth.TokenManager
+	brokerEvents          *BrokerEventHub
+	schemaCache           *jsonSchemaCache
+	alerts                *alerting.WebhookAlerter
+	metrics               *metrics.Registry
+	mosquitto             config.MosquittoConfig
+	cfg                   config.Config
+	deploySvc             deployServicer
+	listenerSvc           *listener.ListenerService
+	listenerRestartRunner listener.ListenerRestartRunner
+	loginLockoutWindow    time.Duration
+	loginMaxAttempts      int
+	auditRetention        time.Duration
+	securityRetention     time.Duration
+	trustedProxies        []*net.IPNet
+	frontendFS            fs.FS
+	logger                *slog.Logger
+	now                   func() time.Time
+	lookupMQTTUser        func(context.Context, int64) (storage.MQTTUser, error)
 
 	// userPasswords holds cleartext MQTT passwords in memory keyed by
 	// username. Populated by handleCreateMQTTUser when a new user is
@@ -97,26 +102,39 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 	brokerEvents.SetPersistence(store, metricsRetention)
 	brokerEvents.SetMetrics(mcmMetrics)
 
-	return &App{
-		store:              store,
-		aclStore:           store.ACLStore(),
-		tokens:             auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
-		brokerEvents:       brokerEvents,
-		schemaCache:        &jsonSchemaCache{},
-		alerts:             alerting.NewWebhookAlerter(cfg.Alerting, logger),
-		metrics:            mcmMetrics,
-		mosquitto:          cfg.Mosquitto,
-		cfg:                cfg,
-		loginLockoutWindow: loginLockoutWindow,
-		loginMaxAttempts:   cfg.Auth.LoginLockout.MaxAttempts,
-		auditRetention:     auditRetention,
-		securityRetention:  securityRetention,
-		trustedProxies:     trustedProxies,
-		logger:             logger,
-		now:                time.Now,
-		lookupMQTTUser:     store.GetMQTTUser,
-		userPasswords:      make(map[string]string),
-	}, nil
+	composeReader := deploy.NewComposePortsReader(os.ReadFile, time.Now)
+	composeReader.Configure(cfg.Mosquitto.ComposePath, cfg.Mosquitto.ComposeService)
+	restartRunner := listener.ListenerRestartRunner(&listener.NoopRestartRunner{})
+	if cfg.Mosquitto.ComposePath != "" && cfg.Mosquitto.Deploy.Mode != "" {
+		restartRunner = listener.DockerComposeRestartRunner{
+			ComposePath: cfg.Mosquitto.ComposePath,
+			ServiceName: cfg.Mosquitto.ComposeService,
+		}
+	}
+
+	app := &App{
+		store:                 store,
+		aclStore:              store.ACLStore(),
+		tokens:                auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
+		brokerEvents:          brokerEvents,
+		schemaCache:           &jsonSchemaCache{},
+		alerts:                alerting.NewWebhookAlerter(cfg.Alerting, logger),
+		metrics:               mcmMetrics,
+		mosquitto:             cfg.Mosquitto,
+		cfg:                   cfg,
+		listenerRestartRunner: restartRunner,
+		loginLockoutWindow:    loginLockoutWindow,
+		loginMaxAttempts:      cfg.Auth.LoginLockout.MaxAttempts,
+		auditRetention:        auditRetention,
+		securityRetention:     securityRetention,
+		trustedProxies:        trustedProxies,
+		logger:                logger,
+		now:                   time.Now,
+		lookupMQTTUser:        store.GetMQTTUser,
+		userPasswords:         make(map[string]string),
+	}
+	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit)
+	return app, nil
 }
 
 // BootstrapAdmin creates the configured bootstrap admin if no admin users exist yet.
@@ -302,6 +320,12 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/deployments", a.requireRole(auth.RoleAuditor, http.HandlerFunc(dAPI.handleList)))
 		mux.Handle("POST /api/v1/deployments/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(dAPI.handlePreview)))
 		mux.Handle("POST /api/v1/deployments/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dAPI.handleApply)))
+	}
+	if a.listenerSvc != nil {
+		lAPI := &listenerAPI{svc: a.listenerSvc}
+		mux.Handle("GET /api/v1/listeners", a.requireRole(auth.RoleViewer, http.HandlerFunc(lAPI.handleList)))
+		mux.Handle("POST /api/v1/listeners/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(lAPI.handlePreview)))
+		mux.Handle("POST /api/v1/listeners/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(lAPI.handleApply)))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {
@@ -1079,6 +1103,22 @@ func (a *App) optionalAuth(next http.Handler) http.Handler {
 			}
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// recordListenerAudit adapts listener lifecycle events to the application's audit store.
+func (a *App) recordListenerAudit(ctx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte) {
+	if metadata == nil {
+		metadata = []byte(`{}`)
+	}
+	_, _ = a.store.RecordAuditEvent(ctx, storage.CreateAuditEventParams{
+		OccurredAt:   a.now().UTC(),
+		Actor:        actor,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Result:       result,
+		Metadata:     metadata,
 	})
 }
 

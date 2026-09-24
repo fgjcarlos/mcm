@@ -259,6 +259,23 @@ CREATE INDEX idx_preview_revisions_created_at ON preview_revisions(created_at);
 CREATE INDEX idx_preview_revisions_applied_at ON preview_revisions(applied_at);
 `,
 	},
+	{
+		version: 16,
+		name:    "create_listener_specs",
+		sql: `
+CREATE TABLE listener_specs (
+	id          TEXT PRIMARY KEY,
+	port        INTEGER NOT NULL,
+	bind        TEXT NOT NULL DEFAULT '0.0.0.0',
+	protocols   TEXT NOT NULL DEFAULT '[]',
+	options     TEXT NOT NULL DEFAULT '{}',
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+CREATE INDEX idx_listener_specs_port_bind ON listener_specs(port, bind);
+CREATE INDEX idx_listener_specs_updated_at ON listener_specs(updated_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

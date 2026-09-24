@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
+import ListenersPanel from './features/broker-config/ListenersPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
@@ -135,6 +136,14 @@ const navItems: NavItem[] = [
     eyebrow: 'Authorization',
     title: 'ACL policy workspace',
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
+  },
+  {
+    id: 'listeners',
+    label: 'Listeners',
+    path: '/listeners',
+    eyebrow: 'MQTT access',
+    title: 'MQTT listeners',
+    description: 'Manage the broker listener set (TCP and WebSockets).',
   },
   {
     id: 'deploy',
@@ -331,6 +340,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'users' ? (
         <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
+      ) : activeId === 'listeners' ? (
+        <ListenersPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={beginDeployMutation} onApplySuccess={clearDeployPending} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
       ) : activeId === 'account' ? (

@@ -31,6 +31,10 @@ Keep desired configuration, reviewed revision, written files and verified active
 
 A deployment adapter reports read, write, reload, restart and log capabilities. MQTT connectivity alone is not an administration transport. A remote broker needs an explicitly configured management path; otherwise the UI must identify observation-only operation. Docker port publication and mounted-file permissions are separate from Mosquitto listener settings.
 
+## Listener management (issue #299)
+
+MCM provides CRUD for MQTT and WebSocket listener specifications through reviewed preview/apply revisions; listener changes require a broker restart, and Compose port mappings remain an independent coexistence constraint that must include every managed listener port.
+
 ## Operator journey
 
 1. Identify the broker version, management capabilities and configuration location.
