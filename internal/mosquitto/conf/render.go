@@ -36,7 +36,9 @@ func (f *File) Render() ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			buf.Write(line)
+			if _, err := buf.Write(line); err != nil {
+				return nil, fmt.Errorf("render directive line %d: %w", it.Line, err)
+			}
 
 		case ItemBlockOpen:
 			// Header line exactly as parsed.
