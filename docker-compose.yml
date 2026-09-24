@@ -158,6 +158,11 @@ services:
       MCM_MOSQUITTO_DEPLOY_PASSWD_PATH: /var/lib/mosquitto-config/passwd
       MCM_MOSQUITTO_DEPLOY_CONTAINER_NAME: mcm-mosquitto
       MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY: sighup
+      # Broker-config e2e (issue #298) sets this from its shell to
+      # /var/lib/mosquitto-config; the variable is empty in normal
+      # dev usage, so the empty default keeps existing dev flows
+      # identical.
+      MCM_MOSQUITTO_CONFIG_DIR: ${MCM_MOSQUITTO_CONFIG_DIR:-}
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/livez || exit 1"]

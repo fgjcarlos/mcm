@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
+import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
@@ -143,6 +144,15 @@ const navItems: NavItem[] = [
     eyebrow: 'Operations',
     title: 'Mosquitto configuration deploy',
     description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
+  },
+  {
+    id: 'broker-config',
+    label: 'Configuration',
+    path: '/broker-config',
+    eyebrow: 'Operations',
+    title: 'Broker configuration manager',
+    description: 'Import, validate, and version mosquitto.conf with explicit adoption before any apply.',
+    minRole: 'auditor',
   },
   {
     id: 'security',
@@ -333,6 +343,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
+      ) : activeId === 'broker-config' ? (
+        <BrokerConfigPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : activeId === 'admin-users' ? (

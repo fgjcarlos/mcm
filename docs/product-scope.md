@@ -13,7 +13,7 @@ This is the agreed target, not a description of completed functionality. Impleme
 | Users | Create, remove, disable and rotate generated passwords | Coherent identity lifecycle with ACL references and pending/active state |
 | ACL | User/topic rules with read, write and readwrite | Native patterns, deny and listener scope supported by each version |
 | Apply | Password/ACL file diff, write, SIGHUP and limited recovery | Immutable revision, validation, reload/restart selection, verification and recovery |
-| Configuration | Static templates; MCM settings exposed read-only | Import and graphical editing of mosquitto.conf and includes |
+| Configuration | Versioned import, catalog-validated preview, explicit adoption and apply of mosquitto.conf (issue #298); directive-level editing not yet exposed | Import and graphical editing of mosquitto.conf and includes |
 | Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
 | TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
 | General settings | Static broker configuration | Persistence, queues, limits, sessions and logging |

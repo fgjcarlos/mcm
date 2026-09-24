@@ -1,0 +1,11 @@
+# Mosquitto 2.1 directive catalog — issue #298.
+#
+# Mosquitto 2.1 inherits the full 2.0 directive set without renaming or
+# removing any of the entries MCM relies on. We keep the file present so
+# LoadVersion("2.1") returns a usable (empty of new entries) catalog and
+# operators can preview applying a 2.0-managed file against a 2.1 broker.
+#
+# Add new entries here when MCM starts managing directives introduced in
+# 2.1 (e.g. the loaders / plugin directives scheduled for issue #304).
+---
+# (no 2.1-specific entries yet — 2.0 catalog covers the supported set)

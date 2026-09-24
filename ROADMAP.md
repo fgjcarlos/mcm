@@ -42,6 +42,8 @@ P0 fixes precede expansion of configuration writes. P1 completes the core admini
 | P2 | Broker diagnostics with explicit data sources | [#306](https://github.com/fgjcarlos/mcm/issues/306) |
 | P2 | Remove unsupported options and isolate optional extensions | [#307](https://github.com/fgjcarlos/mcm/issues/307) |
 
+Landed: #298 (versioned configuration model and lossless import) — parser, catalog, adoption, preview/apply lifecycle and UI panel.
+
 ### Dependencies
 
 1. Resolve #291–#295 before expanding broker configuration writes.

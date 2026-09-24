@@ -47,6 +47,11 @@ var ErrReloadNotSignaled = errors.New("reload not signaled: FileApplier requires
 // in an indeterminate state when any step fails. Apply now performs the
 // write+rename for both files before signalling reload, and restores both
 // files from the provided snapshot when any step fails.
+//
+// Issue #298 adds a single-file Apply (AtomicWriteConf) so the broker-config
+// flow can reuse the same atomic-rename semantics without duplicating
+// write/commit logic. ReloadBrokerOnly signals a reload without writing
+// any files; the broker-config path uses it after its own write.
 type Applier interface {
 	// Apply atomically writes ACL and passwd files, signals the broker to
 	// reload, and restores from snapshot on partial failure.
@@ -63,6 +68,18 @@ type Applier interface {
 	// error wraps context.Canceled (or context.DeadlineExceeded) and
 	// neither file is touched.
 	Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error
+	// ReloadBrokerOnly signals the broker to reload its configuration
+	// without writing any files. Used by the broker-config path after it
+	// has already written mosquitto.conf via AtomicWriteConf.
+	ReloadBrokerOnly() error
+}
+
+// AtomicWriteConf writes a single Mosquitto config file using the same
+// atomic-rename semantics as the ACL/passwd path. Exposed at package
+// level so callers outside the Applier (the broker-config deploy flow)
+// can reuse it without owning a full Applier. Issue #298.
+func AtomicWriteConf(path, content string, perm os.FileMode) error {
+	return atomicWrite(path, content, perm)
 }
 
 // FileApplier writes files directly to the filesystem and signals
@@ -286,6 +303,17 @@ func (f FileApplier) signalReload() error {
 	return nil
 }
 
+// ReloadBrokerOnly signals the broker to reload without writing any
+// files. Used by the broker-config deploy flow after its own atomic
+// write. It mirrors reloadBroker's behaviour (ReloadCommand preferred,
+// PIDPath+SIGHUP fallback, ErrReloadNotSignaled when neither is set).
+func (f FileApplier) ReloadBrokerOnly() error {
+	if f.PIDPath == "" && len(f.ReloadCommand) == 0 {
+		return ErrReloadNotSignaled
+	}
+	return f.reloadBroker()
+}
+
 // reloadBroker picks the right reload mechanism for the applier
 // configuration. ReloadCommand takes precedence over PIDPath+SIGHUP —
 // production deploys use ReloadCommand so MCM does not need the
@@ -370,4 +398,20 @@ func (d DockerApplier) rollbackAfterPartialApply(stage string, cause error, aclS
 		return fmt.Errorf("%s: %w", stage, errors.Join(ErrRollbackFailed, cause, err))
 	}
 	return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause))
+}
+
+// ReloadBrokerOnly signals the broker to reload its configuration via
+// docker exec kill -HUP 1 without writing any files. Issue #298.
+func (d DockerApplier) ReloadBrokerOnly() error {
+	if d.ContainerName == "" {
+		return fmt.Errorf("docker applier: container_name must not be empty")
+	}
+	runner := d.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if _, err := runner.Run(context.Background(), "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
+		return fmt.Errorf("docker exec reload: %w", err)
+	}
+	return nil
 }
