@@ -175,8 +175,14 @@ fi
 echo "adopt OK id=${adopt_id}"
 
 echo "--- invariant 5+6: POST /broker/config/apply, verify on-disk hash ---"
+# The CI compose uses MCM_MOSQUITTO_DEPLOY_RELOAD_STRATEGY=sighup: SIGHUP
+# only reloads non-listener directives, so a normalised diff that includes
+# persistence_location / user / listener triggers ErrRequiresRestart.
+# `force=true` lets the apply proceed; on-disk hash is the real contract
+# (the file IS rewritten regardless of whether Mosquitto picks up
+# restart-required directives from SIGHUP alone).
 apply_resp="$(auth_curl POST /api/v1/broker/config/apply \
-    "{\"revision_id\":\"${revision_id}\",\"force\":false,\"adopt\":true}")"
+    "{\"revision_id\":\"${revision_id}\",\"force\":true,\"adopt\":true}")"
 apply_status="$(jq -r '.status // empty' <<<"$apply_resp")"
 if [ "$apply_status" != "active_verified" ]; then
     echo "apply did not reach active_verified: $apply_resp" >&2
@@ -204,8 +210,9 @@ fi
 echo "drift detected: new base hash ${drift_base:0:12}"
 
 echo "--- invariant 8: apply the drift revision (adopt=true) ---"
+# Same restart-required rationale as invariant 5; see the comment there.
 drift_apply="$(auth_curl POST /api/v1/broker/config/apply \
-    "{\"revision_id\":\"${drift_revision}\",\"force\":false,\"adopt\":true}")"
+    "{\"revision_id\":\"${drift_revision}\",\"force\":true,\"adopt\":true}")"
 drift_status="$(jq -r '.status // empty' <<<"$drift_apply")"
 if [ "$drift_status" != "active_verified" ]; then
     echo "drift apply did not reach active_verified: $drift_apply" >&2
