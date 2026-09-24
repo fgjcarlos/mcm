@@ -163,7 +163,11 @@ echo "import OK revision=${revision_id} rendered_hash=${rendered_hash:0:12}"
 
 echo "--- invariant 4: POST /broker/config/adopt ---"
 adopt_resp="$(auth_curl POST /api/v1/broker/config/adopt '{}')"
-adopt_id="$(jq -r '.id // empty' <<<"$adopt_resp")"
+# The BrokerConfigAdoption struct has Go-style field names (ID /
+# SourcePath / AdoptedBy / AdoptedAt) without explicit json tags,
+# so the wire format is capital-case. The `// .id` fallback keeps the
+# check working if a future tag aligns the wire to snake_case.
+adopt_id="$(jq -r '.ID // .id // empty' <<<"$adopt_resp")"
 if [ -z "$adopt_id" ]; then
     echo "adopt did not return an id: $adopt_resp" >&2
     exit 1
