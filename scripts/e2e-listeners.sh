@@ -109,7 +109,7 @@ LISTENERS="$(curl -fsS -H "Authorization: Bearer ${MCM_AUTH_TOKEN}" "${MCM_BASE_
 pass 2 'list listeners'
 
 NEW_LISTENER="$(jq -cn --argjson port "$MCM_E2E_LISTENER_PORT" '{port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}')"
-DESIRED="$(printf '%s\n%s\n' "$LISTENERS" "$NEW_LISTENER" | jq -cs 'add')"
+DESIRED="$(jq -c --argjson new "$NEW_LISTENER" '. + [$new]' <<<"$LISTENERS")"
 preview "$DESIRED"
 pass 3 'preview listener addition'
 apply
@@ -149,7 +149,7 @@ else
 fi
 
 UNMAPPED_LISTENER="$(jq -cn '{port: 1885, bind: "0.0.0.0", protocols: ["mqtt"]}')"
-UNMAPPED_DESIRED="$(printf '%s\n%s\n' "$LISTENERS" "$UNMAPPED_LISTENER" | jq -cs 'add')"
+UNMAPPED_DESIRED="$(jq -c --argjson new "$UNMAPPED_LISTENER" '. + [$new]' <<<"$LISTENERS")"
 response_file
 UNMAPPED_BODY="$RESPONSE_FILE"
 UNMAPPED_CODE="$(post_json '/api/v1/listeners/preview' "$(jq -cn --argjson specs "$UNMAPPED_DESIRED" '{specs: $specs, confirm: false}')" "$UNMAPPED_BODY")"
