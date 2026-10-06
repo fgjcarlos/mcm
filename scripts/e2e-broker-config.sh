@@ -84,7 +84,9 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 echo "--- e2e-broker-config: compose up (ConfigDir=${MCM_MOSQUITTO_CONFIG_DIR}) ---"
-$COMPOSE up -d --build
+# CI loads mcm:dev built with the host Docker socket GID; rebuilding here
+# would use Compose's default GID and break socket access during apply.
+$COMPOSE up -d --no-build
 
 echo "--- e2e-broker-config: waiting for /livez (up to ${WAIT_SECONDS}s) ---"
 deadline=$(( $(date +%s) + WAIT_SECONDS ))
