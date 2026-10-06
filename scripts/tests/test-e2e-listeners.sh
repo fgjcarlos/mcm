@@ -42,6 +42,23 @@ assert_assembly() {
 assert_assembly DESIRED NEW_LISTENER
 assert_assembly UNMAPPED_DESIRED UNMAPPED_LISTENER
 
+# Exercise the production listener-data hooks through Vitest without the live API or Compose.
+VITEST_OUTPUT="$(cd "$SCRIPT_DIR/../frontend" && npx vitest run --reporter=verbose \
+    "src/features/broker-config/__fixtures__/listenerValidation.fixture.test.ts" \
+    "src/features/broker-config/listenerValidation.test.ts" \
+    "src/features/broker-config/ListenersPanel.test.tsx" 2>&1)" \
+    || fail 'listener validation Vitest regression tests failed'
+for expected in \
+    'accepts a well-formed listener' \
+    'reports duplicate listener tuples' \
+    'maps compose host-port conflicts to listener IDs' \
+    'listenerValidation.fixture.test.ts' \
+    'listenerValidation.test.ts' \
+    'ListenersPanel.test.tsx'; do
+    grep -Fq "$expected" <<<"$VITEST_OUTPUT" || fail "Vitest output omitted expected result: $expected"
+done
+printf 'PASS: production listener validation and panel tests pass through Vitest\n'
+
 # Load the production probe functions without running the live API flow.
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
