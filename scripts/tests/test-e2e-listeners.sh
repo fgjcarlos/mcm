@@ -42,6 +42,18 @@ assert_assembly() {
 assert_assembly DESIRED NEW_LISTENER
 assert_assembly UNMAPPED_DESIRED UNMAPPED_LISTENER
 
+# The production E2E must configure WS, exercise both transports, and clean up
+# both listeners without exposing credentials in its output.
+grep -Fq 'protocols: ["ws"]' "$PRODUCTION_SCRIPT" || fail 'WS listener tuple is missing'
+grep -Fq 'ws_set_options(path="/mqtt")' "$PRODUCTION_SCRIPT" || fail 'WS client does not use the /mqtt endpoint'
+grep -Fq 'mqtt.Client(transport="websockets")' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not use paho WebSockets transport'
+grep -Fq 'actual[0] != expected_payload' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not verify payload equality'
+grep -Fq 'listener_accepts_ws' "$PRODUCTION_SCRIPT" || fail 'WS listener removal probe is missing'
+grep -Fq 'MCM_MOSQUITTO_USERNAME' "$PRODUCTION_SCRIPT" || fail 'TCP/WS publishes do not use broker credentials'
+grep -Fq 'apply ws listener removal' "$PRODUCTION_SCRIPT" || fail 'WS cleanup apply step is missing'
+grep -Fq 'apply listener removal' "$PRODUCTION_SCRIPT" || fail 'TCP cleanup apply step is missing'
+printf 'PASS: listener E2E configures, verifies, and removes TCP and WS listeners\n'
+
 # Exercise the production listener-data hooks through Vitest without the live API or Compose.
 VITEST_OUTPUT="$(cd "$SCRIPT_DIR/../frontend" && npx vitest run --reporter=verbose \
     "src/features/broker-config/__fixtures__/listenerValidation.fixture.test.ts" \
@@ -67,6 +79,7 @@ awk '/# BEGIN listener removal probe/{capture=1; next} /# END listener removal p
 # shellcheck source=/dev/null
 pass() { printf 'PASS: step %s: %s\n' "$1" "$2"; }
 skip() { printf 'SKIP: %s\n' "$1"; }
+export MCM_MOSQUITTO_USERNAME=admin MCM_MOSQUITTO_PASSWORD=test-password
 source "$TMP_DIR/probe-functions.sh"
 
 command -v nc >/dev/null 2>&1 || { printf 'FAIL: nc is required for the offline TCP fixture\n' >&2; exit 1; }
