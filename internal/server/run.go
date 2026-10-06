@@ -21,6 +21,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/mosquitto"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -227,7 +228,12 @@ func Run(ctx context.Context, cfg config.Config) error {
 	if err := checkDeployCapabilities(deployCfg, applier, logger); err != nil {
 		return fmt.Errorf("deploy capability check failed: %w", err)
 	}
-	app.deploySvc = deploy.NewService(
+	// Issue #298: wire the broker-config surface. When ConfigDir is empty
+	// or the catalog fails to load, WithBrokerConfig leaves the surface
+	// disabled and the handler returns 503. ConfPath is the broker's
+	// mosquitto.conf inside the configured ConfigDir; an empty ConfigDir
+	// means "no broker config to manage".
+	deployService := deploy.NewService(
 		applier,
 		store.ACLStore(),
 		store,
@@ -242,6 +248,20 @@ func Run(ctx context.Context, cfg config.Config) error {
 		deployCfg,
 		deployAuditFn,
 	)
+	app.deploySvc = deployService
+
+	var brokerCatalog *catalog.Catalog
+	if cat, catErr := catalog.LoadVersion("2.0"); catErr == nil {
+		brokerCatalog = cat
+	} else {
+		logger.Warn("broker-config catalog load failed; broker-config endpoints disabled", "err", catErr)
+	}
+	if cfg.Mosquitto.ConfigDir != "" && brokerCatalog != nil {
+		confPath := filepath.Join(cfg.Mosquitto.ConfigDir, "mosquitto.conf")
+		deployService.WithBrokerConfig(confPath, brokerCatalog)
+		app.brokerCfgSvc = deployService
+		app.brokerCfgCatalog = brokerCatalog
+	}
 
 	if dist, fErr := frontend.DistFS(); fErr == nil {
 		app.frontendFS = dist

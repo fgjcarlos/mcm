@@ -24,6 +24,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/listener"
 	"github.com/fgjcarlos/mcm/internal/metrics"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -43,6 +44,8 @@ type App struct {
 	mosquitto             config.MosquittoConfig
 	cfg                   config.Config
 	deploySvc             deployServicer
+	brokerCfgSvc          brokerConfigServicer
+	brokerCfgCatalog      *catalog.Catalog
 	listenerSvc           *listener.ListenerService
 	listenerRestartRunner listener.ListenerRestartRunner
 	loginLockoutWindow    time.Duration
@@ -326,6 +329,15 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/listeners", a.requireRole(auth.RoleViewer, http.HandlerFunc(lAPI.handleList)))
 		mux.Handle("POST /api/v1/listeners/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(lAPI.handlePreview)))
 		mux.Handle("POST /api/v1/listeners/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(lAPI.handleApply)))
+	}
+	{
+		bAPI := a.brokerConfigAPI()
+		mux.Handle("GET /api/v1/broker/config", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleGet)))
+		mux.Handle("POST /api/v1/broker/config/import", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handleImport)))
+		mux.Handle("POST /api/v1/broker/config/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handleImport)))
+		mux.Handle("POST /api/v1/broker/config/adopt", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleAdopt)))
+		mux.Handle("POST /api/v1/broker/config/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleApply)))
+		mux.Handle("GET /api/v1/broker/config/catalog", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleCatalog)))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {

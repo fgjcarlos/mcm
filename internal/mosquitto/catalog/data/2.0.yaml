@@ -1,0 +1,197 @@
+# Mosquitto 2.0 directive catalog — issue #298.
+#
+# Each entry pins the value shape, scope (global vs listener-block),
+# multiplicity, restart-vs-reload semantics, the earliest version Mosquitto
+# accepts the directive, optional enum allowed values, and any
+# co-dependencies the validator should enforce.
+#
+# The set covers the directives we ship today in
+# deploy/mosquitto/config/mosquitto.conf plus the TLS directives that
+# issue #300 (Broker TLS) will need. New directives are added per version;
+# operators can still import files containing unknown directives — they
+# are preserved byte-for-byte and surface as ValidationIssue with kind
+# "unknown" so the UI can warn without blocking the import.
+---
+name: listener
+type: integer
+scope: listener
+multiplicity: many
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Starts a new listener on the given port. Bound to the listener block
+  that follows; the optional second argument is the bind address.
+---
+name: port
+type: integer
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Default port for clients. Mosquitto 2.0 removes the default port when
+  no listener is configured, so this is informational on most setups.
+---
+name: max_connections
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: Maximum number of concurrent client connections.
+---
+name: protocol
+type: enum
+scope: listener
+multiplicity: many
+reload_kind: reload
+since_version: "1.0"
+allowed_values: [mqtt, websockets]
+description: |
+  Protocols accepted by this listener. Repeatable per listener block.
+---
+name: allow_anonymous
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: Allow anonymous client connections (no password file required).
+---
+name: password_file
+type: path
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  Path to the mosquitto password file. MCM writes this file on every
+  successful deploy apply.
+---
+name: acl_file
+type: path
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: Path to the Mosquitto ACL file. MCM writes this file on every apply.
+---
+name: persistence
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  Enable persistent store for retained messages, subscriptions and
+  in-flight QoS 1/2 messages.
+---
+name: persistence_location
+type: path
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Directory holding the persistence database. Path cannot be reloaded —
+  Mosquitto opens it at start-up.
+---
+name: log_dest
+type: enum
+scope: global
+multiplicity: many
+reload_kind: reload
+since_version: "1.0"
+allowed_values: [stdout, stderr, syslog, file]
+description: |
+  Destination of log messages. Repeatable. The 'file' value requires an
+  additional path argument (string_list below).
+---
+name: log_type
+type: enum
+scope: global
+multiplicity: many
+reload_kind: reload
+since_version: "1.0"
+allowed_values: [debug, error, warning, notice, information, subscribe, unsubscribe]
+description: Which categories of messages to log.
+---
+name: connection_messages
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: Log a message for every client connect / disconnect.
+---
+name: user
+type: string
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.0"
+description: |
+  User the broker drops to after binding privileged ports. Cannot be
+  reloaded — requires a full restart.
+---
+name: cafile
+type: path
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  Path to a file containing PEM-encoded CA certificates for the broker
+  identity and (optionally) client verification.
+---
+name: capath
+type: path
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  Directory containing PEM-encoded CA certificates (one per file with
+  hashed names, see OpenSSL c_re_hash).
+---
+name: certfile
+type: path
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Path to the broker PEM certificate. Loaded at start-up — changing it
+  requires a broker restart.
+---
+name: keyfile
+type: path
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Path to the broker PEM private key. Loaded at start-up — changing it
+  requires a broker restart.
+---
+name: require_certificate
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  When true, clients MUST present a valid X.509 certificate (used
+  together with cafile / capath).
+---
+name: tls_version
+type: enum
+scope: global
+multiplicity: many
+reload_kind: reload
+since_version: "1.0"
+allowed_values: ["tlsv1", "tlsv1.1", "tlsv1.2", "tlsv1.3"]
+description: |
+  TLS protocol versions the broker accepts. Repeatable; latest entry
+  wins.
+---
