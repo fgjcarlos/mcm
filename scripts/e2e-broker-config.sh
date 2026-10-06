@@ -57,7 +57,14 @@ export MCM_MOSQUITTO_CONFIG_DIR="${MCM_MOSQUITTO_CONFIG_DIR:-/var/lib/mosquitto-
 cd "$REPO_ROOT"
 
 cleanup() {
+    local rc=$?
     echo "--- e2e-broker-config: cleaning up ---"
+    # On failure, capture bounded mcm container logs before teardown so the
+    # underlying apply error survives in job output (down -v would remove
+    # it). The dump is best-effort and never masks the original failure.
+    if [ "$rc" -ne 0 ]; then
+        $COMPOSE logs mcm --tail 100 >&2 || true
+    fi
     $COMPOSE down -v >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
