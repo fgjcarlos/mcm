@@ -304,29 +304,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
       - name: Generate listener e2e compose override
         run: |
           cat > /tmp/docker-compose.e2e.yml <<EOF
           services:
             mosquitto:
+              image: eclipse-mosquitto:2.0
               ports:
                 - "1883:1883"
                 - "9001:9001"
                 - "1884:1884"
             mcm:
+              image: mcm:dev
               environment:
                 MCM_MOSQUITTO_COMPOSE_PATH: /tmp/docker-compose.e2e.yml
               volumes:
                 - /tmp/docker-compose.e2e.yml:/tmp/docker-compose.e2e.yml:ro
           EOF
-      - name: Build ephemeral mcm image with listener changes
-        run: docker buildx build --load --target dev -t mcm:dev .
+      - name: Validate listener restart prerequisites
+        run: |
+          docker run --rm --entrypoint docker mcm:dev compose version
+          docker compose -f /tmp/docker-compose.e2e.yml -p mcm config --quiet
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
         run: |
-          docker compose -f docker-compose.yml \
-            -f /tmp/docker-compose.e2e.yml up -d
+          docker compose -f docker-compose.yml -p mcm \
+            -f /tmp/docker-compose.e2e.yml up --no-build -d
           # wait for mcm and extract bootstrap password
           for i in $(seq 1 30); do
             sleep 1
