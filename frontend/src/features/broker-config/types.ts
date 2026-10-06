@@ -12,6 +12,12 @@ export interface ListenerComposeStatus {
   disabled: boolean
 }
 
+export interface ListenerIssue {
+  kind: string
+  listener_id?: string
+  message: string
+}
+
 export interface ListenerPreviewResult {
   revision_id: string
   base_hash?: string
@@ -19,7 +25,7 @@ export interface ListenerPreviewResult {
   needs_restart: boolean
   diff: string
   rendered: string
-  issues?: Array<{ kind: string; listener_id?: string; directive?: string; message: string }>
+  issues?: Array<ListenerIssue & { directive?: string }>
   warnings?: Array<{ kind: string; listener_id?: string; key?: string; message: string }>
   compose_status?: ListenerComposeStatus
   created_at?: string

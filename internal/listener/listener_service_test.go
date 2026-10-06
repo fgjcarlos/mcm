@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +61,31 @@ func listenerRow(id string, port int) storage.ListenerSpecRow {
 
 func newTestService(store *inMemoryListenerStore, opts ...ListenerServiceOption) *ListenerService {
 	return NewListenerService(store, nil, &NoopRestartRunner{}, nil, opts...)
+}
+
+func TestListenerService_ComposeAllHostPorts_Disabled(t *testing.T) {
+	svc := NewListenerService(nil, fakeComposeReader{configured: true, disabled: true, ports: []int{1883}}, &NoopRestartRunner{}, nil)
+
+	ports, err := svc.ComposeAllHostPorts(context.Background())
+	if err != nil {
+		t.Fatalf("ComposeAllHostPorts() error = %v", err)
+	}
+	if ports != nil {
+		t.Fatalf("ComposeAllHostPorts() = %v, want nil", ports)
+	}
+}
+
+func TestListenerService_ComposeAllHostPorts_Sorted(t *testing.T) {
+	svc := NewListenerService(nil, fakeComposeReader{configured: true, ports: []int{8883, 1883, 8083}}, &NoopRestartRunner{}, nil)
+
+	ports, err := svc.ComposeAllHostPorts(context.Background())
+	if err != nil {
+		t.Fatalf("ComposeAllHostPorts() error = %v", err)
+	}
+	want := []int{1883, 8083, 8883}
+	if !reflect.DeepEqual(ports, want) {
+		t.Fatalf("ComposeAllHostPorts() = %v, want %v", ports, want)
+	}
 }
 
 func TestListenerService_Preview_NoDriftSameList(t *testing.T) {

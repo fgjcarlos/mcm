@@ -270,6 +270,21 @@ func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm 
 	return nil
 }
 
+// ComposeAllHostPorts returns every configured Compose host port for UI collision hints.
+// It is intentionally independent of the listener preview/apply safety path.
+func (s *ListenerService) ComposeAllHostPorts(ctx context.Context) ([]int, error) {
+	if s.composeReader == nil || s.composeReader.Disabled() {
+		return nil, nil
+	}
+	ports, err := s.composeReader.HostPorts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read compose host ports: %w", err)
+	}
+	ports = append([]int(nil), ports...)
+	sort.Ints(ports)
+	return ports, nil
+}
+
 func (s *ListenerService) composeStatus(ctx context.Context, desired []listeners.ListenerSpec) (ComposePreviewStatus, error) {
 	status := ComposePreviewStatus{MappedPorts: []int{}, UnmappedPorts: []int{}}
 	if s.composeReader == nil {
