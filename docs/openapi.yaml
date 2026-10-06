@@ -815,7 +815,7 @@ paths:
                 properties:
                   specs:
                     type: array
-                    items: { $ref: "#/components/schemas/ListenerSpec" }
+                    items: { $ref: "#/components/schemas/ListenerSpecRow" }
                 required: [specs]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1403,6 +1403,14 @@ components:
           additionalProperties: { type: string }
         RestartNeeded: { type: boolean }
       required: [ID, Port, Bind, Protocols, Options, RestartNeeded]
+    ListenerSpecRow:
+      allOf:
+        - $ref: "#/components/schemas/ListenerSpec"
+        - type: object
+          properties:
+            CreatedAt: { type: string, format: date-time }
+            UpdatedAt: { type: string, format: date-time }
+          required: [CreatedAt, UpdatedAt]
     ListenerPreviewResult:
       type: object
       properties:
