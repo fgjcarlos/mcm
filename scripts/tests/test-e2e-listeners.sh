@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 PRODUCTION_SCRIPT="$SCRIPT_DIR/e2e-listeners.sh"
 
+fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+
 assert_assembly() {
     local assignment_name="$1"
     local appended_var="$2"
@@ -39,3 +41,76 @@ assert_assembly() {
 
 assert_assembly DESIRED NEW_LISTENER
 assert_assembly UNMAPPED_DESIRED UNMAPPED_LISTENER
+
+# Load the production probe functions without running the live API flow.
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+awk '/# BEGIN listener removal probe/{capture=1; next} /# END listener removal probe/{capture=0} capture' "$PRODUCTION_SCRIPT" > "$TMP_DIR/probe-functions.sh"
+[[ -s "$TMP_DIR/probe-functions.sh" ]] || fail 'listener removal probe functions are missing'
+# shellcheck source=/dev/null
+pass() { printf 'PASS: step %s: %s\n' "$1" "$2"; }
+skip() { printf 'SKIP: %s\n' "$1"; }
+source "$TMP_DIR/probe-functions.sh"
+
+command -v nc >/dev/null 2>&1 || { printf 'FAIL: nc is required for the offline TCP fixture\n' >&2; exit 1; }
+TEST_PORT=$((20000 + ($$ % 20000)))
+cat > "$TMP_DIR/tcp-server.py" <<'PY'
+import socket, sys, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen(1)
+s.settimeout(0.2)
+while True:
+    try:
+        conn, _ = s.accept()
+        conn.close()
+    except socket.timeout:
+        pass
+PY
+cat > "$TMP_DIR/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == *'--network mcm_default eclipse-mosquitto:2.0 mosquitto_pub -h mcm-mosquitto'* ]] || exit 125
+[[ "$*" == *"-p $MCM_E2E_LISTENER_PORT"* ]] || exit 125
+nc -z 127.0.0.1 "$FAKE_LISTENER_PORT"
+SH
+chmod +x "$TMP_DIR/docker"
+
+python3 "$TMP_DIR/tcp-server.py" "$TEST_PORT" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true; /bin/rm -rf "$TMP_DIR"' EXIT
+sleep 0.2
+export PATH="$TMP_DIR:/usr/bin:/bin"
+export FAKE_LISTENER_PORT="$TEST_PORT" MCM_E2E_LISTENER_PORT=1884
+LISTENER_PROBE_MODE=''
+listener_accepts_mqtt || fail 'probe did not recognize a real MQTT-listener fixture'
+[[ "$LISTENER_PROBE_MODE" == docker ]] || fail 'probe did not prefer the containerized MQTT check'
+printf 'PASS: probe recognizes a live listener through the broker network\n'
+if ( listener_removed_check ) > "$TMP_DIR/listener-present.out" 2>&1; then
+    fail 'listener removal check did not fail E2E when a real listener remained'
+fi
+grep -Fq 'listener port 1884 remained open after removal' "$TMP_DIR/listener-present.out" \
+    || fail 'listener removal check did not preserve the step-11 failure'
+printf 'PASS: step 11 fails when a real listener remains\n'
+
+kill "$SERVER_PID" 2>/dev/null || true
+wait "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=''
+if listener_accepts_mqtt; then
+    fail 'probe treated a published-but-empty port as a real MQTT listener'
+fi
+[[ "$LISTENER_PROBE_MODE" == docker ]] || fail 'empty-port probe did not use the MQTT mechanism'
+printf 'PASS: probe rejects a published-but-empty port\n'
+if ! ( listener_removed_check ) > "$TMP_DIR/no-listener.out" 2>&1; then
+    fail 'listener removal check failed E2E although no listener was listening'
+fi
+
+mkdir "$TMP_DIR/no-tools"
+PATH="$TMP_DIR/no-tools"; export PATH
+LISTENER_PROBE_MODE=''
+if listener_accepts_mqtt; then fail 'probe unexpectedly succeeded without any probe mechanism'; fi
+[[ "$LISTENER_PROBE_MODE" == none ]] || fail 'probe did not report unavailable mechanisms'
+output="$(listener_removed_check)"
+[[ "$output" == *'SKIP:'* ]] || fail 'step 11 did not skip cleanly without nc or Docker'
+printf 'PASS: step 11 skips when neither probe mechanism is available\n'
