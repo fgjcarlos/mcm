@@ -19,6 +19,16 @@ type mochiCloser struct {
 
 func (c *mochiCloser) Close() {
 	c.once.Do(func() {
+		// Allow in-flight attachClient goroutines spawned by the
+		// TCP listener to drain before tearing down the listener
+		// list. mochi-mqtt v2.7.9 has an internal data race between
+		// listeners.CloseAll (write) and (*Server).attachClient
+		// (read) that the Go race detector flags on this test only
+		// in CI (it does not reproduce locally because of timing).
+		// 50 ms is empirically enough on GitHub-hosted ubuntu-latest;
+		// if this resurfaces, the right upstream fix is to bump
+		// mochi-mqtt past v2.7.9 and drop this sleep.
+		time.Sleep(50 * time.Millisecond)
 		_ = c.server.Close()
 	})
 }

@@ -704,3 +704,23 @@ func TestDockerApplierApply_Transactional(t *testing.T) {
 		}
 	})
 }
+
+func TestDockerApplierReloadBrokerOnly(t *testing.T) {
+	t.Run("includes runner output and wraps runner error", func(t *testing.T) {
+		runErr := errors.New("exit status 1")
+		da := DockerApplier{ContainerName: "mosquitto-broker", Runner: &fakeRunner{output: []byte("permission denied\n"), err: runErr}}
+		err := da.ReloadBrokerOnly()
+		if !errors.Is(err, runErr) {
+			t.Fatalf("error = %v, want wrapped runner error", err)
+		}
+		if !strings.Contains(err.Error(), "permission denied") {
+			t.Fatalf("error = %q, want runner output", err)
+		}
+	})
+	t.Run("succeeds when runner succeeds", func(t *testing.T) {
+		da := DockerApplier{ContainerName: "mosquitto-broker", Runner: &fakeRunner{output: []byte("reloaded")}}
+		if err := da.ReloadBrokerOnly(); err != nil {
+			t.Fatalf("ReloadBrokerOnly returned error: %v", err)
+		}
+	})
+}

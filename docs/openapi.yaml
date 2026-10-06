@@ -858,6 +858,176 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config:
+    get:
+      tags: [Broker]
+      summary: Get the current broker configuration
+      description: |
+        Requires auditor or higher. Returns the absolute path of the managed
+        `mosquitto.conf`, its on-disk body, and a sha256 fingerprint. Returns
+        503 when broker-config management is not configured.
+      responses:
+        "200":
+          description: Current broker configuration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfig" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/import:
+    post:
+      tags: [Broker]
+      summary: Preview the next broker-config apply
+      description: |
+        Requires operator or higher. Parses the configured `mosquitto.conf`,
+        resolves the include_dir tree, validates against the loaded directive
+        catalog, and stores an immutable preview revision. Returns the same
+        shape as `POST /api/v1/broker/config/preview`; the two endpoints are
+        aliases kept for ergonomic reasons (the UI calls `/preview` after
+        the operator types changes and `/import` after a file upload).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerConfigImportRequest" }
+      responses:
+        "200":
+          description: Broker-config preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigPreview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/preview:
+    post:
+      tags: [Broker]
+      summary: Preview the next broker-config apply (alias of /import)
+      description: |
+        Requires operator or higher. Same response as `POST
+        /api/v1/broker/config/import`; the two endpoints are aliases so the UI
+        can use a stable name regardless of whether the operator typed or
+        uploaded the changes.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerConfigImportRequest" }
+      responses:
+        "200":
+          description: Broker-config preview.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigPreview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/adopt:
+    post:
+      tags: [Broker]
+      summary: Adopt the imported broker configuration
+      description: |
+        Requires admin. Records an explicit operator adoption of the
+        imported `mosquitto.conf` (and its include_dir tree) so a subsequent
+        apply can proceed without passing `adopt=true` on the apply call.
+        Returns the resulting adoption row.
+      responses:
+        "200":
+          description: Recorded adoption row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigAdoption" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/apply:
+    post:
+      tags: [Broker]
+      summary: Apply a broker-config preview revision
+      description: |
+        Requires admin. Applies the immutable preview identified by the
+        required `revision_id`; callers must preview first. Returns the
+        resulting `Deployment` row. 409 covers the lifecycle sentinels
+        (`requires_restart`, `adoption_required`, revision mismatch/expired/
+        consumed, deploy in progress); 400 covers `revision_id` missing;
+        503 covers broker-config not configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerConfigApplyRequest" }
+      responses:
+        "200":
+          description: Broker-config deployment record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: Missing `revision_id`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Apply refused. The body's `error` distinguishes the reason;
+            `requires_restart` additionally includes a `directives` array
+            listing the directives that would change the broker's reload
+            semantics.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      error: { type: string }
+                      directives: { type: string }
+                    required: [error]
+        "503":
+          description: Broker config management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/catalog:
+    get:
+      tags: [Broker]
+      summary: Directive catalog used by the validator
+      description: |
+        Requires auditor or higher. Returns the loaded directive catalog so
+        the UI can render a version-aware editor. The `version` field is
+        the Mosquitto broker version this catalog describes.
+      responses:
+        "200":
+          description: Loaded directive catalog.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config catalog is not loaded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -1288,6 +1458,110 @@ components:
         revision_id: { type: string, minLength: 1 }
       required: [revision_id]
       additionalProperties: false
+    BrokerConfig:
+      type: object
+      description: |
+        Current on-disk `mosquitto.conf` plus its sha256 fingerprint. The
+        `path` field is the absolute path MCM was wired to manage.
+      properties:
+        path: { type: string }
+        body: { type: string }
+        hash: { type: string, description: "hex-encoded sha256 of `body`" }
+      required: [path, body, hash]
+    BrokerConfigImportRequest:
+      type: object
+      description: |
+        Optional body for `/import` and `/preview`. The `path` field is
+        accepted for forward-compatibility; today MCM only manages the path
+        it was wired with via `WithBrokerConfig`, so the field is ignored.
+      properties:
+        path: { type: string }
+      additionalProperties: false
+    BrokerConfigPreview:
+      type: object
+      description: |
+        Output of `POST /api/v1/broker/config/{import,preview}`. Includes the
+        rendered conf body, the unified diff against the on-disk file, and
+        the catalog-driven classification that the apply path consumes.
+      properties:
+        revision_id: { type: string }
+        base_conf_hash: { type: string }
+        rendered_conf_hash: { type: string }
+        conf_diff: { type: string }
+        conf_body: { type: string }
+        reload_kind: { type: string, enum: [reload, restart, both] }
+        requires_restart: { type: boolean }
+        validation_issues:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerConfigValidationIssue" }
+        include_snapshot: { $ref: "#/components/schemas/BrokerConfigIncludeSnapshot" }
+        has_changes: { type: boolean }
+      required:
+        [revision_id, base_conf_hash, rendered_conf_hash, conf_diff, conf_body, reload_kind, requires_restart, validation_issues, has_changes]
+    BrokerConfigValidationIssue:
+      type: object
+      properties:
+        kind: { type: string, description: "unknown | type | scope | multiplicity | dependency | since_version" }
+        line: { type: integer }
+        directive: { type: string }
+        message: { type: string }
+      required: [kind, line, directive, message]
+    BrokerConfigIncludeSnapshot:
+      type: object
+      properties:
+        root: { type: string }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerConfigIncludeFileEntry" }
+      required: [root, files]
+    BrokerConfigIncludeFileEntry:
+      type: object
+      properties:
+        path: { type: string, description: "path relative to include_snapshot.root" }
+        size: { type: integer, format: int64 }
+        sha256: { type: string }
+      required: [path, size, sha256]
+    BrokerConfigAdoption:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        source_path: { type: string }
+        adopted_by: { type: string }
+        adopted_at: { type: string, format: date-time }
+      required: [id, source_path, adopted_by, adopted_at]
+    BrokerConfigApplyRequest:
+      type: object
+      properties:
+        revision_id: { type: string, minLength: 1 }
+        force: { type: boolean, description: "Apply even when the diff contains restart-required directives." }
+        adopt: { type: boolean, description: "Record an adoption in the same call so the apply can proceed." }
+      required: [revision_id]
+      additionalProperties: false
+    CatalogResponse:
+      type: object
+      properties:
+        version: { type: string, description: "Mosquitto version this catalog describes." }
+        directives:
+          type: array
+          items: { $ref: "#/components/schemas/DirectiveSpec" }
+      required: [version, directives]
+    DirectiveSpec:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [string, integer, boolean, enum, string_list, path] }
+        scope: { type: string, enum: [global, listener, bridge] }
+        multiplicity: { type: string, enum: [once, many, once_per_block] }
+        reload_kind: { type: string, enum: [reload, restart, both] }
+        since_version: { type: string }
+        allowed_values:
+          type: array
+          items: { type: string }
+        deps:
+          type: array
+          items: { type: string }
+        description: { type: string }
+      required: [name, type, scope, multiplicity, reload_kind, since_version]
     SettingsResponse:
       type: object
       properties:

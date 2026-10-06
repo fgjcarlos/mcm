@@ -62,6 +62,8 @@ func (a *cancelingApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 
+func (a *cancelingApplier) ReloadBrokerOnly() error { return nil }
+
 type applyCall struct {
 	aclBody        string
 	passwdBody     string
@@ -98,6 +100,8 @@ func (f *fakeApplier) callAt(i int) applyCall {
 	defer f.mu.Unlock()
 	return f.calls[i]
 }
+
+func (f *fakeApplier) ReloadBrokerOnly() error { return nil }
 
 // fakeDeploymentStore is an in-memory DeploymentStore.
 type fakeDeploymentStore struct {
@@ -1098,6 +1102,8 @@ func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _, _, _ string) er
 	return errors.New("rollback applier: write failed")
 }
 
+func (r *rollbackFailFakeApplier) ReloadBrokerOnly() error { return nil }
+
 // recordingDeploymentStore extends fakeDeploymentStore to record every
 // status transition in order so the lifecycle test can assert the
 // recorded sequence.
@@ -1349,6 +1355,8 @@ func (r *rollbackCtxRecordingApplier) Apply(ctx context.Context, _, _, _, _ stri
 	return errors.New("rollback applier: simulated failure")
 }
 
+func (r *rollbackCtxRecordingApplier) ReloadBrokerOnly() error { return nil }
+
 // TestApply_RollbackUsesIndependentContext covers issue #292 acceptance
 // criterion 3: when the request ctx is cancelled, the rollback must still
 // run. The rollback applier call must use a fresh context derived from
@@ -1404,6 +1412,8 @@ type errApplyRolledBackFakeApplier struct{}
 func (errApplyRolledBackFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	return fmt.Errorf("simulated: %w", mosquitto.ErrApplyRestored)
 }
+
+func (errApplyRolledBackFakeApplier) ReloadBrokerOnly() error { return nil }
 
 // TestApply_ApplierRolledBack_StatusFailed covers the case where the
 // applier handles the partial-failure rollback internally and returns
@@ -1461,6 +1471,8 @@ type errApplyRollbackFailedFakeApplier struct{}
 func (errApplyRollbackFailedFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	return fmt.Errorf("simulated: %w", mosquitto.ErrRollbackFailed)
 }
+
+func (errApplyRollbackFailedFakeApplier) ReloadBrokerOnly() error { return nil }
 
 // TestApply_ApplierRollbackFailed_StatusRollbackFailed covers the case
 // where the applier fails to restore from snapshot and returns
@@ -1666,6 +1678,8 @@ func (b *blockingApplier) Apply(_ context.Context, _, _, _, _ string) error {
 	<-b.releaseCh
 	return nil
 }
+
+func (b *blockingApplier) ReloadBrokerOnly() error { return nil }
 
 func (b *blockingApplier) release() { close(b.releaseCh) }
 

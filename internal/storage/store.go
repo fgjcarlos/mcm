@@ -259,6 +259,44 @@ CREATE INDEX idx_preview_revisions_created_at ON preview_revisions(created_at);
 CREATE INDEX idx_preview_revisions_applied_at ON preview_revisions(applied_at);
 `,
 	},
+	{
+		version: 16,
+		name:    "create_broker_config_revisions_and_adoptions",
+		sql: `
+CREATE TABLE broker_config_revisions (
+	id TEXT PRIMARY KEY,
+	actor TEXT NOT NULL DEFAULT '',
+	base_conf_hash TEXT NOT NULL DEFAULT '',
+	rendered_conf_hash TEXT NOT NULL DEFAULT '',
+	base_path TEXT NOT NULL DEFAULT '',
+	conf_rendered TEXT NOT NULL DEFAULT '',
+	include_snapshot TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	applied_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_broker_config_revisions_created_at ON broker_config_revisions(created_at);
+CREATE INDEX idx_broker_config_revisions_applied_at ON broker_config_revisions(applied_at);
+
+CREATE TABLE broker_config_adoptions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_path TEXT NOT NULL,
+	adopted_by TEXT NOT NULL DEFAULT '',
+	adopted_at TEXT NOT NULL
+);
+CREATE INDEX idx_broker_config_adoptions_source_path ON broker_config_adoptions(source_path, adopted_at);
+`,
+	},
+	{
+		version: 17,
+		name:    "add_deployments_kind_reload_kind_conf",
+		sql: `
+ALTER TABLE deployments ADD COLUMN kind TEXT NOT NULL DEFAULT 'passwd_acl';
+ALTER TABLE deployments ADD COLUMN reload_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN conf_rendered TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN base_conf_hash TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_deployments_kind ON deployments(kind);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.
