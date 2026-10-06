@@ -13,7 +13,6 @@ import (
 
 	"github.com/pmezard/go-difflib/difflib"
 
-	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/listeners"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -50,19 +49,6 @@ type ComposeReader interface {
 	Disabled() bool
 	HostPorts(ctx context.Context) ([]int, error)
 }
-
-// composeAdapter narrows deploy.ComposePortsReader to the listener ComposeReader contract.
-type composeAdapter struct {
-	reader  deploy.ComposePortsReader
-	service string
-}
-
-func (a composeAdapter) IsConfigured() bool { return a.reader.IsConfigured() }
-func (a composeAdapter) Disabled() bool     { return a.reader.Disabled() }
-func (a composeAdapter) HostPorts(ctx context.Context) ([]int, error) {
-	return a.reader.HostPorts(ctx)
-}
-func (a composeAdapter) ComposeService() string { return a.service }
 
 // ListenerAuditFunc records a listener lifecycle audit event.
 type ListenerAuditFunc func(ctx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte)
