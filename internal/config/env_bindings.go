@@ -523,6 +523,24 @@ var envBindings = []envBinding{
 			return nil
 		},
 	},
+	{
+		Name: "MCM_MOSQUITTO_COMPOSE_PATH",
+		Path: "mosquitto.compose_path",
+		Doc:  "Docker Compose file used to discover Mosquitto host ports. Empty disables discovery.",
+		Apply: func(cfg *Config, raw string) error {
+			cfg.Mosquitto.ComposePath = raw
+			return nil
+		},
+	},
+	{
+		Name: "MCM_MOSQUITTO_COMPOSE_SERVICE",
+		Path: "mosquitto.compose_service",
+		Doc:  "Compose service name for Mosquitto host-port discovery. Default \"mosquitto\".",
+		Apply: func(cfg *Config, raw string) error {
+			cfg.Mosquitto.ComposeService = raw
+			return nil
+		},
+	},
 
 	// ── Mosquitto Sparkplug tuning ────────────────────────────────────
 	{

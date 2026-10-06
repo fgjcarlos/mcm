@@ -46,6 +46,32 @@ func minimalLoadEnv(t *testing.T) {
 // TestEnvTableIsConsistent is the structural guard: every binding has the
 // required fields, no two bindings share a name, and the EnvBindingNames
 // helper stays in sync with the table.
+func TestEnvMosquittoComposePath(t *testing.T) {
+	minimalLoadEnv(t)
+	t.Setenv("MCM_MOSQUITTO_COMPOSE_PATH", "/etc/mcm/docker-compose.yml")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Mosquitto.ComposePath, "/etc/mcm/docker-compose.yml"; got != want {
+		t.Errorf("Mosquitto.ComposePath = %q, want %q", got, want)
+	}
+}
+
+func TestEnvMosquittoComposeService(t *testing.T) {
+	minimalLoadEnv(t)
+	t.Setenv("MCM_MOSQUITTO_COMPOSE_SERVICE", "broker")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Mosquitto.ComposeService, "broker"; got != want {
+		t.Errorf("Mosquitto.ComposeService = %q, want %q", got, want)
+	}
+}
+
 func TestEnvTableIsConsistent(t *testing.T) {
 	seen := make(map[string]string, len(envBindings))
 	for i, b := range envBindings {

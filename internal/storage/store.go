@@ -297,6 +297,45 @@ ALTER TABLE deployments ADD COLUMN base_conf_hash TEXT NOT NULL DEFAULT '';
 CREATE INDEX idx_deployments_kind ON deployments(kind);
 `,
 	},
+	{
+		version: 18,
+		name:    "ensure_broker_config_and_listener_schemas",
+		sql: `
+CREATE TABLE IF NOT EXISTS broker_config_revisions (
+	id TEXT PRIMARY KEY,
+	actor TEXT NOT NULL DEFAULT '',
+	base_conf_hash TEXT NOT NULL DEFAULT '',
+	rendered_conf_hash TEXT NOT NULL DEFAULT '',
+	base_path TEXT NOT NULL DEFAULT '',
+	conf_rendered TEXT NOT NULL DEFAULT '',
+	include_snapshot TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	applied_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_broker_config_revisions_created_at ON broker_config_revisions(created_at);
+CREATE INDEX IF NOT EXISTS idx_broker_config_revisions_applied_at ON broker_config_revisions(applied_at);
+
+CREATE TABLE IF NOT EXISTS broker_config_adoptions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_path TEXT NOT NULL,
+	adopted_by TEXT NOT NULL DEFAULT '',
+	adopted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_broker_config_adoptions_source_path ON broker_config_adoptions(source_path, adopted_at);
+
+CREATE TABLE IF NOT EXISTS listener_specs (
+	id          TEXT PRIMARY KEY,
+	port        INTEGER NOT NULL,
+	bind        TEXT NOT NULL DEFAULT '0.0.0.0',
+	protocols   TEXT NOT NULL DEFAULT '[]',
+	options     TEXT NOT NULL DEFAULT '{}',
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_listener_specs_port_bind ON listener_specs(port, bind);
+CREATE INDEX IF NOT EXISTS idx_listener_specs_updated_at ON listener_specs(updated_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

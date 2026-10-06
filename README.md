@@ -126,6 +126,8 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` | *(unset)* | Whitespace-separated command + argv invoked after a successful deploy write. Issue #294 production reload mechanism. Example: `"systemctl reload mosquitto.service"`. Takes precedence over `reload_strategy=sighup` and `pid_path` when set. |
 | `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` | `5s` | Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. |
 | `MCM_MOSQUITTO_DEPLOY_WORKDIR` | *(unset)* | Working directory for the deploy service when writing passwd/acl files. |
+| `MCM_MOSQUITTO_COMPOSE_PATH` | *(unset)* | Path to the `docker-compose.yml` that lists the broker's published ports. When unset, listener port validation against docker-compose is disabled. |
+| `MCM_MOSQUITTO_COMPOSE_SERVICE` | `mosquitto` | Service name inside `docker-compose.yml` whose `ports:` mapping is inspected. Used by listener port validation (issue #299). |
 
 ### Mosquitto Sparkplug tuning
 

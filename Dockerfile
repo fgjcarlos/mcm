@@ -53,9 +53,10 @@ ENTRYPOINT ["mcm"]
 
 # Stage 4: Dev image (Dockerfile.dev target)
 #
-# Layers docker-cli on top of the production image so the MCM deploy
-# service can run `docker exec … kill -HUP 1` against the bundled
-# Mosquitto. The `docker` group is created at the host GID
+# Layers docker-cli and its Compose plugin on top of the production
+# image so the MCM deploy service can run `docker exec … kill -HUP 1`
+# against the bundled Mosquitto and restart it with `docker compose`.
+# The `docker` group is created at the host GID
 # (DOCKER_HOST_GID, default 999 — the conventional host socket GID
 # on the most common Linux distros). If the base image already has a
 # group at that GID (e.g. alpine's `ping` at 999), we install the
@@ -74,7 +75,7 @@ ENTRYPOINT ["mcm"]
 FROM prod AS dev
 USER root
 ARG DOCKER_HOST_GID=999
-RUN apk add --no-cache docker-cli shadow \
+RUN apk add --no-cache docker-cli docker-cli-compose shadow \
     && existing=$(awk -F: -v gid="${DOCKER_HOST_GID}" \
         '$3 == gid {print $1; exit}' /etc/group) \
     && if [ -n "${existing}" ] && [ "${existing}" != "docker" ]; then \
