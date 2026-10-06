@@ -1394,12 +1394,10 @@ components:
         Port: { type: integer }
         Bind: { type: string }
         Protocols:
-          type: array
-          nullable: true
+          type: [array, "null"]
           items: { type: string, enum: [mqtt, websockets] }
         Options:
-          type: object
-          nullable: true
+          type: [object, "null"]
           additionalProperties: { type: string }
         RestartNeeded: { type: boolean }
       required: [ID, Port, Bind, Protocols, Options, RestartNeeded]
@@ -1421,12 +1419,10 @@ components:
         diff: { type: string }
         rendered: { type: string }
         issues:
-          type: array
-          nullable: true
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/ListenerIssue" }
         warnings:
-          type: array
-          nullable: true
+          type: [array, "null"]
           items: { $ref: "#/components/schemas/ListenerOptionWarning" }
         compose_status: { $ref: "#/components/schemas/ComposePreviewStatus" }
         created_at: { type: string, format: date-time }
