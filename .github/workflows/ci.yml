@@ -301,12 +301,6 @@ jobs:
     if: github.event_name == 'pull_request'
     timeout-minutes: 6
     runs-on: ubuntu-latest
-    services:
-      mosquitto:
-        image: eclipse-mosquitto:2.0
-        ports:
-          - 1883:1883
-          - 9001:9001
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
