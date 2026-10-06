@@ -833,13 +833,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                specs:
-                  type: array
-                  items: { $ref: "#/components/schemas/ListenerSpec" }
-                confirm: { type: boolean, default: false }
-              required: [specs]
+                $ref: "#/components/schemas/ListenerPreviewRequest"
       responses:
         "200":
           description: Preview result.
@@ -1384,6 +1378,91 @@ components:
       properties:
         revision_id: { type: string, minLength: 1 }
       required: [revision_id]
+      additionalProperties: false
+    ListenerPreviewRequest:
+      type: object
+      properties:
+        specs:
+          type: array
+          items: { $ref: "#/components/schemas/ListenerSpec" }
+        confirm: { type: boolean }
+      required: [specs]
+    ListenerSpec:
+      type: object
+      properties:
+        ID: { type: string }
+        Port: { type: integer }
+        Bind: { type: string }
+        Protocols:
+          type: array
+          nullable: true
+          items: { type: string, enum: [mqtt, websockets] }
+        Options:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+        RestartNeeded: { type: boolean }
+      required: [ID, Port, Bind, Protocols, Options, RestartNeeded]
+    ListenerPreviewResult:
+      type: object
+      properties:
+        revision_id: { type: string }
+        base_hash: { type: string }
+        rendered_hash: { type: string }
+        needs_restart: { type: boolean }
+        diff: { type: string }
+        rendered: { type: string }
+        issues:
+          type: array
+          nullable: true
+          items: { $ref: "#/components/schemas/ListenerIssue" }
+        warnings:
+          type: array
+          nullable: true
+          items: { $ref: "#/components/schemas/ListenerOptionWarning" }
+        compose_status: { $ref: "#/components/schemas/ComposePreviewStatus" }
+        created_at: { type: string, format: date-time }
+      required: [revision_id, base_hash, rendered_hash, needs_restart, diff, rendered, issues, warnings, compose_status, created_at]
+    ListenerIssue:
+      type: object
+      properties:
+        Kind: { type: string }
+        ListenerID: { type: string }
+        Directive: { type: string }
+        Message: { type: string }
+      required: [Kind, ListenerID, Directive, Message]
+    ListenerOptionWarning:
+      type: object
+      properties:
+        Kind: { type: string }
+        ListenerID: { type: string }
+        Key: { type: string }
+        Message: { type: string }
+      required: [Kind, ListenerID, Key, Message]
+    ComposePreviewStatus:
+      type: object
+      properties:
+        compose_path: { type: string }
+        mapped_ports:
+          type: array
+          items: { type: integer }
+        unmapped_ports:
+          type: array
+          items: { type: integer }
+        disabled: { type: boolean }
+      required: [compose_path, mapped_ports, unmapped_ports, disabled]
+    ListenerApplyRequest:
+      type: object
+      properties:
+        revision_id: { type: string }
+        confirm: { type: boolean }
+      required: [revision_id, confirm]
+    ListenerApplyResult:
+      type: object
+      properties:
+        revision_id: { type: string }
+        applied: { type: boolean }
+      required: [revision_id, applied]
       additionalProperties: false
     SettingsResponse:
       type: object
