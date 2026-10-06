@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +123,15 @@ func TestComposePorts_DeterministicOrder(t *testing.T) {
 }
 
 func TestComposePorts_DevComposeFile_Real(t *testing.T) {
-	const path = "/home/composedof2/Dev/Codex/mcm/.worktrees/feat-299-listeners/docker-compose.yml"
+	// Resolve the repo root relative to this test file so the test is
+	// portable across clones and worktree locations.
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	// file is .../internal/deploy/compose_ports_test.go; walk up to the
+	// repo root and load the real dev compose file from there.
+	path := filepath.Join(filepath.Dir(file), "..", "..", "docker-compose.yml")
 	reader := NewComposePortsReader(os.ReadFile, time.Now)
 	reader.Configure(path, "mosquitto")
 	ports, err := reader.HostPorts(context.Background())
