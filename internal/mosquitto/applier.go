@@ -410,8 +410,8 @@ func (d DockerApplier) ReloadBrokerOnly() error {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
-	if _, err := runner.Run(context.Background(), "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
-		return fmt.Errorf("docker exec reload: %w", err)
+	if output, err := runner.Run(context.Background(), "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
+		return fmt.Errorf("docker exec reload: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
