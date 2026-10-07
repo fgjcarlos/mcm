@@ -328,6 +328,8 @@ jobs:
             mosquitto:
               image: eclipse-mosquitto:2.0
               ports:
+                - "1883:1883"
+                - "9001:9001"
                 - "1884:1884"
             mcm:
               image: mcm:dev
