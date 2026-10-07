@@ -333,6 +333,8 @@ jobs:
               image: mcm:dev
               environment:
                 MCM_MOSQUITTO_COMPOSE_PATH: /tmp/docker-compose.e2e.yml
+              volumes:
+                - /tmp/docker-compose.e2e.yml:/tmp/docker-compose.e2e.yml:ro
           EOF
       - name: Validate listener restart prerequisites
         run: |
