@@ -5,6 +5,11 @@ export interface ListenerSpec {
   protocols: string[]
 }
 
+export interface ListenerListResponse {
+  specs?: ListenerSpec[]
+  compose_host_ports?: number[]
+}
+
 export interface ListenerComposeStatus {
   compose_path?: string
   mapped_ports?: number[]

@@ -1,6 +1,6 @@
 import type { ListenerIssue, ListenerSpec } from './types'
 
-const allowedProtocols = new Set(['mqtt', 'mqtts', 'ws', 'wss'])
+const allowedProtocols = new Set(['mqtt', 'websockets'])
 
 export interface ListenerValidationResult {
   issues: ListenerIssue[]
@@ -15,12 +15,28 @@ function isIPv4(bind: string): boolean {
 }
 
 function isIPv6(bind: string): boolean {
-  if (!bind.includes(':') || !/^[\da-f:]+$/i.test(bind)) return false
-  try {
-    return new URL(`http://[${bind}]/`).hostname.toLowerCase() === `[${bind}]`.toLowerCase()
-  } catch {
-    return false
+  if (!bind.includes(':') || bind.includes('%')) return false
+
+  let address = bind
+  if (address.includes('.')) {
+    const separator = address.lastIndexOf(':')
+    if (separator < 0 || !isIPv4(address.slice(separator + 1))) return false
+    const octets = bind.slice(separator + 1).split('.').map(Number)
+    address = `${bind.slice(0, separator)}:${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`
   }
+
+  if (address.includes(':::')) return false
+  const compression = address.indexOf('::')
+  if (compression !== -1 && address.indexOf('::', compression + 2) !== -1) return false
+  const groups = address.split(':')
+  if (compression === -1) {
+    return groups.length === 8 && groups.every((group) => /^[\da-f]{1,4}$/i.test(group))
+  }
+
+  const left = address.slice(0, compression).split(':').filter(Boolean)
+  const right = address.slice(compression + 2).split(':').filter(Boolean)
+  if (left.length + right.length >= 8) return false
+  return [...left, ...right].every((group) => /^[\da-f]{1,4}$/i.test(group))
 }
 
 function isIPAddress(bind: string): boolean {
@@ -57,7 +73,7 @@ export function validateListeners(specs: ListenerSpec[]): ListenerValidationResu
         continue
       }
       seen.add(key)
-      if ((protocol === 'ws' || protocol === 'wss') && spec.port === 1883) {
+      if (protocol === 'websockets' && spec.port === 1883) {
         warnings.push({
           kind: 'websocket_default_port',
           listener_id: spec.id,

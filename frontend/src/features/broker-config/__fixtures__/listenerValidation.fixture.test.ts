@@ -29,8 +29,8 @@ describe('production listener panel-data hooks', () => {
   it('maps compose host-port conflicts to listener IDs', () => {
     expect(composePortConflicts([
       listener(),
-      listener({ id: 'secure', port: 8883, protocols: ['mqtts'] }),
-      listener({ id: 'web', port: 8083, protocols: ['ws'] }),
+      listener({ id: 'secure', port: 8883, protocols: ['mqtt'] }),
+      listener({ id: 'web', port: 8083, protocols: ['websockets'] }),
     ], [1883, 8883])).toEqual({ mqtt: [1883], secure: [8883] })
   })
 })

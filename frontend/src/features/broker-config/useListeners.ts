@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
-import type { ListenerApplyRequest, ListenerApplyResult, ListenerPreviewResult, ListenerSpec } from './types'
+import type { ListenerApplyRequest, ListenerApplyResult, ListenerListResponse, ListenerPreviewResult, ListenerSpec } from './types'
 
 type ListenerIssue = NonNullable<ListenerPreviewResult['issues']>[number]
 
@@ -14,6 +14,7 @@ function errorMessage(body: unknown, fallback: string) {
 export function useListeners(opts: { token: string; onLogout: () => void }) {
   const { token, onLogout } = opts
   const [listeners, setListeners] = useState<ListenerSpec[]>([])
+  const [composeHostPorts, setComposeHostPorts] = useState<number[]>([])
   const [previewResult, setPreviewResult] = useState<ListenerPreviewResult | null>(null)
   const [previewError, setPreviewError] = useState('')
   const [applyError, setApplyError] = useState('')
@@ -29,8 +30,9 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         const body = await response.json().catch(() => null)
         throw new Error(errorMessage(body, 'Failed to load listeners.'))
       }
-      const body = await response.json() as { specs?: ListenerSpec[] }
+      const body = await response.json() as ListenerListResponse
       setListeners(body.specs ?? [])
+      setComposeHostPorts(body.compose_host_ports ?? [])
     } catch (error) {
       if (!isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
     } finally {
@@ -100,6 +102,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
 
   return {
     listeners,
+    composeHostPorts,
     preview: previewResult,
     previewError,
     applyError,

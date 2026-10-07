@@ -16,7 +16,7 @@ export default function ListenersPanel({
   role,
   onApplyStart,
   onApplySuccess,
-  composeHostPorts = [],
+  composeHostPorts: composeHostPortsOverride,
 }: {
   token: string
   onLogout: () => void
@@ -25,7 +25,8 @@ export default function ListenersPanel({
   onApplySuccess?: (mutationWatermark: number) => void
   composeHostPorts?: number[]
 }) {
-  const { listeners, preview, previewError, applyError, isLoading, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
+  const { listeners, composeHostPorts: fetchedComposeHostPorts, preview, previewError, applyError, isLoading, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
+  const composeHostPorts = composeHostPortsOverride ?? fetchedComposeHostPorts
   const [draft, setDraft] = useState<ListenerSpec[]>()
   const specs = draft ?? listeners
   const dirty = draft !== undefined

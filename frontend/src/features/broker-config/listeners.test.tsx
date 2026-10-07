@@ -45,14 +45,18 @@ afterEach(() => {
 })
 
 describe('ListenersPanel', () => {
-  it('renders listeners list from initial fetch', async () => {
-    vi.stubGlobal('fetch', installFetchMock(baseRoutes()))
+  it('renders listeners and compose port hints from initial fetch', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes(),
+      'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs, compose_host_ports: [1883] }),
+    }))
 
     render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
 
     expect(await screen.findByText('1883')).toBeInTheDocument()
     expect(screen.getByText('0.0.0.0')).toBeInTheDocument()
     expect(screen.getByText('mqtt')).toBeInTheDocument()
+    expect(screen.getByText('Port 1883 conflicts with a Compose host port')).toBeInTheDocument()
   })
 
   it('submitting a preview shows the diff and stores a revision id', async () => {

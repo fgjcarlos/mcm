@@ -816,6 +816,10 @@ paths:
                   specs:
                     type: array
                     items: { $ref: "#/components/schemas/ListenerSpecRow" }
+                  compose_host_ports:
+                    type: array
+                    description: Optional non-blocking Compose host-port hints; omitted if Compose port discovery fails.
+                    items: { type: integer }
                 required: [specs]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
