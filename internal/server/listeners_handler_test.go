@@ -217,7 +217,9 @@ type listenerListService struct {
 func (s listenerListService) List(context.Context) ([]storage.ListenerSpecRow, error) {
 	return []storage.ListenerSpecRow{{ID: "mqtt", Port: 1883, Bind: "0.0.0.0", Protocols: []string{"mqtt"}}}, nil
 }
-func (s listenerListService) ComposeAllHostPorts(context.Context) ([]int, error) { return s.ports, s.err }
+func (s listenerListService) ComposeAllHostPorts(context.Context) ([]int, error) {
+	return s.ports, s.err
+}
 func (listenerListService) Preview(context.Context, []listeners.ListenerSpec, listener.PreviewOptions) (listener.ListenerPreviewResult, error) {
 	return listener.ListenerPreviewResult{}, nil
 }
@@ -225,11 +227,11 @@ func (listenerListService) Apply(context.Context, string, bool) error { return n
 
 func TestHandleListenerList_ComposeHostPorts(t *testing.T) {
 	tests := []struct {
-		name       string
-		ports      []int
-		err        error
-		wantField  bool
-		wantPorts  []int
+		name      string
+		ports     []int
+		err       error
+		wantField bool
+		wantPorts []int
 	}{
 		{name: "success", ports: []int{1883, 9001}, wantField: true, wantPorts: []int{1883, 9001}},
 		{name: "hint failure is non-blocking", err: errors.New("compose unavailable")},
