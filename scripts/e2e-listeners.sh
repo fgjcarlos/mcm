@@ -160,16 +160,35 @@ else
 fi
 
 if command -v docker >/dev/null 2>&1; then
-    TCP_ROUNDTRIP="$(docker run --rm --network mcm_default eclipse-mosquitto:2.0 sh -ec '
-        mosquitto_sub -h mcm-mosquitto -p "$1" -u "$2" -P "$3" -t "$4" -C 1 > /tmp/mcm-listener-message &
+    TCP_EXPECTED_PAYLOAD="tcp-roundtrip-${$}-${RANDOM}-$(date +%s)"
+    if ! TCP_ROUNDTRIP="$(docker run --rm --network mcm_default \
+        -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
+        eclipse-mosquitto:2.0 sh -ec '
+        topic="mcm/healthcheck"
+        expected="$2"
+        output=/tmp/mcm-listener-message
+        mosquitto_sub -h mcm-mosquitto -p "$1" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
+            -t "$topic" -q 1 -W 12 > "$output" 2>&1 &
         subscriber=$!
         sleep 1
-        mosquitto_pub -h mcm-mosquitto -p "$1" -u "$2" -P "$3" -t "$4" -m "$5"
-        wait "$subscriber"
-        cat /tmp/mcm-listener-message
-    ' sh "$MCM_E2E_LISTENER_PORT" "$MCM_MOSQUITTO_USERNAME" "$MCM_MOSQUITTO_PASSWORD" 'mcm/listeners/tcp-e2e' 'tcp-ok' 2>/dev/null)" \
-        || fail 'TCP publish/subscribe round-trip through listener failed'
-    [[ "$TCP_ROUNDTRIP" == 'tcp-ok' ]] || fail 'TCP listener round-trip payload mismatch'
+        mosquitto_pub -h mcm-mosquitto -p "$1" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
+            -t "$topic" -q 1 -m "$expected"
+        wait "$subscriber" || true
+        grep -Fxq "$expected" "$output" || {
+            printf "Expected TCP payload was not observed; subscriber output follows:\\n"
+            cat "$output"
+            exit 1
+        }
+        printf "%s\\n" "$expected"
+    ' sh "$MCM_E2E_LISTENER_PORT" "$TCP_EXPECTED_PAYLOAD" 2>&1)"; then
+        TCP_DIAGNOSTIC="$TCP_ROUNDTRIP"
+        TCP_DIAGNOSTIC="${TCP_DIAGNOSTIC//"$MCM_MOSQUITTO_USERNAME"/[redacted]}"
+        TCP_DIAGNOSTIC="${TCP_DIAGNOSTIC//"$MCM_MOSQUITTO_PASSWORD"/[redacted]}"
+        fail "TCP publish/subscribe round-trip through listener failed: ${TCP_DIAGNOSTIC:-no client diagnostics}"
+    fi
+    [[ "$TCP_ROUNDTRIP" == "$TCP_EXPECTED_PAYLOAD" ]] || fail 'TCP listener round-trip payload mismatch'
     pass 10 'TCP publish/subscribe round-trip'
 else
     fail 'Docker is required for listener transport checks on mcm_default'
@@ -185,7 +204,7 @@ import paho.mqtt.client as mqtt
 
 username = os.environ["MCM_MOSQUITTO_USERNAME"]
 password = os.environ["MCM_MOSQUITTO_PASSWORD"]
-topic = "mcm/listeners/ws-e2e/" + uuid.uuid4().hex
+topic = "mcm/healthcheck"
 expected_payload = "ws-roundtrip-" + uuid.uuid4().hex
 received = threading.Event()
 connected = threading.Event()
@@ -203,8 +222,10 @@ def on_subscribe(client, userdata, mid, granted_qos, properties=None):
     subscribed.set()
 
 def on_message(client, userdata, message):
-    actual.append(message.payload.decode())
-    received.set()
+    payload = message.payload.decode()
+    if payload == expected_payload:
+        actual.append(payload)
+        received.set()
 
 client.on_connect = on_connect
 client.on_subscribe = on_subscribe

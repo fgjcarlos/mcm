@@ -40,6 +40,18 @@ if grep -Eq 'pip3 install|MCM_E2E_PAHO_MQTT_INSTALLED' "$LISTENER_SCRIPT"; then
 fi
 grep -Fq 'WS publish/subscribe round-trip failed' "$LISTENER_SCRIPT" \
     || fail 'WS round-trip expected failure message is missing'
+grep -Fq 'topic="mcm/healthcheck"' "$LISTENER_SCRIPT" \
+    || fail 'TCP round-trip does not publish and subscribe on the exact authorized topic'
+grep -Fq 'topic = "mcm/healthcheck"' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip does not publish and subscribe on the exact authorized topic'
+grep -Fq 'grep -Fxq "$expected" "$output"' "$LISTENER_SCRIPT" \
+    || fail 'TCP round-trip can accept an unrelated healthcheck payload'
+grep -Fq 'if payload == expected_payload:' "$LISTENER_SCRIPT" \
+    || fail 'WS message handler can accept an unrelated healthcheck payload'
+grep -Fq -- '-t "$topic" -q 1 -W 12' "$LISTENER_SCRIPT" \
+    || fail 'TCP probe does not use QoS 1 with a bounded wait'
+grep -Fq 'TCP_DIAGNOSTIC="${TCP_DIAGNOSTIC//"$MCM_MOSQUITTO_PASSWORD"/[redacted]}"' "$LISTENER_SCRIPT" \
+    || fail 'TCP diagnostics do not redact the broker password'
 awk '
     /^[[:space:]]*pass [0-9]+ / {
         step = $2 + 0
