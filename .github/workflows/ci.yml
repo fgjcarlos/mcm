@@ -326,17 +326,11 @@ jobs:
           cat > /tmp/docker-compose.e2e.yml <<EOF
           services:
             mosquitto:
-              image: eclipse-mosquitto:2.0
               ports:
-                - "1883:1883"
-                - "9001:9001"
                 - "1884:1884"
             mcm:
-              image: mcm:dev
               environment:
                 MCM_MOSQUITTO_COMPOSE_PATH: /tmp/docker-compose.e2e.yml
-              volumes:
-                - /tmp/docker-compose.e2e.yml:/tmp/docker-compose.e2e.yml:ro
           EOF
       - name: Validate listener restart prerequisites
         run: |
@@ -345,6 +339,12 @@ jobs:
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          # Issue #299: enable the listener conf writer so the listener
+          # preview/apply flow can splice new listener directives into
+          # the shared /mosquitto/config/mosquitto.conf. Without this
+          # variable the writer is inactive and the broker never picks
+          # up the new ports on restart.
+          MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
