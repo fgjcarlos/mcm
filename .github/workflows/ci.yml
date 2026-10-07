@@ -341,10 +341,20 @@ jobs:
       - name: Validate listener restart prerequisites
         run: |
           docker run --rm --entrypoint docker mcm:dev compose version
-          docker compose -f /tmp/docker-compose.e2e.yml -p mcm config --quiet
+          # Validate the merge of the repo dev compose and the e2e
+          # override; the standalone override file is intentionally
+          # minimal so it inherits image/build/volumes from the base.
+          docker compose -f docker-compose.yml -p mcm \
+            -f /tmp/docker-compose.e2e.yml config --quiet
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          # Issue #299: enable the listener conf writer so the listener
+          # preview/apply flow can splice new listener directives into
+          # the shared /mosquitto/config/mosquitto.conf. Without this
+          # variable the writer is inactive and the broker never picks
+          # up the new ports on restart.
+          MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d

@@ -53,6 +53,22 @@ type ComposeReader interface {
 // ListenerAuditFunc records a listener lifecycle audit event.
 type ListenerAuditFunc func(ctx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte)
 
+// ListenerConfWriter renders and persists listener specs to the broker
+// mosquitto.conf file. Implementations must be idempotent: applying the
+// same listener specs twice leaves the file content unchanged. Snapshot
+// returns the on-disk bytes captured BEFORE the apply; Restore writes
+// them back atomically when the post-write restart fails so the broker
+// can never see a half-applied configuration.
+//
+// nil writers are tolerated for tests and for the dev compose path
+// where MCM_MOSQUITTO_CONFIG_DIR is unset: Apply then skips the file
+// splice and falls back to the previous restart + SQLite behaviour.
+type ListenerConfWriter interface {
+	Write(specs []listeners.ListenerSpec) error
+	Snapshot() ([]byte, error)
+	Restore(snapshot []byte) error
+}
+
 // ListenerPreviewResult is the immutable outcome of rendering a listener preview.
 type ListenerPreviewResult struct {
 	RevisionID    string                    `json:"revision_id"`
@@ -101,6 +117,17 @@ func WithListenerRevisionID(newRevisionID func() (string, error)) ListenerServic
 	}
 }
 
+// WithListenerConfWriter injects the broker conf writer used to splice
+// listener directives into mosquitto.conf. When w is nil the apply path
+// falls back to the legacy behaviour (restart + SQLite only); this
+// matches the dev compose default where MCM_MOSQUITTO_CONFIG_DIR is
+// unset and there is nothing to splice.
+func WithListenerConfWriter(w ListenerConfWriter) ListenerServiceOption {
+	return func(s *ListenerService) {
+		s.confWriter = w
+	}
+}
+
 type previewEntry struct {
 	result   ListenerPreviewResult
 	rows     []storage.ListenerSpecRow
@@ -114,6 +141,7 @@ type ListenerService struct {
 	store         ListenerRepository
 	composeReader ComposeReader
 	restartRunner ListenerRestartRunner
+	confWriter    ListenerConfWriter
 	auditFn       ListenerAuditFunc
 	clock         func() time.Time
 	newRevisionID func() (string, error)
@@ -216,6 +244,23 @@ func (s *ListenerService) Preview(ctx context.Context, desired []listeners.Liste
 }
 
 // Apply restarts the broker if necessary and persists the immutable preview rows.
+//
+// The contract is split into three ordered steps when a conf writer is
+// configured:
+//
+//  1. Snapshot the current mosquitto.conf bytes BEFORE writing anything.
+//  2. Splice the rendered listener directives into mosquitto.conf via
+//     the writer. If this fails, the broker is untouched and SQLite is
+//     untouched — the apply is rejected with the writer error wrapped in
+//     ErrListenerRestartFailed so the audit log flags the failure.
+//  3. Restart the broker. If the restart fails, the snapshot from step 1
+//     is restored BEFORE the function returns, so the broker never sees a
+//     half-applied configuration. SQLite is not touched on the rollback
+//     path either, so the preview remains valid for retry.
+//
+// When no conf writer is configured the legacy behaviour (restart +
+// SQLite) is preserved. This matches the dev compose default where
+// MCM_MOSQUITTO_CONFIG_DIR is unset and there is nothing to splice.
 func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm bool) error {
 	now := s.clock().UTC()
 	s.mu.Lock()
@@ -249,14 +294,49 @@ func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm 
 		s.mu.Unlock()
 	}()
 
+	specs, err := rowsToSpecs(entry.rows)
+	if err != nil {
+		return fmt.Errorf("decode listener rows: %w", err)
+	}
+
+	var snapshotTaken bool
+	var snapshotBytes []byte
+	if s.confWriter != nil {
+		snapshotBytes, err = s.confWriter.Snapshot()
+		if err != nil {
+			return fmt.Errorf("%w: snapshot mosquitto.conf: %v", ErrListenerRestartFailed, err)
+		}
+		snapshotTaken = true
+		if writeErr := s.confWriter.Write(specs); writeErr != nil {
+			if snapshotTaken {
+				if restoreErr := s.confWriter.Restore(snapshotBytes); restoreErr != nil {
+					return fmt.Errorf("%w: write mosquitto.conf: %v (restore also failed: %v)", ErrListenerRestartFailed, writeErr, restoreErr)
+				}
+			}
+			return fmt.Errorf("%w: write mosquitto.conf: %v", ErrListenerRestartFailed, writeErr)
+		}
+	}
+
 	target := ""
 	if reader, ok := s.composeReader.(interface{ ComposeService() string }); ok {
 		target = reader.ComposeService()
 	}
-	if err := s.restartRunner.Restart(ctx, target); err != nil {
-		return fmt.Errorf("%w: %v", ErrListenerRestartFailed, err)
+	restartErr := s.restartRunner.Restart(ctx, target)
+	if restartErr != nil {
+		if snapshotTaken {
+			if restoreErr := s.confWriter.Restore(snapshotBytes); restoreErr != nil {
+				return fmt.Errorf("%w: %v (restore also failed: %v)", ErrListenerRestartFailed, restartErr, restoreErr)
+			}
+		}
+		return fmt.Errorf("%w: %v", ErrListenerRestartFailed, restartErr)
 	}
+
 	if err := s.store.ReplaceAllListenerSpecs(ctx, entry.rows); err != nil {
+		if snapshotTaken {
+			if restoreErr := s.confWriter.Restore(snapshotBytes); restoreErr != nil {
+				return fmt.Errorf("replace listener specs: %w (restore also failed: %v)", err, restoreErr)
+			}
+		}
 		return fmt.Errorf("replace listener specs: %w", err)
 	}
 	s.mu.Lock()
@@ -268,6 +348,45 @@ func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm 
 		s.auditFn(ctx, "system", "listener.apply", "listener_config", revisionID, "applied", nil)
 	}
 	return nil
+}
+
+// rowsToSpecs converts persisted listener rows back into the in-memory
+// specs used by the conf writer. The round-trip mirrors listenerRows in
+// the preview path so the writer sees exactly the topology the operator
+// approved.
+func rowsToSpecs(rows []storage.ListenerSpecRow) ([]listeners.ListenerSpec, error) {
+	specs := make([]listeners.ListenerSpec, 0, len(rows))
+	for _, row := range rows {
+		spec := listeners.ListenerSpec{
+			ID:      row.ID,
+			Port:    row.Port,
+			Bind:    row.Bind,
+			Options: cloneOptions(row.Options),
+		}
+		for _, protocol := range row.Protocols {
+			spec.Protocols = append(spec.Protocols, listeners.Protocol(protocol))
+		}
+		if err := listeners.Normalize(&spec); err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
+// ComposeAllHostPorts returns every configured Compose host port for UI collision hints.
+// It is intentionally independent of the listener preview/apply safety path.
+func (s *ListenerService) ComposeAllHostPorts(ctx context.Context) ([]int, error) {
+	if s.composeReader == nil || s.composeReader.Disabled() {
+		return nil, nil
+	}
+	ports, err := s.composeReader.HostPorts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read compose host ports: %w", err)
+	}
+	ports = append([]int(nil), ports...)
+	sort.Ints(ports)
+	return ports, nil
 }
 
 func (s *ListenerService) composeStatus(ctx context.Context, desired []listeners.ListenerSpec) (ComposePreviewStatus, error) {

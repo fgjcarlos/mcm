@@ -13,8 +13,12 @@ readonly RESET='\033[0m'
 
 MCM_BASE_URL="${MCM_BASE_URL:-http://127.0.0.1:8080}"
 MCM_E2E_LISTENER_PORT="${MCM_E2E_LISTENER_PORT:-1884}"
+MCM_E2E_WS_PORT=9001
 MCM_MOSQUITTO_COMPOSE_PATH="${MCM_MOSQUITTO_COMPOSE_PATH:-}"
 MCM_MOSQUITTO_SERVICE="${MCM_MOSQUITTO_SERVICE:-mosquitto}"
+MCM_MOSQUITTO_USERNAME="${MCM_MOSQUITTO_USERNAME:-admin}"
+MCM_MOSQUITTO_PASSWORD="${MCM_MOSQUITTO_PASSWORD:-mcm-dev-broker-password}"
+export MCM_MOSQUITTO_USERNAME MCM_MOSQUITTO_PASSWORD
 
 if [[ -z "${MCM_AUTH_TOKEN:-}" ]]; then
     printf '%b\n' "${RED}✗ MCM_AUTH_TOKEN is required${RESET}" >&2
@@ -101,6 +105,24 @@ apply() {
     fi
 }
 
+listener_accepts_ws() {
+    docker run --rm --network mcm_default \
+        -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
+        python:3.12-slim sh -ec 'python -m pip install --no-cache-dir paho-mqtt==2.1.0 >/dev/null && exec python3 -' \
+        <<'PY' >/dev/null 2>&1
+import os
+import paho.mqtt.client as mqtt
+client = mqtt.Client(transport="websockets")
+client.username_pw_set(os.environ["MCM_MOSQUITTO_USERNAME"], os.environ["MCM_MOSQUITTO_PASSWORD"])
+client.ws_set_options(path="/mqtt")
+try:
+    client.connect("mcm-mosquitto", 9001, 5)
+    client.disconnect()
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
 wait_for_ready
 printf '%s\n' "Listener Compose context: path=${MCM_MOSQUITTO_COMPOSE_PATH:-not set}, service=${MCM_MOSQUITTO_SERVICE}"
 
@@ -108,7 +130,7 @@ LISTENERS="$(curl -fsS -H "Authorization: Bearer ${MCM_AUTH_TOKEN}" "${MCM_BASE_
     || fail 'could not fetch existing listener specs'
 pass 2 'list listeners'
 
-NEW_LISTENER="$(jq -cn --argjson port "$MCM_E2E_LISTENER_PORT" '{port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}')"
+NEW_LISTENER="$(jq -cn --argjson port "$MCM_E2E_LISTENER_PORT" '{id: "e2e-tcp", port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}')"
 DESIRED="$(jq -c --argjson new "$NEW_LISTENER" '. + [$new]' <<<"$LISTENERS")"
 preview "$DESIRED"
 pass 3 'preview listener addition'
@@ -117,27 +139,133 @@ pass 4 'apply listener addition'
 sleep 5
 pass 5 'wait for listener restart'
 
+if [[ -z "$MCM_MOSQUITTO_COMPOSE_PATH" || ! -r "$MCM_MOSQUITTO_COMPOSE_PATH" ]] || \
+    ! grep -Eq '9001:9001' "$MCM_MOSQUITTO_COMPOSE_PATH"; then
+    fail 'WS listener port 9001 is not mapped by the configured Compose override'
+fi
+WS_LISTENER="$(jq -cn '{id: "e2e-ws", port: 9001, bind: "0.0.0.0", protocols: ["websockets"]}')"
+WS_DESIRED="$(jq -c --argjson new "$WS_LISTENER" '. + [$new]' <<<"$DESIRED")"
+preview "$WS_DESIRED"
+pass 6 'preview ws listener addition'
+apply
+pass 7 'apply ws listener'
+sleep 5
+pass 8 'wait for ws listener restart'
+
 if command -v nc >/dev/null 2>&1; then
     nc -zv 127.0.0.1 "$MCM_E2E_LISTENER_PORT" || fail "listener port ${MCM_E2E_LISTENER_PORT} is not open"
-    pass 6 'listener port is open'
+    pass 9 'listener port is open'
 else
     skip 'nc is not installed; listener port-open check skipped'
 fi
 
-if command -v mosquitto_pub >/dev/null 2>&1; then
-    mosquitto_pub -h 127.0.0.1 -p "$MCM_E2E_LISTENER_PORT" -t 'mcm/listeners/e2e' -m 'ok' \
-        || fail "MQTT publish to listener port ${MCM_E2E_LISTENER_PORT} failed"
-    pass 7 'publish through new listener'
+if command -v docker >/dev/null 2>&1; then
+    TCP_EXPECTED_PAYLOAD="tcp-roundtrip-${$}-${RANDOM}-$(date +%s)"
+    if ! TCP_ROUNDTRIP="$(docker run --rm --network mcm_default \
+        -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
+        eclipse-mosquitto:2.0 sh -ec '
+        topic="mcm/healthcheck"
+        expected="$2"
+        output=/tmp/mcm-listener-message
+        mosquitto_sub -h mcm-mosquitto -p "$1" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
+            -t "$topic" -q 1 -W 12 > "$output" 2>&1 &
+        subscriber=$!
+        sleep 1
+        mosquitto_pub -h mcm-mosquitto -p "$1" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
+            -t "$topic" -q 1 -m "$expected"
+        wait "$subscriber" || true
+        grep -Fxq "$expected" "$output" || {
+            printf "Expected TCP payload was not observed; subscriber output follows:\\n"
+            cat "$output"
+            exit 1
+        }
+        printf "%s\\n" "$expected"
+    ' sh "$MCM_E2E_LISTENER_PORT" "$TCP_EXPECTED_PAYLOAD" 2>&1)"; then
+        TCP_DIAGNOSTIC="$TCP_ROUNDTRIP"
+        TCP_DIAGNOSTIC="${TCP_DIAGNOSTIC//"$MCM_MOSQUITTO_USERNAME"/[redacted]}"
+        TCP_DIAGNOSTIC="${TCP_DIAGNOSTIC//"$MCM_MOSQUITTO_PASSWORD"/[redacted]}"
+        fail "TCP publish/subscribe round-trip through listener failed: ${TCP_DIAGNOSTIC:-no client diagnostics}"
+    fi
+    [[ "$TCP_ROUNDTRIP" == "$TCP_EXPECTED_PAYLOAD" ]] || fail 'TCP listener round-trip payload mismatch'
+    pass 10 'TCP publish/subscribe round-trip'
 else
-    skip 'mosquitto_pub is not installed; MQTT publish check skipped'
+    fail 'Docker is required for listener transport checks on mcm_default'
 fi
 
-preview "$LISTENERS"
-pass 8 'preview listener removal'
+docker run --rm --network mcm_default \
+    -e MCM_E2E_WS_HOST=mcm-mosquitto \
+    -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
+    python:3.12-slim sh -ec 'python -m pip install --no-cache-dir paho-mqtt==2.1.0 >/dev/null && exec python3 -' \
+    <<'PY' || fail 'WS publish/subscribe round-trip failed'
+import os, threading, uuid
+import paho.mqtt.client as mqtt
+
+username = os.environ["MCM_MOSQUITTO_USERNAME"]
+password = os.environ["MCM_MOSQUITTO_PASSWORD"]
+topic = "mcm/healthcheck"
+expected_payload = "ws-roundtrip-" + uuid.uuid4().hex
+received = threading.Event()
+connected = threading.Event()
+subscribed = threading.Event()
+actual = []
+client = mqtt.Client(transport="websockets")
+client.username_pw_set(username, password)
+client.ws_set_options(path="/mqtt")
+
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    if int(reason_code) == 0:
+        connected.set()
+
+def on_subscribe(client, userdata, mid, granted_qos, properties=None):
+    subscribed.set()
+
+def on_message(client, userdata, message):
+    payload = message.payload.decode()
+    if payload == expected_payload:
+        actual.append(payload)
+        received.set()
+
+client.on_connect = on_connect
+client.on_subscribe = on_subscribe
+client.on_message = on_message
+try:
+    client.connect(os.environ.get("MCM_E2E_WS_HOST", "mcm-mosquitto"), 9001, 10)
+    client.loop_start()
+    if not connected.wait(8):
+        raise RuntimeError("WS connection was not established")
+    client.subscribe(topic, qos=1)
+    if not subscribed.wait(8):
+        raise RuntimeError("WS subscription was not established")
+    info = client.publish(topic, expected_payload, qos=1)
+    if info.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError("WS publish was rejected")
+    info.wait_for_publish(timeout=8)
+    if not received.wait(8) or actual[0] != expected_payload:
+        raise RuntimeError("WS payload was not received exactly")
+finally:
+    client.loop_stop()
+    client.disconnect()
+PY
+pass 11 'WS publish/subscribe round-trip'
+
+preview "$DESIRED"
+pass 12 'preview ws listener removal'
 apply
-pass 9 'apply listener removal'
+pass 13 'apply ws listener removal'
 sleep 5
-pass 10 'wait for listener removal restart'
+pass 14 'wait for ws listener removal restart'
+if listener_accepts_ws; then
+    fail 'WS listener port 9001 remained open after removal'
+fi
+pass 15 'WS listener port is closed after removal'
+preview "$LISTENERS"
+pass 16 'preview TCP listener removal'
+apply
+pass 17 'apply listener removal'
+sleep 5
+pass 18 'wait for listener removal restart'
 
 # BEGIN listener removal probe
 listener_accepts_mqtt() {
@@ -148,6 +276,7 @@ listener_accepts_mqtt() {
         # port. Suppress client output so no broker credentials can leak to logs.
         docker run --rm --network mcm_default eclipse-mosquitto:2.0 \
             mosquitto_pub -h mcm-mosquitto -p "$MCM_E2E_LISTENER_PORT" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
             -t 'mcm/listeners/e2e-probe' -m 'probe' >/dev/null 2>&1
         return $?
     fi
@@ -167,7 +296,7 @@ listener_removed_check() {
     if listener_accepts_mqtt; then
         fail "listener port ${MCM_E2E_LISTENER_PORT} remained open after removal"
     fi
-    pass 11 'listener port is closed after removal'
+    pass 19 'listener port is closed after removal'
 }
 # END listener removal probe
 
@@ -186,5 +315,5 @@ UNMAPPED_CODE="$(post_json '/api/v1/listeners/preview' "$(jq -cn --argjson specs
 if [[ "$UNMAPPED_CODE" != '409' ]] || ! grep -Eqi 'compose|unmapped' "$UNMAPPED_BODY"; then
     fail "unmapped listener preview expected HTTP 409 with compose/unmapped message; got HTTP ${UNMAPPED_CODE}: $(<"$UNMAPPED_BODY")"
 fi
-pass 12 'reject unmapped Compose port'
+pass 20 'reject unmapped Compose port'
 printf '%b\n' "${GREEN}✓ e2e-listeners: all steps passed${RESET}"

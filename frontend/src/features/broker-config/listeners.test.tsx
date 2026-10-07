@@ -45,14 +45,18 @@ afterEach(() => {
 })
 
 describe('ListenersPanel', () => {
-  it('renders listeners list from initial fetch', async () => {
-    vi.stubGlobal('fetch', installFetchMock(baseRoutes()))
+  it('renders listeners and compose port hints from initial fetch', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes(),
+      'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs, compose_host_ports: [1883] }),
+    }))
 
     render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
 
     expect(await screen.findByText('1883')).toBeInTheDocument()
     expect(screen.getByText('0.0.0.0')).toBeInTheDocument()
     expect(screen.getByText('mqtt')).toBeInTheDocument()
+    expect(screen.getByText('Port 1883 conflicts with a Compose host port')).toBeInTheDocument()
   })
 
   it('submitting a preview shows the diff and stores a revision id', async () => {
@@ -111,6 +115,39 @@ describe('ListenersPanel', () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([input]) => input === '/api/v1/listeners')).toHaveLength(2)
     })
+  })
+
+  it('refreshes applied edits, returns to clean state, and reports the mutation watermark', async () => {
+    const onApplyStart = vi.fn(() => 42)
+    const onApplySuccess = vi.fn()
+    let listenerFetches = 0
+    vi.stubGlobal('fetch', installFetchMock({
+      'GET /api/v1/listeners': () => {
+        listenerFetches += 1
+        return jsonResponse({ specs: listenerFetches === 1
+          ? initialSpecs
+          : [{ ...initialSpecs[0], port: 1884 }] })
+      },
+      'POST /api/v1/listeners/preview': () => jsonResponse({ ...preview, needs_restart: false }),
+      'POST /api/v1/listeners/apply': () => jsonResponse({ revision_id: 'revision-123', applied: true }),
+    }))
+
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" onApplyStart={onApplyStart} onApplySuccess={onApplySuccess} />)
+    const port = await screen.findByLabelText('Port mqtt')
+    await userEvent.setup().clear(port)
+    await userEvent.setup().type(port, '1884')
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('revision-123')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Apply (restart required)' }))
+
+    expect(await screen.findByText('Listener configuration applied.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Saved')).toBeInTheDocument())
+    expect(screen.getByLabelText('Port mqtt')).toHaveValue('1884')
+    expect(onApplyStart).toHaveBeenCalledOnce()
+    expect(onApplySuccess).toHaveBeenCalledExactlyOnceWith(42)
+    expect(listenerFetches).toBe(2)
   })
 
   it('shows compose_unmapped (409) as an error', async () => {
