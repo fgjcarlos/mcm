@@ -33,6 +33,28 @@ function renderPanel(composeHostPorts: number[] = []) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('ListenersPanel editor', () => {
+  it('keeps Add disabled until the initial listener fetch resolves', async () => {
+    let resolveResponse!: (response: Response) => void
+    const pendingResponse = new Promise<Response>((resolve) => { resolveResponse = resolve })
+    vi.stubGlobal('fetch', installFetchMock({
+      'GET /api/v1/listeners': () => pendingResponse,
+      'POST /api/v1/listeners/preview': () => jsonResponse(preview),
+    }))
+    const user = userEvent.setup()
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
+
+    const addButton = screen.getByRole('button', { name: 'Add listener' })
+    expect(addButton).toBeDisabled()
+    await user.click(addButton)
+    expect(screen.getByText('Loading listeners…')).toBeInTheDocument()
+
+    resolveResponse(jsonResponse({ specs: initialSpecs }))
+    expect(await screen.findByLabelText('Port mqtt')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add listener' })).toBeEnabled()
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(screen.getAllByLabelText(/Port/)).toHaveLength(1)
+  })
+
   it('adds, edits, and deletes listener rows and marks edits dirty', async () => {
     const user = userEvent.setup()
     renderPanel()

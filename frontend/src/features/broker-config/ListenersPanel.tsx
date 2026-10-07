@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useListeners } from './useListeners'
 import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerIssue, ListenerSpec } from './types'
@@ -26,11 +26,11 @@ export default function ListenersPanel({
   composeHostPorts?: number[]
 }) {
   const { listeners, preview, previewError, applyError, isLoading, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
-  const [specs, setSpecs] = useState<ListenerSpec[]>([])
-  const [dirty, setDirty] = useState(false)
+  const [draft, setDraft] = useState<ListenerSpec[]>()
+  const specs = draft ?? listeners
+  const dirty = draft !== undefined
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [previewedSpecs, setPreviewedSpecs] = useState('')
-  const mutationWatermark = useRef<number | null>(null)
   const canApply = role === 'admin'
   const validation = useMemo(() => validateListeners(specs), [specs])
   const composeConflicts = useMemo(() => composePortConflicts(specs, composeHostPorts), [specs, composeHostPorts])
@@ -39,20 +39,8 @@ export default function ListenersPanel({
   const isPreviewCurrent = Boolean(preview?.revision_id) && previewedSpecs === JSON.stringify(specs)
   const applyEnabled = canApply && isPreviewCurrent && blockingIssues.length === 0 && (!preview?.needs_restart || confirmRestart)
 
-  useEffect(() => {
-    if (!dirty) setSpecs(listeners)
-  }, [listeners, dirty])
-
-  useEffect(() => {
-    if (!applyResult?.applied || mutationWatermark.current === null) return
-    onApplySuccess?.(mutationWatermark.current)
-    mutationWatermark.current = null
-    setDirty(false)
-  }, [applyResult, onApplySuccess])
-
   const updateListener = (id: string, changes: Partial<ListenerSpec>) => {
-    setSpecs((current) => current.map((listener) => listener.id === id ? { ...listener, ...changes } : listener))
-    setDirty(true)
+    setDraft((current) => (current ?? listeners).map((listener) => listener.id === id ? { ...listener, ...changes } : listener))
     setConfirmRestart(false)
   }
 
@@ -69,8 +57,12 @@ export default function ListenersPanel({
 
   const handleApply = async () => {
     if (!preview?.revision_id || !applyEnabled) return
-    mutationWatermark.current = onApplyStart?.() ?? 0
-    await apply({ revision_id: preview.revision_id, confirm: confirmRestart })
+    const mutationWatermark = onApplyStart?.() ?? 0
+    const result = await apply({ revision_id: preview.revision_id, confirm: confirmRestart })
+    if (result?.applied) {
+      setDraft(undefined)
+      onApplySuccess?.(mutationWatermark)
+    }
   }
 
   const addListener = () => {
@@ -78,13 +70,11 @@ export default function ListenersPanel({
       const match = listener.id.match(/^listener-(\d+)$/)
       return match ? Math.max(max, Number(match[1])) : max
     }, 0) + 1
-    setSpecs((current) => [...current, newListener(nextIndex)])
-    setDirty(true)
+    setDraft((current) => [...(current ?? listeners), newListener(nextIndex)])
   }
 
   const removeListener = (id: string) => {
-    setSpecs((current) => current.filter((listener) => listener.id !== id))
-    setDirty(true)
+    setDraft((current) => (current ?? listeners).filter((listener) => listener.id !== id))
   }
 
   const listenerIssues = (id: string): ListenerIssue[] => blockingIssues.filter((issue) => issue.listener_id === id)
@@ -99,7 +89,7 @@ export default function ListenersPanel({
             <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={addListener} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200">Add listener</button>
+            <button type="button" onClick={addListener} disabled={isLoading} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-50">Add listener</button>
             <button
               type="button"
               onClick={handlePreview}

@@ -69,7 +69,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: ListenerApplyRequest) => {
+  const apply = useCallback(async (req: ListenerApplyRequest): Promise<ListenerApplyResult | null> => {
     setApplyError('')
     setApplyResult(null)
     try {
@@ -83,7 +83,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
       const body = await response.json().catch(() => null) as ListenerApplyResult | { error?: string } | null
       if (!response.ok) {
         setApplyError(errorMessage(body, 'Apply failed.'))
-        return
+        return null
       }
       const result = body as ListenerApplyResult
       setApplyResult(result)
@@ -91,8 +91,10 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         setPreviewResult(null)
         await refresh()
       }
+      return result
     } catch (error) {
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
+      return null
     }
   }, [token, onLogout, refresh])
 
