@@ -44,7 +44,9 @@ assert_assembly UNMAPPED_DESIRED UNMAPPED_LISTENER
 
 # The production E2E must configure WS, exercise both transports, and clean up
 # both listeners without exposing credentials in its output.
-grep -Fq 'protocols: ["ws"]' "$PRODUCTION_SCRIPT" || fail 'WS listener tuple is missing'
+grep -Fq 'WS_LISTENER="$(jq -cn' "$PRODUCTION_SCRIPT" \
+    && grep -Fq 'port: 9001, bind: "0.0.0.0", protocols: ["websockets"]' "$PRODUCTION_SCRIPT" \
+    || fail 'WS listener tuple is missing or uses the wrong backend protocol'
 grep -Fq 'ws_set_options(path="/mqtt")' "$PRODUCTION_SCRIPT" || fail 'WS client does not use the /mqtt endpoint'
 grep -Fq 'mqtt.Client(transport="websockets")' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not use paho WebSockets transport'
 grep -Fq 'actual[0] != expected_payload' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not verify payload equality'
@@ -121,8 +123,8 @@ if ( listener_removed_check ) > "$TMP_DIR/listener-present.out" 2>&1; then
     fail 'listener removal check did not fail E2E when a real listener remained'
 fi
 grep -Fq 'listener port 1884 remained open after removal' "$TMP_DIR/listener-present.out" \
-    || fail 'listener removal check did not preserve the step-11 failure'
-printf 'PASS: step 11 fails when a real listener remains\n'
+    || fail 'listener removal check did not preserve the step-19 failure'
+printf 'PASS: step 19 fails when a real listener remains\n'
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
@@ -142,5 +144,5 @@ LISTENER_PROBE_MODE=''
 if listener_accepts_mqtt; then fail 'probe unexpectedly succeeded without any probe mechanism'; fi
 [[ "$LISTENER_PROBE_MODE" == none ]] || fail 'probe did not report unavailable mechanisms'
 output="$(listener_removed_check)"
-[[ "$output" == *'SKIP:'* ]] || fail 'step 11 did not skip cleanly without nc or Docker'
-printf 'PASS: step 11 skips when neither probe mechanism is available\n'
+[[ "$output" == *'SKIP:'* ]] || fail 'step 19 did not skip cleanly without nc or Docker'
+printf 'PASS: step 19 skips when neither probe mechanism is available\n'

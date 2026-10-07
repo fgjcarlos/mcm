@@ -16,6 +16,43 @@ pass() {
     printf 'PASS: %s\n' "$1"
 }
 
+LISTENER_SCRIPT="$ROOT/scripts/e2e-listeners.sh"
+awk '
+    /^MCM_MOSQUITTO_USERNAME=/ { username = NR }
+    /^MCM_MOSQUITTO_PASSWORD=/ { password = NR }
+    /^export MCM_MOSQUITTO_USERNAME MCM_MOSQUITTO_PASSWORD$/ { exported = NR }
+    END { if (!(username && password && exported > username && exported > password)) exit 1 }
+' "$LISTENER_SCRIPT" || fail 'broker credentials are not exported after their defaults are assigned'
+grep -Fq -- '-e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD' "$LISTENER_SCRIPT" \
+    || fail 'Python containers do not receive broker credentials through environment variables'
+grep -Fq 'protocols: ["websockets"]' "$LISTENER_SCRIPT" \
+    || fail 'WS listener does not use the backend websockets protocol vocabulary'
+grep -Fq 'docker run --rm --network mcm_default' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip is not run on mcm_default'
+grep -Fq 'python:3.12-slim' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip does not use a Python-capable image'
+grep -Fq 'paho-mqtt==2.1.0' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip does not install pinned paho-mqtt in-container'
+grep -Fq 'pip install --no-cache-dir paho-mqtt==2.1.0' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip does not install paho-mqtt inside its ephemeral container'
+if grep -Eq 'pip3 install|MCM_E2E_PAHO_MQTT_INSTALLED' "$LISTENER_SCRIPT"; then
+    fail 'WS round-trip retains the unused host-side paho installation/export'
+fi
+grep -Fq 'WS publish/subscribe round-trip failed' "$LISTENER_SCRIPT" \
+    || fail 'WS round-trip expected failure message is missing'
+awk '
+    /^[[:space:]]*pass [0-9]+ / {
+        step = $2 + 0
+        if (step != count + 1) {
+            printf "FAIL: pass markers are not a unique sequence at step %d (expected %d)\n", step, count + 1 > "/dev/stderr"
+            exit 1
+        }
+        count++
+    }
+    END { if (count == 0) exit 1 }
+' "$LISTENER_SCRIPT" || fail 'pass markers are not one clear unique sequence'
+pass 'listener WS runtime and deterministic step assertions'
+
 # The Compose plugin belongs only in the dev stage; prod stays minimal.
 awk '/^FROM prod AS dev$/{dev=1} dev && /docker-cli-compose/{found=1} END{if (!found) exit 1}' "$DOCKERFILE" \
     || fail 'dev stage does not install docker-cli-compose with docker-cli'
