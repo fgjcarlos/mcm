@@ -326,16 +326,22 @@ jobs:
           cat > /tmp/docker-compose.e2e.yml <<EOF
           services:
             mosquitto:
+              image: eclipse-mosquitto:2.0
               ports:
                 - "1884:1884"
             mcm:
+              image: mcm:dev
               environment:
                 MCM_MOSQUITTO_COMPOSE_PATH: /tmp/docker-compose.e2e.yml
           EOF
       - name: Validate listener restart prerequisites
         run: |
           docker run --rm --entrypoint docker mcm:dev compose version
-          docker compose -f /tmp/docker-compose.e2e.yml -p mcm config --quiet
+          # Validate the merge of the repo dev compose and the e2e
+          # override; the standalone override file is intentionally
+          # minimal so it inherits image/build/volumes from the base.
+          docker compose -f docker-compose.yml -p mcm \
+            -f /tmp/docker-compose.e2e.yml config --quiet
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
