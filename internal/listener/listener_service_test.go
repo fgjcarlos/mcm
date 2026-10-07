@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -225,5 +226,159 @@ func TestListenerService_AuditOnApply(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("audit calls = %d, want 1", calls)
+	}
+}
+
+// fakeConfWriter captures the calls made by Apply against a
+// listener.ListenerConfWriter. Snapshot/Restore operate on an in-memory
+// byte slice so tests can assert the rollback path without touching
+// the filesystem.
+type fakeConfWriter struct {
+	mu           sync.Mutex
+	snapshot     []byte
+	written      [][]byte
+	writeErr     error
+	snapshotErr  error
+	restoreErr   error
+	restoreCalls int
+	writeCalls   int
+}
+
+func (f *fakeConfWriter) Write(specs []listeners.ListenerSpec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writeCalls++
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	// Encode the applied spec count as a sentinel so tests can assert
+	// which topology was rendered without coupling to listener.RenderAll.
+	encoded := []byte(fmt.Sprintf("listeners=%d", len(specs)))
+	f.written = append(f.written, encoded)
+	return nil
+}
+
+func (f *fakeConfWriter) Snapshot() ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.snapshotErr != nil {
+		return nil, f.snapshotErr
+	}
+	return append([]byte(nil), f.snapshot...), nil
+}
+
+func (f *fakeConfWriter) Restore(snapshot []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restoreCalls++
+	if f.restoreErr != nil {
+		return f.restoreErr
+	}
+	f.snapshot = append([]byte(nil), snapshot...)
+	return nil
+}
+
+func TestListenerService_Apply_HappyPath_WritesConf(t *testing.T) {
+	store := newInMemoryListenerStore(nil)
+	w := &fakeConfWriter{snapshot: []byte("original-body")}
+	svc := NewListenerService(store, nil, &NoopRestartRunner{}, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+		WithListenerConfWriter(w),
+	)
+	preview, err := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if w.writeCalls != 1 {
+		t.Fatalf("Write calls = %d, want 1", w.writeCalls)
+	}
+	if w.restoreCalls != 0 {
+		t.Fatalf("Restore calls = %d, want 0 on happy path", w.restoreCalls)
+	}
+	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(rows))
+	}
+}
+
+func TestListenerService_Apply_RestartFailure_RollsBackConf(t *testing.T) {
+	store := newInMemoryListenerStore(nil)
+	w := &fakeConfWriter{snapshot: []byte("original-body")}
+	svc := NewListenerService(store, nil, failingRestartRunner{}, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+		WithListenerConfWriter(w),
+	)
+	preview, _ := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); !errors.Is(err, ErrListenerRestartFailed) {
+		t.Fatalf("Apply() error = %v, want ErrListenerRestartFailed", err)
+	}
+	if w.writeCalls != 1 {
+		t.Fatalf("Write calls = %d, want 1", w.writeCalls)
+	}
+	if w.restoreCalls != 1 {
+		t.Fatalf("Restore calls = %d, want 1 on restart failure", w.restoreCalls)
+	}
+	if string(w.snapshot) != "original-body" {
+		t.Fatalf("snapshot after restore = %q, want original-body", string(w.snapshot))
+	}
+	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 0 {
+		t.Fatalf("stored rows = %d, want 0 on rollback", len(rows))
+	}
+}
+
+func TestListenerService_Apply_WriteFailure_NoSQLitePersist(t *testing.T) {
+	store := newInMemoryListenerStore(nil)
+	w := &fakeConfWriter{snapshot: []byte("original-body"), writeErr: errors.New("disk full")}
+	svc := NewListenerService(store, nil, &NoopRestartRunner{}, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+		WithListenerConfWriter(w),
+	)
+	preview, _ := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); !errors.Is(err, ErrListenerRestartFailed) {
+		t.Fatalf("Apply() error = %v, want ErrListenerRestartFailed", err)
+	}
+	if w.restoreCalls != 1 {
+		t.Fatalf("Restore calls = %d, want 1 on write failure", w.restoreCalls)
+	}
+	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 0 {
+		t.Fatalf("stored rows = %d, want 0 when writer rejects", len(rows))
+	}
+}
+
+func TestListenerService_Apply_NoConfWriter_PreservesLegacyBehaviour(t *testing.T) {
+	store := newInMemoryListenerStore(nil)
+	svc := NewListenerService(store, nil, &NoopRestartRunner{}, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+	)
+	preview, err := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); err != nil {
+		t.Fatalf("Apply() error = %v, want nil without conf writer", err)
+	}
+	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(rows))
+	}
+}
+
+func TestListenerService_Apply_SnapshotFailure_NoSQLitePersist(t *testing.T) {
+	store := newInMemoryListenerStore(nil)
+	w := &fakeConfWriter{snapshotErr: errors.New("read-only fs")}
+	svc := NewListenerService(store, nil, &NoopRestartRunner{}, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+		WithListenerConfWriter(w),
+	)
+	preview, _ := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); !errors.Is(err, ErrListenerRestartFailed) {
+		t.Fatalf("Apply() error = %v, want ErrListenerRestartFailed", err)
+	}
+	if w.writeCalls != 0 {
+		t.Fatalf("Write calls = %d, want 0 when snapshot fails", w.writeCalls)
+	}
+	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 0 {
+		t.Fatalf("stored rows = %d, want 0 when snapshot fails", len(rows))
 	}
 }

@@ -180,6 +180,68 @@ func TestFileWriter_PropagatesAtomicWriteError(t *testing.T) {
 	}
 }
 
+func TestFileWriter_SnapshotAndRestoreRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "mosquitto.conf")
+	if err := os.WriteFile(confPath, []byte(fixedConf), 0o644); err != nil {
+		t.Fatalf("seed conf: %v", err)
+	}
+	w := New(confPath)
+
+	snap, err := w.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if string(snap) != fixedConf {
+		t.Fatalf("Snapshot mismatch:\nwant=%q\ngot=%q", fixedConf, string(snap))
+	}
+
+	if _, err := w.Write([]listeners.ListenerSpec{
+		{ID: "mqtt", Port: 1883, Bind: "0.0.0.0", Protocols: []listeners.Protocol{listeners.ProtocolMQTT}},
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if err := w.Restore(snap); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	body, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(body) != fixedConf {
+		t.Fatalf("Restore did not revert:\n%q", string(body))
+	}
+}
+
+func TestFileWriter_SnapshotMissingFileIsEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "absent.conf")
+	w := New(confPath)
+	snap, err := w.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot on missing file: %v", err)
+	}
+	if len(snap) != 0 {
+		t.Fatalf("expected empty snapshot for missing file, got %d bytes", len(snap))
+	}
+}
+
+func TestFileWriter_RestoreEmptySnapshotRemovesFile(t *testing.T) {
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "mosquitto.conf")
+	if err := os.WriteFile(confPath, []byte("anything"), 0o644); err != nil {
+		t.Fatalf("seed conf: %v", err)
+	}
+	w := New(confPath)
+	if err := w.Restore(nil); err != nil {
+		t.Fatalf("Restore(nil): %v", err)
+	}
+	if _, err := os.Stat(confPath); !os.IsNotExist(err) {
+		t.Fatalf("expected file removed, stat err = %v", err)
+	}
+}
+
 func TestFilterListenerItems_HandlesBracedBlocks(t *testing.T) {
 	body := `listener 1883 0.0.0.0
 listener 1884 0.0.0.0 {

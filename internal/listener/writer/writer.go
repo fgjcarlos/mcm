@@ -68,6 +68,19 @@ type Writer interface {
 	// this writer targets. Used by ListenerService to compose the
 	// snapshot rollback path after a failed restart.
 	ConfigPath() string
+
+	// Snapshot returns the on-disk file bytes (or an empty slice when
+	// the file does not exist). ListenerService.Apply calls Snapshot
+	// before Write so it can restore the previous content if the
+	// subsequent broker restart fails.
+	Snapshot() ([]byte, error)
+
+	// Restore atomically writes the supplied snapshot back to
+	// ConfigPath. It is invoked by ListenerService.Apply when a
+	// restart fails after the writer has already persisted new
+	// listener directives. When snapshot is empty the file is removed
+	// so the broker falls back to its bootstrap configuration.
+	Restore(snapshot []byte) error
 }
 
 // Rendered describes the textual output of a successful Write. It is
@@ -124,6 +137,56 @@ func New(configPath string) *FileWriter {
 // writer targets.
 func (w *FileWriter) ConfigPath() string { return w.configPath }
 
+// Snapshot returns the current on-disk file content. When the file is
+// missing the returned slice is empty and err is nil; the bootstrap
+// script seeds mosquitto.conf on first boot so the empty case is the
+// "fresh volume" path.
+func (w *FileWriter) Snapshot() ([]byte, error) {
+	if strings.TrimSpace(w.configPath) == "" {
+		return nil, ErrConfigPathEmpty
+	}
+	reader := w.Reader
+	if reader == nil {
+		reader = os.ReadFile
+	}
+	body, err := reader(w.configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []byte{}, nil
+		}
+		return nil, fmt.Errorf("snapshot config %q: %w", w.configPath, err)
+	}
+	return body, nil
+}
+
+// Restore writes the supplied snapshot back to ConfigPath atomically.
+// An empty snapshot removes the file so the broker falls back to its
+// bootstrap configuration. Used by ListenerService.Apply to roll back
+// listener writes after a failed restart.
+func (w *FileWriter) Restore(snapshot []byte) error {
+	if strings.TrimSpace(w.configPath) == "" {
+		return ErrConfigPathEmpty
+	}
+	if len(snapshot) == 0 {
+		if err := os.Remove(w.configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove config %q: %w", w.configPath, err)
+		}
+		return nil
+	}
+	perm := w.FileMode
+	if perm == 0 {
+		perm = FileMode
+	}
+	writer := w.Writer
+	if writer == nil {
+		writer = mosquitto.AtomicWriteConf
+	}
+	if err := writer(w.configPath, string(snapshot), perm); err != nil {
+		return fmt.Errorf("restore config %q: %w", w.configPath, err)
+	}
+	return nil
+}
+
 // Write reads the configured mosquitto.conf, splices the rendered
 // listener directives into the result, and writes the new file
 // atomically. It does NOT signal a reload — that responsibility stays
@@ -173,7 +236,7 @@ func (w *FileWriter) Write(specs []listeners.ListenerSpec) (Rendered, error) {
 
 	return Rendered{
 		Path:      w.configPath,
-		Head:       head,
+		Head:      head,
 		Listeners: rendered,
 		Full:      full,
 	}, nil
