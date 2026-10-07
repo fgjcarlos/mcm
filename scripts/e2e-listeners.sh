@@ -130,7 +130,7 @@ LISTENERS="$(curl -fsS -H "Authorization: Bearer ${MCM_AUTH_TOKEN}" "${MCM_BASE_
     || fail 'could not fetch existing listener specs'
 pass 2 'list listeners'
 
-NEW_LISTENER="$(jq -cn --argjson port "$MCM_E2E_LISTENER_PORT" '{port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}')"
+NEW_LISTENER="$(jq -cn --argjson port "$MCM_E2E_LISTENER_PORT" '{id: "e2e-tcp", port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}')"
 DESIRED="$(jq -c --argjson new "$NEW_LISTENER" '. + [$new]' <<<"$LISTENERS")"
 preview "$DESIRED"
 pass 3 'preview listener addition'
@@ -143,7 +143,7 @@ if [[ -z "$MCM_MOSQUITTO_COMPOSE_PATH" || ! -r "$MCM_MOSQUITTO_COMPOSE_PATH" ]] 
     ! grep -Eq '9001:9001' "$MCM_MOSQUITTO_COMPOSE_PATH"; then
     fail 'WS listener port 9001 is not mapped by the configured Compose override'
 fi
-WS_LISTENER="$(jq -cn '{port: 9001, bind: "0.0.0.0", protocols: ["websockets"]}')"
+WS_LISTENER="$(jq -cn '{id: "e2e-ws", port: 9001, bind: "0.0.0.0", protocols: ["websockets"]}')"
 WS_DESIRED="$(jq -c --argjson new "$WS_LISTENER" '. + [$new]' <<<"$DESIRED")"
 preview "$WS_DESIRED"
 pass 6 'preview ws listener addition'

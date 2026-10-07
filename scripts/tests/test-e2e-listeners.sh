@@ -15,7 +15,7 @@ assert_assembly() {
         || { printf 'FAIL: could not find production assignment %s\n' "$assignment_name" >&2; return 1; }
 
     LISTENERS='[]'
-    NEW_LISTENER='{"port":2883,"bind":"0.0.0.0","protocols":["mqtt"]}'
+    NEW_LISTENER='{"id":"e2e-tcp","port":2883,"bind":"0.0.0.0","protocols":["mqtt"]}'
     UNMAPPED_LISTENER='{"port":1885,"bind":"0.0.0.0","protocols":["mqtt"]}'
     eval "$assignment"
     output="${!assignment_name}"
@@ -41,12 +41,14 @@ assert_assembly() {
 
 assert_assembly DESIRED NEW_LISTENER
 assert_assembly UNMAPPED_DESIRED UNMAPPED_LISTENER
+grep -Fq '{id: "e2e-tcp", port: $port, bind: "0.0.0.0", protocols: ["mqtt"]}' "$PRODUCTION_SCRIPT" \
+    || fail 'TCP listener tuple is missing its stable ID or uses the wrong port, bind, or protocol'
 
 # The production E2E must configure WS, exercise both transports, and clean up
 # both listeners without exposing credentials in its output.
 grep -Fq 'WS_LISTENER="$(jq -cn' "$PRODUCTION_SCRIPT" \
-    && grep -Fq 'port: 9001, bind: "0.0.0.0", protocols: ["websockets"]' "$PRODUCTION_SCRIPT" \
-    || fail 'WS listener tuple is missing or uses the wrong backend protocol'
+    && grep -Fq 'id: "e2e-ws", port: 9001, bind: "0.0.0.0", protocols: ["websockets"]' "$PRODUCTION_SCRIPT" \
+    || fail 'WS listener tuple is missing its stable ID or uses the wrong backend protocol'
 grep -Fq 'ws_set_options(path="/mqtt")' "$PRODUCTION_SCRIPT" || fail 'WS client does not use the /mqtt endpoint'
 grep -Fq 'mqtt.Client(transport="websockets")' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not use paho WebSockets transport'
 grep -Fq 'actual[0] != expected_payload' "$PRODUCTION_SCRIPT" || fail 'WS round-trip does not verify payload equality'
