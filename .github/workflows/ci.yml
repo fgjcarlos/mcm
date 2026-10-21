@@ -321,6 +321,8 @@ jobs:
           path: /tmp/mcm-dev
       - name: docker load (mcm:dev)
         run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+      - name: Mosquitto bootstrap regression
+        run: bash scripts/tests/test-mosquitto-bootstrap.sh
       - name: Generate listener e2e compose override
         run: |
           cat > /tmp/docker-compose.e2e.yml <<EOF
