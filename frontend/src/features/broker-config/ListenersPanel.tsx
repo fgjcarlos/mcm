@@ -25,20 +25,19 @@ export default function ListenersPanel({
   onApplySuccess?: (mutationWatermark: number) => void
   composeHostPorts?: number[]
 }) {
-  const { listeners, composeHostPorts: fetchedComposeHostPorts, preview, previewError, applyError, isLoading, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
+  const { listeners, composeHostPorts: fetchedComposeHostPorts, preview, previewedSpecs, previewError, applyError, isLoading, isApplying, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
   const composeHostPorts = composeHostPortsOverride ?? fetchedComposeHostPorts
   const [draft, setDraft] = useState<ListenerSpec[]>()
   const specs = draft ?? listeners
   const dirty = draft !== undefined
   const [confirmRestart, setConfirmRestart] = useState(false)
-  const [previewedSpecs, setPreviewedSpecs] = useState('')
   const canApply = role === 'admin'
   const validation = useMemo(() => validateListeners(specs), [specs])
   const composeConflicts = useMemo(() => composePortConflicts(specs, composeHostPorts), [specs, composeHostPorts])
   const blockingIssues = [...validation.issues, ...backendIssues]
   const warnings = [...validation.warnings, ...(preview?.warnings ?? [])]
-  const isPreviewCurrent = Boolean(preview?.revision_id) && previewedSpecs === JSON.stringify(specs)
-  const applyEnabled = canApply && isPreviewCurrent && blockingIssues.length === 0 && (!preview?.needs_restart || confirmRestart)
+  const isPreviewCurrent = Boolean(preview?.revision_id) && JSON.stringify(previewedSpecs) === JSON.stringify(specs)
+  const applyEnabled = canApply && !isApplying && isPreviewCurrent && blockingIssues.length === 0 && (!preview?.needs_restart || confirmRestart)
 
   const updateListener = (id: string, changes: Partial<ListenerSpec>) => {
     setDraft((current) => (current ?? listeners).map((listener) => listener.id === id ? { ...listener, ...changes } : listener))
@@ -49,10 +48,8 @@ export default function ListenersPanel({
     setConfirmRestart(false)
     const result = validateListeners(specs)
     if (result.issues.length > 0) {
-      setPreviewedSpecs('')
       return
     }
-    setPreviewedSpecs(JSON.stringify(specs))
     void requestPreview(specs, false)
   }
 
@@ -90,11 +87,11 @@ export default function ListenersPanel({
             <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={addListener} disabled={isLoading} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-50">Add listener</button>
+            <button type="button" onClick={addListener} disabled={isLoading || isApplying} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-50">Add listener</button>
             <button
               type="button"
               onClick={handlePreview}
-              disabled={isLoading || validation.issues.length > 0}
+              disabled={isLoading || isApplying || validation.issues.length > 0}
               className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
             >
               Preview
@@ -126,22 +123,22 @@ export default function ListenersPanel({
                   return (
                     <tr key={listener.id} className="border-b border-white/5 last:border-0 align-top">
                       <td className="px-4 py-3 font-mono text-slate-200">
-                        <input aria-label={`Port ${listener.id}`} type="text" inputMode="numeric" value={listener.port} onChange={(event) => updateListener(listener.id, { port: event.target.value === '' ? 0 : Number(event.target.value) })} className="w-24 rounded bg-slate-800 px-2 py-1" />
+                        <input aria-label={`Port ${listener.id}`} disabled={isApplying} type="text" inputMode="numeric" value={listener.port} onChange={(event) => updateListener(listener.id, { port: event.target.value === '' ? 0 : Number(event.target.value) })} className="w-24 rounded bg-slate-800 px-2 py-1" />
                         <span className="sr-only">{listener.port}</span>
                         {rowIssues.filter((issue) => issue.kind === 'port_range').map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
                         {conflicts.map((port) => <span key={port} className="mt-1 block text-xs font-sans text-amber-200">Port {port} conflicts with a Compose host port</span>)}
                       </td>
                       <td className="px-4 py-3 font-mono text-cyan-100">
-                        <input aria-label={`Bind ${listener.id}`} value={listener.bind} onChange={(event) => updateListener(listener.id, { bind: event.target.value })} className="w-36 rounded bg-slate-800 px-2 py-1" />
+                        <input aria-label={`Bind ${listener.id}`} disabled={isApplying} value={listener.bind} onChange={(event) => updateListener(listener.id, { bind: event.target.value })} className="w-36 rounded bg-slate-800 px-2 py-1" />
                         <span className="sr-only">{listener.bind}</span>
                         {rowIssues.filter((issue) => issue.kind === 'bind').map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
                       </td>
                       <td className="px-4 py-3 text-slate-300">
-                        <input aria-label={`Protocols ${listener.id}`} value={listener.protocols.join(', ')} onChange={(event) => updateListener(listener.id, { protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className="w-36 rounded bg-slate-800 px-2 py-1" />
+                        <input aria-label={`Protocols ${listener.id}`} disabled={isApplying} value={listener.protocols.join(', ')} onChange={(event) => updateListener(listener.id, { protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className="w-36 rounded bg-slate-800 px-2 py-1" />
                         <span className="sr-only">{listener.protocols.join(', ')}</span>
                         {rowIssues.filter((issue) => issue.kind.startsWith('protocols')).map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
                       </td>
-                      <td className="px-4 py-3"><button type="button" aria-label={`Remove listener ${listener.id}`} onClick={() => removeListener(listener.id)} className="text-rose-200">Remove</button></td>
+                      <td className="px-4 py-3"><button type="button" aria-label={`Remove listener ${listener.id}`} disabled={isApplying} onClick={() => removeListener(listener.id)} className="text-rose-200">Remove</button></td>
                     </tr>
                   )
                 })}
@@ -175,7 +172,7 @@ export default function ListenersPanel({
               <p className="font-mono text-sm text-cyan-100">{preview.revision_id}</p>
               {preview.needs_restart ? (
                 <label className="flex items-center gap-2 text-sm text-slate-200">
-                  <input type="checkbox" checked={confirmRestart} onChange={(event) => setConfirmRestart(event.target.checked)} />
+                  <input type="checkbox" disabled={isApplying} checked={confirmRestart} onChange={(event) => setConfirmRestart(event.target.checked)} />
                   Confirm restart
                 </label>
               ) : null}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
 import type { ListenerApplyRequest, ListenerApplyResult, ListenerListResponse, ListenerPreviewResult, ListenerSpec } from './types'
 
@@ -21,6 +21,10 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
   const [isLoading, setIsLoading] = useState(true)
   const [issues, setIssues] = useState<ListenerIssue[]>([])
   const [applyResult, setApplyResult] = useState<ListenerApplyResult | null>(null)
+  const [previewedSpecs, setPreviewedSpecs] = useState<ListenerSpec[] | null>(null)
+  const [isApplying, setIsApplying] = useState(false)
+  const previewRequestId = useRef(0)
+  const applying = useRef(false)
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
@@ -45,6 +49,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
   }, [refresh])
 
   const requestPreview = useCallback(async (specs: ListenerSpec[], confirm = false) => {
+    const requestId = ++previewRequestId.current
     setPreviewError('')
     setPreviewResult(null)
     setIssues([])
@@ -58,6 +63,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         body: JSON.stringify({ specs, confirm }),
       })
       const body = await response.json().catch(() => null) as ListenerPreviewResult | { error?: string; issues?: ListenerIssue[] } | null
+      if (requestId !== previewRequestId.current) return
       if (!response.ok) {
         const validationIssues = body && 'issues' in body ? body.issues ?? [] : []
         setIssues(validationIssues)
@@ -65,13 +71,17 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         return
       }
       setPreviewResult(body as ListenerPreviewResult)
+      setPreviewedSpecs(specs)
       setIssues((body as ListenerPreviewResult).issues ?? [])
     } catch (error) {
-      if (!isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
+      if (requestId === previewRequestId.current && !isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
     }
   }, [token, onLogout])
 
   const apply = useCallback(async (req: ListenerApplyRequest): Promise<ListenerApplyResult | null> => {
+    if (applying.current) return null
+    applying.current = true
+    setIsApplying(true)
     setApplyError('')
     setApplyResult(null)
     try {
@@ -97,6 +107,9 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
     } catch (error) {
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
+    } finally {
+      applying.current = false
+      setIsApplying(false)
     }
   }, [token, onLogout, refresh])
 
@@ -104,6 +117,8 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
     listeners,
     composeHostPorts,
     preview: previewResult,
+    previewedSpecs,
+    isApplying,
     previewError,
     applyError,
     isLoading,
