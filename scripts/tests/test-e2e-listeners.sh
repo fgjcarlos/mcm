@@ -63,6 +63,29 @@ grep -Fq 'listener_accepts_ws' "$PRODUCTION_SCRIPT" || fail 'WS listener removal
 grep -Fq 'MCM_MOSQUITTO_USERNAME' "$PRODUCTION_SCRIPT" || fail 'TCP/WS publishes do not use broker credentials'
 grep -Fq 'apply ws listener removal' "$PRODUCTION_SCRIPT" || fail 'WS cleanup apply step is missing'
 grep -Fq 'apply listener removal' "$PRODUCTION_SCRIPT" || fail 'TCP cleanup apply step is missing'
+
+# Both Python heredoc containers need Docker's stdin attachment; otherwise
+# python3 - receives EOF and neither probe body executes.
+awk '
+    /docker run --rm/ { command = $0; active = 1; next }
+    active {
+        command = command " " $0
+        if ($0 ~ /(python:3[.]12-slim|eclipse-mosquitto:2[.]0)/) {
+            if ($0 ~ /python:3[.]12-slim/) {
+                count++
+                if (command !~ /(^|[[:space:]])-i([[:space:]]|$)/) {
+                    printf "FAIL: Python docker heredoc call %d does not attach stdin with -i\n", count > "/dev/stderr"
+                    failed = 1
+                }
+            }
+            active = 0
+        }
+    }
+    END {
+        if (count != 2) { printf "FAIL: expected two Python heredoc docker calls, found %d\n", count > "/dev/stderr"; failed = 1 }
+        if (failed) exit 1
+    }
+' "$PRODUCTION_SCRIPT" || fail 'Python heredoc calls must both attach stdin'
 printf 'PASS: listener E2E configures, verifies, and removes TCP and WS listeners\n'
 
 # Exercise the production listener-data hooks through Vitest without the live API or Compose.

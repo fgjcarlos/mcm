@@ -106,7 +106,7 @@ apply() {
 }
 
 listener_accepts_ws() {
-    docker run --rm --network mcm_default \
+    docker run --rm -i --network mcm_default \
         -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
         python:3.12-slim sh -ec 'python -m pip install --no-cache-dir paho-mqtt==2.1.0 >/dev/null && exec python3 -' \
         <<'PY' >/dev/null 2>&1
@@ -194,7 +194,7 @@ else
     fail 'Docker is required for listener transport checks on mcm_default'
 fi
 
-docker run --rm --network mcm_default \
+docker run --rm -i --network mcm_default \
     -e MCM_E2E_WS_HOST=mcm-mosquitto \
     -e MCM_MOSQUITTO_USERNAME -e MCM_MOSQUITTO_PASSWORD \
     python:3.12-slim sh -ec 'python -m pip install --no-cache-dir paho-mqtt==2.1.0 >/dev/null && exec python3 -' \
