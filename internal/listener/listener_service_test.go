@@ -14,9 +14,10 @@ import (
 )
 
 type inMemoryListenerStore struct {
-	mu   sync.Mutex
-	rows []storage.ListenerSpecRow
-	err  error
+	mu     sync.Mutex
+	rows   []storage.ListenerSpecRow
+	err    error
+	events *[]string
 }
 
 func newInMemoryListenerStore(rows []storage.ListenerSpecRow) *inMemoryListenerStore {
@@ -32,6 +33,9 @@ func (s *inMemoryListenerStore) ListListenerSpecs(context.Context) ([]storage.Li
 func (s *inMemoryListenerStore) ReplaceAllListenerSpecs(_ context.Context, rows []storage.ListenerSpecRow) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.events != nil {
+		*s.events = append(*s.events, "persist")
+	}
 	if s.err != nil {
 		return s.err
 	}
@@ -361,6 +365,125 @@ func TestListenerService_Apply_NoConfWriter_PreservesLegacyBehaviour(t *testing.
 	}
 	if rows, _ := store.ListListenerSpecs(context.Background()); len(rows) != 1 {
 		t.Fatalf("stored rows = %d, want 1", len(rows))
+	}
+}
+
+func TestListenerService_Apply_PersistFailure_CompensatesRuntime(t *testing.T) {
+	persistErr := errors.New("sqlite unavailable")
+	events := []string{}
+	store := newInMemoryListenerStore(nil)
+	store.err = persistErr
+	store.events = &events
+	writer := &orderedConfWriter{events: &events}
+	runner := &orderedRestartRunner{events: &events}
+	applyCtx, cancel := context.WithCancel(context.Background())
+	runner.cancel = cancel
+	svc := NewListenerService(store, nil, runner, nil,
+		WithListenerRevisionID(func() (string, error) { return "one", nil }),
+		WithListenerConfWriter(writer),
+	)
+	preview, err := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotErr := svc.Apply(applyCtx, preview.RevisionID, true)
+	if !errors.Is(gotErr, persistErr) {
+		t.Fatalf("Apply() error = %v, want persistence error", gotErr)
+	}
+	wantEvents := []string{"snapshot", "write", "forward restart", "persist", "restore", "compensating restart"}
+	if !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("events = %v, want %v", events, wantEvents)
+	}
+	if len(runner.contexts) != 2 || runner.contexts[1].Err != nil || !runner.contexts[1].DeadlineSet {
+		t.Fatalf("compensating restart context = %+v, want bounded live context", runner.contexts)
+	}
+	if err := svc.Apply(context.Background(), preview.RevisionID, true); !errors.Is(err, persistErr) {
+		t.Fatalf("retry should retain preview and fail persistence again, got %v", err)
+	}
+}
+
+type orderedConfWriter struct {
+	events     *[]string
+	restoreErr error
+}
+
+func (w *orderedConfWriter) Snapshot() ([]byte, error) {
+	*w.events = append(*w.events, "snapshot")
+	return []byte("old"), nil
+}
+func (w *orderedConfWriter) Write([]listeners.ListenerSpec) error {
+	*w.events = append(*w.events, "write")
+	return nil
+}
+func (w *orderedConfWriter) Restore([]byte) error {
+	*w.events = append(*w.events, "restore")
+	return w.restoreErr
+}
+
+type restartContext struct {
+	Err         error
+	DeadlineSet bool
+}
+type orderedRestartRunner struct {
+	events      *[]string
+	contexts    []restartContext
+	cancel      context.CancelFunc
+	restartErrs []error
+}
+
+func (r *orderedRestartRunner) Restart(ctx context.Context, _ string) error {
+	idx := len(r.contexts)
+	_, deadline := ctx.Deadline()
+	r.contexts = append(r.contexts, restartContext{Err: ctx.Err(), DeadlineSet: deadline})
+	if idx == 0 {
+		*r.events = append(*r.events, "forward restart")
+		if r.cancel != nil {
+			r.cancel()
+		}
+	} else {
+		*r.events = append(*r.events, "compensating restart")
+	}
+	if idx < len(r.restartErrs) {
+		return r.restartErrs[idx]
+	}
+	return nil
+}
+
+func TestListenerService_Apply_PersistFailure_RestoreFailureSkipsRestart(t *testing.T) {
+	persistErr, restoreErr := errors.New("sqlite unavailable"), errors.New("restore denied")
+	events := []string{}
+	store := newInMemoryListenerStore(nil)
+	store.err = persistErr
+	store.events = &events
+	writer := &orderedConfWriter{events: &events, restoreErr: restoreErr}
+	runner := &orderedRestartRunner{events: &events}
+	svc := NewListenerService(store, nil, runner, nil, WithListenerRevisionID(func() (string, error) { return "one", nil }), WithListenerConfWriter(writer))
+	preview, _ := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	err := svc.Apply(context.Background(), preview.RevisionID, true)
+	if !errors.Is(err, persistErr) || !errors.Is(err, restoreErr) {
+		t.Fatalf("Apply() error = %v, want persistence and restore errors", err)
+	}
+	if !reflect.DeepEqual(events, []string{"snapshot", "write", "forward restart", "persist", "restore"}) {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestListenerService_Apply_PersistFailure_CompensatingRestartFailure(t *testing.T) {
+	persistErr, restartErr := errors.New("sqlite unavailable"), errors.New("recovery restart failed")
+	events := []string{}
+	store := newInMemoryListenerStore(nil)
+	store.err = persistErr
+	store.events = &events
+	writer := &orderedConfWriter{events: &events}
+	runner := &orderedRestartRunner{events: &events, restartErrs: []error{nil, restartErr}}
+	svc := NewListenerService(store, nil, runner, nil, WithListenerRevisionID(func() (string, error) { return "one", nil }), WithListenerConfWriter(writer))
+	preview, _ := svc.Preview(context.Background(), []listeners.ListenerSpec{listenerSpec("one", 1883)}, PreviewOptions{})
+	err := svc.Apply(context.Background(), preview.RevisionID, true)
+	if !errors.Is(err, persistErr) || !errors.Is(err, restartErr) {
+		t.Fatalf("Apply() error = %v, want persistence and restart errors", err)
+	}
+	if len(runner.contexts) != 2 {
+		t.Fatalf("restart calls = %d, want 2", len(runner.contexts))
 	}
 }
 

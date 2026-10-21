@@ -19,7 +19,8 @@ import (
 
 const (
 	// ListenerPreviewTTL is the lifetime of an unapplied listener preview.
-	ListenerPreviewTTL = time.Hour
+	ListenerPreviewTTL      = time.Hour
+	listenerRecoveryTimeout = 30 * time.Second
 )
 
 var (
@@ -334,7 +335,13 @@ func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm 
 	if err := s.store.ReplaceAllListenerSpecs(ctx, entry.rows); err != nil {
 		if snapshotTaken {
 			if restoreErr := s.confWriter.Restore(snapshotBytes); restoreErr != nil {
-				return fmt.Errorf("replace listener specs: %w (restore also failed: %v)", err, restoreErr)
+				return fmt.Errorf("replace listener specs: %w (restore also failed: %w)", err, restoreErr)
+			}
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listenerRecoveryTimeout)
+			recoveryErr := s.restartRunner.Restart(recoveryCtx, target)
+			cancel()
+			if recoveryErr != nil {
+				return fmt.Errorf("replace listener specs: %w (compensating restart also failed: %w)", err, recoveryErr)
 			}
 		}
 		return fmt.Errorf("replace listener specs: %w", err)
