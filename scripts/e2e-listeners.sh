@@ -152,11 +152,47 @@ pass 7 'apply ws listener'
 sleep 5
 pass 8 'wait for ws listener restart'
 
-if command -v nc >/dev/null 2>&1; then
+# BEGIN broker network probe
+listener_accepts_mqtt() {
+    LISTENER_PROBE_MODE=none
+    if command -v docker >/dev/null 2>&1; then
+        LISTENER_PROBE_MODE=docker
+        # Probe the broker over Compose's service network, not the published host
+        # port. Suppress client output so no broker credentials can leak to logs.
+        docker run --rm --network mcm_default eclipse-mosquitto:2.0 \
+            mosquitto_pub -h mcm-mosquitto -p "$MCM_E2E_LISTENER_PORT" \
+            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
+            -t 'mcm/listeners/e2e-probe' -m 'probe' >/dev/null 2>&1
+        return $?
+    fi
+    if command -v nc >/dev/null 2>&1; then
+        LISTENER_PROBE_MODE=nc
+        nc -z 127.0.0.1 "$MCM_E2E_LISTENER_PORT" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+# END broker network probe
+
+# The published host port is accepted by docker-proxy even when no listener is
+# bound inside the broker, so a host-side check cannot prove that the applied
+# listener is live. Probe the broker network instead.
+acceptance_check=''
+if command -v docker >/dev/null 2>&1; then
+    if ! listener_accepts_mqtt; then
+        fail "listener ${MCM_E2E_LISTENER_PORT} does not accept MQTT on the broker network"
+    fi
+    acceptance_check='listener accepts MQTT on the broker network'
+elif command -v nc >/dev/null 2>&1; then
+    # Host reachability only: without Docker this check cannot tell a bound
+    # listener apart from a published but empty port.
     nc -zv 127.0.0.1 "$MCM_E2E_LISTENER_PORT" || fail "listener port ${MCM_E2E_LISTENER_PORT} is not open"
-    pass 9 'listener port is open'
+    acceptance_check='listener port is open (host reachability only)'
 else
-    skip 'nc is not installed; listener port-open check skipped'
+    skip 'neither Docker nor nc is available; listener acceptance check skipped'
+fi
+if [[ -n "$acceptance_check" ]]; then
+    pass 9 "$acceptance_check"
 fi
 
 if command -v docker >/dev/null 2>&1; then
@@ -267,27 +303,7 @@ pass 17 'apply listener removal'
 sleep 5
 pass 18 'wait for listener removal restart'
 
-# BEGIN listener removal probe
-listener_accepts_mqtt() {
-    LISTENER_PROBE_MODE=none
-    if command -v docker >/dev/null 2>&1; then
-        LISTENER_PROBE_MODE=docker
-        # Probe the broker over Compose's service network, not the published host
-        # port. Suppress client output so no broker credentials can leak to logs.
-        docker run --rm --network mcm_default eclipse-mosquitto:2.0 \
-            mosquitto_pub -h mcm-mosquitto -p "$MCM_E2E_LISTENER_PORT" \
-            -u "$MCM_MOSQUITTO_USERNAME" -P "$MCM_MOSQUITTO_PASSWORD" \
-            -t 'mcm/listeners/e2e-probe' -m 'probe' >/dev/null 2>&1
-        return $?
-    fi
-    if command -v nc >/dev/null 2>&1; then
-        LISTENER_PROBE_MODE=nc
-        nc -z 127.0.0.1 "$MCM_E2E_LISTENER_PORT" >/dev/null 2>&1
-        return $?
-    fi
-    return 1
-}
-
+# BEGIN listener removal check
 listener_removed_check() {
     if [[ "$LISTENER_PROBE_MODE" == none ]]; then
         skip 'neither docker MQTT probe nor nc is available; listener port-closed check skipped'
@@ -298,7 +314,7 @@ listener_removed_check() {
     fi
     pass 19 'listener port is closed after removal'
 }
-# END listener removal probe
+# END listener removal check
 
 if ! command -v docker >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
     LISTENER_PROBE_MODE=none

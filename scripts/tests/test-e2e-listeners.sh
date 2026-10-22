@@ -88,6 +88,22 @@ awk '
 ' "$PRODUCTION_SCRIPT" || fail 'Python heredoc calls must both attach stdin'
 printf 'PASS: listener E2E configures, verifies, and removes TCP and WS listeners\n'
 
+# The listener acceptance check must probe the broker network. The published
+# host port accepts connections through docker-proxy even when no listener is
+# bound inside the broker, so a host-only check cannot prove that the applied
+# listener is live.
+STEP9_BLOCK="$(awk '/^# END broker network probe/{capture=1} /pass 10 /{capture=0} capture' "$PRODUCTION_SCRIPT")"
+[[ -n "$STEP9_BLOCK" ]] || fail 'could not extract the listener acceptance check'
+grep -Fq 'listener_accepts_mqtt' <<<"$STEP9_BLOCK" \
+    || fail 'listener acceptance check does not probe the broker network'
+grep -Fq 'host reachability only' <<<"$STEP9_BLOCK" \
+    || fail 'host-only fallback probe is not labelled as reachability-only'
+PROBE_DEF_LINE="$(grep -n '^listener_accepts_mqtt() {' "$PRODUCTION_SCRIPT" | head -1 | cut -d: -f1)"
+STEP9_LINE="$(grep -n 'pass 9 ' "$PRODUCTION_SCRIPT" | head -1 | cut -d: -f1)"
+[[ -n "$PROBE_DEF_LINE" && -n "$STEP9_LINE" && "$PROBE_DEF_LINE" -lt "$STEP9_LINE" ]] \
+    || fail 'the broker-network probe is not defined before the acceptance check uses it'
+printf 'PASS: listener acceptance check probes the broker network, not only the published host port\n'
+
 # Exercise the production listener-data hooks through Vitest without the live API or Compose.
 VITEST_OUTPUT="$(cd "$SCRIPT_DIR/../frontend" && npx vitest run --reporter=verbose \
     "src/features/broker-config/__fixtures__/listenerValidation.fixture.test.ts" \
@@ -108,7 +124,13 @@ printf 'PASS: production listener validation and panel tests pass through Vitest
 # Load the production probe functions without running the live API flow.
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
-awk '/# BEGIN listener removal probe/{capture=1; next} /# END listener removal probe/{capture=0} capture' "$PRODUCTION_SCRIPT" > "$TMP_DIR/probe-functions.sh"
+awk '
+    /^# BEGIN broker network probe/ { capture=1; next }
+    /^# END broker network probe/ { capture=0; next }
+    /^# BEGIN listener removal check/ { capture=1; next }
+    /^# END listener removal check/ { capture=0; next }
+    capture
+' "$PRODUCTION_SCRIPT" > "$TMP_DIR/probe-functions.sh"
 [[ -s "$TMP_DIR/probe-functions.sh" ]] || fail 'listener removal probe functions are missing'
 # shellcheck source=/dev/null
 pass() { printf 'PASS: step %s: %s\n' "$1" "$2"; }
