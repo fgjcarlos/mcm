@@ -220,6 +220,23 @@ func (s *Store) ActiveRevision(profile string) (string, error) {
 	return filepath.Base(target), nil
 }
 
+// Deactivate clears the active link of a profile.
+//
+// It is used to roll back an activation when no previous revision existed.
+func (s *Store) Deactivate(profile string) error {
+	if err := validateName(profile); err != nil {
+		return err
+	}
+	activePath := filepath.Join(s.profileDir(profile), "active")
+	if err := os.Remove(activePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("remove active link: %w", err)
+	}
+	return nil
+}
+
 // RevisionFiles returns the paths of a stored revision.
 func (s *Store) RevisionFiles(profile, revisionID string) (Files, error) {
 	if err := validateName(profile); err != nil {

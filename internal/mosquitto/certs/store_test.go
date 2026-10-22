@@ -197,6 +197,25 @@ func TestActivateRejectsUnknownRevision(t *testing.T) {
 	}
 }
 
+func TestDeactivateClearsTheActiveLink(t *testing.T) {
+	store, input := storeFixture(t)
+	if _, err := store.SaveRevision("production", "rev-1", input); err != nil {
+		t.Fatalf("save rev-1: %v", err)
+	}
+	if err := store.Activate("production", "rev-1"); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if err := store.Deactivate("production"); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if _, err := store.ActiveRevision("production"); err == nil {
+		t.Fatal("expected no active revision after the deactivation")
+	}
+	if err := store.Deactivate("production"); err != nil {
+		t.Fatalf("expected the deactivation of a profile without active material to succeed: %v", err)
+	}
+}
+
 func TestActiveRevisionReportsMissingProfile(t *testing.T) {
 	store, _ := storeFixture(t)
 	if _, err := store.ActiveRevision("production"); err == nil {

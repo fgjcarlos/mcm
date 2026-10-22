@@ -23,8 +23,11 @@ type ListenerSpecRow struct {
 	Bind      string
 	Protocols []string
 	Options   map[string]string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// TLSProfile names the certificate profile that secures the listener.
+	// It is empty when the listener serves plain MQTT.
+	TLSProfile string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // InsertListenerSpec persists row and populates timestamps that were not provided.
@@ -165,7 +168,7 @@ func (s *Store) ReplaceAllListenerSpecs(ctx context.Context, rows []ListenerSpec
 	return nil
 }
 
-const listenerSpecSelect = `SELECT id, port, bind, protocols, options, created_at, updated_at FROM listener_specs`
+const listenerSpecSelect = `SELECT id, port, bind, protocols, options, tls_profile, created_at, updated_at FROM listener_specs`
 
 type listenerSpecExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -181,9 +184,9 @@ func insertListenerSpec(ctx context.Context, executor listenerSpecExecutor, row 
 		return err
 	}
 	_, err = executor.ExecContext(ctx, `
-INSERT INTO listener_specs(id, port, bind, protocols, options, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, row.Port, row.Bind, protocols, options,
+INSERT INTO listener_specs(id, port, bind, protocols, options, tls_profile, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID, row.Port, row.Bind, protocols, options, row.TLSProfile,
 		row.CreatedAt.UTC().Format(time.RFC3339Nano), row.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		if isListenerSpecConflict(err) {
@@ -203,8 +206,8 @@ func updateListenerSpec(ctx context.Context, executor listenerSpecExecutor, row 
 		return err
 	}
 	_, err = executor.ExecContext(ctx, `
-UPDATE listener_specs SET port = ?, bind = ?, protocols = ?, options = ?, updated_at = ?
-WHERE id = ?`, row.Port, row.Bind, protocols, options, row.UpdatedAt.UTC().Format(time.RFC3339Nano), row.ID)
+UPDATE listener_specs SET port = ?, bind = ?, protocols = ?, options = ?, tls_profile = ?, updated_at = ?
+WHERE id = ?`, row.Port, row.Bind, protocols, options, row.TLSProfile, row.UpdatedAt.UTC().Format(time.RFC3339Nano), row.ID)
 	if err != nil {
 		if isListenerSpecConflict(err) {
 			return ErrListenerConflict
@@ -251,7 +254,7 @@ func marshalListenerSpecFields(row ListenerSpecRow) (string, string, error) {
 func scanListenerSpec(row interface{ Scan(...any) error }) (ListenerSpecRow, error) {
 	var spec ListenerSpecRow
 	var protocols, options, createdAt, updatedAt string
-	if err := row.Scan(&spec.ID, &spec.Port, &spec.Bind, &protocols, &options, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&spec.ID, &spec.Port, &spec.Bind, &protocols, &options, &spec.TLSProfile, &createdAt, &updatedAt); err != nil {
 		return ListenerSpecRow{}, err
 	}
 	if err := json.Unmarshal([]byte(protocols), &spec.Protocols); err != nil {
