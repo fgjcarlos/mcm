@@ -60,9 +60,9 @@ type Metadata struct {
 // that caused it. Blocking problems are reported in Result.Issues and
 // non-blocking concerns in Result.Warnings.
 type Issue struct {
-	Kind    string
-	Field   string
-	Message string
+	Kind    string `json:"kind"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // Options tunes the validation rules.

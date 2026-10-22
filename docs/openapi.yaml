@@ -1783,10 +1783,10 @@ components:
       type: object
       description: A validation problem or a warning about the uploaded material.
       properties:
-        Kind: { type: string }
-        Field: { type: string }
-        Message: { type: string }
-      required: [Kind, Field, Message]
+        kind: { type: string }
+        field: { type: string }
+        message: { type: string }
+      required: [kind, field, message]
     CertificateRevisionRequest:
       type: object
       description: |
