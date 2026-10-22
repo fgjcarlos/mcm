@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
-import type { ListenerApplyRequest, ListenerApplyResult, ListenerPreviewResult, ListenerSpec } from './types'
+import type { ListenerApplyRequest, ListenerApplyResult, ListenerListResponse, ListenerPreviewResult, ListenerSpec } from './types'
 
 type ListenerIssue = NonNullable<ListenerPreviewResult['issues']>[number]
 
@@ -14,12 +14,17 @@ function errorMessage(body: unknown, fallback: string) {
 export function useListeners(opts: { token: string; onLogout: () => void }) {
   const { token, onLogout } = opts
   const [listeners, setListeners] = useState<ListenerSpec[]>([])
+  const [composeHostPorts, setComposeHostPorts] = useState<number[]>([])
   const [previewResult, setPreviewResult] = useState<ListenerPreviewResult | null>(null)
   const [previewError, setPreviewError] = useState('')
   const [applyError, setApplyError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [issues, setIssues] = useState<ListenerIssue[]>([])
   const [applyResult, setApplyResult] = useState<ListenerApplyResult | null>(null)
+  const [previewedSpecs, setPreviewedSpecs] = useState<ListenerSpec[] | null>(null)
+  const [isApplying, setIsApplying] = useState(false)
+  const previewRequestId = useRef(0)
+  const applying = useRef(false)
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
@@ -29,8 +34,9 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         const body = await response.json().catch(() => null)
         throw new Error(errorMessage(body, 'Failed to load listeners.'))
       }
-      const body = await response.json() as { specs?: ListenerSpec[] }
+      const body = await response.json() as ListenerListResponse
       setListeners(body.specs ?? [])
+      setComposeHostPorts(body.compose_host_ports ?? [])
     } catch (error) {
       if (!isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
     } finally {
@@ -43,6 +49,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
   }, [refresh])
 
   const requestPreview = useCallback(async (specs: ListenerSpec[], confirm = false) => {
+    const requestId = ++previewRequestId.current
     setPreviewError('')
     setPreviewResult(null)
     setIssues([])
@@ -56,6 +63,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         body: JSON.stringify({ specs, confirm }),
       })
       const body = await response.json().catch(() => null) as ListenerPreviewResult | { error?: string; issues?: ListenerIssue[] } | null
+      if (requestId !== previewRequestId.current) return
       if (!response.ok) {
         const validationIssues = body && 'issues' in body ? body.issues ?? [] : []
         setIssues(validationIssues)
@@ -63,13 +71,17 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         return
       }
       setPreviewResult(body as ListenerPreviewResult)
+      setPreviewedSpecs(specs)
       setIssues((body as ListenerPreviewResult).issues ?? [])
     } catch (error) {
-      if (!isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
+      if (requestId === previewRequestId.current && !isUnauthorizedResponseError(error)) setPreviewError(error instanceof Error ? error.message : 'Could not reach the server.')
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: ListenerApplyRequest) => {
+  const apply = useCallback(async (req: ListenerApplyRequest): Promise<ListenerApplyResult | null> => {
+    if (applying.current) return null
+    applying.current = true
+    setIsApplying(true)
     setApplyError('')
     setApplyResult(null)
     try {
@@ -83,7 +95,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
       const body = await response.json().catch(() => null) as ListenerApplyResult | { error?: string } | null
       if (!response.ok) {
         setApplyError(errorMessage(body, 'Apply failed.'))
-        return
+        return null
       }
       const result = body as ListenerApplyResult
       setApplyResult(result)
@@ -91,14 +103,22 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         setPreviewResult(null)
         await refresh()
       }
+      return result
     } catch (error) {
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
+      return null
+    } finally {
+      applying.current = false
+      setIsApplying(false)
     }
   }, [token, onLogout, refresh])
 
   return {
     listeners,
+    composeHostPorts,
     preview: previewResult,
+    previewedSpecs,
+    isApplying,
     previewError,
     applyError,
     isLoading,

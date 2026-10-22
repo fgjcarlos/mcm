@@ -56,6 +56,12 @@ The end-to-end flow on every successful deploy apply:
 
 This flow is limited to password/ACL files. A successful CONNECT does not verify ACL changes, and an applier failure after a partial write does not currently trigger recovery. These gaps are tracked in [#292](https://github.com/fgjcarlos/mcm/issues/292) and [#293](https://github.com/fgjcarlos/mcm/issues/293).
 
+#### Shared config ownership and listener restarts
+
+`config/mosquitto.conf` is the initialization template, not a file copied on every broker start. On the first successful bootstrap, the entrypoint replaces the image-prepopulated anonymous-default config with this template and writes `.mcm-bootstrap-initialized` in the shared config volume. Thereafter, that volume owns `mosquitto.conf`: MCM's listener writer can add or remove listener blocks, and a full broker-container restart preserves those managed edits even if the source template changes. If the sidecar marker is missing but a config exists, bootstrap preserves that config (including legacy managed configs without a marker); it only replaces a markerless config with no active directives (the image's commented-only default). If the config file is missing, bootstrap seeds it again from the current template; a failed seed does not create an initialization marker or start the broker. The existing passwd and ACL seeding behavior is unchanged.
+
+Listener changes still require the full Compose container restart managed by MCM. Do not replace it with SIGHUP: Mosquitto 2.0 does not reload listener definitions on SIGHUP. The initialization template is therefore only the seed for a new config volume (or a missing config file), while the shared volume is the runtime source of truth.
+
 The production template is not a drop-in version of this managed flow. Align its password/ACL paths, ownership and reload mechanism with MCM first; see [production limitations](../../docs/production.md#current-limitations) and [#294](https://github.com/fgjcarlos/mcm/issues/294). Do not switch an existing broker to MCM-generated files before reviewing how its existing users and rules will be imported.
 
 ### Dev-only knobs (don't carry to production)

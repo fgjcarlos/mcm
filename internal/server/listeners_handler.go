@@ -15,6 +15,7 @@ import (
 // listenerServicer is the listener lifecycle contract used by the HTTP handlers.
 type listenerServicer interface {
 	List(ctx context.Context) ([]storage.ListenerSpecRow, error)
+	ComposeAllHostPorts(ctx context.Context) ([]int, error)
 	Preview(ctx context.Context, desired []listeners.ListenerSpec, opts listener.PreviewOptions) (listener.ListenerPreviewResult, error)
 	Apply(ctx context.Context, revisionID string, confirm bool) error
 }
@@ -42,7 +43,14 @@ func (a *listenerAPI) handleList(w http.ResponseWriter, r *http.Request) {
 	if specs == nil {
 		specs = []storage.ListenerSpecRow{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"specs": specs})
+	response := map[string]any{"specs": specs}
+	if ports, err := a.svc.ComposeAllHostPorts(r.Context()); err == nil {
+		if ports == nil {
+			ports = []int{}
+		}
+		response["compose_host_ports"] = ports
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *listenerAPI) handlePreview(w http.ResponseWriter, r *http.Request) {

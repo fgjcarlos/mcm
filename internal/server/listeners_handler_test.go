@@ -201,10 +201,73 @@ type failingListenerService struct{ err error }
 func (s failingListenerService) List(context.Context) ([]storage.ListenerSpecRow, error) {
 	return nil, s.err
 }
+func (s failingListenerService) ComposeAllHostPorts(context.Context) ([]int, error) {
+	return nil, s.err
+}
 func (s failingListenerService) Preview(context.Context, []listeners.ListenerSpec, listener.PreviewOptions) (listener.ListenerPreviewResult, error) {
 	return listener.ListenerPreviewResult{}, s.err
 }
 func (s failingListenerService) Apply(context.Context, string, bool) error { return s.err }
+
+type listenerListService struct {
+	ports []int
+	err   error
+}
+
+func (s listenerListService) List(context.Context) ([]storage.ListenerSpecRow, error) {
+	return []storage.ListenerSpecRow{{ID: "mqtt", Port: 1883, Bind: "0.0.0.0", Protocols: []string{"mqtt"}}}, nil
+}
+func (s listenerListService) ComposeAllHostPorts(context.Context) ([]int, error) {
+	return s.ports, s.err
+}
+func (listenerListService) Preview(context.Context, []listeners.ListenerSpec, listener.PreviewOptions) (listener.ListenerPreviewResult, error) {
+	return listener.ListenerPreviewResult{}, nil
+}
+func (listenerListService) Apply(context.Context, string, bool) error { return nil }
+
+func TestHandleListenerList_ComposeHostPorts(t *testing.T) {
+	tests := []struct {
+		name      string
+		ports     []int
+		err       error
+		wantField bool
+		wantPorts []int
+	}{
+		{name: "success", ports: []int{1883, 9001}, wantField: true, wantPorts: []int{1883, 9001}},
+		{name: "hint failure is non-blocking", err: errors.New("compose unavailable")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			(&listenerAPI{svc: listenerListService{ports: test.ports, err: test.err}}).handleList(rec, httptest.NewRequest(http.MethodGet, "/api/v1/listeners", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			var response map[string]json.RawMessage
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			raw, present := response["compose_host_ports"]
+			if present != test.wantField {
+				t.Fatalf("compose_host_ports present = %v, want %v", present, test.wantField)
+			}
+			if present {
+				var ports []int
+				if err := json.Unmarshal(raw, &ports); err != nil {
+					t.Fatalf("decode compose_host_ports: %v", err)
+				}
+				if len(ports) != len(test.wantPorts) {
+					t.Fatalf("compose_host_ports = %v, want %v", ports, test.wantPorts)
+				}
+				for i := range ports {
+					if ports[i] != test.wantPorts[i] {
+						t.Fatalf("compose_host_ports = %v, want %v", ports, test.wantPorts)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestHandleListenerApply_ErrorMapping(t *testing.T) {
 	tests := []struct {

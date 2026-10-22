@@ -9,13 +9,13 @@
 # and no password_file).
 #
 # This script:
-#   1. Copies /mosquitto-init/mosquitto.conf (the operator-edited source
-#      of truth on the host) into /mosquitto/config/mosquitto.conf on
-#      EVERY startup. We deliberately don't use an "if missing" guard
-#      because Docker pre-populates named volumes with the underlying
-#      image's content (the built-in anonymous-default mosquitto.conf)
-#      the first time the volume is created. An "if missing" check
-#      would see that file and skip our auth-enabled copy.
+#   1. Seeds /mosquitto/config/mosquitto.conf from
+#      /mosquitto-init/mosquitto.conf on the first successful startup.
+#      Docker may pre-populate a new named volume with the image's
+#      anonymous-default config, so the initialization marker—not file
+#      absence—distinguishes a managed config from image content. Later
+#      restarts preserve MCM's managed config; if it is missing, it is
+#      seeded again from the source template.
 #   2. Seeds /mosquitto/config/passwd with a single "admin" user using
 #      mosquitto_passwd when missing. The dev password is intentionally
 #      fixed (MCM_DEV_BROKER_PASSWORD env var, default
@@ -35,11 +35,10 @@
 #      either already done by the image's filesystem layout or
 #      unnecessary for our minimal dev config.
 #
-# Idempotency: the conf copy overwrites the volume copy every restart,
-# which is intentional (operators edit the source on the host). The
-# passwd file is only seeded when absent, so an operator who rewrites it
-# via a deploy apply still has their changes preserved across container
-# restarts.
+# Idempotency: the config marker is written only after successful
+# initialization. The shared volume then owns mosquitto.conf, passwd, and
+# ACL state as MCM updates it; the source template is only a seed, not a
+# restart-time source of truth.
 
 set -eu
 
@@ -61,17 +60,63 @@ mkdir -p "$CONFIG_DIR"
 # so this 0777 shortcut is dev-only.
 chmod 777 "$CONFIG_DIR" 2>/dev/null || true
 
-# 1. Seed mosquitto.conf from /mosquitto-init/. Always overwrite (see
-#    header).
-if [ ! -f "$INIT_DIR/mosquitto.conf" ]; then
-    echo "mosquitto-bootstrap: $INIT_DIR/mosquitto.conf not found; cannot seed broker config" >&2
-    exit 1
+# 1. Seed an absent config, or replace the image's anonymous-default config
+#    on first initialization. A missing marker alone is not evidence that an
+#    existing config is disposable: older managed configs may have no marker.
+CONFIG_MARKER="$CONFIG_DIR/.mcm-bootstrap-initialized"
+CONFIG_FILE="$CONFIG_DIR/mosquitto.conf"
+needs_seed=false
+if [ ! -f "$CONFIG_FILE" ]; then
+    needs_seed=true
+elif [ ! -f "$CONFIG_MARKER" ]; then
+    # A markerless config is only disposable when it provably holds no active
+    # directive. grep exits 1 for "no match" and >1 for a read or usage error,
+    # so an unreadable config must be reported instead of silently replaced.
+    if grep -Eq '^[[:space:]]*[^#[:space:]]' "$CONFIG_FILE"; then
+        :
+    else
+        grep_status=$?
+        if [ "$grep_status" -gt 1 ]; then
+            echo "mosquitto-bootstrap: cannot inspect $CONFIG_FILE (grep exit $grep_status); refusing to replace it" >&2
+            exit 1
+        fi
+        needs_seed=true
+    fi
 fi
-cp "$INIT_DIR/mosquitto.conf" "$CONFIG_DIR/mosquitto.conf"
-# MCM needs to read this file from inside its own container (different
-# UID); 0644 is sufficient since the file holds no secrets.
-chmod 644 "$CONFIG_DIR/mosquitto.conf" || true
-echo "mosquitto-bootstrap: synced $CONFIG_DIR/mosquitto.conf from $INIT_DIR/mosquitto.conf"
+if [ "$needs_seed" = true ]; then
+    if [ -e "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+        echo "mosquitto-bootstrap: $CONFIG_FILE exists and is not a regular file; refusing to replace it" >&2
+        exit 1
+    fi
+    if [ ! -f "$INIT_DIR/mosquitto.conf" ]; then
+        echo "mosquitto-bootstrap: $INIT_DIR/mosquitto.conf not found; cannot seed broker config" >&2
+        exit 1
+    fi
+    # Seed through a temporary file in the same directory and install it with
+    # a rename. Copying straight onto the live config would let an
+    # interrupted copy leave a truncated mosquitto.conf behind, which the
+    # next startup reads as a managed config and preserves.
+    SEED_TMP="$CONFIG_FILE.seed.$$"
+    if ! cp "$INIT_DIR/mosquitto.conf" "$SEED_TMP"; then
+        rm -f "$SEED_TMP" 2>/dev/null || true
+        echo "mosquitto-bootstrap: failed to copy $INIT_DIR/mosquitto.conf into $CONFIG_DIR; $CONFIG_FILE left unchanged" >&2
+        exit 1
+    fi
+    # MCM needs to read this file from inside its own container (different
+    # UID); 0644 is sufficient since the file holds no secrets.
+    chmod 644 "$SEED_TMP" 2>/dev/null || true
+    if ! mv -f "$SEED_TMP" "$CONFIG_FILE"; then
+        rm -f "$SEED_TMP" 2>/dev/null || true
+        echo "mosquitto-bootstrap: failed to install $CONFIG_FILE from $INIT_DIR/mosquitto.conf" >&2
+        exit 1
+    fi
+    echo "mosquitto-bootstrap: initialized $CONFIG_FILE from $INIT_DIR/mosquitto.conf"
+fi
+# Existing configs are retained when marker state is absent or ambiguous.
+# Recreate the sidecar only after a config exists (seeded or preserved).
+if [ ! -f "$CONFIG_MARKER" ]; then
+    : > "$CONFIG_MARKER"
+fi
 
 # 2. Seed passwd if missing.
 if [ ! -f "$CONFIG_DIR/passwd" ]; then

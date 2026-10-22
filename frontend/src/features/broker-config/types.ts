@@ -5,11 +5,22 @@ export interface ListenerSpec {
   protocols: string[]
 }
 
+export interface ListenerListResponse {
+  specs?: ListenerSpec[]
+  compose_host_ports?: number[]
+}
+
 export interface ListenerComposeStatus {
   compose_path?: string
   mapped_ports?: number[]
   unmapped_ports?: number[]
   disabled: boolean
+}
+
+export interface ListenerIssue {
+  kind: string
+  listener_id?: string
+  message: string
 }
 
 export interface ListenerPreviewResult {
@@ -19,7 +30,7 @@ export interface ListenerPreviewResult {
   needs_restart: boolean
   diff: string
   rendered: string
-  issues?: Array<{ kind: string; listener_id?: string; directive?: string; message: string }>
+  issues?: Array<ListenerIssue & { directive?: string }>
   warnings?: Array<{ kind: string; listener_id?: string; key?: string; message: string }>
   compose_status?: ListenerComposeStatus
   created_at?: string

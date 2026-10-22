@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,10 @@ import (
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/listener"
+	listenerwriter "github.com/fgjcarlos/mcm/internal/listener/writer"
 	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/listeners"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -136,8 +139,39 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		lookupMQTTUser:        store.GetMQTTUser,
 		userPasswords:         make(map[string]string),
 	}
-	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit)
+	listenerOpts := []listener.ListenerServiceOption{}
+	if cfg.Mosquitto.ConfigDir != "" {
+		listenerConfPath := filepath.Join(cfg.Mosquitto.ConfigDir, "mosquitto.conf")
+		listenerOpts = append(listenerOpts, listener.WithListenerConfWriter(newListenerConfWriterAdapter(listenerwriter.New(listenerConfPath))))
+	}
+	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit, listenerOpts...)
 	return app, nil
+}
+
+// newListenerConfWriterAdapter wraps the writer package's full
+// Rendered-returning Writer into the simpler listener.ListenerConfWriter
+// interface used by Apply. The adapter intentionally drops the Rendered
+// detail: Apply only needs the write to succeed or fail — the rendered
+// text is already surfaced to operators through the listener preview.
+func newListenerConfWriterAdapter(w *listenerwriter.FileWriter) listener.ListenerConfWriter {
+	return listenerWriterAdapter{w: w}
+}
+
+type listenerWriterAdapter struct {
+	w *listenerwriter.FileWriter
+}
+
+func (a listenerWriterAdapter) Write(specs []listeners.ListenerSpec) error {
+	_, err := a.w.Write(specs)
+	return err
+}
+
+func (a listenerWriterAdapter) Snapshot() ([]byte, error) {
+	return a.w.Snapshot()
+}
+
+func (a listenerWriterAdapter) Restore(snapshot []byte) error {
+	return a.w.Restore(snapshot)
 }
 
 // BootstrapAdmin creates the configured bootstrap admin if no admin users exist yet.
