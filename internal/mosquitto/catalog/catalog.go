@@ -7,6 +7,8 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // DirectiveType describes the value shape expected for one directive.
@@ -59,15 +61,19 @@ const (
 // version. SinceVersion is the earliest broker version that recognises
 // the directive; later versions keep the entry and may add new ones.
 type DirectiveSpec struct {
-	Name          string        `yaml:"name" json:"name"`
-	Type          DirectiveType `yaml:"type" json:"type"`
-	Scope         Scope         `yaml:"scope" json:"scope"`
-	Multiplicity  Multiplicity  `yaml:"multiplicity" json:"multiplicity"`
-	ReloadKind    ReloadKind    `yaml:"reload_kind" json:"reload_kind"`
-	SinceVersion  string        `yaml:"since_version" json:"since_version"`
-	AllowedValues []string      `yaml:"allowed_values,omitempty" json:"allowed_values,omitempty"`
-	Deps          []string      `yaml:"deps,omitempty" json:"deps,omitempty"`
-	Description   string        `yaml:"description,omitempty" json:"description,omitempty"`
+	Name         string        `yaml:"name" json:"name"`
+	Type         DirectiveType `yaml:"type" json:"type"`
+	Scope        Scope         `yaml:"scope" json:"scope"`
+	Multiplicity Multiplicity  `yaml:"multiplicity" json:"multiplicity"`
+	ReloadKind   ReloadKind    `yaml:"reload_kind" json:"reload_kind"`
+	SinceVersion string        `yaml:"since_version" json:"since_version"`
+	// ListenerSinceVersion is the earliest broker version that accepts the
+	// directive inside a listener block. It is empty when the directive is
+	// not available per listener.
+	ListenerSinceVersion string   `yaml:"listener_since_version" json:"listener_since_version"`
+	AllowedValues        []string `yaml:"allowed_values,omitempty" json:"allowed_values,omitempty"`
+	Deps                 []string `yaml:"deps,omitempty" json:"deps,omitempty"`
+	Description          string   `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 // Catalog is the immutable set of directive specs known for one broker
@@ -110,6 +116,68 @@ func (c *Catalog) Specs() []DirectiveSpec {
 // Names returns the sorted list of catalog names. Used by the validator
 // for diagnostics that need to mention all known directives.
 func (c *Catalog) Names() []string { return c.knownNames }
+
+// SupportsListenerDirective reports whether the directive can be used
+// inside a listener block with this broker version.
+//
+// A directive is listener-capable when the catalog declares the earliest
+// broker version that accepts it in a listener block. Directives without
+// that marker are never listener-capable, so a caller can fail closed
+// instead of rendering a block the broker would refuse to start.
+func (c *Catalog) SupportsListenerDirective(directive string) bool {
+	if c == nil {
+		return false
+	}
+	spec, ok := c.Lookup(directive)
+	if !ok || spec.ListenerSinceVersion == "" {
+		return false
+	}
+	return versionAtLeast(c.Version, spec.ListenerSinceVersion)
+}
+
+// versionAtLeast reports whether version is at least since. Both values
+// are dotted numeric versions such as "2.0".
+func versionAtLeast(version string, since string) bool {
+	current, ok := parseVersionNumber(version)
+	if !ok {
+		return false
+	}
+	target, ok := parseVersionNumber(since)
+	if !ok {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		var left, right int
+		if i < len(current) {
+			left = current[i]
+		}
+		if i < len(target) {
+			right = target[i]
+		}
+		if left != right {
+			return left > right
+		}
+	}
+	return true
+}
+
+// parseVersionNumber parses a dotted numeric version.
+func parseVersionNumber(version string) ([]int, bool) {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return nil, false
+	}
+	parts := strings.Split(trimmed, ".")
+	numbers := make([]int, 0, len(parts))
+	for _, part := range parts {
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return nil, false
+		}
+		numbers = append(numbers, number)
+	}
+	return numbers, true
+}
 
 // VersionName returns the broker version this catalog describes.
 func (c *Catalog) VersionName() string {
@@ -169,6 +237,11 @@ func (s DirectiveSpec) Validate(c ValidateSentinels) error {
 	}
 	if s.Type == TypeEnum && len(s.AllowedValues) == 0 {
 		return fmt.Errorf("directive %q: enum type requires allowed_values", s.Name)
+	}
+	if s.ListenerSinceVersion != "" {
+		if _, ok := parseVersionNumber(s.ListenerSinceVersion); !ok {
+			return fmt.Errorf("directive %q: invalid listener_since_version %q", s.Name, s.ListenerSinceVersion)
+		}
 	}
 	return nil
 }

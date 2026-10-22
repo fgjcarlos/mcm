@@ -147,7 +147,17 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		listenerConfPath := filepath.Join(cfg.Mosquitto.ConfigDir, "mosquitto.conf")
 		listenerOpts = append(listenerOpts, listener.WithListenerConfWriter(newListenerConfWriterAdapter(listenerwriter.New(listenerConfPath))))
 	}
-	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit, listenerOpts...)
+	// Issue #300: the directive catalog gates the per-listener TLS
+	// directives. Without it the listener service refuses every certificate
+	// binding, because it cannot prove that the broker understands the
+	// directives it would render.
+	//
+	// The catalog is not published here: the broker-config surface keeps
+	// its own contract of being disabled until Run wires the service.
+	brokerCatalog, catalogErr := catalog.LoadVersion("2.0")
+	if catalogErr == nil {
+		listenerOpts = append(listenerOpts, listener.WithListenerCatalog(brokerCatalog))
+	}
 	// Issue #300: the certificate surface needs a directory MCM can write
 	// the material into. Without a broker config dir there is no shared
 	// volume to store the certificates, so the surface stays disabled.
@@ -169,7 +179,9 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 			certificate.WithBrokerHost(cfg.Mosquitto.Host),
 			certificate.WithBrokerCertsDir(filepath.Join(brokerConfigDir, "certs")),
 		)
+		listenerOpts = append(listenerOpts, listener.WithListenerCertificateResolver(app.certificateSvc))
 	}
+	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit, listenerOpts...)
 	return app, nil
 }
 

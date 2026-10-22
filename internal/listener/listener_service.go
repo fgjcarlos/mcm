@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pmezard/go-difflib/difflib"
 
+	"github.com/fgjcarlos/mcm/internal/certificate"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/listeners"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -56,6 +59,16 @@ type ComposeReader interface {
 
 // ListenerAuditFunc records a listener lifecycle audit event.
 type ListenerAuditFunc func(ctx context.Context, actor, action, resourceType, resourceID, result string, metadata []byte)
+
+// CertificateResolver resolves the broker-side paths of a certificate
+// profile.
+//
+// The resolved paths point at the active revision of the profile, so they
+// stay stable across rotations: a rotation replaces the material behind
+// the paths, it does not change the rendered configuration.
+type CertificateResolver interface {
+	ResolveProfile(ctx context.Context, profileName string) (certificate.ResolvedProfile, error)
+}
 
 // ListenerConfWriter renders and persists listener specs to the broker
 // mosquitto.conf file. Implementations must be idempotent: applying the
@@ -132,6 +145,30 @@ func WithListenerConfWriter(w ListenerConfWriter) ListenerServiceOption {
 	}
 }
 
+// WithListenerCertificateResolver injects the resolver that maps a
+// certificate profile to the broker-side paths of its active material.
+//
+// Without a resolver a listener cannot be bound to a certificate profile:
+// the service refuses the binding instead of rendering a path the broker
+// cannot read.
+func WithListenerCertificateResolver(resolver CertificateResolver) ListenerServiceOption {
+	return func(s *ListenerService) {
+		s.resolver = resolver
+	}
+}
+
+// WithListenerCatalog injects the directive catalog used to gate the
+// per-listener TLS directives.
+//
+// Without a catalog the service refuses every certificate binding, because
+// it cannot prove that the broker understands the directives it would
+// render.
+func WithListenerCatalog(cat *catalog.Catalog) ListenerServiceOption {
+	return func(s *ListenerService) {
+		s.catalog = cat
+	}
+}
+
 type previewEntry struct {
 	result   ListenerPreviewResult
 	rows     []storage.ListenerSpecRow
@@ -147,6 +184,8 @@ type ListenerService struct {
 	restartRunner ListenerRestartRunner
 	confWriter    ListenerConfWriter
 	auditFn       ListenerAuditFunc
+	resolver      CertificateResolver
+	catalog       *catalog.Catalog
 	clock         func() time.Time
 	newRevisionID func() (string, error)
 	inProgress    bool
@@ -195,19 +234,39 @@ func (s *ListenerService) Preview(ctx context.Context, desired []listeners.Liste
 		return ListenerPreviewResult{}, fmt.Errorf("convert current listener specs: %w", err)
 	}
 	normalized, issues := normalizeDesired(desired)
-	validationIssues, warnings := listeners.Validate(normalized)
+	// The certificate material of the bound profiles is resolved before the
+	// validation: the rendered block carries the broker-side paths, and the
+	// validator has to see them to check the TLS directives as a whole.
+	resolved, resolveIssues, err := s.resolveTLSMaterial(ctx, normalized)
+	issues = append(issues, resolveIssues...)
+	// A broken binding of the CURRENT configuration does not block the
+	// change: the operator must be able to repair it by rebinding the
+	// listener. It is surfaced as a warning instead.
+	currentResolved, currentIssues, err := s.resolveTLSMaterial(ctx, current)
+	if err != nil {
+		return ListenerPreviewResult{Issues: issues, Warnings: []listeners.OptionWarning{}}, err
+	}
+	validationIssues, warnings := listeners.Validate(resolved)
+	for _, issue := range currentIssues {
+		warnings = append(warnings, listeners.OptionWarning{
+			Kind:       "tls_binding",
+			ListenerID: issue.ListenerID,
+			Key:        issue.Directive,
+			Message:    issue.Message,
+		})
+	}
 	issues = append(issues, validationIssues...)
 	if len(issues) > 0 {
 		sort.Slice(issues, func(i, j int) bool { return issues[i].Message < issues[j].Message })
 		return ListenerPreviewResult{Issues: issues, Warnings: warnings}, fmt.Errorf("validate listener specs: %w", errors.New(issues[0].Message))
 	}
-	desiredRendered, err := listeners.RenderAll(normalized)
+	desiredRendered, err := listeners.RenderAll(resolved)
 	if err != nil {
 		return ListenerPreviewResult{}, fmt.Errorf("render listener specs: %w", err)
 	}
 	currentRendered := ""
-	if len(current) > 0 {
-		currentRendered, err = listeners.RenderAll(current)
+	if len(currentResolved) > 0 {
+		currentRendered, err = listeners.RenderAll(currentResolved)
 		if err != nil {
 			return ListenerPreviewResult{}, fmt.Errorf("render current listener specs: %w", err)
 		}
@@ -302,6 +361,16 @@ func (s *ListenerService) Apply(ctx context.Context, revisionID string, confirm 
 	if err != nil {
 		return fmt.Errorf("decode listener rows: %w", err)
 	}
+	// The certificate material is resolved again on apply: the preview and
+	// the apply must render exactly the same block, and the active
+	// revision of a profile can change between both.
+	specs, resolveIssues, err := s.resolveTLSMaterial(ctx, specs)
+	if err != nil {
+		return fmt.Errorf("resolve certificate material: %w", err)
+	}
+	if len(resolveIssues) > 0 {
+		return fmt.Errorf("%w: %s", ErrListenerRestartFailed, resolveIssues[0].Message)
+	}
 
 	var snapshotTaken bool
 	var snapshotBytes []byte
@@ -368,10 +437,11 @@ func rowsToSpecs(rows []storage.ListenerSpecRow) ([]listeners.ListenerSpec, erro
 	specs := make([]listeners.ListenerSpec, 0, len(rows))
 	for _, row := range rows {
 		spec := listeners.ListenerSpec{
-			ID:      row.ID,
-			Port:    row.Port,
-			Bind:    row.Bind,
-			Options: cloneOptions(row.Options),
+			ID:         row.ID,
+			Port:       row.Port,
+			Bind:       row.Bind,
+			Options:    cloneOptions(row.Options),
+			TLSProfile: row.TLSProfile,
 		}
 		for _, protocol := range row.Protocols {
 			spec.Protocols = append(spec.Protocols, listeners.Protocol(protocol))
@@ -382,6 +452,108 @@ func rowsToSpecs(rows []storage.ListenerSpecRow) ([]listeners.ListenerSpec, erro
 		specs = append(specs, spec)
 	}
 	return specs, nil
+}
+
+// resolveTLSMaterial injects the broker-side TLS directives of the bound
+// certificate profile into the copy of the specs used for rendering.
+//
+// The persisted rows keep the profile name and never the resolved paths:
+// the paths point at the active revision, so a rotation replaces the
+// material behind them without changing the rendered configuration.
+//
+// A spec without a profile is returned unchanged: a listener may still
+// carry TLS directives that the operator manages by hand.
+func (s *ListenerService) resolveTLSMaterial(ctx context.Context, specs []listeners.ListenerSpec) ([]listeners.ListenerSpec, []listeners.Issue, error) {
+	resolved := make([]listeners.ListenerSpec, 0, len(specs))
+	var issues []listeners.Issue
+	for _, spec := range specs {
+		resolvedSpec, specIssues, err := s.resolveTLSMaterialFor(ctx, spec)
+		if err != nil {
+			return nil, issues, err
+		}
+		issues = append(issues, specIssues...)
+		resolved = append(resolved, resolvedSpec)
+	}
+	return resolved, issues, nil
+}
+
+// resolveTLSMaterialFor resolves the certificate profile of one spec.
+func (s *ListenerService) resolveTLSMaterialFor(ctx context.Context, spec listeners.ListenerSpec) (listeners.ListenerSpec, []listeners.Issue, error) {
+	resolved := spec
+	resolved.Options = cloneOptions(spec.Options)
+	if resolved.Options == nil {
+		resolved.Options = map[string]string{}
+	}
+	var issues []listeners.Issue
+	profile := strings.TrimSpace(spec.TLSProfile)
+	if profile == "" {
+		return resolved, issues, nil
+	}
+	// The profile owns the TLS paths: a hand-written path would point at
+	// material the rotation does not manage.
+	for _, key := range []string{"cafile", "capath", "certfile", "keyfile"} {
+		if _, exists := resolved.Options[key]; exists {
+			issues = append(issues, listeners.Issue{
+				Kind:       "tls_conflict",
+				ListenerID: spec.ID,
+				Directive:  key,
+				Message:    fmt.Sprintf("the %q directive is managed by the certificate profile %q", key, profile),
+			})
+		}
+	}
+	if s.catalog == nil || !s.catalog.SupportsListenerDirective("certfile") {
+		issues = append(issues, listeners.Issue{
+			Kind:       "tls_unsupported",
+			ListenerID: spec.ID,
+			Directive:  "certfile",
+			Message:    "the broker version does not accept TLS directives inside a listener block",
+		})
+		return resolved, issues, nil
+	}
+	if s.resolver == nil {
+		issues = append(issues, listeners.Issue{
+			Kind:       "tls_unavailable",
+			ListenerID: spec.ID,
+			Directive:  "tls_profile",
+			Message:    "the certificate surface is not available",
+		})
+		return resolved, issues, nil
+	}
+	material, err := s.resolver.ResolveProfile(ctx, profile)
+	if err != nil {
+		issues = append(issues, listeners.Issue{
+			Kind:       "tls_profile_unavailable",
+			ListenerID: spec.ID,
+			Directive:  "tls_profile",
+			Message:    fmt.Sprintf("the certificate profile %q is not available: %v", profile, err),
+		})
+		return resolved, issues, nil
+	}
+	resolved.Options["certfile"] = material.CertPath
+	resolved.Options["keyfile"] = material.KeyPath
+	if material.HasCA && material.CAPath != "" {
+		resolved.Options["cafile"] = material.CAPath
+	}
+	// Mutual TLS needs a certificate authority to verify the clients.
+	if optionEnabled(resolved.Options, "require_certificate") && !material.HasCA {
+		issues = append(issues, listeners.Issue{
+			Kind:       "tls_ca_required",
+			ListenerID: spec.ID,
+			Directive:  "require_certificate",
+			Message:    "mutual TLS requires a certificate profile with a certificate authority",
+		})
+	}
+	return resolved, issues, nil
+}
+
+// optionEnabled reports whether an option is set to a true value.
+func optionEnabled(options map[string]string, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(options[key])) {
+	case "true", "yes", "on", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 // ComposeAllHostPorts returns every configured Compose host port for UI collision hints.
@@ -439,7 +611,7 @@ func (s *ListenerService) gcPreviewsLocked(now time.Time) {
 func convertAndNormalize(rows []storage.ListenerSpecRow) ([]listeners.ListenerSpec, error) {
 	specs := make([]listeners.ListenerSpec, 0, len(rows))
 	for _, row := range rows {
-		spec := listeners.ListenerSpec{ID: row.ID, Port: row.Port, Bind: row.Bind, Options: cloneOptions(row.Options)}
+		spec := listeners.ListenerSpec{ID: row.ID, Port: row.Port, Bind: row.Bind, Options: cloneOptions(row.Options), TLSProfile: row.TLSProfile}
 		for _, protocol := range row.Protocols {
 			spec.Protocols = append(spec.Protocols, listeners.Protocol(protocol))
 		}
@@ -469,7 +641,7 @@ func normalizeDesired(desired []listeners.ListenerSpec) ([]listeners.ListenerSpe
 func listenerRows(specs []listeners.ListenerSpec) []storage.ListenerSpecRow {
 	rows := make([]storage.ListenerSpecRow, 0, len(specs))
 	for _, spec := range specs {
-		row := storage.ListenerSpecRow{ID: spec.ID, Port: spec.Port, Bind: spec.Bind, Options: cloneOptions(spec.Options)}
+		row := storage.ListenerSpecRow{ID: spec.ID, Port: spec.Port, Bind: spec.Bind, Options: cloneOptions(spec.Options), TLSProfile: spec.TLSProfile}
 		for _, protocol := range spec.Protocols {
 			row.Protocols = append(row.Protocols, string(protocol))
 		}

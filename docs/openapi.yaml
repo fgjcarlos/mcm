@@ -1703,6 +1703,13 @@ components:
         Options:
           type: [object, "null"]
           additionalProperties: { type: string }
+        tls_profile:
+          type: string
+          description: |
+            Name of the certificate profile that secures the listener. Empty
+            when the listener serves plain MQTT. The broker-side paths of
+            the profile are injected at render time, so a rotation does not
+            change the rendered configuration.
         RestartNeeded: { type: boolean }
       required: [ID, Port, Bind, Protocols, Options, RestartNeeded]
     ListenerSpecRow:

@@ -25,7 +25,7 @@ type ListenerSpecRow struct {
 	Options   map[string]string
 	// TLSProfile names the certificate profile that secures the listener.
 	// It is empty when the listener serves plain MQTT.
-	TLSProfile string
+	TLSProfile string `json:"tls_profile"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
