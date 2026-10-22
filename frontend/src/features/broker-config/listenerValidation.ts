@@ -49,34 +49,34 @@ export function validateListeners(specs: ListenerSpec[]): ListenerValidationResu
   const seen = new Set<string>()
 
   for (const spec of specs) {
-    if (!isIPAddress(spec.bind)) {
-      issues.push({ kind: 'bind', listener_id: spec.id, message: 'bind must be an IP address' })
+    if (!isIPAddress(spec.Bind)) {
+      issues.push({ kind: 'bind', listener_id: spec.ID, message: 'bind must be an IP address' })
     }
-    if (!Number.isInteger(spec.port) || spec.port < 1 || spec.port > 65535) {
-      issues.push({ kind: 'port_range', listener_id: spec.id, message: 'port must be between 1 and 65535' })
+    if (!Number.isInteger(spec.Port) || spec.Port < 1 || spec.Port > 65535) {
+      issues.push({ kind: 'port_range', listener_id: spec.ID, message: 'port must be between 1 and 65535' })
     }
-    if (spec.protocols.length === 0) {
-      issues.push({ kind: 'protocols_required', listener_id: spec.id, message: 'at least one protocol is required' })
+    if (spec.Protocols.length === 0) {
+      issues.push({ kind: 'protocols_required', listener_id: spec.ID, message: 'at least one protocol is required' })
     }
-    for (const protocol of spec.protocols) {
+    for (const protocol of spec.Protocols) {
       if (!allowedProtocols.has(protocol)) {
-        issues.push({ kind: 'protocols_unknown', listener_id: spec.id, message: `unknown protocol "${protocol}"` })
+        issues.push({ kind: 'protocols_unknown', listener_id: spec.ID, message: `unknown protocol "${protocol}"` })
         continue
       }
-      const key = `${spec.port}\0${spec.bind}\0${protocol}`
+      const key = `${spec.Port}\0${spec.Bind}\0${protocol}`
       if (seen.has(key)) {
         issues.push({
           kind: 'duplicate',
-          listener_id: spec.id,
-          message: `duplicate listener for port ${spec.port}, bind ${spec.bind}, protocol ${protocol}`,
+          listener_id: spec.ID,
+          message: `duplicate listener for port ${spec.Port}, bind ${spec.Bind}, protocol ${protocol}`,
         })
         continue
       }
       seen.add(key)
-      if (protocol === 'websockets' && spec.port === 1883) {
+      if (protocol === 'websockets' && spec.Port === 1883) {
         warnings.push({
           kind: 'websocket_default_port',
-          listener_id: spec.id,
+          listener_id: spec.ID,
           message: 'websocket protocols on port 1883 may conflict with the default MQTT listener',
         })
       }
@@ -92,9 +92,9 @@ export function composePortConflicts(specs: ListenerSpec[], hostPorts: number[])
   const composePorts = new Set(hostPorts)
   const conflicts: Record<string, number[]> = {}
   for (const spec of specs) {
-    if (composePorts.has(spec.port)) {
-      conflicts[spec.id] ??= []
-      if (!conflicts[spec.id].includes(spec.port)) conflicts[spec.id].push(spec.port)
+    if (composePorts.has(spec.Port)) {
+      conflicts[spec.ID] ??= []
+      if (!conflicts[spec.ID].includes(spec.Port)) conflicts[spec.ID].push(spec.Port)
     }
   }
   for (const ports of Object.values(conflicts)) ports.sort((a, b) => a - b)

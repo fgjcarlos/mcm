@@ -23,7 +23,7 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
   })
 }
 
-const initialSpecs = [{ id: 'mqtt', port: 1883, bind: '0.0.0.0', protocols: ['mqtt'] }]
+const initialSpecs = [{ ID: 'mqtt', Port: 1883, Bind: '0.0.0.0', Protocols: ['mqtt'] }]
 const preview = {
   revision_id: 'revision-123',
   needs_restart: true,
@@ -37,6 +37,7 @@ const preview = {
 function baseRoutes(): Record<string, RouteHandler> {
   return {
     'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs }),
+    'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
   }
 }
 
@@ -200,7 +201,7 @@ describe('ListenersPanel', () => {
         listenerFetches += 1
         return jsonResponse({ specs: listenerFetches === 1
           ? initialSpecs
-          : [{ ...initialSpecs[0], port: 1884 }] })
+          : [{ ...initialSpecs[0], Port: 1884 }] })
       },
       'POST /api/v1/listeners/preview': () => jsonResponse({ ...preview, needs_restart: false }),
       'POST /api/v1/listeners/apply': () => jsonResponse({ revision_id: 'revision-123', applied: true }),

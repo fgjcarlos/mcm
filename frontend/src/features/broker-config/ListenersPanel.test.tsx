@@ -19,12 +19,13 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
   })
 }
 
-const initialSpecs = [{ id: 'mqtt', port: 1883, bind: '0.0.0.0', protocols: ['mqtt'] }]
+const initialSpecs = [{ ID: 'mqtt', Port: 1883, Bind: '0.0.0.0', Protocols: ['mqtt'] }]
 const preview = { revision_id: 'revision-123', needs_restart: false, diff: '', rendered: '', issues: [], warnings: [] }
 
 function renderPanel(composeHostPorts: number[] = []) {
   vi.stubGlobal('fetch', installFetchMock({
     'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs }),
+    'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
     'POST /api/v1/listeners/preview': () => jsonResponse(preview),
   }))
   return render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" composeHostPorts={composeHostPorts} />)
@@ -38,6 +39,7 @@ describe('ListenersPanel editor', () => {
     const pendingResponse = new Promise<Response>((resolve) => { resolveResponse = resolve })
     vi.stubGlobal('fetch', installFetchMock({
       'GET /api/v1/listeners': () => pendingResponse,
+      'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
       'POST /api/v1/listeners/preview': () => jsonResponse(preview),
     }))
     const user = userEvent.setup()
@@ -89,6 +91,36 @@ describe('ListenersPanel editor', () => {
     await screen.findByLabelText('Port mqtt')
 
     expect(screen.getByText('Port 1883 conflicts with a Compose host port')).toBeInTheDocument()
+  })
+
+  it('binds a certificate profile to a listener and sends it in the preview', async () => {
+    const previewBodies: string[] = []
+    vi.stubGlobal('fetch', installFetchMock({
+      'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs }),
+      'GET /api/v1/broker/certificates': () => jsonResponse({
+        profiles: [{ name: 'production', active_revision: 'rev-active', expiry_status: 'valid', revisions: [] }],
+      }),
+      'POST /api/v1/listeners/preview': (init) => {
+        previewBodies.push(String(init?.body))
+        return jsonResponse(preview)
+      },
+    }))
+    const user = userEvent.setup()
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
+    await screen.findByLabelText('Port mqtt')
+
+    const select = await screen.findByLabelText('TLS profile mqtt')
+    expect(screen.queryByLabelText('Require client certificate mqtt')).not.toBeInTheDocument()
+    await user.selectOptions(select, 'production')
+
+    const mutualTls = await screen.findByLabelText('Require client certificate mqtt')
+    await user.click(mutualTls)
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('revision-123')
+
+    const body = JSON.parse(previewBodies[0]) as { specs: Array<{ tls_profile?: string; Options?: Record<string, string> }> }
+    expect(body.specs[0].tls_profile).toBe('production')
+    expect(body.specs[0].Options?.require_certificate).toBe('true')
   })
 
   it('keeps collision warnings non-blocking for Apply', async () => {

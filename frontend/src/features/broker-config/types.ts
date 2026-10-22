@@ -1,8 +1,10 @@
 export interface ListenerSpec {
-  id: string
-  port: number
-  bind: string
-  protocols: string[]
+  ID: string
+  Port: number
+  Bind: string
+  Protocols: string[]
+  Options?: Record<string, string>
+  tls_profile?: string
 }
 
 export interface ListenerListResponse {

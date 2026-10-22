@@ -3,10 +3,10 @@ import { composePortConflicts, validateListeners } from '../listenerValidation'
 import type { ListenerSpec } from '../types'
 
 const listener = (overrides: Partial<ListenerSpec> = {}): ListenerSpec => ({
-  id: 'mqtt',
-  port: 1883,
-  bind: '0.0.0.0',
-  protocols: ['mqtt'],
+  ID: 'mqtt',
+  Port: 1883,
+  Bind: '0.0.0.0',
+  Protocols: ['mqtt'],
   ...overrides,
 })
 
@@ -18,7 +18,7 @@ describe('production listener panel-data hooks', () => {
   it('reports duplicate listener tuples', () => {
     const issues = validateListeners([
       listener(),
-      listener({ id: 'duplicate' }),
+      listener({ ID: 'duplicate' }),
     ]).issues
 
     expect(issues).toEqual(expect.arrayContaining([
@@ -29,8 +29,8 @@ describe('production listener panel-data hooks', () => {
   it('maps compose host-port conflicts to listener IDs', () => {
     expect(composePortConflicts([
       listener(),
-      listener({ id: 'secure', port: 8883, protocols: ['mqtt'] }),
-      listener({ id: 'web', port: 8083, protocols: ['websockets'] }),
+      listener({ ID: 'secure', Port: 8883, Protocols: ['mqtt'] }),
+      listener({ ID: 'web', Port: 8083, Protocols: ['websockets'] }),
     ], [1883, 8883])).toEqual({ mqtt: [1883], secure: [8883] })
   })
 })
