@@ -84,14 +84,32 @@ elif [ ! -f "$CONFIG_MARKER" ]; then
     fi
 fi
 if [ "$needs_seed" = true ]; then
+    if [ -e "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+        echo "mosquitto-bootstrap: $CONFIG_FILE exists and is not a regular file; refusing to replace it" >&2
+        exit 1
+    fi
     if [ ! -f "$INIT_DIR/mosquitto.conf" ]; then
         echo "mosquitto-bootstrap: $INIT_DIR/mosquitto.conf not found; cannot seed broker config" >&2
         exit 1
     fi
-    cp "$INIT_DIR/mosquitto.conf" "$CONFIG_FILE"
+    # Seed through a temporary file in the same directory and install it with
+    # a rename. Copying straight onto the live config would let an
+    # interrupted copy leave a truncated mosquitto.conf behind, which the
+    # next startup reads as a managed config and preserves.
+    SEED_TMP="$CONFIG_FILE.seed.$$"
+    if ! cp "$INIT_DIR/mosquitto.conf" "$SEED_TMP"; then
+        rm -f "$SEED_TMP" 2>/dev/null || true
+        echo "mosquitto-bootstrap: failed to copy $INIT_DIR/mosquitto.conf into $CONFIG_DIR; $CONFIG_FILE left unchanged" >&2
+        exit 1
+    fi
     # MCM needs to read this file from inside its own container (different
     # UID); 0644 is sufficient since the file holds no secrets.
-    chmod 644 "$CONFIG_FILE" || true
+    chmod 644 "$SEED_TMP" 2>/dev/null || true
+    if ! mv -f "$SEED_TMP" "$CONFIG_FILE"; then
+        rm -f "$SEED_TMP" 2>/dev/null || true
+        echo "mosquitto-bootstrap: failed to install $CONFIG_FILE from $INIT_DIR/mosquitto.conf" >&2
+        exit 1
+    fi
     echo "mosquitto-bootstrap: initialized $CONFIG_FILE from $INIT_DIR/mosquitto.conf"
 fi
 # Existing configs are retained when marker state is absent or ambiguous.

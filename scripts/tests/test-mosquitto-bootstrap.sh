@@ -107,6 +107,55 @@ run_bootstrap || fail 'missing config was not reseeded'
 grep -Fq 'changed source template' "$CONFIG_DIR/mosquitto.conf" || fail 'missing config was not reseeded from current source'
 pass 'missing config is reseeded after initialization'
 
+# The seed must be installed through a temporary file and an atomic rename: a
+# copy that fails midway would otherwise leave a truncated mosquitto.conf on
+# disk, which the next startup treats as a managed config and preserves.
+grep -Fq 'cp "$INIT_DIR/mosquitto.conf" "$CONFIG_FILE"' "$BOOTSTRAP" \
+    && fail 'bootstrap copies the seed directly onto the live config'
+grep -Eq 'mv [^|]*SEED_TMP[^|]*CONFIG_FILE' "$BOOTSTRAP" \
+    || fail 'bootstrap does not install the seed with an atomic rename'
+
+# A seed copy that fails must be reported, must not install a partial config,
+# and must not leave a success marker. A fake `cp` on PATH makes the failure
+# deterministic for every user, including root.
+mkdir -p "$TMP_DIR/failbin"
+cat > "$TMP_DIR/failbin/cp" <<'SH'
+#!/bin/sh
+echo 'simulated copy failure' >&2
+exit 1
+SH
+chmod +x "$TMP_DIR/failbin/cp"
+run_bootstrap_with_failing_cp() {
+    BROKER_LOG="$TMP_DIR/broker.log" PATH="$TMP_DIR/failbin:$TMP_DIR/bin:/usr/bin:/bin" \
+        MCM_DEV_BROKER_USER=admin MCM_DEV_BROKER_PASSWORD=test-password \
+        "$TMP_DIR/bootstrap.sh" >/dev/null
+}
+rm -f "$marker" "$CONFIG_DIR/mosquitto.conf"
+if run_bootstrap_with_failing_cp >"$TMP_DIR/seed-failure.out" 2>&1; then
+    fail 'bootstrap reported success after a failed seed copy'
+fi
+grep -Fq 'failed to copy' "$TMP_DIR/seed-failure.out" || fail 'bootstrap did not report the failed seed copy'
+[[ ! -e "$CONFIG_DIR/mosquitto.conf" ]] || fail 'failed seed copy left a config behind'
+[[ -z "$(find "$CONFIG_DIR" -maxdepth 1 -name 'mosquitto.conf.seed.*' -print -quit)" ]] \
+    || fail 'failed seed copy left a temporary file behind'
+[[ ! -e "$marker" ]] || fail 'failed seed copy left a success marker'
+pass 'failed seed copy is reported and leaves no config, no temporary file, and no marker'
+
+# A config path that is not a regular file must be reported, never replaced:
+# installing the seed there would hide it inside the directory instead of
+# producing a broker config.
+rm -f "$marker"
+rm -rf "$CONFIG_DIR/mosquitto.conf"
+mkdir "$CONFIG_DIR/mosquitto.conf"
+if run_bootstrap >"$TMP_DIR/not-a-file.out" 2>&1; then
+    rmdir "$CONFIG_DIR/mosquitto.conf" 2>/dev/null || true
+    fail 'bootstrap reported success for a config path that is not a regular file'
+fi
+grep -Fq 'not a regular file' "$TMP_DIR/not-a-file.out" || fail 'bootstrap did not report the unusable config path'
+rmdir "$CONFIG_DIR/mosquitto.conf"
+[[ ! -e "$marker" ]] || fail 'unusable config path left a success marker'
+pass 'config path that is not a regular file is reported and preserved'
+
 rm -f "$marker" "$CONFIG_DIR/mosquitto.conf"
 rm "$INIT_DIR/mosquitto.conf"
 launches_before_failure="$(wc -l < "$TMP_DIR/broker.log")"
