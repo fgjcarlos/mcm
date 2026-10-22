@@ -19,7 +19,10 @@ import (
 
 const (
 	// ListenerPreviewTTL is the lifetime of an unapplied listener preview.
-	ListenerPreviewTTL      = time.Hour
+	ListenerPreviewTTL = time.Hour
+	// listenerRecoveryTimeout bounds the compensating broker restart that
+	// runs when the listener specs could not be persisted and the previous
+	// broker config could not be restored either.
 	listenerRecoveryTimeout = 30 * time.Second
 )
 
