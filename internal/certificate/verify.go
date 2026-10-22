@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fgjcarlos/mcm/internal/mosquitto/certs"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -74,8 +75,7 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 	}
 
 	address := net.JoinHostPort(s.brokerHost, strconv.Itoa(spec.Port))
-	dialer := &net.Dialer{Timeout: s.verifyTimeout}
-	raw, err := dialer.DialContext(ctx, "tcp", address)
+	raw, err := s.dialListener(ctx, address)
 	if err != nil {
 		verification.Status = TLSStatusUnverified
 		verification.Reason = "the listener port is not reachable from MCM"
@@ -103,6 +103,30 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 	verification.Status = TLSStatusVerified
 	verification.Reason = "the broker served the new certificate"
 	return verification
+}
+
+// dialListener opens a TCP connection to the listener.
+//
+// The broker is restarted right before the verification runs, so the port can
+// still refuse connections for a short moment. Only the connection is
+// retried: once the broker answers, the handshake verdict is final.
+func (s *Service) dialListener(ctx context.Context, address string) (net.Conn, error) {
+	deadline := time.Now().Add(s.verifyReadyWindow)
+	for {
+		dialer := &net.Dialer{Timeout: s.verifyTimeout}
+		raw, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			return raw, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(s.verifyRetryInterval):
+		}
+	}
 }
 
 // buildVerifyConfig builds the TLS configuration used to check a listener.

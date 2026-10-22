@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"path/filepath"
@@ -324,6 +325,86 @@ func TestApplyRollsBackWhenTheListenerRejectsTheMaterial(t *testing.T) {
 	}
 }
 
+// delayedBrokerRestarter starts the broker only after the restart returned.
+//
+// A real broker needs a moment to bind its ports after the container
+// restart, so the verification must not give up on the first refused
+// connection.
+type delayedBrokerRestarter struct {
+	tb          testing.TB
+	port        int
+	certificate tls.Certificate
+	delay       time.Duration
+}
+
+func (r *delayedBrokerRestarter) Restart(context.Context) error {
+	go func() {
+		time.Sleep(r.delay)
+		listener, err := tls.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", r.port), &tls.Config{
+			Certificates: []tls.Certificate{r.certificate},
+			MinVersion:   tls.VersionTLS12,
+		})
+		if err != nil {
+			return
+		}
+		r.tb.Cleanup(func() { _ = listener.Close() })
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if tlsConn, ok := conn.(*tls.Conn); ok {
+					_ = tlsConn.Handshake()
+				}
+			}()
+		}
+	}()
+	return nil
+}
+
+func TestApplyWaitsForTheBrokerToAcceptConnectionsAfterTheRestart(t *testing.T) {
+	service, repo, _ := serviceFixture(t)
+	ctx := context.Background()
+
+	material, ca, caKey := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
+	port := reservePort(t)
+	service.restart = &delayedBrokerRestarter{
+		tb:          t,
+		port:        port,
+		certificate: listenerCertificate(t, ca, caKey, "broker.example.com"),
+		delay:       300 * time.Millisecond,
+	}
+	service.verifyReadyWindow = 5 * time.Second
+	service.verifyRetryInterval = 50 * time.Millisecond
+
+	if _, err := repo.InsertListenerSpec(ctx, storage.ListenerSpecRow{
+		ID:         "tls-listener",
+		Port:       port,
+		Bind:       "0.0.0.0",
+		Protocols:  []string{"mqtt"},
+		TLSProfile: "production",
+	}); err != nil {
+		t.Fatalf("InsertListenerSpec returned error: %v", err)
+	}
+
+	revision, err := service.CreateRevision(ctx, "operator", "production", "", material, false)
+	if err != nil {
+		t.Fatalf("CreateRevision returned error: %v", err)
+	}
+	result, err := service.Apply(ctx, "admin", "production", revision.RevisionID)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if len(result.Verification) != 1 {
+		t.Fatalf("Apply verification = %#v, want one check", result.Verification)
+	}
+	if result.Verification[0].Status != TLSStatusVerified {
+		t.Fatalf("Apply verification status = %q, want %q", result.Verification[0].Status, TLSStatusVerified)
+	}
+}
+
 func TestApplyReportsAnUnreachableListenerAsUnverified(t *testing.T) {
 	service, repo, _ := serviceFixture(t)
 	ctx := context.Background()
@@ -465,6 +546,8 @@ func serviceFixture(t *testing.T) (*Service, *storage.Store, *countingRestarter)
 		WithBrokerCertsDir("/mosquitto/config/certs"),
 		WithExpiryWarningWindow(30*24*time.Hour),
 		WithVerifyTimeout(2*time.Second),
+		WithVerifyReadyWindow(200*time.Millisecond),
+		WithVerifyRetryInterval(50*time.Millisecond),
 	)
 	return service, repo, restarter
 }
@@ -550,6 +633,33 @@ func materialWithCA(t *testing.T, commonName string, notBefore time.Time, notAft
 func startUntrustedTLSListener(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string) int {
 	t.Helper()
 
+	listener, err := tlsListen(listenerCertificate(t, ca, caKey, commonName))
+	if err != nil {
+		t.Fatalf("start the tls listener: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if tlsConn, ok := conn.(*tls.Conn); ok {
+					_ = tlsConn.Handshake()
+				}
+			}()
+		}
+	}()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
+// listenerCertificate builds a server certificate signed by the given
+// certificate authority.
+func listenerCertificate(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string) tls.Certificate {
+	t.Helper()
+
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate the listener key: %v", err)
@@ -572,28 +682,24 @@ func startUntrustedTLSListener(t *testing.T, ca *x509.Certificate, caKey *ecdsa.
 	if err != nil {
 		t.Fatalf("parse the listener certificate: %v", err)
 	}
-	listener, err := tlsListen(tls.Certificate{
+	return tls.Certificate{
 		Certificate: [][]byte{certificate.Raw},
 		PrivateKey:  leafKey,
 		Leaf:        certificate,
-	})
-	if err != nil {
-		t.Fatalf("start the tls listener: %v", err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				if tlsConn, ok := conn.(*tls.Conn); ok {
-					_ = tlsConn.Handshake()
-				}
-			}()
-		}
-	}()
-	return listener.Addr().(*net.TCPAddr).Port
+}
+
+// reservePort returns a port that is free at the time of the call.
+func reservePort(t *testing.T) int {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release the reserved port: %v", err)
+	}
+	return port
 }

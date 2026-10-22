@@ -109,6 +109,11 @@ type Service struct {
 	brokerCertsDir string
 	expiryWarning  time.Duration
 	verifyTimeout  time.Duration
+	// verifyReadyWindow bounds how long the verification waits for the
+	// broker to accept connections after a restart.
+	verifyReadyWindow time.Duration
+	// verifyRetryInterval is the delay between two connection attempts.
+	verifyRetryInterval time.Duration
 }
 
 // ServiceOption configures a Service.
@@ -185,18 +190,44 @@ func WithVerifyTimeout(timeout time.Duration) ServiceOption {
 	}
 }
 
+// WithVerifyReadyWindow sets how long the verification waits for the broker
+// to accept connections.
+//
+// The broker is restarted right before the verification runs, so the port
+// can refuse connections for a short moment. The window bounds that wait:
+// it never turns a rejected handshake into a success, it only gives the
+// broker time to bind its ports.
+func WithVerifyReadyWindow(window time.Duration) ServiceOption {
+	return func(s *Service) {
+		if window > 0 {
+			s.verifyReadyWindow = window
+		}
+	}
+}
+
+// WithVerifyRetryInterval sets the delay between two connection attempts.
+func WithVerifyRetryInterval(interval time.Duration) ServiceOption {
+	return func(s *Service) {
+		if interval > 0 {
+			s.verifyRetryInterval = interval
+		}
+	}
+}
+
 // NewService returns a certificate service.
 //
 // The store holds the material on disk, the repository persists the metadata
 // and the restarter reloads the broker.
 func NewService(store *certs.Store, repo CertificateRepository, options ...ServiceOption) *Service {
 	service := &Service{
-		store:         store,
-		repo:          repo,
-		clock:         time.Now,
-		newRevisionID: defaultRevisionID,
-		expiryWarning: 30 * 24 * time.Hour,
-		verifyTimeout: 5 * time.Second,
+		store:               store,
+		repo:                repo,
+		clock:               time.Now,
+		newRevisionID:       defaultRevisionID,
+		expiryWarning:       30 * 24 * time.Hour,
+		verifyTimeout:       5 * time.Second,
+		verifyReadyWindow:   10 * time.Second,
+		verifyRetryInterval: 500 * time.Millisecond,
 	}
 	for _, option := range options {
 		if option != nil {
