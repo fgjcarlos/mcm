@@ -101,6 +101,7 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_MOSQUITTO_USERNAME` | `admin` | Broker service user. Both `_USERNAME` and `_PASSWORD` must be set or both empty. Dev default matches the Mosquitto bootstrap script. |
 | `MCM_MOSQUITTO_PASSWORD` | `mcm-dev-broker-password` | Broker service user password. Read from a secret manager in production. Dev-only. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | *(unset)* | Directory containing the Mosquitto configuration. |
+| `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | *(unset)* | Broker-side path of the configuration directory that holds the broker certificate material. It must point at the same volume as `MCM_MOSQUITTO_CONFIG_DIR`. |
 | `MCM_MOSQUITTO_DATA_DIR` | *(unset)* | Directory for Mosquitto persistent data (retained messages, persistence file). |
 
 ### Mosquitto TLS

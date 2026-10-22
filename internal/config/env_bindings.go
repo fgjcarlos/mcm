@@ -515,6 +515,15 @@ var envBindings = []envBinding{
 		},
 	},
 	{
+		Name: "MCM_MOSQUITTO_BROKER_CONFIG_DIR",
+		Path: "mosquitto.broker_config_dir",
+		Doc:  "Broker-side path of the configuration directory that holds the broker certificate material. It must point at the same volume as MCM_MOSQUITTO_CONFIG_DIR.",
+		Apply: func(cfg *Config, raw string) error {
+			cfg.Mosquitto.BrokerConfigDir = raw
+			return nil
+		},
+	},
+	{
 		Name: "MCM_MOSQUITTO_DATA_DIR",
 		Path: "mosquitto.data_dir",
 		Doc:  "Directory for Mosquitto persistent data (e.g. retained messages, persistence file).",

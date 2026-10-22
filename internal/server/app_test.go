@@ -848,7 +848,7 @@ func TestAppLivezIsProcessOnly(t *testing.T) {
 	}
 }
 
-func newTestApp(t *testing.T) (*App, *storage.Store) {
+func newTestApp(t *testing.T, mutate ...func(*config.Config)) (*App, *storage.Store) {
 	t.Helper()
 
 	cfg := config.Default()
@@ -860,6 +860,11 @@ func newTestApp(t *testing.T) (*App, *storage.Store) {
 	// Tests model MCM behind a reverse proxy: trust the default httptest peer
 	// (192.0.2.1) so X-Forwarded-For client IPs are honored in test requests.
 	cfg.HTTP.TrustedProxies = []string{"192.0.2.1"}
+	for _, apply := range mutate {
+		if apply != nil {
+			apply(&cfg)
+		}
+	}
 
 	store, err := storage.Open(cfg.Database.Path)
 	if err != nil {
