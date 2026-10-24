@@ -60,6 +60,8 @@ type DeployPreview = {
   acl_diff: string
   passwd_diff: string
   orphan_rules?: ACLRule[]
+  scope_issues?: string[]
+  scope_pending_activation?: string[]
   has_changes: boolean
 }
 
@@ -1463,6 +1465,34 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                     </tbody>
                   </table>
                 </div>
+              </div>
+            ) : null}
+            {preview.scope_issues?.length ? (
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
+                  <span className="rounded-full bg-rose-300/15 px-2.5 py-1 text-xs font-semibold text-rose-100">{preview.scope_issues.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-rose-50">The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
+                <ul className="mt-4 space-y-2 text-sm text-rose-50">
+                  {preview.scope_issues.map((issue) => (
+                    <li key={issue} className="break-words">{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.scope_pending_activation?.length ? (
+              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Pending listener activation</p>
+                  <span className="rounded-full bg-cyan-300/15 px-2.5 py-1 text-xs font-semibold text-cyan-50">{preview.scope_pending_activation.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-cyan-50">The files of these listeners are written by this deployment. Their rules become active once the listener configuration declares them.</p>
+                <ul className="mt-4 space-y-2 text-sm text-cyan-50">
+                  {preview.scope_pending_activation.map((notice) => (
+                    <li key={notice} className="break-words">{notice}</li>
+                  ))}
+                </ul>
               </div>
             ) : null}
             {preview.acl_diff ? (

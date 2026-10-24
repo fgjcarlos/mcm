@@ -1182,6 +1182,66 @@ describe('App', () => {
     expect(screen.getByText('Pending deploy')).toBeInTheDocument()
   })
 
+  // The listener scope of a deployment is only in effect once the listener
+  // configuration declares the file of the listener. The preview tells the
+  // operator which scoped rules wait for that step and which ones can never
+  // work.
+  it('shows the listener scope of the deployment preview', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'scope-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('scope-token'),
+      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-scope',
+        acl_diff: '+user plant\n+topic readwrite plant/#',
+        passwd_diff: '',
+        scope_pending_activation: [
+          'listener "plant" does not declare "/mosquitto/config/acl.plant" in the broker configuration yet; apply the listener configuration to activate its scoped rules',
+        ],
+        has_changes: true,
+      }),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+    expect(await screen.findByText('Pending listener activation')).toBeInTheDocument()
+    expect(screen.getByText(/apply the listener configuration to activate its scoped rules/)).toBeInTheDocument()
+    expect(screen.queryByText('Listener scope problems')).not.toBeInTheDocument()
+  })
+
+  it('refuses a deployment whose listener scope can never work', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'scope-broken-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('scope-broken-token'),
+      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-scope-broken',
+        acl_diff: '+user plant',
+        passwd_diff: '',
+        scope_issues: [
+          'listener "plant" does not exist; its scoped rules would never apply',
+        ],
+        has_changes: true,
+      }),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+    expect(await screen.findByText('Listener scope problems')).toBeInTheDocument()
+    expect(screen.getByText(/its scoped rules would never apply/)).toBeInTheDocument()
+    expect(screen.queryByText('Pending listener activation')).not.toBeInTheDocument()
+  })
+
   // FIX 2: Deploy panel shows friendly 403 message, does not log out
   describe('Deploy panel 403 forbidden handling', () => {
     function deployRoutesWithForbiddenPreview(): Record<string, RouteHandler> {
