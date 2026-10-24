@@ -182,6 +182,114 @@ mosquitto:
     insecure_skip_verify: true # development only; never production
 ```
 
+## Managing the broker TLS material from MCM
+
+MCM manages the certificate the **broker serves to its own clients** — the server side of the broker's TLS listeners. It is the mirror image of the section above: there MCM connects to a TLS broker as a client; here MCM gives the broker its server certificate, keeps every upload as an immutable revision, rotates it, and binds TLS or mutual TLS to individual listeners.
+
+This is the capability delivered by [issue #300](https://github.com/fgjcarlos/mcm/issues/300). The web UI exposes it in the **Certificates** panel (Broker configuration → Certificates) and in the **MQTT listeners** panel, where a listener is bound to a certificate profile.
+
+### Path alignment
+
+The material has to be visible to both processes, and each one sees the shared volume under a different path:
+
+| Setting | Meaning |
+| --- | --- |
+| `MCM_MOSQUITTO_CONFIG_DIR` | Where MCM writes the material. The certificate surface stays disabled while this is unset. |
+| `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | The path the **broker** uses for the same directory. It is the path that ends up in the rendered `mosquitto.conf`, so it must match the broker's mount, not MCM's. Defaults to `/mosquitto/config`. |
+
+Both settings must point at the same volume. In the dev stack the `mosquitto_config` volume is mounted twice — `/mosquitto/config` in the broker and `/var/lib/mosquitto-config` in MCM — which is why both variables are required.
+
+```text
+# MCM view: $MCM_MOSQUITTO_CONFIG_DIR
+/var/lib/mosquitto-config/certs/production/
+├── revisions/20260101T120000Z-a1b2c3d4/
+│   ├── ca.crt        # authority that signs the broker certificate
+│   ├── chain.crt     # intermediate chain, optional
+│   ├── server.crt    # the certificate the broker serves
+│   └── server.key    # the private key (0600)
+└── active -> revisions/20260101T120000Z-a1b2c3d4
+
+# Broker view: $MCM_MOSQUITTO_BROKER_CONFIG_DIR (same volume, other mount)
+/mosquitto/config/certs/production/active/server.crt
+```
+
+The `active` link is relative and swapped atomically, so the broker never observes a half-written revision and there is no window without material.
+
+### The lifecycle
+
+| Step | Endpoint | Role | Effect |
+| --- | --- | --- | --- |
+| Upload a revision | `POST /api/v1/broker/certificates/profiles/{name}/revisions` | operator | Validates the CA, the certificate, the key and the chain, and stores them as an immutable `pending` revision. A certificate and a key that do not belong together are rejected with the reported issues. |
+| Preview | `POST /api/v1/broker/certificates/preview` | operator | Resolves the target paths and the material metadata of a revision. The preview contains paths and metadata, never PEM material. |
+| Activate | `POST /api/v1/broker/certificates/apply` | admin | Installs the material, restarts the broker, verifies the handshake of every listener bound to the profile, and marks the revision `active`. |
+| Inspect | `GET /api/v1/broker/certificates` | auditor | Reports the profiles, their revisions, the active revision and the expiry status (`valid`, `expiring`, `expired`). |
+
+### Rotation
+
+Rotation is an upload plus an activation; there is no separate rotation command:
+
+1. Upload the new material under the same profile. The previous revision stays `active` and keeps serving the broker.
+2. Preview and activate the new revision. The activation restarts the broker, verifies the handshake and only then marks the new revision `active` and the previous one `superseded`.
+3. The broker now serves the new certificate and rejects clients that trust only the previous authority.
+
+Keep both authorities trusted during the overlap window if external clients still use the old certificate: upload the new revision, activate it, and only remove the old authority from the clients afterwards.
+
+### Recovery
+
+An activation that the broker does not serve does not leave the broker without material. When the restart fails or the verification reports `failed`, MCM restores the previous material, restarts the broker again and marks the rejected revision `failed` with the reason. The API answers `502` with the recovery state so the operator can see that the previous revision is still the one in service.
+
+A listener that cannot be reached is reported as `unverified`, never as `verified`: an unreachable port proves nothing about the material.
+
+### Expiry
+
+Every revision and every profile carries an `expiry_status`:
+
+| Status | Meaning |
+| --- | --- |
+| `valid` | The certificate is not close to its expiry. |
+| `expiring` | The certificate expires inside the warning window (30 days by default). The upload also returns an `expiring_soon` warning. |
+| `expired` | The certificate is already expired. |
+| `unknown` | The validity window could not be determined. |
+
+An expired certificate is rejected at upload time: it is a validation issue, not a warning. Only the window before the expiry is a warning.
+
+### Key handling
+
+- The private key is **write-only**. It travels in the upload request body and never appears in an API response, in a preview, in a configuration diff or in the MCM logs.
+- The key is written with `0600` inside the revision directory, so the broker process must own it or share its group to read it.
+- The rendered `mosquitto.conf` contains only paths (`certfile`, `keyfile`, `cafile`), never PEM material.
+- MCM does not issue, renew or revoke certificates; it installs the material an external CA produced.
+
+### Binding a listener to a profile
+
+A listener is bound to a profile through its `tls_profile` field, in the **MQTT listeners** panel or through `POST /api/v1/listeners/preview`:
+
+| Listener | Options | Result |
+| --- | --- | --- |
+| Plain TLS | `tls_profile: production` | The listener serves the profile material. |
+| Mutual TLS | `tls_profile: production` and `options.require_certificate: true` | The listener also demands a client certificate signed by the profile authority (`cafile`). |
+
+The broker-side paths of the profile are injected into the rendered configuration, so a rotation never rewrites `mosquitto.conf`: only the `active` link changes and the broker picks the new material up after the restart.
+
+### What the activation verification reports
+
+| Status | Meaning |
+| --- | --- |
+| `verified` | The broker completed the handshake and served the expected certificate. |
+| `unverified` | The handshake could not be completed: the port is not published, the broker asked for a client certificate that MCM does not own, or the material could not be read. The activation still succeeds — an unreachable listener is not proof of a bad certificate. |
+| `failed` | The handshake failed for a reason that points at the material. The activation is rolled back and the previous revision keeps serving the broker. |
+
+A mutual TLS listener is always reported as `unverified`: MCM owns no client certificate, so it cannot complete a usable handshake against it.
+
+### Production checklist additions
+
+- Keep `MCM_MOSQUITTO_CONFIG_DIR` and `MCM_MOSQUITTO_BROKER_CONFIG_DIR` aligned with the broker's mount, and make sure the broker process can read the `active` material (the private key is `0600`, so it must be owned by the broker user or its group).
+- Back up the certificate directory together with the database: the revisions are the audit trail of every rotation.
+- Alert on `expiry_status: expiring`. A rotation that is only triggered by the broker failing to start is a rotation that already cost an outage.
+- Test the rotation on a disposable broker first. The activation restarts the broker; a broken certificate must not reach production.
+
+`scripts/e2e-broker-tls.sh` exercises this whole surface against the dev stack — plain TLS, mutual TLS, rejection of a client without a certificate, rejection of an untrusted authority, rollback of a rejected activation, rotation under a new authority and the expiry warning. CI runs it in the `e2e-broker-tls` job.
+
 ## Security note
 
 The development configuration enables authentication (no anonymous access) and uses a shared volume so MCM can manage users and ACLs through the deploy service. The dev-only shortcuts above (hardcoded password, broker running as root, docker socket mount, world-writable shared dir) exist purely so a clean clone of the repo works without operator input.
