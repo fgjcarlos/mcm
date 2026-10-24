@@ -34,13 +34,15 @@ type ManagedACLFileRow struct {
 
 // RecordManagedACLFile registers an ACL file MCM owns, or refreshes the
 // registration of a file it already owns.
+//
+// The registry follows the deploy apply: the deploy service holds the
+// mutation lock while it writes the registry, so this method does not take
+// the lock itself — taking it here would deadlock the apply.
 func (s *Store) RecordManagedACLFile(ctx context.Context, path, listenerID string) error {
 	if path == "" {
 		return errors.New("managed acl file path is required")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	s.LockMutations()
-	defer s.UnlockMutations()
 
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO managed_acl_files(path, listener_id, created_at, updated_at)
@@ -90,10 +92,10 @@ ORDER BY path ASC`)
 // DeleteManagedACLFile removes the registration of an ACL file MCM owned.
 // The file itself is removed by the deploy service, which owns the
 // transactional write.
+//
+// Like RecordManagedACLFile, the method does not take the mutation lock:
+// the deploy service holds it while it updates the registry.
 func (s *Store) DeleteManagedACLFile(ctx context.Context, path string) error {
-	s.LockMutations()
-	defer s.UnlockMutations()
-
 	result, err := s.db.ExecContext(ctx, `DELETE FROM managed_acl_files WHERE path = ?`, path)
 	if err != nil {
 		return fmt.Errorf("delete managed acl file: %w", err)
