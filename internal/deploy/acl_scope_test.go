@@ -137,6 +137,16 @@ func newScopedService(t *testing.T, rules []acl.Rule) (*Service, *scopedDeployme
 		cfg,
 		noAudit,
 	)
+	// The broker configuration MCM manages: it declares the broker-wide
+	// ACL file, which is the path the broker reads the per-listener files
+	// next to.
+	confPath := filepath.Join(dir, "mosquitto.conf")
+	confBody := "per_listener_settings true\nallow_anonymous false\npassword_file " +
+		filepath.Join(dir, "passwd") + "\nacl_file " + cfg.ACLPath + "\n"
+	if err := os.WriteFile(confPath, []byte(confBody), 0o644); err != nil {
+		t.Fatalf("write broker config: %v", err)
+	}
+	svc.WithBrokerConfig(confPath, nil)
 	return svc, deployStore, cfg
 }
 
@@ -362,5 +372,90 @@ func TestApplyRestoresTheRemovedListenerFileOnRollback(t *testing.T) {
 
 	if _, statErr := os.Stat(listenerPath); statErr != nil {
 		t.Fatalf("the listener file is gone after the rollback: %v", statErr)
+	}
+}
+
+// TestPreviewReportsThePendingActivation pins that the preview names the
+// scoped rules the broker reads only after the listener configuration is
+// applied.
+//
+// The broker refuses to start when the ACL file of a listener is missing, so
+// the deploy writes the file first and the listener configuration declares
+// it afterwards. The preview tells the operator that the rules are not
+// active yet.
+func TestPreviewReportsThePendingActivation(t *testing.T) {
+	t.Parallel()
+
+	svc, store, cfg := newScopedService(t, []acl.Rule{
+		{Scope: acl.ScopeListener, ListenerID: "tls", Principal: "bob", TopicFilter: "tls/#", Permission: acl.PermissionRead},
+	})
+	store.setListener("tls", filepath.Join(filepath.Dir(cfg.ACLPath), "acl.tls"))
+
+	preview, err := svc.Preview(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if len(preview.ScopeIssues) != 0 {
+		t.Fatalf("the preview reports blocking issues although the listener declares the file: %v", preview.ScopeIssues)
+	}
+	if len(preview.ScopePendingActivation) != 1 {
+		t.Fatalf("the preview reported %d pending activations, want 1: %v", len(preview.ScopePendingActivation), preview.ScopePendingActivation)
+	}
+	if !strings.Contains(preview.ScopePendingActivation[0], "tls") {
+		t.Fatalf("the pending activation does not name the listener: %q", preview.ScopePendingActivation[0])
+	}
+}
+
+// TestPreviewReportsNoPendingActivationWhenTheConfigDeclaresTheFile pins
+// that a listener whose file the broker configuration already declares has
+// nothing pending.
+func TestPreviewReportsNoPendingActivationWhenTheConfigDeclaresTheFile(t *testing.T) {
+	t.Parallel()
+
+	svc, store, cfg := newScopedService(t, []acl.Rule{
+		{Scope: acl.ScopeListener, ListenerID: "tls", Principal: "bob", TopicFilter: "tls/#", Permission: acl.PermissionRead},
+	})
+	store.setListener("tls", filepath.Join(filepath.Dir(cfg.ACLPath), "acl.tls"))
+	// The configuration declares the file the broker reads.
+	confPath := filepath.Join(filepath.Dir(cfg.ACLPath), "mosquitto.conf")
+	confBody := "per_listener_settings true\nacl_file " + cfg.ACLPath + "\nlistener 8883\nacl_file " +
+		filepath.Join(filepath.Dir(cfg.ACLPath), "acl.tls") + "\n"
+	if err := os.WriteFile(confPath, []byte(confBody), 0o644); err != nil {
+		t.Fatalf("write broker config: %v", err)
+	}
+
+	preview, err := svc.Preview(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if len(preview.ScopePendingActivation) != 0 {
+		t.Fatalf("the preview reports pending activations although the configuration declares the file: %v", preview.ScopePendingActivation)
+	}
+}
+
+// TestApplyRefusesAScopedRuleWithoutABrokerConfiguration pins that MCM
+// refuses a scoped rule it cannot wire.
+//
+// Without a broker configuration MCM manages, the acl_file of a listener
+// never reaches Mosquitto, so the rules would stay inert for good.
+func TestApplyRefusesAScopedRuleWithoutABrokerConfiguration(t *testing.T) {
+	t.Parallel()
+
+	svc, store, cfg := newScopedService(t, []acl.Rule{
+		{Scope: acl.ScopeListener, ListenerID: "tls", Principal: "bob", TopicFilter: "tls/#", Permission: acl.PermissionRead},
+	})
+	store.setListener("tls", filepath.Join(filepath.Dir(cfg.ACLPath), "acl.tls"))
+	// MCM does not manage the broker configuration.
+	svc.confPath = ""
+
+	preview, err := svc.Preview(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Preview() error = %v", err)
+	}
+	if len(preview.ScopeIssues) == 0 {
+		t.Fatal("the preview reports no issue although the scoped rules cannot be wired")
+	}
+	if _, err := svc.Apply(context.Background(), "alice", preview.RevisionID); !errors.Is(err, ErrACLScopeNotWired) {
+		t.Fatalf("Apply() error = %v, want ErrACLScopeNotWired", err)
 	}
 }

@@ -286,12 +286,15 @@ func listenerRenderedJSON(plan aclFilePlan) (string, error) {
 //
 //   - the listener must declare `acl_file <path>` with the path MCM writes
 //     the listener's file to, otherwise Mosquitto keeps using the
-//     broker-wide file for that listener;
-//   - `per_listener_settings true` must be set, otherwise Mosquitto
-//     ignores a listener-local `acl_file` entirely.
+//     broker-wide file for that listener.
 //
 // The issues are blocking: an apply that would leave the scoped rules
 // inert would report success while the broker serves something else.
+//
+// The activation of the file is a separate concern: the broker reads the
+// file of a listener once the configuration declares it, and the
+// configuration is applied after the deploy. That state is reported by
+// scopeActivationPending.
 func (s *Service) scopeWiringIssues(ctx context.Context, rendered renderedConfig) ([]string, error) {
 	listenerFiles := make([]ACLFileRender, 0, len(rendered.ACLFiles))
 	for _, file := range rendered.ACLFiles {
@@ -304,6 +307,15 @@ func (s *Service) scopeWiringIssues(ctx context.Context, rendered renderedConfig
 	}
 
 	var issues []string
+
+	// Without a broker configuration MCM manages, the acl_file of a
+	// listener never reaches Mosquitto: the rules would stay inert for
+	// good, so the apply refuses them.
+	if s.confPath == "" {
+		issues = append(issues,
+			"MCM does not manage the broker configuration, so the acl_file of a listener cannot be declared",
+		)
+	}
 
 	// The listener must point at the file MCM writes for it.
 	specs, err := s.listenerSpecs(ctx)
@@ -339,20 +351,75 @@ func (s *Service) scopeWiringIssues(ctx context.Context, rendered renderedConfig
 		}
 	}
 
-	// Mosquitto only resolves the acl_file per listener when the global
-	// directive is enabled.
-	enabled, err := s.perListenerSettingsEnabled(ctx)
-	if err != nil {
-		return nil, err
+	return issues, nil
+}
+
+// scopeActivationPending reports the scoped rules that the apply writes but
+// that the broker does not read yet.
+//
+// Mosquitto reads the ACL file of a listener only once the broker
+// configuration declares it as the listener's `acl_file`, and the broker
+// refuses to start when that file is missing. The deploy therefore writes
+// the file first and the listener configuration is applied afterwards: the
+// rules are active once the operator applies the listener configuration.
+//
+// The pending state is not an error: the apply has to write the file before
+// the configuration can declare it.
+func (s *Service) scopeActivationPending(ctx context.Context, rendered renderedConfig) ([]string, error) {
+	listenerFiles := make([]ACLFileRender, 0, len(rendered.ACLFiles))
+	for _, file := range rendered.ACLFiles {
+		if file.Scope == acl.ScopeListener {
+			listenerFiles = append(listenerFiles, file)
+		}
 	}
-	if !enabled {
-		issues = append(issues, fmt.Sprintf(
-			"%s is not enabled; Mosquitto would ignore the acl_file of every listener",
-			"per_listener_settings",
-		))
+	if len(listenerFiles) == 0 {
+		return nil, nil
 	}
 
-	return issues, nil
+	// Without a broker configuration MCM manages, the acl_file of a
+	// listener never reaches Mosquitto. That is a blocking problem and
+	// scopeWiringIssues reports it.
+	if s.confPath == "" {
+		return nil, nil
+	}
+	body, err := s.readFile(s.confPath)
+	if err != nil {
+		return nil, fmt.Errorf("read broker config %q: %w", s.confPath, err)
+	}
+	globalACLFile := s.brokerGlobalACLFile(body)
+
+	var pending []string
+	for _, file := range listenerFiles {
+		brokerPath, _ := mosquitto.BrokerACLPath(file.Path, globalACLFile, file.ListenerID)
+		if globalACLFile != "" && strings.Contains(body, brokerPath) {
+			continue
+		}
+		pending = append(pending, fmt.Sprintf(
+			"listener %q does not declare %q in the broker configuration yet; apply the listener configuration to activate its scoped rules",
+			file.ListenerID, brokerPath,
+		))
+	}
+	return pending, nil
+}
+
+// brokerGlobalACLFile returns the broker-wide ACL file the broker
+// configuration declares. It is the path the broker reads, so it names the
+// directory the per-listener files live in.
+func (s *Service) brokerGlobalACLFile(body string) string {
+	parsed, err := conf.ParseString(body, s.confPath)
+	if err != nil {
+		return ""
+	}
+	for _, item := range parsed.Items {
+		if item.Kind != conf.ItemDirective || item.Key != "acl_file" {
+			continue
+		}
+		if len(item.Values) == 0 {
+			return ""
+		}
+		return strings.TrimSpace(item.Values[0])
+	}
+	return ""
 }
 
 // listenerSpecs returns the listener specs MCM manages.

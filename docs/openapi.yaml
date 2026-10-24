@@ -1965,8 +1965,43 @@ components:
         acl_diff: { type: string }
         passwd_diff: { type: string }
         acl_body: { type: string }
+        scope_issues:
+          type: array
+          description: |
+            Configuration problems that leave the listener-scoped rules
+            without effect. They block the apply.
+          items: { type: string }
+        scope_pending_activation:
+          type: array
+          description: |
+            Scoped rules that the apply writes but that the broker reads
+            only once the broker configuration declares the file of the
+            listener. The rules are active after the listener configuration
+            is applied.
+          items: { type: string }
+        listener_acl_files:
+          type: array
+          description: The per-listener ACL files the apply would write.
+          items: { $ref: "#/components/schemas/ListenerACLPreview" }
+        removed_acl_files:
+          type: array
+          description: The per-listener ACL files the apply would delete.
+          items: { type: string }
         summary: { $ref: "#/components/schemas/DeploymentChangeSummary" }
       required: [revision_id, base_acl_hash, base_passwd_hash, rendered_acl_hash, rendered_passwd_hash, orphan_rules, has_changes, acl_diff, passwd_diff, acl_body, summary]
+    ListenerACLPreview:
+      type: object
+      properties:
+        listener_id: { type: string }
+        path: { type: string }
+        body: { type: string }
+        diff: { type: string }
+        at_risk_entries:
+          type: array
+          items: { type: string }
+        preserved_entries:
+          type: array
+          items: { type: string }
     DeploymentChangeSummary:
       type: object
       properties:

@@ -24,7 +24,38 @@ func ListenerACLPath(globalACLPath, listenerID string) string {
 	if globalACLPath == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(globalACLPath), "acl."+listenerID)
+	return filepath.Join(filepath.Dir(globalACLPath), ListenerACLFileName(listenerID))
+}
+
+// ListenerACLFileName returns the name of the ACL file that carries the
+// rules of one listener.
+func ListenerACLFileName(listenerID string) string {
+	return "acl." + listenerID
+}
+
+// BrokerACLPath maps the ACL file MCM writes for a listener onto the path
+// the broker reads.
+//
+// MCM writes the file next to the broker-wide ACL file, but under the path
+// of MCM's own filesystem: in a container deployment the shared volume is
+// mounted under a different path in each container ("/var/lib/mosquitto-config/acl"
+// for MCM, "/mosquitto/config/acl" for the broker), so the broker reads the
+// file under its own path.
+//
+// The broker-wide ACL file of the configuration names the path the broker
+// uses, so the file of a listener is resolved against the same directory.
+//
+// The second return value reports whether the path is the file MCM manages
+// for the listener. A path MCM does not manage (an operator-provided file)
+// keeps the value it was given.
+func BrokerACLPath(path, globalACLFile, listenerID string) (string, bool) {
+	if path == "" || globalACLFile == "" || listenerID == "" {
+		return path, false
+	}
+	if filepath.Base(path) != ListenerACLFileName(listenerID) {
+		return path, false
+	}
+	return filepath.Join(filepath.Dir(globalACLFile), filepath.Base(path)), true
 }
 
 // RenderACLFile produces a Mosquitto-compatible ACL file body.

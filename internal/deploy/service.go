@@ -296,6 +296,12 @@ type PreviewResult struct {
 	// ScopeIssues name the configuration problems that would leave the
 	// listener-scoped rules without effect. They block the apply.
 	ScopeIssues []string `json:"scope_issues,omitempty"`
+	// ScopePendingActivation names the scoped rules that the apply writes
+	// but that the broker does not read yet. The broker reads the file of
+	// a listener once the broker configuration declares it, and the
+	// configuration is applied after the deploy: the rules are active once
+	// the operator applies the listener configuration.
+	ScopePendingActivation []string `json:"scope_pending_activation,omitempty"`
 
 	Summary    ChangeSummary `json:"summary"`
 	HasChanges bool          `json:"has_changes"`
@@ -1199,26 +1205,34 @@ func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResul
 		return PreviewResult{}, err
 	}
 
+	// Report the scoped rules that are written by the apply but that the
+	// broker reads only once the listener configuration is applied.
+	scopePending, err := s.scopeActivationPending(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+
 	return PreviewResult{
-		RevisionID:          revisionID,
-		Kind:                "passwd_acl",
-		BaseACLHash:         revision.BaseACLHash,
-		BasePasswdHash:      revision.BasePasswdHash,
-		RenderedACLHash:     revision.RenderedACLHash,
-		RenderedPasswdHash:  revision.RenderedPasswdHash,
-		OrphanRules:         orphanRules,
-		ACLDiff:             aclDiff,
-		PasswdDiff:          passwdDiff,
-		ACLBody:             aclBody,
-		PasswdBody:          passwdBody,
-		AtRiskEntries:       atRisk,
-		PreservedEntries:    preserved,
-		CompositionWarnings: rendered.CompositionWarnings,
-		ListenerACLFiles:    listenerPreviews,
-		RemovedACLFiles:     removedFiles,
-		ScopeIssues:         scopeIssues,
-		Summary:             summary,
-		HasChanges:          hasChanges,
+		RevisionID:             revisionID,
+		Kind:                   "passwd_acl",
+		BaseACLHash:            revision.BaseACLHash,
+		BasePasswdHash:         revision.BasePasswdHash,
+		RenderedACLHash:        revision.RenderedACLHash,
+		RenderedPasswdHash:     revision.RenderedPasswdHash,
+		OrphanRules:            orphanRules,
+		ACLDiff:                aclDiff,
+		PasswdDiff:             passwdDiff,
+		ACLBody:                aclBody,
+		PasswdBody:             passwdBody,
+		AtRiskEntries:          atRisk,
+		PreservedEntries:       preserved,
+		CompositionWarnings:    rendered.CompositionWarnings,
+		ListenerACLFiles:       listenerPreviews,
+		RemovedACLFiles:        removedFiles,
+		ScopeIssues:            scopeIssues,
+		ScopePendingActivation: scopePending,
+		Summary:                summary,
+		HasChanges:             hasChanges,
 	}, nil
 }
 
