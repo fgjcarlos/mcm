@@ -269,8 +269,8 @@ func TestApplyRollsBackWhenTheListenerRejectsTheMaterial(t *testing.T) {
 	service, repo, _ := serviceFixture(t)
 	ctx := context.Background()
 
-	firstMaterial, firstCA, firstCAKey := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
-	port := startUntrustedTLSListener(t, firstCA, firstCAKey, "broker.example.com")
+	firstMaterial, _, _ := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
+	port := startMaterialTLSListener(t, firstMaterial)
 	if _, err := repo.InsertListenerSpec(ctx, storage.ListenerSpecRow{
 		ID:         "tls-listener",
 		Port:       port,
@@ -368,12 +368,12 @@ func TestApplyWaitsForTheBrokerToAcceptConnectionsAfterTheRestart(t *testing.T) 
 	service, repo, _ := serviceFixture(t)
 	ctx := context.Background()
 
-	material, ca, caKey := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
+	material, _, _ := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
 	port := reservePort(t)
 	service.restart = &delayedBrokerRestarter{
 		tb:          t,
 		port:        port,
-		certificate: listenerCertificate(t, ca, caKey, "broker.example.com"),
+		certificate: materialCertificate(t, material),
 		delay:       300 * time.Millisecond,
 	}
 	service.verifyReadyWindow = 5 * time.Second
@@ -501,6 +501,59 @@ func TestApplyDoesNotFailAMutualTLSListener(t *testing.T) {
 				t.Fatalf("Apply verification reason = %q, want the client certificate reason", result.Verification[0].Reason)
 			}
 		})
+	}
+}
+
+// TestApplyRejectsABrokerThatKeepsThePreviousRevisionOfTheSameAuthority
+// proves that a rotation inside one authority cannot pass while the broker
+// keeps serving the previous certificate.
+func TestApplyRejectsABrokerThatKeepsThePreviousRevisionOfTheSameAuthority(t *testing.T) {
+	service, repo, _ := serviceFixture(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	firstMaterial, ca, caKey := materialWithCA(t, "broker.example.com", now.Add(-time.Hour), now.Add(90*24*time.Hour))
+	port := startMaterialTLSListener(t, firstMaterial)
+	if _, err := repo.InsertListenerSpec(ctx, storage.ListenerSpecRow{
+		ID:         "tls-listener",
+		Port:       port,
+		Bind:       "0.0.0.0",
+		Protocols:  []string{"mqtt"},
+		TLSProfile: "production",
+	}); err != nil {
+		t.Fatalf("InsertListenerSpec returned error: %v", err)
+	}
+
+	first, err := service.CreateRevision(ctx, "operator", "production", "", firstMaterial, false)
+	if err != nil {
+		t.Fatalf("CreateRevision returned error: %v", err)
+	}
+	if _, err := service.Apply(ctx, "admin", "production", first.RevisionID); err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	secondMaterial := materialWithAuthority(t, ca, caKey, 3, "broker.example.com", now.Add(-time.Hour), now.Add(120*24*time.Hour))
+	second, err := service.CreateRevision(ctx, "operator", "production", "", secondMaterial, false)
+	if err != nil {
+		t.Fatalf("CreateRevision returned error: %v", err)
+	}
+	result, err := service.Apply(ctx, "admin", "production", second.RevisionID)
+	if err == nil {
+		t.Fatal("Apply accepted a broker that kept the previous revision of the same authority")
+	}
+	if !result.Recovered {
+		t.Fatalf("Apply = %#v, want a recovered activation", result)
+	}
+	if len(result.Verification) != 1 || result.Verification[0].Status != TLSStatusFailed {
+		t.Fatalf("Apply verification = %#v, want one failed check", result.Verification)
+	}
+
+	active, err := service.store.ActiveRevision("production")
+	if err != nil {
+		t.Fatalf("ActiveRevision returned error: %v", err)
+	}
+	if active != first.RevisionID {
+		t.Fatalf("ActiveRevision = %q, want the previous revision %q", active, first.RevisionID)
 	}
 }
 
@@ -695,12 +748,22 @@ func materialWithCA(t *testing.T, commonName string, notBefore time.Time, notAft
 		t.Fatalf("parse ca certificate: %v", err)
 	}
 
+	return materialWithAuthority(t, caCert, caKey, 2, commonName, notBefore, notAfter), caCert, caKey
+}
+
+// materialWithAuthority signs a server certificate with an existing authority.
+//
+// The signed certificate shares the authority and the subject alternative name
+// of the authority's own leaf, so only the key and the serial number differ.
+func materialWithAuthority(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, serial int64, commonName string, notBefore time.Time, notAfter time.Time) certs.Input {
+	t.Helper()
+
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate leaf key: %v", err)
 	}
 	leafTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
+		SerialNumber: big.NewInt(serial),
 		Subject:      pkix.Name{CommonName: commonName},
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
@@ -708,7 +771,7 @@ func materialWithCA(t *testing.T, commonName string, notBefore time.Time, notAft
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     []string{commonName},
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, &leafKey.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("create leaf certificate: %v", err)
 	}
@@ -718,21 +781,21 @@ func materialWithCA(t *testing.T, commonName string, notBefore time.Time, notAft
 	}
 
 	return certs.Input{
-		CACertPEM:     string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})),
+		CACertPEM:     string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw})),
 		ServerCertPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})),
 		ServerKeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: leafKeyDER})),
-	}, caCert, caKey
+	}
 }
 
-// startUntrustedTLSListener starts a TLS listener that serves a certificate
-// signed by the given certificate authority.
+// startMaterialTLSListener starts a TLS listener that serves the server
+// certificate of the given material.
 //
-// A profile that trusts another authority cannot verify the listener, so the
-// handshake fails exactly like a broker serving the wrong material.
-func startUntrustedTLSListener(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string) int {
+// The listener keeps the certificate it was started with, which is how a
+// broker behaves when a rotation does not reach its configuration.
+func startMaterialTLSListener(t *testing.T, material certs.Input) int {
 	t.Helper()
 
-	listener, err := tlsListen(listenerCertificate(t, ca, caKey, commonName))
+	listener, err := tlsListen(materialCertificate(t, material))
 	if err != nil {
 		t.Fatalf("start the tls listener: %v", err)
 	}
@@ -752,6 +815,37 @@ func startUntrustedTLSListener(t *testing.T, ca *x509.Certificate, caKey *ecdsa.
 		}
 	}()
 	return listener.Addr().(*net.TCPAddr).Port
+}
+
+// materialCertificate builds the server certificate carried by a material.
+func materialCertificate(t *testing.T, material certs.Input) tls.Certificate {
+	t.Helper()
+
+	certificateBlock, _ := pem.Decode([]byte(material.ServerCertPEM))
+	if certificateBlock == nil {
+		t.Fatal("the material does not carry a PEM certificate")
+	}
+	keyBlock, _ := pem.Decode([]byte(material.ServerKeyPEM))
+	if keyBlock == nil {
+		t.Fatal("the material does not carry a PEM private key")
+	}
+	certificate, err := x509.ParseCertificate(certificateBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse the server certificate: %v", err)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse the server key: %v", err)
+	}
+	ecKey, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("the server key type is %T, want an ECDSA key", key)
+	}
+	return tls.Certificate{
+		Certificate: [][]byte{certificate.Raw},
+		PrivateKey:  ecKey,
+		Leaf:        certificate,
+	}
 }
 
 // listenerCertificate builds a server certificate signed by the given

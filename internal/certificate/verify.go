@@ -3,8 +3,10 @@ package certificate
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -109,6 +111,25 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 	if state.clientCertificateRequested {
 		verification.Status = TLSStatusUnverified
 		verification.Reason = "the listener requires a client certificate that MCM does not own"
+		return verification
+	}
+
+	// A completed handshake only proves that the broker serves a trusted
+	// certificate. The served leaf is compared with the activated revision
+	// so a rotation inside one authority cannot pass while the broker keeps
+	// serving the previous certificate.
+	served := conn.ConnectionState().PeerCertificates
+	if len(served) == 0 {
+		verification.Status = TLSStatusFailed
+		verification.Reason = "the broker did not present a certificate"
+		return verification
+	}
+	expected := sha256.Sum256(leaf[0].Raw)
+	actual := sha256.Sum256(served[0].Raw)
+	if expected != actual {
+		verification.Status = TLSStatusFailed
+		verification.Reason = "the broker served a different certificate than the activated revision"
+		verification.Detail = fmt.Sprintf("expected sha256:%s, served sha256:%s", hex.EncodeToString(expected[:]), hex.EncodeToString(actual[:]))
 		return verification
 	}
 
