@@ -329,8 +329,8 @@ func (f FileApplier) Apply(ctx context.Context, req ApplyRequest) error {
 
 	// Stage 3: remove the ACL files the deploy retired. A listener whose
 	// scoped rules are gone must not keep serving the access the operator
-	// removed, and Mosquitto falls back to the broker-wide file once the
-	// listener no longer declares one.
+	// removed, and MCM writes the broker-wide file into the listener
+	// again once the listener no longer declares its own.
 	for _, file := range req.RemovedACLFiles {
 		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return f.rollbackAfterPartialApply("remove acl", err, files, req)

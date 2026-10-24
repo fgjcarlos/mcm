@@ -13,14 +13,17 @@ in the [production guide](production.md).
 | Field | Meaning |
 |-------|---------|
 | `id` | MCM-generated rule identifier. |
-| `selector` | Scope of the rule: `user`, `anonymous` or `pattern`. |
+| `selector` | Native scope of the rule: `user`, `anonymous` or `pattern`. |
+| `scope` | ACL file the rule is rendered into: `global` or `listener`. |
+| `listener_id` | Listener whose ACL file carries the rule. Required for `listener` only. |
 | `principal` | The MQTT username. Required for `user` only. |
 | `topic_filter` | An MQTT topic filter, with wildcards `+` and `#`. |
 | `permission` | `read`, `write`, `readwrite` or `deny`. |
 | `description` | Optional operator-facing note. |
 
 A request without `selector` means `user`. A request with `principal`
-but without `selector` is a legacy user-scoped request.
+but without `selector` is a legacy user-scoped request. A request without
+`scope` means `global`.
 
 ## Scopes
 
@@ -42,6 +45,36 @@ Two rules matter when reading a rendered file:
   `pattern` lines for every user, whatever `user` section surrounds
   them.
 
+### ACL files
+
+A rule also names the **ACL file** it is rendered into. MCM manages two
+kinds of files:
+
+| Scope | File | Applies to |
+|-------|------|-----------|
+| `global` | The broker-wide ACL file, the `acl_file` of the configuration. | Every listener. |
+| `listener` | The ACL file of one listener, next to the broker-wide one. | That listener only. |
+
+Mosquitto resolves the access control per listener once
+`per_listener_settings true` is set. From that moment a `listener` block
+that declares no `acl_file` has **no access control at all**, and a client
+that authenticates is refused. MCM therefore:
+
+- enables `per_listener_settings` when a listener owns a scoped rule;
+- writes the broker-wide `acl_file` and `password_file` into every listener
+  block that does not declare its own, so the broker-wide rules and the
+  broker-wide accounts keep applying there;
+- points a listener with scoped rules at the file MCM writes for it, and
+  removes the option again when the last scoped rule of that listener is
+  gone;
+- deletes the file it owned for that listener, so the listener cannot keep
+  serving access the operator removed.
+
+The deploy preview names the listeners whose scope the broker does not
+apply yet, and the apply **refuses** a scope that is not wired: an apply
+that reported success while the rules never reached the broker would be a
+lie.
+
 ### Backward compatibility
 
 - A request without `selector` keeps the legacy `user` scope, so existing
@@ -57,10 +90,15 @@ Two rules matter when reading a rendered file:
 
 | Permission | Meaning | Broker requirement |
 |------------|---------|--------------------|
-| `read` | Subscribe to the topic. | Mosquitto 1.x and later |
+| `read` | Receive the messages published to the topic. | Mosquitto 1.x and later |
 | `write` | Publish to the topic. | Mosquitto 1.x and later |
-| `readwrite` | Subscribe and publish. | Mosquitto 1.x and later |
+| `readwrite` | Receive the messages and publish to the topic. | Mosquitto 1.x and later |
 | `deny` | Deny the action. | Mosquitto 2.0 or later |
+
+The `read` permission controls the **delivery** of a message, not the
+subscription itself: the ACL file of Mosquitto accepts a subscription and
+filters the messages the subscriber receives. The integration test in
+`internal/acl` proves this against a real broker.
 
 MCM supports Mosquitto **2.0**. The `deny` permission is validated
 against that version, so a rule that needs a newer broker is rejected at
@@ -93,6 +131,13 @@ for pattern entries.
 - `POST /api/v1/acls`: create a rule.
 - `PUT /api/v1/acls/{id}`: update a rule.
 - `DELETE /api/v1/acls/{id}`: delete a rule.
+- `GET /api/v1/acls/scopes`: list the ACL files MCM manages and whether the
+  broker configuration applies them.
+- `GET /api/v1/acls/source`: read the adopted ACL source.
+- `POST /api/v1/acls/source/adopt`: adopt an existing ACL file.
+- `GET /api/v1/acls/effective`: resolve the effective permissions of every
+  identity.
+- `POST /api/v1/acls/effective/simulate`: answer one access question.
 
 Role requirements are unchanged: `auditor` may list, `operator` may
 create, update and delete.
@@ -140,6 +185,78 @@ Example pattern rule:
   "permission": "readwrite"
 }
 ```
+
+## Effective permissions
+
+Listing the rules back does not answer the question an operator asks when
+a rule looks wrong: may this client do this on this topic? MCM resolves the
+rules the way Mosquitto does.
+
+- `GET /api/v1/acls/effective` returns, per ACL file and per identity, the
+  grants that apply and the verdict the deny rules have on them.
+- `POST /api/v1/acls/effective/simulate` answers a concrete question.
+
+The resolution follows the documented semantics of Mosquitto:
+
+- a **deny** rule is handled before any grant, so a deny that matches the
+  topic wins over a broader grant;
+- the **anonymous** section applies to unauthenticated clients only and is
+  not a fallback for the authenticated ones;
+- the **pattern** rules apply to every client, with `%u` and `%c`
+  substituted;
+- a client is denied when no rule grants the access.
+
+Example simulation request:
+
+```json
+{
+  "username": "device-01",
+  "client_id": "device-01-7f3a",
+  "topic": "sensors/1/temperature",
+  "access": "read"
+}
+```
+
+Example response:
+
+```json
+{
+  "allowed": true,
+  "reason": "a read rule grants read on the topic",
+  "matching_rules": [
+    {
+      "id": "3",
+      "selector": "user",
+      "scope": "global",
+      "principal": "device-01",
+      "topic_filter": "sensors/#",
+      "permission": "read"
+    }
+  ]
+}
+```
+
+The view and the simulator speak MQTT access control only. The MCM
+administrative roles (viewer, auditor, operator, admin) belong to the
+administration panel and are never presented as MQTT permissions.
+
+## Adopting an existing ACL file
+
+An operator who installs MCM on a running broker usually has an ACL file
+already. `POST /api/v1/acls/source/adopt` takes it under the management of
+MCM:
+
+- the content is stored **verbatim**, with a SHA-256 hash of it;
+- the deploy composes the managed rules into the adopted document, without
+  dropping the original lines and without duplicating a rule that is
+  already present;
+- the preview reports the access the composition would drop (`at_risk_entries`)
+  and the lines that survive (`preserved_entries`);
+- an apply that would drop access MCM can neither reproduce nor attribute
+  to a managed MQTT user is **refused** with the blocking entries.
+
+The adoption works per path, so the ACL file of a listener can be adopted
+the same way as the broker-wide one.
 
 ## Validation
 

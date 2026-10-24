@@ -44,6 +44,10 @@ var optionWhitelist = map[string]struct{}{
 	// listener_allow_anonymous overrides the global allow_anonymous for
 	// this listener.
 	"listener_allow_anonymous": {},
+	// password_file points the listener at the password file that holds
+	// the accounts of the broker. Mosquitto only honours it when
+	// per_listener_settings is enabled.
+	"password_file": {},
 }
 
 // Validate reports blocking listener issues and non-blocking option warnings.
