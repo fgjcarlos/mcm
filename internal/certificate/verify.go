@@ -85,7 +85,9 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 		verification.Detail = err.Error()
 		return verification
 	}
-	defer raw.Close()
+	// The probe connection is read-only: the verdict is decided by the
+	// handshake below, so a failing close cannot change it.
+	defer func() { _ = raw.Close() }()
 
 	conn := tls.Client(raw, tlsConfig)
 	handshakeCtx, cancel := context.WithTimeout(ctx, s.verifyTimeout)

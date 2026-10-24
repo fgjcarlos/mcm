@@ -237,7 +237,9 @@ func (s *ListenerService) Preview(ctx context.Context, desired []listeners.Liste
 	// The certificate material of the bound profiles is resolved before the
 	// validation: the rendered block carries the broker-side paths, and the
 	// validator has to see them to check the TLS directives as a whole.
-	resolved, resolveIssues, err := s.resolveTLSMaterial(ctx, normalized)
+	// The helper reports every binding problem as an issue and returns no
+	// error, so the desired resolution cannot fail here.
+	resolved, resolveIssues, _ := s.resolveTLSMaterial(ctx, normalized)
 	issues = append(issues, resolveIssues...)
 	// A broken binding of the CURRENT configuration does not block the
 	// change: the operator must be able to repair it by rebinding the
