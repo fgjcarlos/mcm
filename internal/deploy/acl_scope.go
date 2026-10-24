@@ -18,11 +18,10 @@ import (
 //
 // Mosquitto resolves `acl_file` per listener once
 // `per_listener_settings true` is set: a listener that declares its own
-// file uses only that file, and every other listener falls back to the
-// broker-wide file. MCM therefore writes one file per listener that owns
-// scoped rules — and must delete that file again when the last scoped rule
-// disappears, otherwise the listener would keep serving access the operator
-// removed. The registry is what tells MCM which files it owns.
+// file uses only that file. MCM therefore writes one file per listener
+// that owns scoped rules — and must delete that file again when the last
+// scoped rule disappears, otherwise the listener would keep serving access
+// the operator removed. The registry is what tells MCM which files it owns.
 type ManagedACLFileStore interface {
 	ListManagedACLFiles(ctx context.Context) ([]storage.ManagedACLFileRow, error)
 	RecordManagedACLFile(ctx context.Context, path, listenerID string) error

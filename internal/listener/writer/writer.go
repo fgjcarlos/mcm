@@ -219,11 +219,6 @@ func (w *FileWriter) Write(specs []listeners.ListenerSpec) (Rendered, error) {
 		writer = mosquitto.AtomicWriteConf
 	}
 
-	rendered, err := listeners.RenderAll(specs)
-	if err != nil {
-		return Rendered{}, fmt.Errorf("%w: %v", ErrSpecRender, err)
-	}
-
 	head, err := w.renderHead(reader)
 	if err != nil {
 		return Rendered{}, err
@@ -237,6 +232,16 @@ func (w *FileWriter) Write(specs []listeners.ListenerSpec) (Rendered, error) {
 		if err != nil {
 			return Rendered{}, err
 		}
+		// The listener blocks lose the global authentication and access
+		// control settings once they are resolved per listener, so the
+		// global values are copied into the blocks that do not declare
+		// their own.
+		specs = inheritGlobalAccessControl(specs, head)
+	}
+
+	rendered, err := listeners.RenderAll(specs)
+	if err != nil {
+		return Rendered{}, fmt.Errorf("%w: %v", ErrSpecRender, err)
 	}
 
 	full := composeBody(head, rendered)

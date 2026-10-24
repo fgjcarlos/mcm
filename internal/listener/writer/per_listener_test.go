@@ -75,6 +75,56 @@ func TestWriteKeepsPerListenerSettingsEnabled(t *testing.T) {
 	}
 }
 
+// TestWriteInheritsTheGlobalAccessControl pins that the listener blocks
+// receive the global password file and the global ACL file.
+//
+// Mosquitto resolves the authentication and the access control per
+// listener once the per-listener settings are enabled: a listener block
+// that declares neither a password file nor an ACL file has no access
+// control at all, and a client that authenticates is refused.
+func TestWriteInheritsTheGlobalAccessControl(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "mosquitto.conf")
+	body := "allow_anonymous false\npassword_file /mosquitto/config/passwd\nacl_file /mosquitto/config/acl\n"
+	if err := os.WriteFile(confPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write conf: %v", err)
+	}
+
+	w := New(confPath)
+	specs := []listeners.ListenerSpec{{
+		ID:        "plain",
+		Port:      1883,
+		Bind:      "0.0.0.0",
+		Protocols: []listeners.Protocol{listeners.ProtocolMQTT},
+		Options:   map[string]string{},
+	}, {
+		ID:        "tls",
+		Port:      8883,
+		Bind:      "0.0.0.0",
+		Protocols: []listeners.Protocol{listeners.ProtocolMQTT},
+		Options:   map[string]string{"acl_file": "/mosquitto/config/acl.tls"},
+	}}
+
+	rendered, err := w.Write(specs)
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	// The listener without a file of its own keeps the broker-wide one.
+	if !strings.Contains(rendered.Full, "acl_file /mosquitto/config/acl\n") &&
+		!strings.Contains(rendered.Full, "acl_file /mosquitto/config/acl\r\n") {
+		t.Fatalf("the listener blocks do not carry the broker-wide acl file:\n%s", rendered.Full)
+	}
+	if !strings.Contains(rendered.Full, "password_file /mosquitto/config/passwd") {
+		t.Fatalf("the listener blocks do not carry the broker-wide password file:\n%s", rendered.Full)
+	}
+	// The listener with a file of its own keeps it.
+	if !strings.Contains(rendered.Full, "acl_file /mosquitto/config/acl.tls") {
+		t.Fatalf("the scoped listener lost its own acl file:\n%s", rendered.Full)
+	}
+}
+
 // TestWriteRefusesDisabledPerListenerSettings pins that MCM refuses a
 // configuration that turns the per-listener settings off while a listener
 // declares its own ACL file.

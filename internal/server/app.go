@@ -373,6 +373,16 @@ func (a *App) Handler() http.Handler {
 		recordSecurityFailure: a.recordSecurityFailure,
 		recordSecurityChange:  a.recordSecurityChange,
 	}
+	// The listeners own the ACL file of their scope: MCM points a listener
+	// at the file it writes and removes the option again when the last
+	// scoped rule of the listener is gone.
+	if a.mosquitto.Deploy.ACLPath != "" {
+		aclAPI.scopeSync = &aclScopeSync{
+			store:   a.store,
+			rules:   a.aclStore,
+			aclPath: a.mosquitto.Deploy.ACLPath,
+		}
+	}
 
 	// The native ACL surface: the scopes a rule can belong to, the ACL
 	// sources MCM adopted and the effective permissions of an identity.

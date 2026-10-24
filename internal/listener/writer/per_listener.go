@@ -21,6 +21,10 @@ const perListenerSettingsDirective = "per_listener_settings"
 // listener.
 const aclFileOption = "acl_file"
 
+// passwordFileOption is the listener option that points at the password
+// file of one listener.
+const passwordFileOption = "password_file"
+
 // ErrPerListenerSettingsDisabled is returned when the configuration turns
 // per-listener settings off while a listener declares its own ACL file.
 //
@@ -40,6 +44,74 @@ func specsDeclareACLFile(specs []listeners.ListenerSpec) bool {
 		}
 	}
 	return false
+}
+
+// inheritGlobalAccessControl copies the global authentication and access
+// control settings into the listener blocks that do not declare their own.
+//
+// Mosquitto resolves the authentication and the access control per
+// listener once the per-listener settings are enabled: a listener block
+// that declares neither a password file nor an ACL file has no access
+// control at all, and a client that authenticates is refused. Copying the
+// global values keeps the broker-wide accounts and the broker-wide rules
+// in place for the listeners that do not own a scoped ACL file, while a
+// listener that declares its own ACL file keeps it.
+func inheritGlobalAccessControl(specs []listeners.ListenerSpec, head string) []listeners.ListenerSpec {
+	values := globalDirectiveValues(head, passwordFileOption, aclFileOption)
+	if len(values) == 0 {
+		return specs
+	}
+	out := make([]listeners.ListenerSpec, 0, len(specs))
+	for _, spec := range specs {
+		options := make(map[string]string, len(spec.Options)+len(values))
+		for key, value := range spec.Options {
+			options[key] = value
+		}
+		for _, key := range []string{passwordFileOption, aclFileOption} {
+			if _, declared := options[key]; declared {
+				continue
+			}
+			if value, ok := values[key]; ok && value != "" {
+				options[key] = value
+			}
+		}
+		spec.Options = options
+		out = append(out, spec)
+	}
+	return out
+}
+
+// globalDirectiveValues returns the value of every requested global
+// directive of the configuration head.
+func globalDirectiveValues(head string, keys ...string) map[string]string {
+	if strings.TrimSpace(head) == "" {
+		return nil
+	}
+	parsed, err := conf.ParseString(head, "")
+	if err != nil {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		wanted[key] = struct{}{}
+	}
+	values := make(map[string]string, len(keys))
+	for _, item := range parsed.Items {
+		if item.Kind != conf.ItemDirective {
+			continue
+		}
+		if _, tracked := wanted[item.Key]; !tracked {
+			continue
+		}
+		if _, found := values[item.Key]; found {
+			continue
+		}
+		if len(item.Values) == 0 {
+			continue
+		}
+		values[item.Key] = item.Values[0]
+	}
+	return values
 }
 
 // ensurePerListenerSettings returns the configuration head with the

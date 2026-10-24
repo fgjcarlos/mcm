@@ -31,12 +31,12 @@ const (
 
 // Scope identifies the ACL file a rule is rendered into.
 //
-// Mosquitto 2.0 resolves access control per listener once
+// Mosquitto resolves the access control per listener once
 // `per_listener_settings true` is set: an `acl_file` declared inside a
-// `listener` block applies to that listener only, while a global `acl_file`
-// applies to every listener that does not declare its own. MCM models the
-// same distinction so an operator can express "these rules only apply to
-// the TLS listener" without hand-editing mosquitto.conf.
+// `listener` block applies to that listener only, and a listener block
+// that declares no ACL file has no access control at all. MCM therefore
+// writes the broker-wide ACL file into every listener that does not own a
+// scoped file, so the same distinction holds:
 //
 //   - global: the rule is rendered into the broker-wide ACL file. It
 //     applies to every listener.

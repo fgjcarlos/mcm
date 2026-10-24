@@ -32,6 +32,9 @@ type aclAPI struct {
 	audit                 func(r *http.Request, action string, resourceType string, resourceID string, result string, metadata map[string]any)
 	recordSecurityFailure func(*http.Request, string, string, string)
 	recordSecurityChange  func(*http.Request, string, string, string)
+	// scopeSync keeps the ACL file of a listener in sync with the scoped
+	// rules. It is nil when the deployment does not manage the ACL files.
+	scopeSync *aclScopeSync
 }
 
 type aclRuleRequest struct {
@@ -68,6 +71,21 @@ func (api *aclAPI) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
+// syncScopes keeps the ACL file of the listeners in sync with the scoped
+// rules.
+//
+// A failure is reported to the operator but does not undo the rule: the
+// deploy preview names the listener that is not wired yet, so the change
+// stays visible until the listener configuration is applied.
+func (api *aclAPI) syncScopes(r *http.Request) {
+	if api.scopeSync == nil {
+		return
+	}
+	if err := api.scopeSync.Sync(r.Context()); err != nil {
+		api.recordACLSecurityFailure(r, "acl_scope_sync_failed", "scope_sync_failed", "")
+	}
+}
+
 func (api *aclAPI) handleListRules(w http.ResponseWriter, r *http.Request) {
 	rules, err := api.store.ListRules(r.Context())
 	if err != nil {
@@ -95,6 +113,7 @@ func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.recordACLSecurityChange(r, "acl_rule_created", "acl_rule", created.ID)
+	api.syncScopes(r)
 
 	api.recordAudit(r, "acl.create", "acl_rule", created.ID, "success", map[string]any{"principal": created.Principal, "topic_filter": created.TopicFilter, "permission": string(created.Permission)})
 	writeJSON(w, http.StatusCreated, created)
@@ -124,6 +143,7 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.recordACLSecurityChange(r, "acl_rule_updated", "acl_rule", updated.ID)
+	api.syncScopes(r)
 
 	api.recordAudit(r, "acl.update", "acl_rule", updated.ID, "success", map[string]any{"principal": updated.Principal, "topic_filter": updated.TopicFilter, "permission": string(updated.Permission)})
 	writeJSON(w, http.StatusOK, updated)
@@ -144,6 +164,7 @@ func (api *aclAPI) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.recordACLSecurityChange(r, "acl_rule_deleted", "acl_rule", id)
+	api.syncScopes(r)
 
 	api.recordAudit(r, "acl.delete", "acl_rule", id, "success", nil)
 	w.WriteHeader(http.StatusNoContent)
