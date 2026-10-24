@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
 )
 
 func TestNewHTTPServerAppliesDefensiveLimits(t *testing.T) {
@@ -236,4 +237,46 @@ func waitForHTTPReady(t *testing.T, addr string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("HTTP server did not become ready at %s", addr)
+}
+
+// TestBuildApplierCarriesTheDeployPaths guards the wiring between the
+// deploy configuration and the applier. The applier writes the ACL file
+// at the path it carries, so an applier built without that path writes
+// the file into the working directory of the process instead and the
+// apply fails with a permission error.
+func TestBuildApplierCarriesTheDeployPaths(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.DeployConfig{
+		Mode:           "file",
+		ACLPath:        "/var/lib/mosquitto-config/acl",
+		PasswdPath:     "/var/lib/mosquitto-config/passwd",
+		PIDPath:        "/var/run/mosquitto/mosquitto.pid",
+		ReloadStrategy: "sighup",
+	}
+
+	fileApplier, ok := buildApplier(cfg).(mosquitto.FileApplier)
+	if !ok {
+		t.Fatalf("buildApplier(file) = %T, want mosquitto.FileApplier", buildApplier(cfg))
+	}
+	if fileApplier.ACLPath != cfg.ACLPath {
+		t.Errorf("FileApplier.ACLPath = %q, want %q", fileApplier.ACLPath, cfg.ACLPath)
+	}
+	if fileApplier.PasswdPath != cfg.PasswdPath {
+		t.Errorf("FileApplier.PasswdPath = %q, want %q", fileApplier.PasswdPath, cfg.PasswdPath)
+	}
+
+	dockerCfg := cfg
+	dockerCfg.Mode = "docker"
+	dockerCfg.ContainerName = "mosquitto"
+	dockerApplier, ok := buildApplier(dockerCfg).(mosquitto.DockerApplier)
+	if !ok {
+		t.Fatalf("buildApplier(docker) = %T, want mosquitto.DockerApplier", buildApplier(dockerCfg))
+	}
+	if dockerApplier.ACLPath != dockerCfg.ACLPath {
+		t.Errorf("DockerApplier.ACLPath = %q, want %q", dockerApplier.ACLPath, dockerCfg.ACLPath)
+	}
+	if dockerApplier.PasswdPath != dockerCfg.PasswdPath {
+		t.Errorf("DockerApplier.PasswdPath = %q, want %q", dockerApplier.PasswdPath, dockerCfg.PasswdPath)
+	}
 }
