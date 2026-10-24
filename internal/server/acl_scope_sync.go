@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -94,23 +93,4 @@ func (s *aclScopeSync) setACLFile(ctx context.Context, listenerID string, path s
 		return fmt.Errorf("update the acl_file of the listener %q: %w", listenerID, err)
 	}
 	return nil
-}
-
-// scopedListenerIDs returns the listeners that own scoped rules, in a
-// stable order.
-func scopedListenerIDs(rules []acl.Rule) []string {
-	seen := make(map[string]struct{})
-	ids := make([]string, 0, len(rules))
-	for _, rule := range rules {
-		if !rule.IsListenerScoped() {
-			continue
-		}
-		if _, known := seen[rule.ListenerID]; known {
-			continue
-		}
-		seen[rule.ListenerID] = struct{}{}
-		ids = append(ids, rule.ListenerID)
-	}
-	sort.Strings(ids)
-	return ids
 }

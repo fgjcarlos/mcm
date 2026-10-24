@@ -22,10 +22,9 @@ import (
 // scoped ACL behaviour can be exercised end to end.
 type scopedDeploymentStore struct {
 	*fakeDeploymentStore
-	mu        sync.Mutex
-	managed   map[string]string
-	specs     []storage.ListenerSpecRow
-	managedOK bool
+	mu      sync.Mutex
+	managed map[string]string
+	specs   []storage.ListenerSpecRow
 }
 
 func newScopedDeploymentStore() *scopedDeploymentStore {

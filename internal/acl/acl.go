@@ -53,12 +53,6 @@ const (
 	ScopeListener Scope = "listener"
 )
 
-// validScopes is the set of scopes a rule may declare.
-var validScopes = map[Scope]struct{}{
-	ScopeGlobal:   {},
-	ScopeListener: {},
-}
-
 // Permission describes the allowed MQTT action for an ACL rule.
 type Permission string
 
