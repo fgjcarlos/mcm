@@ -46,14 +46,12 @@ func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
 	switch cfg.Mode {
 	case "docker":
 		return mosquitto.DockerApplier{
-			ACLPath:       cfg.ACLPath,
 			PasswdPath:    cfg.PasswdPath,
 			ContainerName: cfg.ContainerName,
 			Runner:        mosquitto.ExecRunner{},
 		}
 	case "file":
 		return mosquitto.FileApplier{
-			ACLPath:       cfg.ACLPath,
 			PasswdPath:    cfg.PasswdPath,
 			PIDPath:       cfg.PIDPath,
 			ReloadCommand: cfg.ReloadCommand,

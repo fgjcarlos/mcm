@@ -38,7 +38,13 @@ type aclRuleRequest struct {
 	// Selector chooses the native Mosquitto scope of the rule. An omitted
 	// selector keeps the legacy user scope, so an existing client cannot
 	// change the meaning of a rule by accident.
-	Selector    acl.Selector   `json:"selector"`
+	Selector acl.Selector `json:"selector"`
+	// Scope chooses the ACL file the rule is rendered into. An omitted
+	// scope keeps the global scope.
+	Scope acl.Scope `json:"scope"`
+	// ListenerID names the listener whose ACL file carries the rule. It is
+	// required for the listener scope.
+	ListenerID  string         `json:"listener_id"`
 	Principal   string         `json:"principal"`
 	TopicFilter string         `json:"topic_filter"`
 	Permission  acl.Permission `json:"permission"`
@@ -167,6 +173,8 @@ func decodeRuleRequest(r *http.Request) (acl.Rule, error) {
 
 	return acl.Rule{
 		Selector:    input.Selector,
+		Scope:       input.Scope,
+		ListenerID:  input.ListenerID,
 		Principal:   input.Principal,
 		TopicFilter: input.TopicFilter,
 		Permission:  input.Permission,

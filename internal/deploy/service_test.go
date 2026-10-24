@@ -57,7 +57,7 @@ type cancelingApplier struct {
 	cancel context.CancelFunc
 }
 
-func (a *cancelingApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (a *cancelingApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	a.cancel()
 	return nil
 }
@@ -69,16 +69,20 @@ type applyCall struct {
 	passwdBody     string
 	aclSnapshot    string
 	passwdSnapshot string
+	aclFiles       []mosquitto.ACLFile
+	removedFiles   []mosquitto.ACLFile
 }
 
-func (f *fakeApplier) Apply(_ context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error {
+func (f *fakeApplier) Apply(_ context.Context, req mosquitto.ApplyRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, applyCall{
-		aclBody:        aclBody,
-		passwdBody:     passwdBody,
-		aclSnapshot:    aclSnapshot,
-		passwdSnapshot: passwdSnapshot,
+		aclBody:        req.ACLBody,
+		passwdBody:     req.PasswdBody,
+		aclSnapshot:    req.ACLSnapshot,
+		passwdSnapshot: req.PasswdSnapshot,
+		aclFiles:       req.ListenerACLFiles,
+		removedFiles:   req.RemovedACLFiles,
 	})
 	if f.failAll {
 		return errors.New("applier: write failed")
@@ -1094,7 +1098,7 @@ type rollbackFailFakeApplier struct {
 	count int32
 }
 
-func (r *rollbackFailFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (r *rollbackFailFakeApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	n := atomic.AddInt32(&r.count, 1)
 	if n == 1 {
 		return nil // first call (apply) succeeds
@@ -1341,7 +1345,7 @@ type rollbackCtxRecordingApplier struct {
 	rollbackCtxErr error   // error captured from the rollback call's ctx
 }
 
-func (r *rollbackCtxRecordingApplier) Apply(ctx context.Context, _, _, _, _ string) error {
+func (r *rollbackCtxRecordingApplier) Apply(ctx context.Context, _ mosquitto.ApplyRequest) error {
 	// Record the ctx.Err() of the SECOND call (the rollback) to confirm
 	// it is NOT cancelled.
 	if len(r.applyErrs) >= 1 {
@@ -1409,7 +1413,7 @@ func TestApply_RollbackUsesIndependentContext(t *testing.T) {
 // with the right audit event when the applier handles the rollback itself.
 type errApplyRolledBackFakeApplier struct{}
 
-func (errApplyRolledBackFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (errApplyRolledBackFakeApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	return fmt.Errorf("simulated: %w", mosquitto.ErrApplyRestored)
 }
 
@@ -1468,7 +1472,7 @@ func TestApply_ApplierRolledBack_StatusFailed(t *testing.T) {
 // restore from snapshot and the broker is in an indeterminate state.
 type errApplyRollbackFailedFakeApplier struct{}
 
-func (errApplyRollbackFailedFakeApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (errApplyRollbackFailedFakeApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	return fmt.Errorf("simulated: %w", mosquitto.ErrRollbackFailed)
 }
 
@@ -1670,7 +1674,7 @@ func newBlockingApplier() *blockingApplier {
 	return &blockingApplier{started: make(chan struct{}), releaseCh: make(chan struct{})}
 }
 
-func (b *blockingApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (b *blockingApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	b.mu.Lock()
 	b.count++
 	b.mu.Unlock()

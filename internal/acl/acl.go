@@ -29,6 +29,36 @@ const (
 	SelectorPattern Selector = "pattern"
 )
 
+// Scope identifies the ACL file a rule is rendered into.
+//
+// Mosquitto 2.0 resolves access control per listener once
+// `per_listener_settings true` is set: an `acl_file` declared inside a
+// `listener` block applies to that listener only, while a global `acl_file`
+// applies to every listener that does not declare its own. MCM models the
+// same distinction so an operator can express "these rules only apply to
+// the TLS listener" without hand-editing mosquitto.conf.
+//
+//   - global: the rule is rendered into the broker-wide ACL file. It
+//     applies to every listener.
+//   - listener: the rule is rendered into the ACL file of exactly one
+//     listener. It applies to that listener only.
+type Scope string
+
+const (
+	// ScopeGlobal renders the rule into the broker-wide ACL file. Rules
+	// stored before scoped rules existed carry an empty scope, which
+	// means the global scope.
+	ScopeGlobal Scope = "global"
+	// ScopeListener renders the rule into the ACL file of one listener.
+	ScopeListener Scope = "listener"
+)
+
+// validScopes is the set of scopes a rule may declare.
+var validScopes = map[Scope]struct{}{
+	ScopeGlobal:   {},
+	ScopeListener: {},
+}
+
 // Permission describes the allowed MQTT action for an ACL rule.
 type Permission string
 
@@ -62,7 +92,15 @@ type Rule struct {
 	// Selector chooses the native Mosquitto scope of the rule. An empty
 	// selector means the legacy user scope, so rules stored before native
 	// selectors existed keep their meaning.
-	Selector    Selector   `json:"selector,omitempty"`
+	Selector Selector `json:"selector,omitempty"`
+	// Scope chooses the ACL file the rule is rendered into. An empty scope
+	// means the global scope, so rules stored before scoped rules existed
+	// keep their meaning.
+	Scope Scope `json:"scope,omitempty"`
+	// ListenerID names the listener whose ACL file carries the rule. It is
+	// required for the listener scope and must be empty for the global
+	// scope.
+	ListenerID  string     `json:"listener_id,omitempty"`
 	Principal   string     `json:"principal"`
 	TopicFilter string     `json:"topic_filter"`
 	Permission  Permission `json:"permission"`
@@ -88,6 +126,22 @@ func (r Rule) EffectiveSelector() Selector {
 	return r.Selector
 }
 
+// EffectiveScope returns the scope the rule applies under. Rules stored
+// before scoped rules existed carry an empty scope, which means the global
+// scope.
+func (r Rule) EffectiveScope() Scope {
+	if r.Scope == "" {
+		return ScopeGlobal
+	}
+	return r.Scope
+}
+
+// IsListenerScoped reports whether the rule is rendered into the ACL file
+// of a single listener instead of the broker-wide ACL file.
+func (r Rule) IsListenerScoped() bool {
+	return r.EffectiveScope() == ScopeListener
+}
+
 // IsUserScoped reports whether the rule is bound to an MQTT username. Only
 // user-scoped rules follow MQTT user renames and can become orphans when
 // their user disappears.
@@ -95,11 +149,17 @@ func (r Rule) IsUserScoped() bool {
 	return r.EffectiveSelector() == SelectorUser
 }
 
-// Normalize returns the rule with its selector resolved to an explicit
-// value. Stores persist the normalized rule so a legacy rule and an
-// explicitly user-scoped rule are stored identically.
+// Normalize returns the rule with its selector and scope resolved to
+// explicit values. Stores persist the normalized rule so a legacy rule and
+// an explicitly user-scoped, globally scoped rule are stored identically.
 func (r Rule) Normalize() Rule {
 	r.Selector = r.EffectiveSelector()
+	r.Scope = r.EffectiveScope()
+	if r.Scope != ScopeListener {
+		// A global rule never carries a listener reference; dropping it
+		// keeps the stored row unambiguous.
+		r.ListenerID = ""
+	}
 	return r
 }
 
@@ -133,6 +193,19 @@ func ValidateRuleForMosquittoVersion(rule Rule, version string) error {
 		}
 	default:
 		problems = append(problems, `selector must be one of: "user", "anonymous", "pattern"`)
+	}
+
+	switch rule.EffectiveScope() {
+	case ScopeGlobal:
+		if rule.ListenerID != "" {
+			problems = append(problems, "listener_id must be empty for global rules")
+		}
+	case ScopeListener:
+		if err := ValidateListenerID(rule.ListenerID); err != nil {
+			problems = append(problems, err.Error())
+		}
+	default:
+		problems = append(problems, `scope must be one of: "global", "listener"`)
 	}
 
 	if strings.TrimSpace(rule.TopicFilter) == "" {
@@ -203,6 +276,42 @@ func ValidatePatternPlaceholders(filter string) error {
 		}
 		if level != "%u" && level != "%c" {
 			return fmt.Errorf(`topic_filter %q is invalid: "%%u" and "%%c" must each occupy an entire topic level`, filter)
+		}
+	}
+	return nil
+}
+
+// maxListenerIDLength bounds the listener reference so the derived ACL file
+// name stays well inside the limits of every filesystem MCM supports.
+const maxListenerIDLength = 64
+
+// ValidateListenerID validates the listener reference of a listener-scoped
+// rule. The reference ends up in the name of the ACL file MCM writes for
+// that listener, so it must not be able to escape the ACL directory.
+func ValidateListenerID(id string) error {
+	if id == "" {
+		return fmt.Errorf("listener_id is required for listener scoped rules")
+	}
+	if len(id) > maxListenerIDLength {
+		return fmt.Errorf("listener_id must be at most %d characters", maxListenerIDLength)
+	}
+	if containsControlCharacter(id) {
+		return fmt.Errorf("listener_id must not contain control characters")
+	}
+	if strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("listener_id must not contain path separators")
+	}
+	if id == "." || id == ".." {
+		return fmt.Errorf("listener_id %q is not a valid listener reference", id)
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return fmt.Errorf("listener_id %q must only contain letters, digits, '-', '_' and '.'", id)
 		}
 	}
 	return nil

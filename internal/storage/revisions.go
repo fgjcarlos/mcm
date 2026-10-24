@@ -26,8 +26,15 @@ type PreviewRevision struct {
 	RenderedPasswdHash string
 	ACLRendered        string
 	PasswdRendered     string
-	CreatedAt          time.Time
-	AppliedAt          time.Time
+	// ListenerACLRendered holds the rendered per-listener ACL files as a
+	// JSON object keyed by listener id. Empty when every rule is global.
+	ListenerACLRendered string
+	// RenderedACLFilesHash is the hash over every ACL file the preview
+	// would write. It detects a drift between the preview and the apply
+	// that also covers the per-listener files.
+	RenderedACLFilesHash string
+	CreatedAt            time.Time
+	AppliedAt            time.Time
 }
 
 // InsertPreviewRevision persists a newly generated preview revision.
@@ -41,8 +48,9 @@ func (s *Store) InsertPreviewRevision(ctx context.Context, revision *PreviewRevi
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO preview_revisions(
 	id, actor, base_acl_hash, base_passwd_hash, rendered_acl_hash,
-	rendered_passwd_hash, acl_rendered, passwd_rendered, created_at, applied_at
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
+	rendered_passwd_hash, acl_rendered, passwd_rendered, listener_acl_rendered,
+	rendered_acl_files_hash, created_at, applied_at
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
 		revision.ID,
 		revision.Actor,
 		revision.BaseACLHash,
@@ -51,6 +59,8 @@ INSERT INTO preview_revisions(
 		revision.RenderedPasswdHash,
 		revision.ACLRendered,
 		revision.PasswdRendered,
+		revision.ListenerACLRendered,
+		revision.RenderedACLFilesHash,
 		revision.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -63,7 +73,8 @@ INSERT INTO preview_revisions(
 func (s *Store) GetPreviewRevision(ctx context.Context, id string) (PreviewRevision, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, actor, base_acl_hash, base_passwd_hash, rendered_acl_hash,
-       rendered_passwd_hash, acl_rendered, passwd_rendered, created_at, applied_at
+       rendered_passwd_hash, acl_rendered, passwd_rendered, listener_acl_rendered,
+       rendered_acl_files_hash, created_at, applied_at
 FROM preview_revisions WHERE id = ?`, id)
 	return scanPreviewRevision(row)
 }
@@ -109,6 +120,8 @@ func scanPreviewRevision(row interface{ Scan(dest ...any) error }) (PreviewRevis
 		&revision.RenderedPasswdHash,
 		&revision.ACLRendered,
 		&revision.PasswdRendered,
+		&revision.ListenerACLRendered,
+		&revision.RenderedACLFilesHash,
 		&createdAt,
 		&appliedAt,
 	); err != nil {

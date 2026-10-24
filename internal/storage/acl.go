@@ -22,7 +22,7 @@ type aclSQLStore struct {
 }
 
 func (s *aclSQLStore) ListRules(ctx context.Context) ([]acl.Rule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, principal, topic_filter, permission, description, selector FROM acl_rules ORDER BY id ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, principal, topic_filter, permission, description, selector, scope, listener_id FROM acl_rules ORDER BY id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list acl rules: %w", err)
 	}
@@ -52,13 +52,15 @@ func (s *aclSQLStore) CreateRule(ctx context.Context, rule acl.Rule) (acl.Rule, 
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.ExecContext(ctx, `
-INSERT INTO acl_rules(principal, topic_filter, permission, description, selector, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, ?)`,
+INSERT INTO acl_rules(principal, topic_filter, permission, description, selector, scope, listener_id, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rule.Principal,
 		rule.TopicFilter,
 		string(rule.Permission),
 		rule.Description,
 		string(rule.Selector),
+		string(rule.Scope),
+		rule.ListenerID,
 		now,
 		now,
 	)
@@ -88,12 +90,14 @@ func (s *aclSQLStore) UpdateRule(ctx context.Context, id string, rule acl.Rule) 
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, description = ?, selector = ?, updated_at = ? WHERE id = ?`,
+UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, description = ?, selector = ?, scope = ?, listener_id = ?, updated_at = ? WHERE id = ?`,
 		rule.Principal,
 		rule.TopicFilter,
 		string(rule.Permission),
 		rule.Description,
 		string(rule.Selector),
+		string(rule.Scope),
+		rule.ListenerID,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		numericID,
 	)
@@ -142,8 +146,10 @@ func scanACLRule(rows interface{ Scan(dest ...any) error }) (acl.Rule, error) {
 		permission  string
 		description string
 		selector    string
+		scope       string
+		listenerID  string
 	)
-	if err := rows.Scan(&id, &principal, &topicFilter, &permission, &description, &selector); err != nil {
+	if err := rows.Scan(&id, &principal, &topicFilter, &permission, &description, &selector, &scope, &listenerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return acl.Rule{}, err
 		}
@@ -152,6 +158,8 @@ func scanACLRule(rows interface{ Scan(dest ...any) error }) (acl.Rule, error) {
 	return acl.Rule{
 		ID:          strconv.FormatInt(id, 10),
 		Selector:    acl.Selector(selector),
+		Scope:       acl.Scope(scope),
+		ListenerID:  listenerID,
 		Principal:   principal,
 		TopicFilter: topicFilter,
 		Permission:  acl.Permission(permission),

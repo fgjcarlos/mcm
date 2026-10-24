@@ -207,11 +207,13 @@ func TestParseACLFileRecognizesNativeDirectives(t *testing.T) {
 
 	rules := ParseACLFile(body)
 
+	// A parsed file is always the broker-wide ACL file, so every parsed
+	// rule carries the global scope.
 	want := []acl.Rule{
-		{Selector: acl.SelectorAnonymous, TopicFilter: "public/#", Permission: acl.PermissionRead},
-		{Selector: acl.SelectorPattern, TopicFilter: "clients/%u/state", Permission: acl.PermissionDeny},
-		{Selector: acl.SelectorUser, Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
-		{Selector: acl.SelectorUser, Principal: "alice", TopicFilter: "cmd/#", Permission: acl.PermissionWrite},
+		{Selector: acl.SelectorAnonymous, Scope: acl.ScopeGlobal, TopicFilter: "public/#", Permission: acl.PermissionRead},
+		{Selector: acl.SelectorPattern, Scope: acl.ScopeGlobal, TopicFilter: "clients/%u/state", Permission: acl.PermissionDeny},
+		{Selector: acl.SelectorUser, Scope: acl.ScopeGlobal, Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
+		{Selector: acl.SelectorUser, Scope: acl.ScopeGlobal, Principal: "alice", TopicFilter: "cmd/#", Permission: acl.PermissionWrite},
 	}
 
 	if len(rules) != len(want) {

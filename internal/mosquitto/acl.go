@@ -1,11 +1,31 @@
 package mosquitto
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 )
+
+// ListenerACLPath returns the path of the ACL file that carries the rules
+// of one listener.
+//
+// Mosquitto resolves `acl_file` per listener once
+// `per_listener_settings true` is set: the global file applies to every
+// listener that does not declare its own, and a listener that declares one
+// uses only that file. MCM therefore keeps the global file at its
+// configured path and writes the per-listener files next to it, named after
+// the listener they belong to.
+//
+// The listener reference is validated by the acl package before it reaches
+// this function, so it cannot escape the ACL directory.
+func ListenerACLPath(globalACLPath, listenerID string) string {
+	if globalACLPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(globalACLPath), "acl."+listenerID)
+}
 
 // RenderACLFile produces a Mosquitto-compatible ACL file body.
 //
@@ -124,6 +144,10 @@ func ParseACLFile(body string) []acl.Rule {
 			perm := strings.ToLower(fields[1])
 			topic := strings.Join(fields[2:], " ")
 			rule := acl.Rule{
+				// A parsed file is always the broker-wide ACL file: the
+				// per-listener files are rendered by MCM, not parsed from
+				// an arbitrary source.
+				Scope:       acl.ScopeGlobal,
 				TopicFilter: topic,
 				Permission:  acl.Permission(mosquittoPermToACLPerm(perm)),
 			}
@@ -142,6 +166,7 @@ func ParseACLFile(body string) []acl.Rule {
 			topic := strings.Join(fields[2:], " ")
 			rules = append(rules, acl.Rule{
 				Selector:    acl.SelectorPattern,
+				Scope:       acl.ScopeGlobal,
 				TopicFilter: topic,
 				Permission:  acl.Permission(mosquittoPermToACLPerm(perm)),
 			})

@@ -403,6 +403,36 @@ CREATE TABLE IF NOT EXISTS acl_sources (
 );
 `,
 	},
+	{
+		version: 23,
+		name:    "add_acl_rules_scope",
+		sql: `
+ALTER TABLE acl_rules ADD COLUMN scope TEXT NOT NULL DEFAULT 'global';
+ALTER TABLE acl_rules ADD COLUMN listener_id TEXT NOT NULL DEFAULT '';
+`,
+	},
+	{
+		version: 24,
+		name:    "add_listener_acl_revisions",
+		sql: `
+ALTER TABLE preview_revisions ADD COLUMN listener_acl_rendered TEXT NOT NULL DEFAULT '';
+ALTER TABLE preview_revisions ADD COLUMN rendered_acl_files_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN listener_acl_snapshot TEXT NOT NULL DEFAULT '';
+ALTER TABLE deployments ADD COLUMN listener_acl_rendered TEXT NOT NULL DEFAULT '';
+`,
+	},
+	{
+		version: 25,
+		name:    "create_managed_acl_files",
+		sql: `
+CREATE TABLE IF NOT EXISTS managed_acl_files (
+	path TEXT PRIMARY KEY,
+	listener_id TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

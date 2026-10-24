@@ -53,25 +53,64 @@ var ErrReloadNotSignaled = errors.New("reload not signaled: FileApplier requires
 // write/commit logic. ReloadBrokerOnly signals a reload without writing
 // any files; the broker-config path uses it after its own write.
 type Applier interface {
-	// Apply atomically writes ACL and passwd files, signals the broker to
-	// reload, and restores from snapshot on partial failure.
+	// Apply atomically writes the ACL and passwd files, signals the broker
+	// to reload, and restores from snapshot on partial failure.
 	//
-	// aclSnapshot and passwdSnapshot must be the on-disk content BEFORE the
-	// apply (taken by the caller). They are used to restore the broker's
-	// configuration when the apply cannot complete cleanly — e.g. the
+	// The snapshots in req must be the on-disk content BEFORE the apply
+	// (taken by the caller). They are used to restore the broker's
+	// configuration when the apply cannot complete cleanly - e.g. the
 	// second file write fails, a rename fails, SIGHUP fails, or the
 	// context is cancelled mid-apply.
 	//
 	// On internal rollback success, the returned error wraps
 	// ErrApplyRestored. On internal rollback failure, the returned error
-	// wraps ErrRollbackFailed. On a pre-cancelled context, the returned
-	// error wraps context.Canceled (or context.DeadlineExceeded) and
-	// neither file is touched.
-	Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error
+	// wraps ErrRollbackFailed. On a pre-cancelled context, the returned error
+	// wraps context.Canceled (or context.DeadlineExceeded) and no file is
+	// touched.
+	Apply(ctx context.Context, req ApplyRequest) error
 	// ReloadBrokerOnly signals the broker to reload its configuration
 	// without writing any files. Used by the broker-config path after it
 	// has already written mosquitto.conf via AtomicWriteConf.
 	ReloadBrokerOnly() error
+}
+
+// ApplyRequest describes the files one apply writes and the snapshots used
+// to restore them when the apply cannot complete cleanly.
+//
+// Mosquitto resolves `acl_file` per listener once
+// `per_listener_settings true` is set, so MCM can manage more than one ACL
+// file: the broker-wide file plus one file per listener that owns a scoped
+// rule. All of them are written in the same transaction, so a failure never
+// leaves the broker with a mixture of old and new access control.
+type ApplyRequest struct {
+	// ACLBody is the rendered body of the broker-wide ACL file.
+	ACLBody string
+	// ACLSnapshot is the on-disk content of the broker-wide ACL file
+	// before the apply.
+	ACLSnapshot string
+	// ListenerACLFiles are the per-listener ACL files the apply writes.
+	// Every entry carries its own snapshot.
+	ListenerACLFiles []ACLFile
+	// RemovedACLFiles lists the ACL files the apply deletes. Their
+	// snapshot carries the content the rollback restores when the apply
+	// fails.
+	RemovedACLFiles []ACLFile
+	// PasswdBody is the rendered password file body.
+	PasswdBody string
+	// PasswdSnapshot is the on-disk password file content before the
+	// apply.
+	PasswdSnapshot string
+}
+
+// ACLFile is one ACL file an apply writes.
+type ACLFile struct {
+	// Path is the absolute path of the file.
+	Path string
+	// Body is the rendered content of the file.
+	Body string
+	// Snapshot is the on-disk content of the file before the apply. It is
+	// restored when the apply fails.
+	Snapshot string
 }
 
 // AtomicWriteConf writes a single Mosquitto config file using the same
@@ -100,7 +139,11 @@ func AtomicWriteConf(path, content string, perm os.FileMode) error {
 // If both are set, ReloadCommand takes precedence and the SIGHUP path
 // is ignored. If neither is set, Apply returns ErrReloadNotSignaled.
 type FileApplier struct {
-	ACLPath       string
+	// ACLPath is the absolute path of the broker-wide ACL file.
+	ACLPath string
+	// PasswdPath is the absolute path of the password file. The
+	// per-listener ACL file paths are carried by the ApplyRequest because
+	// an apply can write one ACL file per listener.
 	PasswdPath    string
 	PIDPath       string          // if empty AND no ReloadCommand, Apply refuses
 	SignalFunc    func(int) error // if nil, uses platform default (SIGHUP)
@@ -111,7 +154,11 @@ type FileApplier struct {
 // DockerApplier writes files to paths that are volume-mounted into a Docker
 // container, then signals PID 1 in that container via "docker exec … kill -SIGHUP 1".
 type DockerApplier struct {
-	ACLPath       string
+	// ACLPath is the absolute path of the broker-wide ACL file.
+	ACLPath string
+	// PasswdPath is the absolute path of the password file. The
+	// per-listener ACL file paths are carried by the ApplyRequest because
+	// an apply can write one ACL file per listener.
 	PasswdPath    string
 	ContainerName string
 	Runner        CommandRunner
@@ -201,12 +248,21 @@ func atomicWrite(path, content string, perm os.FileMode) error {
 // partial apply failure. ctx must be independent of any request context
 // that may have been cancelled — the caller is expected to derive it from
 // context.Background().
-func rollbackFromSnapshot(ctx context.Context, aclPath, passwdPath, aclSnapshot, passwdSnapshot string) error {
+func rollbackFromSnapshot(ctx context.Context, aclFiles []ACLFile, removedACLFiles []ACLFile, passwdPath, passwdSnapshot string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := atomicWrite(aclPath, aclSnapshot, 0o600); err != nil {
-		return fmt.Errorf("restore acl: %w", err)
+	for _, file := range aclFiles {
+		if err := atomicWrite(file.Path, file.Snapshot, 0o600); err != nil {
+			return fmt.Errorf("restore acl %q: %w", file.Path, err)
+		}
+	}
+	// A file the apply deleted is restored from its snapshot so the
+	// listener keeps the access it had before the apply.
+	for _, file := range removedACLFiles {
+		if err := atomicWrite(file.Path, file.Snapshot, 0o600); err != nil {
+			return fmt.Errorf("restore removed acl %q: %w", file.Path, err)
+		}
 	}
 	if err := atomicWrite(passwdPath, passwdSnapshot, 0o600); err != nil {
 		return fmt.Errorf("restore passwd: %w", err)
@@ -220,7 +276,7 @@ func rollbackFromSnapshot(ctx context.Context, aclPath, passwdPath, aclSnapshot,
 // second stage does not leave the first file half-applied. A failure in
 // the rename or SIGHUP step triggers an internal rollback from the
 // provided snapshot using a fresh bounded context.
-func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error {
+func (f FileApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -233,33 +289,59 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 	if f.PIDPath == "" && len(f.ReloadCommand) == 0 {
 		return ErrReloadNotSignaled
 	}
+	files := append([]ACLFile{{Path: f.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
 
-	// Stage 1: write both temp files. Neither rename has happened yet.
-	aclTmp, err := writeStage(f.ACLPath, aclBody, 0o600)
+	// Stage 1: write every temp file. No rename has happened yet, so a
+	// failure here leaves the broker on the previous configuration.
+	aclTmps := make([]string, 0, len(files))
+	for _, file := range files {
+		tmp, err := writeStage(file.Path, file.Body, 0o600)
+		if err != nil {
+			for _, staged := range aclTmps {
+				cleanupTempFile(nil, staged)
+			}
+			return err
+		}
+		aclTmps = append(aclTmps, tmp)
+	}
+	passwdTmp, err := writeStage(f.PasswdPath, req.PasswdBody, 0o600)
 	if err != nil {
+		for _, staged := range aclTmps {
+			cleanupTempFile(nil, staged)
+		}
 		return err
 	}
-	passwdTmp, err := writeStage(f.PasswdPath, passwdBody, 0o600)
-	if err != nil {
-		cleanupTempFile(nil, aclTmp)
-		return err
-	}
 
-	// Stage 2: rename both temp files into place. A failure here leaves
+	// Stage 2: rename every temp file into place. A failure here leaves
 	// the broker half-applied, so we trigger an internal rollback.
-	if err := commitStage(aclTmp, f.ACLPath); err != nil {
-		cleanupTempFile(nil, passwdTmp)
-		return f.rollbackAfterPartialApply("rename acl", err, aclSnapshot, passwdSnapshot)
+	for idx, file := range files {
+		if err := commitStage(aclTmps[idx], file.Path); err != nil {
+			cleanupTempFile(nil, passwdTmp)
+			for _, staged := range aclTmps[idx+1:] {
+				cleanupTempFile(nil, staged)
+			}
+			return f.rollbackAfterPartialApply("rename acl", err, files, req)
+		}
 	}
 	if err := commitStage(passwdTmp, f.PasswdPath); err != nil {
-		return f.rollbackAfterPartialApply("rename passwd", err, aclSnapshot, passwdSnapshot)
+		return f.rollbackAfterPartialApply("rename passwd", err, files, req)
 	}
 
-	// Stage 3: signal the broker. If the reload fails after the files were
+	// Stage 3: remove the ACL files the deploy retired. A listener whose
+	// scoped rules are gone must not keep serving the access the operator
+	// removed, and Mosquitto falls back to the broker-wide file once the
+	// listener no longer declares one.
+	for _, file := range req.RemovedACLFiles {
+		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return f.rollbackAfterPartialApply("remove acl", err, files, req)
+		}
+	}
+
+	// Stage 4: signal the broker. If the reload fails after the files were
 	// already renamed, the broker is now serving the new configuration
 	// without having reloaded it — rollback from snapshot.
 	if err := f.reloadBroker(); err != nil {
-		return f.rollbackAfterPartialApply("signal reload", err, aclSnapshot, passwdSnapshot)
+		return f.rollbackAfterPartialApply("signal reload", err, files, req)
 	}
 
 	return nil
@@ -273,11 +355,11 @@ func (f FileApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot
 // Returns an error wrapping ErrApplyRestored when the restore succeeded,
 // or ErrRollbackFailed when the restore also failed. In both cases the
 // underlying cause is also wrapped so callers can inspect it via errors.Is.
-func (f FileApplier) rollbackAfterPartialApply(stage string, cause error, aclSnapshot, passwdSnapshot string) error {
+func (f FileApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), internalRollbackTimeout)
 	defer cancel()
 
-	if err := rollbackFromSnapshot(rollbackCtx, f.ACLPath, f.PasswdPath, aclSnapshot, passwdSnapshot); err != nil {
+	if err := rollbackFromSnapshot(rollbackCtx, files, req.RemovedACLFiles, f.PasswdPath, req.PasswdSnapshot); err != nil {
 		return fmt.Errorf("%s: %w", stage, errors.Join(ErrRollbackFailed, cause, err))
 	}
 	return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause))
@@ -353,48 +435,70 @@ func (f FileApplier) reloadViaCommand() error {
 // Uses the same two-stage transactional behavior as FileApplier: both
 // files are staged before either rename, and a failure in docker exec
 // triggers an internal rollback from the provided snapshot.
-func (d DockerApplier) Apply(ctx context.Context, aclBody, passwdBody, aclSnapshot, passwdSnapshot string) error {
+func (d DockerApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if d.ContainerName == "" {
 		return fmt.Errorf("docker applier: container_name must not be empty")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	files := append([]ACLFile{{Path: d.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
 
-	// Stage 1: write both temp files.
-	aclTmp, err := writeStage(d.ACLPath, aclBody, 0o600)
+	// Stage 1: write every temp file.
+	aclTmps := make([]string, 0, len(files))
+	for _, file := range files {
+		tmp, err := writeStage(file.Path, file.Body, 0o600)
+		if err != nil {
+			for _, staged := range aclTmps {
+				cleanupTempFile(nil, staged)
+			}
+			return err
+		}
+		aclTmps = append(aclTmps, tmp)
+	}
+	passwdTmp, err := writeStage(d.PasswdPath, req.PasswdBody, 0o600)
 	if err != nil {
+		for _, staged := range aclTmps {
+			cleanupTempFile(nil, staged)
+		}
 		return err
 	}
-	passwdTmp, err := writeStage(d.PasswdPath, passwdBody, 0o600)
-	if err != nil {
-		cleanupTempFile(nil, aclTmp)
-		return err
-	}
 
-	// Stage 2: rename both temp files into place.
-	if err := commitStage(aclTmp, d.ACLPath); err != nil {
-		cleanupTempFile(nil, passwdTmp)
-		return d.rollbackAfterPartialApply("rename acl", err, aclSnapshot, passwdSnapshot)
+	// Stage 2: rename every temp file into place.
+	for idx, file := range files {
+		if err := commitStage(aclTmps[idx], file.Path); err != nil {
+			cleanupTempFile(nil, passwdTmp)
+			for _, staged := range aclTmps[idx+1:] {
+				cleanupTempFile(nil, staged)
+			}
+			return d.rollbackAfterPartialApply("rename acl", err, files, req)
+		}
 	}
 	if err := commitStage(passwdTmp, d.PasswdPath); err != nil {
-		return d.rollbackAfterPartialApply("rename passwd", err, aclSnapshot, passwdSnapshot)
+		return d.rollbackAfterPartialApply("rename passwd", err, files, req)
 	}
 
-	// Stage 3: docker exec kill -HUP 1.
+	// Stage 3: remove the ACL files the deploy retired.
+	for _, file := range req.RemovedACLFiles {
+		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return d.rollbackAfterPartialApply("remove acl", err, files, req)
+		}
+	}
+
+	// Stage 4: docker exec kill -HUP 1.
 	if _, err := d.Runner.Run(ctx, "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
-		return d.rollbackAfterPartialApply("docker exec", err, aclSnapshot, passwdSnapshot)
+		return d.rollbackAfterPartialApply("docker exec", err, files, req)
 	}
 	return nil
 }
 
 // rollbackAfterPartialApply is the DockerApplier counterpart of
 // FileApplier.rollbackAfterPartialApply; same semantics.
-func (d DockerApplier) rollbackAfterPartialApply(stage string, cause error, aclSnapshot, passwdSnapshot string) error {
+func (d DockerApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), internalRollbackTimeout)
 	defer cancel()
 
-	if err := rollbackFromSnapshot(rollbackCtx, d.ACLPath, d.PasswdPath, aclSnapshot, passwdSnapshot); err != nil {
+	if err := rollbackFromSnapshot(rollbackCtx, files, req.RemovedACLFiles, d.PasswdPath, req.PasswdSnapshot); err != nil {
 		return fmt.Errorf("%s: %w", stage, errors.Join(ErrRollbackFailed, cause, err))
 	}
 	return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause))

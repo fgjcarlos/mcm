@@ -229,6 +229,16 @@ func (w *FileWriter) Write(specs []listeners.ListenerSpec) (Rendered, error) {
 		return Rendered{}, err
 	}
 
+	// A listener that declares its own ACL file only takes effect when
+	// Mosquitto resolves the access control options per listener, so the
+	// global directive is enabled here.
+	if specsDeclareACLFile(specs) {
+		head, err = ensurePerListenerSettings(head)
+		if err != nil {
+			return Rendered{}, err
+		}
+	}
+
 	full := composeBody(head, rendered)
 	if err := writer(w.configPath, full, perm); err != nil {
 		return Rendered{}, fmt.Errorf("write spliced config: %w", err)

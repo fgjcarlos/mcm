@@ -13,6 +13,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -94,7 +95,7 @@ type fakeDeployApplier struct {
 	failAll bool
 }
 
-func (f *fakeDeployApplier) Apply(_ context.Context, _, _, _, _ string) error {
+func (f *fakeDeployApplier) Apply(_ context.Context, _ mosquitto.ApplyRequest) error {
 	if f.failAll {
 		return errors.New("applier: write failed")
 	}

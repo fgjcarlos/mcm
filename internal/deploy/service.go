@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,30 @@ var ErrAdoptionRequired = errors.New("broker config adoption required")
 // resolve the refusal by adopting the current ACL file as an ACL source
 // (which preserves the content) or by removing the entries.
 var ErrUnmanagedACLContent = errors.New("unmanaged acl content would be dropped")
+
+// ErrACLScopeNotWired is returned when an apply would leave the
+// listener-scoped rules without effect.
+//
+// Mosquitto only applies the ACL file of a listener when the listener
+// declares it and the broker resolves the access control options per
+// listener. An apply that ignored this would report success while the
+// broker kept serving the broker-wide access, so the apply is refused.
+var ErrACLScopeNotWired = errors.New("acl scope is not wired to the broker configuration")
+
+// ACLScopeNotWiredError carries the configuration problems that block an
+// apply.
+type ACLScopeNotWiredError struct {
+	Issues []string
+}
+
+func (e *ACLScopeNotWiredError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrACLScopeNotWired, strings.Join(e.Issues, "; "))
+}
+
+// Unwrap exposes ErrACLScopeNotWired to errors.Is.
+func (e *ACLScopeNotWiredError) Unwrap() error {
+	return ErrACLScopeNotWired
+}
 
 // UnmanagedACLContentError carries the ACL entries that block an apply.
 type UnmanagedACLContentError struct {
@@ -261,8 +286,37 @@ type PreviewResult struct {
 	// into the adopted source and the duplicates it skipped.
 	CompositionWarnings []string `json:"composition_warnings,omitempty"`
 
+	// ListenerACLFiles are the per-listener ACL files the deploy would
+	// write. A listener that owns scoped rules uses only its own file, so
+	// the preview has to show it separately from the broker-wide file.
+	ListenerACLFiles []ListenerACLPreview `json:"listener_acl_files,omitempty"`
+	// RemovedACLFiles are the per-listener ACL files the deploy would
+	// delete because their listener no longer owns any scoped rule.
+	RemovedACLFiles []string `json:"removed_acl_files,omitempty"`
+	// ScopeIssues name the configuration problems that would leave the
+	// listener-scoped rules without effect. They block the apply.
+	ScopeIssues []string `json:"scope_issues,omitempty"`
+
 	Summary    ChangeSummary `json:"summary"`
 	HasChanges bool          `json:"has_changes"`
+}
+
+// ListenerACLPreview describes one per-listener ACL file in a preview.
+type ListenerACLPreview struct {
+	// ListenerID names the listener whose file this is.
+	ListenerID string `json:"listener_id"`
+	// Path is the absolute path of the file.
+	Path string `json:"path"`
+	// Body is the rendered content of the file.
+	Body string `json:"body,omitempty"`
+	// Diff is the unified diff between the on-disk file and the render.
+	Diff string `json:"diff,omitempty"`
+	// AtRiskEntries are the semantic ACL keys the on-disk file grants and
+	// the rendered file does not.
+	AtRiskEntries []string `json:"at_risk_entries,omitempty"`
+	// PreservedEntries are the verbatim lines of the adopted source that
+	// survive into the rendered file.
+	PreservedEntries []string `json:"preserved_entries,omitempty"`
 }
 
 // Service orchestrates deploy preview, apply, and history.
@@ -277,6 +331,8 @@ type Service struct {
 	revisionStore       previewRevisionStore
 	brokerCfgStore      BrokerConfigRevisionStore
 	aclSourceStore      ACLSourceStore
+	managedACLFileStore ManagedACLFileStore
+	listenerLister      ListenerScopeLister
 	confCatalog         ConfCatalog
 	confPath            string // broker config absolute path; empty disables the broker-config path
 	verifier            ActiveVerifier
@@ -312,6 +368,8 @@ func NewService(
 	mutationCoordinator, _ := mqttStore.(MutationCoordinator)
 	brokerCfgStore, _ := deployStore.(BrokerConfigRevisionStore)
 	aclSourceStore, _ := deployStore.(ACLSourceStore)
+	managedACLFileStore, _ := deployStore.(ManagedACLFileStore)
+	listenerLister, _ := deployStore.(ListenerScopeLister)
 	return &Service{
 		applier:             applier,
 		aclStore:            aclStore,
@@ -322,6 +380,8 @@ func NewService(
 		revisionStore:       revisionStore,
 		brokerCfgStore:      brokerCfgStore,
 		aclSourceStore:      aclSourceStore,
+		managedACLFileStore: managedACLFileStore,
+		listenerLister:      listenerLister,
 		verifier:            verifier,
 		passwordLookup:      passwordLookup,
 		readFile:            defaultFileReader,
@@ -418,6 +478,10 @@ func contentHash(body string) string {
 type renderedConfig struct {
 	// ACLBody is the rendered ACL file body.
 	ACLBody string
+	// ACLFiles lists every ACL file the deploy would write: the
+	// broker-wide file first, then one file per listener that owns a
+	// scoped rule.
+	ACLFiles []ACLFileRender
 	// PasswdBody is the rendered passwd file body.
 	PasswdBody string
 	// OrphanRules are the managed rules excluded from the render because
@@ -429,6 +493,25 @@ type renderedConfig struct {
 	// AdoptedSource is the adopted ACL source of the configured ACL path,
 	// or nil when no source was adopted.
 	AdoptedSource *storage.ACLSourceRow
+}
+
+// ACLFileRender is one rendered ACL file.
+//
+// Mosquitto resolves `acl_file` per listener once
+// `per_listener_settings true` is set: the broker-wide file applies to
+// every listener that does not declare its own file, and a listener that
+// declares one uses only that file. MCM renders one file per scope so the
+// two behaviours stay distinguishable.
+type ACLFileRender struct {
+	// Scope is the scope the file serves.
+	Scope acl.Scope `json:"scope"`
+	// ListenerID names the listener whose file this is. It is empty for
+	// the broker-wide file.
+	ListenerID string `json:"listener_id,omitempty"`
+	// Path is the absolute path of the file.
+	Path string `json:"path"`
+	// Body is the rendered content of the file.
+	Body string `json:"body,omitempty"`
 }
 
 // render renders the broker configuration and returns the ACL body, the
@@ -515,9 +598,14 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 		activeRules = append(activeRules, rule)
 	}
 
+	// Split the active rules by scope. The global rules go into the
+	// broker-wide ACL file; every listener that owns scoped rules gets its
+	// own file.
+	globalRules, listenerRules := splitRulesByScope(activeRules)
+
 	// Build the ACL body: active managed rules + service user block.
-	allRules := make([]acl.Rule, 0, len(activeRules)+1)
-	allRules = append(allRules, activeRules...)
+	allRules := make([]acl.Rule, 0, len(globalRules)+1)
+	allRules = append(allRules, globalRules...)
 	if s.mosquittoCfg.Username != "" {
 		allRules = append(allRules, serviceUserACL(s.mosquittoCfg.Username)...)
 	}
@@ -539,6 +627,46 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 		rendered.CompositionWarnings = warnings
 		rendered.AdoptedSource = source
 	}
+
+	// The broker-wide ACL file is always part of the file set, even when
+	// every managed rule belongs to a listener: a listener that declares
+	// no file of its own falls back to the broker-wide one.
+	files := []ACLFileRender{{
+		Scope: acl.ScopeGlobal,
+		Path:  s.deployCfg.ACLPath,
+		Body:  rendered.ACLBody,
+	}}
+
+	// One file per listener that owns scoped rules. The service user block
+	// is emitted in every file: a listener with its own ACL file no longer
+	// inherits the broker-wide one, so MCM's own account would lose the
+	// access it needs to keep the runtime working there.
+	for _, listenerID := range sortedListenerIDs(listenerRules) {
+		scoped := make([]acl.Rule, 0, len(listenerRules[listenerID])+1)
+		scoped = append(scoped, listenerRules[listenerID]...)
+		if s.mosquittoCfg.Username != "" {
+			scoped = append(scoped, serviceUserACL(s.mosquittoCfg.Username)...)
+		}
+		path := mosquitto.ListenerACLPath(s.deployCfg.ACLPath, listenerID)
+		body := mosquitto.RenderACLFile(scoped)
+		scopedSource, err := s.adoptedACLSourceForPath(ctx, path)
+		if err != nil {
+			return renderedConfig{}, err
+		}
+		if scopedSource != nil {
+			document := mosquitto.ParseACLDocument(scopedSource.Body)
+			composed, warnings := mosquitto.ComposeACLDocument(document, scoped)
+			body = composed.Render()
+			rendered.CompositionWarnings = append(rendered.CompositionWarnings, warnings...)
+		}
+		files = append(files, ACLFileRender{
+			Scope:      acl.ScopeListener,
+			ListenerID: listenerID,
+			Path:       path,
+			Body:       body,
+		})
+	}
+	rendered.ACLFiles = files
 
 	entries := make([]mosquitto.PasswdEntry, 0, len(users)+1)
 	for _, u := range users {
@@ -581,13 +709,48 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	return rendered, nil
 }
 
+// splitRulesByScope partitions rules into the global rules and the rules
+// of every listener. The returned map is keyed by listener id.
+func splitRulesByScope(rules []acl.Rule) ([]acl.Rule, map[string][]acl.Rule) {
+	global := make([]acl.Rule, 0, len(rules))
+	byListener := make(map[string][]acl.Rule)
+	for _, rule := range rules {
+		if !rule.IsListenerScoped() {
+			global = append(global, rule)
+			continue
+		}
+		byListener[rule.ListenerID] = append(byListener[rule.ListenerID], rule)
+	}
+	return global, byListener
+}
+
+// sortedListenerIDs returns the listener ids in a stable order so the
+// rendered file set and every hash over it are deterministic.
+func sortedListenerIDs(byListener map[string][]acl.Rule) []string {
+	ids := make([]string, 0, len(byListener))
+	for id := range byListener {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // adoptedACLSource returns the adopted ACL source of the configured ACL
 // path. It returns nil when no source was adopted for that path.
 func (s *Service) adoptedACLSource(ctx context.Context) (*storage.ACLSourceRow, error) {
-	if s.aclSourceStore == nil || s.deployCfg.ACLPath == "" {
+	return s.adoptedACLSourceForPath(ctx, s.deployCfg.ACLPath)
+}
+
+// adoptedACLSourceForPath returns the adopted ACL source of one ACL path.
+// Every ACL file MCM writes can own an adopted source: the broker-wide
+// file and each per-listener file are addressed by their own path, so
+// adopting a listener's existing ACL file preserves its content the same
+// way adopting the broker-wide file does.
+func (s *Service) adoptedACLSourceForPath(ctx context.Context, path string) (*storage.ACLSourceRow, error) {
+	if s.aclSourceStore == nil || path == "" {
 		return nil, nil
 	}
-	row, err := s.aclSourceStore.GetACLSource(ctx, s.deployCfg.ACLPath)
+	row, err := s.aclSourceStore.GetACLSource(ctx, path)
 	if err != nil {
 		if errors.Is(err, storage.ErrACLSourceNotFound) {
 			return nil, nil
@@ -1000,6 +1163,12 @@ func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResul
 		PasswdRendered:     passwdBody,
 		CreatedAt:          time.Now().UTC(),
 	}
+	listenerRendered, renderErr := listenerACLRenderedJSON(rendered.ACLFiles)
+	if renderErr != nil {
+		return PreviewResult{}, renderErr
+	}
+	revision.ListenerACLRendered = listenerRendered
+	revision.RenderedACLFilesHash = aclFilesHash(rendered.ACLFiles)
 	if err := s.revisionStore.InsertPreviewRevision(ctx, revision); err != nil {
 		return PreviewResult{}, fmt.Errorf("store preview revision: %w", err)
 	}
@@ -1013,6 +1182,22 @@ func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResul
 	next := mosquitto.ParseACLDocument(aclBody)
 	atRisk := mosquitto.MissingSemanticEntries(base, next)
 	preserved := preservedACLEntries(rendered.AdoptedSource, next)
+
+	// The per-listener ACL files are previewed separately: a listener that
+	// owns scoped rules uses only its own file, so the broker-wide diff
+	// says nothing about the access that listener keeps or loses.
+	listenerPreviews, removedFiles, listenerChanged, err := s.previewListenerACLFiles(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	hasChanges = hasChanges || listenerChanged
+
+	// Report the configuration problems that would leave the scoped rules
+	// without effect. They are blocking: the apply refuses them.
+	scopeIssues, err := s.scopeWiringIssues(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
 
 	return PreviewResult{
 		RevisionID:          revisionID,
@@ -1029,9 +1214,79 @@ func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResul
 		AtRiskEntries:       atRisk,
 		PreservedEntries:    preserved,
 		CompositionWarnings: rendered.CompositionWarnings,
+		ListenerACLFiles:    listenerPreviews,
+		RemovedACLFiles:     removedFiles,
+		ScopeIssues:         scopeIssues,
 		Summary:             summary,
 		HasChanges:          hasChanges,
 	}, nil
+}
+
+// previewListenerACLFiles renders the preview of the per-listener ACL
+// files. It returns the preview of every file the deploy would write, the
+// paths of the files it would delete, and whether any of them changes.
+func (s *Service) previewListenerACLFiles(ctx context.Context, rendered renderedConfig) ([]ListenerACLPreview, []string, bool, error) {
+	var (
+		previews []ListenerACLPreview
+		removed  []string
+		changed  bool
+	)
+
+	for _, file := range rendered.ACLFiles {
+		if file.Scope != acl.ScopeListener {
+			continue
+		}
+		current, err := s.readFile(file.Path)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("read on-disk listener acl file %q: %w", file.Path, err)
+		}
+		diff, err := unifiedDiff("current", "rendered", current, file.Body)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if diff != "" {
+			changed = true
+		}
+		atRisk := mosquitto.MissingSemanticEntries(
+			mosquitto.ParseACLDocument(current),
+			mosquitto.ParseACLDocument(file.Body),
+		)
+		source, err := s.adoptedACLSourceForPath(ctx, file.Path)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		preserved := preservedACLEntries(source, mosquitto.ParseACLDocument(file.Body))
+		previews = append(previews, ListenerACLPreview{
+			ListenerID:       file.ListenerID,
+			Path:             file.Path,
+			Body:             file.Body,
+			Diff:             diff,
+			AtRiskEntries:    atRisk,
+			PreservedEntries: preserved,
+		})
+	}
+
+	// The files of listeners that no longer own a scoped rule are removed,
+	// otherwise the listener would keep serving the access the operator
+	// deleted.
+	current := make(map[string]struct{}, len(rendered.ACLFiles))
+	for _, file := range rendered.ACLFiles {
+		current[file.Path] = struct{}{}
+	}
+	managed, err := s.managedACLFiles(ctx)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	for _, row := range managed {
+		if _, stillUsed := current[row.Path]; stillUsed {
+			continue
+		}
+		removed = append(removed, row.Path)
+		changed = true
+	}
+	sort.Strings(removed)
+
+	return previews, removed, changed, nil
 }
 
 // preservedACLEntries returns the verbatim lines of the adopted ACL source
@@ -1125,7 +1380,39 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	if contentHash(currentACLRendered) != revision.RenderedACLHash || contentHash(currentPasswdRendered) != revision.RenderedPasswdHash {
 		return storage.Deployment{}, ErrRevisionMismatch
 	}
+	// The per-listener files drift independently of the broker-wide one,
+	// so the file set is hashed as a whole.
+	if aclFilesHash(currentRendered.ACLFiles) != revision.RenderedACLFilesHash {
+		return storage.Deployment{}, ErrRevisionMismatch
+	}
 	aclRendered, passwdRendered := revision.ACLRendered, revision.PasswdRendered
+
+	// The apply writes exactly the content the preview showed: the
+	// broker-wide body and the per-listener bodies come from the revision.
+	listenerBodies, err := decodeListenerACLRendered(revision.ListenerACLRendered)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+	bodies := map[string]string{s.deployCfg.ACLPath: aclRendered}
+	for path, body := range listenerBodies {
+		bodies[path] = body
+	}
+	plan, err := s.planACLFiles(ctx, currentRendered, bodies)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("plan acl files: %w", err)
+	}
+
+	// Refuse an apply whose listener-scoped rules would never reach the
+	// broker: the configuration does not point the listener at the file MCM
+	// writes, or Mosquitto does not resolve the access control options per
+	// listener.
+	scopeIssues, err := s.scopeWiringIssues(ctx, currentRendered)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("evaluate acl scope wiring: %w", err)
+	}
+	if len(scopeIssues) > 0 {
+		return storage.Deployment{}, &ACLScopeNotWiredError{Issues: scopeIssues}
+	}
 
 	// Refuse a destructive apply: the render would drop ACL access that MCM
 	// can neither reproduce nor attribute to a managed MQTT user. The
@@ -1143,13 +1430,23 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 
 	// Issue #293: insert with status="saved" so the lifecycle starts
 	// at "rendered content exists, not yet applied to disk".
+	listenerSnapshots, err := listenerSnapshotJSON(plan)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+	listenerRendered, err := listenerRenderedJSON(plan)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
 	d := &storage.Deployment{
-		Actor:          actor,
-		Status:         "saved",
-		ACLSnapshot:    aclSnapshot,
-		PasswdSnapshot: passwdSnapshot,
-		ACLRendered:    aclRendered,
-		PasswdRendered: passwdRendered,
+		Actor:               actor,
+		Status:              "saved",
+		ACLSnapshot:         aclSnapshot,
+		PasswdSnapshot:      passwdSnapshot,
+		ACLRendered:         aclRendered,
+		PasswdRendered:      passwdRendered,
+		ListenerACLSnapshot: listenerSnapshots,
+		ListenerACLRendered: listenerRendered,
 	}
 	if err := s.deployStore.InsertDeployment(ctx, d); err != nil {
 		return storage.Deployment{}, fmt.Errorf("insert deployment: %w", err)
@@ -1174,11 +1471,28 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		return storage.Deployment{}, fmt.Errorf("consume preview revision: %w", err)
 	}
 
+	// The registry of the per-listener ACL files MCM owns follows the
+	// apply: it is captured before the write so a rollback can restore it.
+	previousManaged, err := s.managedACLFiles(ctx)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+
 	// Apply rendered configuration. The applier restores from snapshot
 	// internally on partial failure (issue #292).
-	applyErr := s.applier.Apply(ctx, aclRendered, passwdRendered, aclSnapshot, passwdSnapshot)
+	applyErr := s.applier.Apply(ctx, mosquitto.ApplyRequest{
+		ACLBody:          plan.Global.Body,
+		ACLSnapshot:      plan.Global.Snapshot,
+		ListenerACLFiles: plan.Listener,
+		RemovedACLFiles:  plan.Remove,
+		PasswdBody:       passwdRendered,
+		PasswdSnapshot:   passwdSnapshot,
+	})
 	if applyErr != nil {
 		return s.recordApplyFailure(ctx, actor, d, applyErr)
+	}
+	if err := s.recordManagedACLFiles(ctx, currentRendered); err != nil {
+		return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, err.Error(), previousManaged)
 	}
 
 	// Move to "pending_activation" — files on disk, reload signalled,
@@ -1212,7 +1526,7 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 			msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
 		}
 		if pendingActivationErr != nil {
-			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr)
+			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr, previousManaged)
 		}
 		if err := s.updateDeploymentStatus(d.ID, "active_verified", msg); err != nil {
 			return s.rollbackAfterPersistenceFailure(
@@ -1222,6 +1536,7 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 				aclSnapshot,
 				passwdSnapshot,
 				fmt.Errorf("persist active_verified status: %w", err),
+				previousManaged,
 			)
 		}
 		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
@@ -1238,9 +1553,9 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		msg = fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
 	}
 	if pendingActivationErr != nil {
-		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr))
+		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr), previousManaged)
 	}
-	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg)
+	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg, previousManaged)
 }
 
 // runVerifier invokes the ActiveVerifier with bounded retries and
@@ -1606,12 +1921,37 @@ func (s *Service) lookupCleartextPassword(username string) (string, bool) {
 	return s.passwordLookup.CleartextPassword(username)
 }
 
+// rollbackRequest builds the apply request that restores the broker from
+// the snapshot the deployment record carries.
+func (s *Service) rollbackRequest(d *storage.Deployment, aclSnapshot, passwdSnapshot string) mosquitto.ApplyRequest {
+	request := mosquitto.ApplyRequest{
+		ACLBody:        aclSnapshot,
+		PasswdBody:     passwdSnapshot,
+		PasswdSnapshot: "",
+	}
+	if snapshots, err := decodeListenerACLRendered(d.ListenerACLSnapshot); err == nil {
+		paths := make([]string, 0, len(snapshots))
+		for path := range snapshots {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			request.ListenerACLFiles = append(request.ListenerACLFiles,
+				mosquitto.ACLFile{Path: path, Body: snapshots[path]})
+		}
+	}
+	return request
+}
+
 // rollbackAfterVerifyFailure rolls back from snapshot after verification
 // exhausted retries and persists the appropriate status / audit event.
-func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot, msg string) (storage.Deployment, error) {
+//
+// The rollback restores every ACL file the apply touched: the broker-wide
+// file, the per-listener files and the files the apply deleted.
+func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot, msg string, previousManaged []storage.ManagedACLFileRow) (storage.Deployment, error) {
 	rollbackCtx, cancelRollback := context.WithTimeout(context.Background(), rollbackTimeout)
 	defer cancelRollback()
-	rollbackErr := s.applier.Apply(rollbackCtx, aclSnapshot, passwdSnapshot, "", "")
+	rollbackErr := s.applier.Apply(rollbackCtx, s.rollbackRequest(d, aclSnapshot, passwdSnapshot))
 	if rollbackErr != nil {
 		full := fmt.Sprintf("%s; rollback also failed: %s", msg, rollbackErr.Error())
 		statusErr := s.updateDeploymentStatus(d.ID, "rollback_failed", full)
@@ -1624,6 +1964,9 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 			return storage.Deployment{}, fmt.Errorf("verification rollback failed: %w; get deployment: %v", rollbackErr, getErr)
 		}
 		return deployment, fmt.Errorf("verification rollback failed: %w", rollbackErr)
+	}
+	if err := s.restoreManagedACLFiles(ctx, previousManaged); err != nil {
+		msg = fmt.Sprintf("%s; restore managed acl file registry: %s", msg, err.Error())
 	}
 	if err := s.updateDeploymentStatus(d.ID, "rolled_back", msg); err != nil {
 		return storage.Deployment{}, fmt.Errorf("persist rolled_back status: %w", err)
@@ -1642,8 +1985,8 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 // safety path. A successful rollback leaves a known broker state but still
 // reports the persistence failure; a failed rollback makes the full state
 // indeterminate.
-func (s *Service) rollbackAfterPersistenceFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot string, persistenceErr error) (storage.Deployment, error) {
-	deployment, rollbackErr := s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, persistenceErr.Error())
+func (s *Service) rollbackAfterPersistenceFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot string, persistenceErr error, previousManaged []storage.ManagedACLFileRow) (storage.Deployment, error) {
+	deployment, rollbackErr := s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, persistenceErr.Error(), previousManaged)
 	if rollbackErr != nil {
 		return deployment, fmt.Errorf("%w: %w; rollback: %w", ErrDeploymentStateIndeterminate, persistenceErr, rollbackErr)
 	}
