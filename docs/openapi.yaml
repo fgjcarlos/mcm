@@ -1434,7 +1434,12 @@ components:
       additionalProperties: false
     ACLPermission:
       type: string
-      enum: [read, write, readwrite]
+      description: >-
+        Permission of an ACL rule. `deny` blocks the topic filter for the
+        principal and requires Mosquitto 2.0 or later; `read`, `write` and
+        `readwrite` grant access and work on every supported Mosquitto
+        version. A deny rule never grants access.
+      enum: [read, write, readwrite, deny]
     JSONSchemaDefinition:
       type: object
       properties:

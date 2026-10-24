@@ -13,13 +13,25 @@ const (
 	PermissionRead      Permission = "read"
 	PermissionWrite     Permission = "write"
 	PermissionReadWrite Permission = "readwrite"
+	// PermissionDeny denies the action. Mosquitto 2.0 introduced it.
+	PermissionDeny Permission = "deny"
 )
 
 var validPermissions = map[Permission]struct{}{
 	PermissionRead:      {},
 	PermissionWrite:     {},
 	PermissionReadWrite: {},
+	PermissionDeny:      {},
 }
+
+// SupportedMosquittoVersion is the Mosquitto runtime MCM manages. Version
+// dependent native ACL features are validated against it. MCM does not
+// discover the runtime version of a broker on its own.
+const SupportedMosquittoVersion = "2.0"
+
+// MinimumDenyPermissionVersion is the earliest Mosquitto version that
+// understands the "deny" ACL permission.
+const MinimumDenyPermissionVersion = "2.0"
 
 // Rule represents one ACL entry managed by MCM.
 type Rule struct {
@@ -39,8 +51,17 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("acl validation failed: %s", strings.Join(e.Problems, "; "))
 }
 
-// ValidateRule validates a rule before it is persisted.
+// ValidateRule validates a rule before it is persisted against the
+// Mosquitto version MCM supports.
 func ValidateRule(rule Rule) error {
+	return ValidateRuleForMosquittoVersion(rule, SupportedMosquittoVersion)
+}
+
+// ValidateRuleForMosquittoVersion validates a rule against a specific
+// Mosquitto version. It exists so a version dependent native feature
+// (today: the "deny" permission) can be checked without inventing runtime
+// version discovery.
+func ValidateRuleForMosquittoVersion(rule Rule, version string) error {
 	var problems []string
 
 	if strings.TrimSpace(rule.Principal) == "" {
@@ -54,7 +75,9 @@ func ValidateRule(rule Rule) error {
 		problems = append(problems, err.Error())
 	}
 	if _, ok := validPermissions[rule.Permission]; !ok {
-		problems = append(problems, `permission must be one of: "read", "write", "readwrite"`)
+		problems = append(problems, `permission must be one of: "read", "write", "readwrite", "deny"`)
+	} else if rule.Permission == PermissionDeny && !mosquittoVersionAtLeast(version, MinimumDenyPermissionVersion) {
+		problems = append(problems, fmt.Sprintf("permission %q requires mosquitto %s or later", PermissionDeny, MinimumDenyPermissionVersion))
 	}
 
 	if len(problems) > 0 {
@@ -93,6 +116,57 @@ func ValidateTopicFilter(filter string) error {
 	}
 
 	return nil
+}
+
+// mosquittoVersionAtLeast reports whether a dotted numeric Mosquitto
+// version is greater than or equal to a minimum version. An unparsable
+// version never satisfies the minimum.
+func mosquittoVersionAtLeast(version string, minimum string) bool {
+	current, ok := parseMosquittoVersion(version)
+	if !ok {
+		return false
+	}
+	required, ok := parseMosquittoVersion(minimum)
+	if !ok {
+		return false
+	}
+	for idx := 0; idx < len(current) || idx < len(required); idx++ {
+		var currentPart, requiredPart int
+		if idx < len(current) {
+			currentPart = current[idx]
+		}
+		if idx < len(required) {
+			requiredPart = required[idx]
+		}
+		if currentPart != requiredPart {
+			return currentPart > requiredPart
+		}
+	}
+	return true
+}
+
+// parseMosquittoVersion parses a dotted numeric version such as "2.0".
+func parseMosquittoVersion(version string) ([]int, bool) {
+	trimmed := strings.TrimSpace(version)
+	if trimmed == "" {
+		return nil, false
+	}
+	parts := strings.Split(trimmed, ".")
+	numbers := make([]int, 0, len(parts))
+	for _, part := range parts {
+		number := 0
+		if part == "" {
+			return nil, false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return nil, false
+			}
+			number = number*10 + int(r-'0')
+		}
+		numbers = append(numbers, number)
+	}
+	return numbers, true
 }
 
 func containsControlCharacter(value string) bool {

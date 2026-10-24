@@ -239,10 +239,16 @@ func encodeRemainingLength(length int) ([]byte, error) {
 // against the live broker with credentials and topic filters derived from
 // the rendered ACL/passwd bodies — not from a cached "applied" state.
 type VerifyActiveOptions struct {
-	Config           config.MosquittoConfig
-	Username         string
-	Password         string
-	AllowedTopic     string
+	Config   config.MosquittoConfig
+	Username string
+	Password string
+	// AllowedTopic is the concrete topic the positive stage subscribes
+	// to and publishes on.
+	AllowedTopic string
+	// DeniedTopic is the topic the caller believes the ACL denies. It is
+	// kept for API compatibility and is not consumed by the negative
+	// stage, which authenticates an unknown user instead of evaluating
+	// a topic permission.
 	DeniedTopic      string
 	DialTimeout      time.Duration
 	RoundTripTimeout time.Duration
@@ -277,14 +283,19 @@ func (f VerifierFunc) VerifyActive(ctx context.Context, opts VerifyActiveOptions
 //     subscriber receives the message. This proves the broker is
 //     accepting the new passwd credentials AND honouring the new ACL
 //     grant.
-//  2. Negative — subscribe to a topic the new ACL denies and assert the
-//     broker returns SUBACK failure (return code 0x80). This proves the
-//     broker is enforcing the new ACL denials, not silently allowing
-//     everything.
+//  2. Negative — authenticate with a username that is absent from the
+//     rendered passwd and assert the broker rejects the connection.
+//     This proves the broker enforces the new authentication.
 //
 // Both checks must pass for the result to be OK. The caller (deploy
 // service) is expected to invoke VerifyActive with bounded retries and
 // backoff and to roll back from snapshot on persistent failure.
+//
+// Limit: the negative stage covers authentication only. It does not
+// assert that a topic is denied, so a broker that accepts every
+// subscription still passes. Checking the effective permission table
+// (deny lines, pattern lines, the anonymous section) needs a broker
+// runtime check and is out of scope for this verifier.
 func VerifyActive(ctx context.Context, opts VerifyActiveOptions) VerifyActiveResult {
 	if opts.DialTimeout == 0 {
 		opts.DialTimeout = 2 * time.Second
@@ -373,12 +384,15 @@ func runPositiveTest(ctx context.Context, broker string, opts VerifyActiveOption
 }
 
 // runNegativeTest attempts to authenticate with a username that does
-// NOT exist in the rendered passwd. Mosquitto has default-allow for
-// unmatched ACL topics (unlike mochi), so a "subscribe to denied
-// topic" check is unreliable; instead we verify that an unknown user
-// is REJECTED outright. A positive test (subscribe+publish on a granted
-// topic) covers the ACL path; this negative test covers the auth path
-// — together they prove both halves of the rendered config are active.
+// NOT exist in the rendered passwd and asserts the broker rejects the
+// connection.
+//
+// The check covers the authentication path, not the topic authorization
+// path: the in-process mochi broker used by the tests allows every topic
+// that is not explicitly denied, so a "subscribe to a denied topic"
+// assertion would not be reliable there. A positive test (subscribe plus
+// publish on a granted topic) covers the ACL path; together they show
+// that both halves of the rendered config are active.
 func runNegativeTest(ctx context.Context, broker string, opts VerifyActiveOptions) (string, bool) {
 	clientOpts := newPahoOptions(broker, "mcm-verify-neg-"+randSuffix(), "mcm-verify-nonexistent-user", "mcm-verify-dummy-pass", opts.TLS, opts.DialTimeout)
 	client := mqtt.NewClient(clientOpts)

@@ -10,6 +10,9 @@ import (
 // RenderACLFile produces a Mosquitto-compatible ACL file body.
 // Rules are grouped by Principal (lexicographic sort), with "user <principal>"
 // header per group and blank lines between groups.
+//
+// A deny rule renders as a `topic deny <topic_filter>` line: Mosquitto 2.0
+// understands the deny permission in the same directive as the grants.
 // Empty input returns "".
 func RenderACLFile(rules []acl.Rule) string {
 	if len(rules) == 0 {
@@ -105,7 +108,7 @@ func mosquittoPermToACLPerm(perm string) string {
 	case "readwrite":
 		return string(acl.PermissionReadWrite)
 	case "deny":
-		return "deny"
+		return string(acl.PermissionDeny)
 	default:
 		return ""
 	}

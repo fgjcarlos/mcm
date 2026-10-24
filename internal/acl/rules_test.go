@@ -232,6 +232,38 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 			t.Errorf("expected *ValidationError, got %T", err)
 		}
 	})
+
+	t.Run("create and list round-trip a deny rule", func(t *testing.T) {
+		// The deny permission is a stored value, not a transient one:
+		// it must survive the create/list round trip unchanged.
+		freshStore := acl.NewMemoryStore()
+
+		created, err := freshStore.CreateRule(ctx, acl.Rule{
+			Principal:   "alice",
+			TopicFilter: "sensors/#",
+			Permission:  acl.PermissionDeny,
+		})
+		if err != nil {
+			t.Fatalf("CreateRule(deny) returned error: %v", err)
+		}
+		if created.Permission != acl.PermissionDeny {
+			t.Errorf("created permission = %q, want %q", created.Permission, acl.PermissionDeny)
+		}
+
+		rules, err := freshStore.ListRules(ctx)
+		if err != nil {
+			t.Fatalf("ListRules returned error: %v", err)
+		}
+		if len(rules) != 1 {
+			t.Fatalf("expected 1 rule, got %d", len(rules))
+		}
+		if rules[0].Permission != acl.PermissionDeny {
+			t.Errorf("listed permission = %q, want %q", rules[0].Permission, acl.PermissionDeny)
+		}
+		if rules[0].Principal != "alice" || rules[0].TopicFilter != "sensors/#" {
+			t.Errorf("listed rule = %#v, want principal alice and topic sensors/#", rules[0])
+		}
+	})
 }
 
 // TestMemoryStoreRunsContract verifies that MemoryStore implements the Store contract.

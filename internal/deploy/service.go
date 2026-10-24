@@ -471,6 +471,11 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 	return aclBody, passwdBody, orphanRules, nil
 }
 
+// serviceHealthcheckTopic is the topic of the grant MCM always emits for
+// the managed broker service account. The deploy healthcheck authenticates
+// with that account and uses this grant.
+const serviceHealthcheckTopic = "mcm/healthcheck"
+
 // serviceUserACL returns the set of ACL rules MCM always emits for the
 // broker service user (MCM_MOSQUITTO_USERNAME). The list is the minimum
 // the runtime needs to keep working after every apply:
@@ -493,7 +498,7 @@ func serviceUserACL(username string) []acl.Rule {
 		},
 		{
 			Principal:   username,
-			TopicFilter: "mcm/healthcheck",
+			TopicFilter: serviceHealthcheckTopic,
 			Permission:  acl.PermissionReadWrite,
 		},
 	}
@@ -894,11 +899,11 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Bounded-retry verification (issue #293, acceptance criterion 4).
-	verifyResult, attempts := s.runVerifier(ctx, aclRendered, passwdRendered)
+	verifyResult, attempts, probeKind := s.runVerifier(ctx, aclRendered, passwdRendered)
 	if verifyResult.OK {
-		msg := ""
+		msg := fmt.Sprintf("activation probe: %s", probeKind)
 		if attempts > 1 {
-			msg = fmt.Sprintf("verified after %d attempts", attempts)
+			msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
 		}
 		if pendingActivationErr != nil {
 			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr)
@@ -930,22 +935,22 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 }
 
 // runVerifier invokes the ActiveVerifier with bounded retries and
-// backoff. Returns the last result and the number of attempts made.
+// backoff. Returns the last result, the number of attempts made and the
+// kind of probe that was exercised.
 // The verifier context is bounded by HealthcheckTimeout so the deploy
 // respects the operator's overall budget.
-func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int) {
-	// Pick a test user + topics from the rendered config. If we cannot
-	// find a usable test subject, the verifier is invoked with empty
-	// credentials/topics and will fail — the deploy is then rolled back.
-	testUser, allowedTopic, deniedTopic := s.pickVerificationSubject(ctx, aclBody, passwdBody)
-	password, hasPassword := s.lookupCleartextPassword(testUser)
-	if testUser == "" || !hasPassword || allowedTopic == "" || deniedTopic == "" {
+func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int, verificationProbeKind) {
+	// Pick the probe identity and topic from the rendered config. If no
+	// usable probe exists the verifier is never invoked and the deploy is
+	// rolled back.
+	probe, ok := s.pickVerificationProbe(ctx, aclBody, passwdBody)
+	if !ok {
 		return diagnostics.VerifyActiveResult{
 			OK:              false,
 			Stage:           "setup",
-			Message:         "no test subject available (need a non-service user with an ACL grant and a known cleartext password)",
-			PositiveMessage: "skipped: no test subject",
-		}, 0
+			Message:         "no activation probe available (need a user grant with a known cleartext password, or the configured managed service account)",
+			PositiveMessage: "skipped: no activation probe",
+		}, 0, ""
 	}
 
 	timeout := s.deployCfg.HealthcheckTimeout
@@ -958,10 +963,10 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		verifyCtx, cancel := context.WithTimeout(ctx, timeout)
 		result := s.verifier.VerifyActive(verifyCtx, diagnostics.VerifyActiveOptions{
 			Config:           s.mosquittoCfg,
-			Username:         testUser,
-			Password:         password,
-			AllowedTopic:     allowedTopic,
-			DeniedTopic:      deniedTopic,
+			Username:         probe.username,
+			Password:         probe.password,
+			AllowedTopic:     probe.allowedTopic,
+			DeniedTopic:      probe.deniedTopic,
 			DialTimeout:      2 * time.Second,
 			RoundTripTimeout: 2 * time.Second,
 			SubTimeout:       2 * time.Second,
@@ -969,33 +974,65 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		cancel()
 		last = result
 		if result.OK {
-			return result, attempt
+			return result, attempt, probe.kind
 		}
 		if attempt < verifyAttempts {
 			select {
 			case <-time.After(time.Duration(attempt) * verifyBackoff):
 			case <-ctx.Done():
 				last.Message = fmt.Sprintf("verification cancelled after %d attempts: %v", attempt, ctx.Err())
-				return last, attempt
+				return last, attempt, probe.kind
 			}
 		}
 	}
-	return last, verifyAttempts
+	last.Message = fmt.Sprintf("%s (activation probe: %s)", last.Message, probe.kind)
+	return last, verifyAttempts, probe.kind
 }
 
-// pickVerificationSubject picks a non-service user from the rendered
-// passwd, the first topic granted to that user, and a topic the user
-// does NOT have access to (negative test). Returns empty strings when
-// no suitable subject is available.
-func (s *Service) pickVerificationSubject(_ context.Context, aclBody, passwdBody string) (user, allowed, denied string) {
+// verificationProbeKind labels how the deploy activation probe was built,
+// so the deployment status can say what was actually exercised.
+type verificationProbeKind string
+
+const (
+	// probeKindUserGrant probes a user-scoped grant as that user.
+	probeKindUserGrant verificationProbeKind = "user grant"
+	// probeKindServiceGrant probes the managed service account and the
+	// grant MCM always emits for it. It is an operational fallback: it
+	// shows that the broker serves the freshly rendered credentials and
+	// the service grant, not that every client permission is correct.
+	probeKindServiceGrant verificationProbeKind = "managed service healthcheck grant (operational fallback)"
+)
+
+// verificationProbe is the identity and the topic the deploy verifier
+// exercises after a deploy.
+type verificationProbe struct {
+	username     string
+	password     string
+	allowedTopic string
+	deniedTopic  string
+	kind         verificationProbeKind
+}
+
+// pickVerificationProbe picks the identity and the topic the deploy
+// verifier exercises.
+//
+// A deny rule is not a grant: it never activates an action, so it is never
+// selected as the positive probe. When the policy grants nothing usable,
+// the probe falls back to the managed service account and the grant MCM
+// always emits for it. That fallback is operational: it shows the broker
+// serves the freshly rendered credentials and the service grant, not that
+// every client permission is correct.
+//
+// A grant whose identity has no known cleartext password yields no probe
+// at all: the verifier must never invent credentials, and the deploy fails
+// instead of falling back to the service account.
+func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody string) (verificationProbe, bool) {
 	entries := mosquitto.ParsePasswdFile(passwdBody)
 	rules := mosquitto.ParseACLFile(aclBody)
-	if len(entries) == 0 || len(rules) == 0 {
-		return "", "", ""
-	}
+
 	for _, e := range entries {
-		// Skip the service user — it has # access so the negative test
-		// would be vacuous.
+		// Skip the service user — it has # access, so it is never the
+		// probe subject. It is used only as the labelled fallback below.
 		if e.Username == s.mosquittoCfg.Username && s.mosquittoCfg.Username != "" {
 			continue
 		}
@@ -1003,12 +1040,88 @@ func (s *Service) pickVerificationSubject(_ context.Context, aclBody, passwdBody
 			if r.Principal != e.Username {
 				continue
 			}
-			allowed = r.TopicFilter
-			denied = r.TopicFilter + "/denied"
-			return e.Username, allowed, denied
+			if r.Permission == acl.PermissionDeny {
+				// A deny is not a grant: probing it would exercise a
+				// topic the policy blocks.
+				continue
+			}
+			password, hasPassword := s.lookupCleartextPassword(e.Username)
+			if !hasPassword || password == "" {
+				return verificationProbe{}, false
+			}
+			return verificationProbe{
+				username:     e.Username,
+				password:     password,
+				allowedTopic: r.TopicFilter,
+				deniedTopic:  deniedTopicFor(rules, e.Username),
+				kind:         probeKindUserGrant,
+			}, true
 		}
 	}
-	return "", "", ""
+
+	return s.serviceVerificationProbe(entries, rules)
+}
+
+// serviceVerificationProbe builds the operational fallback probe: the
+// managed service account and the grant MCM always emits for it.
+//
+// It is an operational fallback, not a proof of the client policy: it
+// shows that the broker serves the freshly rendered credentials and the
+// service grant. The fallback is only used when the service account is
+// configured with known credentials, is present in the rendered passwd and
+// owns the generated readwrite healthcheck grant in the rendered ACL. Any
+// other rule that grants the service account a topic is not the generated
+// healthcheck grant and is never used as the fallback probe.
+func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rules []acl.Rule) (verificationProbe, bool) {
+	username := s.mosquittoCfg.Username
+	password := s.mosquittoCfg.Password
+	if username == "" || password == "" {
+		return verificationProbe{}, false
+	}
+
+	provisioned := false
+	for _, e := range entries {
+		if e.Username == username {
+			provisioned = true
+			break
+		}
+	}
+	if !provisioned {
+		return verificationProbe{}, false
+	}
+
+	for _, r := range rules {
+		if r.Principal != username || r.Permission != acl.PermissionReadWrite {
+			continue
+		}
+		if r.TopicFilter != serviceHealthcheckTopic && r.TopicFilter != "" {
+			continue
+		}
+		return verificationProbe{
+			username:     username,
+			password:     password,
+			allowedTopic: r.TopicFilter,
+			deniedTopic:  deniedTopicFor(rules, username),
+			kind:         probeKindServiceGrant,
+		}, true
+	}
+	return verificationProbe{}, false
+}
+
+// deniedTopicFor returns the topic filter the rendered ACL explicitly
+// denies for the given identity, or "" when the ACL denies nothing for it.
+//
+// The negative stage of the verifier authenticates an unknown user and does
+// not consume this topic. The value documents what the policy denies; it is
+// not a permission evaluation of the rendered ACL.
+func deniedTopicFor(rules []acl.Rule, identity string) string {
+	for _, r := range rules {
+		if r.Principal != identity || r.Permission != acl.PermissionDeny {
+			continue
+		}
+		return r.TopicFilter
+	}
+	return ""
 }
 
 // lookupCleartextPassword returns the cleartext password for the test

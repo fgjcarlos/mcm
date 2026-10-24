@@ -7,7 +7,7 @@ Each ACL rule contains:
 - `id`: MCM-generated rule identifier.
 - `principal`: the Mosquitto username or application identity the rule applies to.
 - `topic_filter`: an MQTT topic filter, including MQTT wildcards such as `+` and `#`.
-- `permission`: one of `read`, `write`, or `readwrite`.
+- `permission`: one of `read`, `write`, `readwrite`, or `deny`.
 - `description`: optional operator-facing note.
 
 ## REST endpoints
@@ -95,7 +95,67 @@ user writer
 topic readwrite factory/line1/#
 ```
 
+## Deny permission
+
+`deny` blocks a topic filter for a principal. It is the counterpart of the
+grant permissions, not a stronger grant: a deny rule never activates an
+action.
+
+- `deny` requires Mosquitto 2.0 or later. On older brokers MCM rejects the
+  rule with a validation error instead of rendering a line the broker would
+  ignore.
+- `read`, `write` and `readwrite` keep working on every supported Mosquitto
+  version.
+
+Example request:
+
+```json
+{
+  "principal": "operator",
+  "topic_filter": "factory/#",
+  "permission": "deny",
+  "description": "Block the factory tree for this principal"
+}
+```
+
+Mosquitto ACL output:
+
+```text
+user operator
+topic deny factory/#
+```
+
+The rule round-trips through the API and the store unchanged: create, list,
+update and delete all preserve the `deny` permission.
+
 The current implementation stores ACL rules in memory so the API and validation logic stay isolated and easy to test. Persisting the same model in SQLite can be added later without changing the HTTP contract.
+
+## Deployment activation probe
+
+After a deploy, MCM runs an activation probe against the broker it just
+configured. The probe has two stages:
+
+- Positive: subscribe to a granted topic and publish a message as the same
+  user. This proves the broker serves the freshly rendered credentials and
+  honours the rendered grants.
+- Negative: authenticate with a username that is absent from the rendered
+  passwd and expect the connection to be rejected. This proves the
+  authentication path is enforced. It does **not** prove that a topic
+  denial is enforced: the negative stage never evaluates a topic
+  permission, so MCM does not claim deny enforcement from this check.
+
+The probe subject is a user-scoped grant. A deny rule is never chosen as
+the probe subject, because a deny is not a grant.
+
+When the policy grants nothing usable — a deny-only policy is the typical
+case — MCM falls back to the managed service account and the `mcm/healthcheck`
+grant it always emits for that account. The fallback requires a configured
+service account with known credentials and the generated healthcheck grant in
+the rendered ACL. The deployment status labels that probe as an
+*operational fallback*: it shows that the broker serves the new credentials
+and the service grant, not that every client permission is correct. When the
+fallback is not available, the deploy fails and rolls back instead of
+reporting an unverified activation.
 
 ## Security event visibility
 

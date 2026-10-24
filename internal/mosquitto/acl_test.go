@@ -63,3 +63,61 @@ func TestRenderACLFile(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderACLFileRendersDenyPermission pins that a deny rule renders as
+// a native Mosquitto `topic deny` line inside the user section.
+func TestRenderACLFileRendersDenyPermission(t *testing.T) {
+	t.Parallel()
+
+	rules := []acl.Rule{
+		{Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionDeny},
+	}
+
+	want := "user alice\ntopic deny sensors/#"
+
+	if got := RenderACLFile(rules); got != want {
+		t.Fatalf("RenderACLFile() =\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// TestParseACLFileReadsDenyPermission pins that the parser recognises the
+// deny permission keyword.
+func TestParseACLFileReadsDenyPermission(t *testing.T) {
+	t.Parallel()
+
+	body := "user alice\ntopic deny sensors/#"
+
+	rules := ParseACLFile(body)
+
+	if len(rules) != 1 {
+		t.Fatalf("ParseACLFile() returned %d rules, want 1: %#v", len(rules), rules)
+	}
+	if rules[0].Permission != acl.PermissionDeny {
+		t.Fatalf("Permission = %q, want %q", rules[0].Permission, acl.PermissionDeny)
+	}
+	if rules[0].Principal != "alice" || rules[0].TopicFilter != "sensors/#" {
+		t.Fatalf("parsed rule = %#v, want principal alice and topic sensors/#", rules[0])
+	}
+}
+
+// TestRenderParseACLFileRoundTripsDeny pins that a rendered deny rule
+// parses back into the same rule.
+func TestRenderParseACLFileRoundTripsDeny(t *testing.T) {
+	t.Parallel()
+
+	rules := []acl.Rule{
+		{Principal: "alice", TopicFilter: "sensors/+/temperature", Permission: acl.PermissionDeny},
+		{Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionReadWrite},
+	}
+
+	parsed := ParseACLFile(RenderACLFile(rules))
+
+	if len(parsed) != len(rules) {
+		t.Fatalf("round-trip returned %d rules, want %d: %#v", len(parsed), len(rules), parsed)
+	}
+	for idx := range rules {
+		if parsed[idx] != rules[idx] {
+			t.Fatalf("round-trip rule[%d] = %#v, want %#v", idx, parsed[idx], rules[idx])
+		}
+	}
+}
