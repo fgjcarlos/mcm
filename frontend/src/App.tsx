@@ -55,11 +55,25 @@ type Deployment = {
   created_at: string
 }
 
+type ListenerACLFilePreview = {
+  listener_id: string
+  path: string
+  body?: string
+  diff?: string
+  at_risk_entries?: string[]
+  preserved_entries?: string[]
+}
+
 type DeployPreview = {
   revision_id: string
   acl_diff: string
   passwd_diff: string
   orphan_rules?: ACLRule[]
+  at_risk_entries?: string[]
+  preserved_entries?: string[]
+  composition_warnings?: string[]
+  listener_acl_files?: ListenerACLFilePreview[]
+  removed_acl_files?: string[]
   scope_issues?: string[]
   scope_pending_activation?: string[]
   has_changes: boolean
@@ -1465,6 +1479,80 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                     </tbody>
                   </table>
                 </div>
+              </div>
+            ) : null}
+            {preview.at_risk_entries?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Access at risk</p>
+                  <span className="rounded-full bg-amber-300/15 px-2.5 py-1 text-xs font-semibold text-amber-100">{preview.at_risk_entries.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-amber-50">The current file grants these entries and the rendered one does not. The deploy would drop that access.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+                  {preview.at_risk_entries.map((entry) => (
+                    <li key={entry} className="break-all">{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.preserved_entries?.length ? (
+              <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Preserved entries</p>
+                  <span className="rounded-full bg-emerald-300/15 px-2.5 py-1 text-xs font-semibold text-emerald-100">{preview.preserved_entries.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-emerald-50">These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-emerald-50">
+                  {preview.preserved_entries.map((entry) => (
+                    <li key={entry} className="break-all">{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.composition_warnings?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Composition warnings</p>
+                <ul className="mt-3 space-y-2 text-sm text-amber-50">
+                  {preview.composition_warnings.map((warning) => (
+                    <li key={warning} className="break-words">{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.listener_acl_files?.length ? (
+              <div className="space-y-4">
+                {preview.listener_acl_files.map((file) => (
+                  <div key={file.path} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+                        Listener file — {file.listener_id}
+                      </p>
+                      <span className="break-all font-mono text-xs text-slate-400">{file.path}</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      This listener reads only this file, so its rules apply to that listener alone.
+                    </p>
+                    {file.at_risk_entries?.length ? (
+                      <ul className="mt-3 space-y-1 font-mono text-xs text-amber-100">
+                        {file.at_risk_entries.map((entry) => (
+                          <li key={entry} className="break-all">at risk: {entry}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {file.diff ? <div className="mt-4"><DiffBlock content={file.diff} /></div> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {preview.removed_acl_files?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Files the deploy would delete</p>
+                <p className="mt-2 text-sm leading-6 text-amber-50">These listener files lose their last scoped rule, so the deploy removes them.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+                  {preview.removed_acl_files.map((path) => (
+                    <li key={path} className="break-all">{path}</li>
+                  ))}
+                </ul>
               </div>
             ) : null}
             {preview.scope_issues?.length ? (

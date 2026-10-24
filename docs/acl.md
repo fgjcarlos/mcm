@@ -336,6 +336,11 @@ MCM:
 The adoption works per path, so the ACL file of a listener can be adopted
 the same way as the broker-wide one.
 
+The deploy preview of the graphical interface shows that impact: the access
+at risk, the lines that survive, the file of every listener that owns
+scoped rules (`listener_acl_files`) and the files the deploy would delete
+(`removed_acl_files`).
+
 ## Validation
 
 MCM rejects a rule with HTTP `400` and a top-level `error` plus detailed

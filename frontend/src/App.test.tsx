@@ -1242,6 +1242,46 @@ describe('App', () => {
     expect(screen.queryByText('Pending listener activation')).not.toBeInTheDocument()
   })
 
+  it('shows the impact of the import and the files of the listeners', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'impact-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('impact-token'),
+      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-impact',
+        acl_diff: '-topic read sensors/#',
+        passwd_diff: '',
+        at_risk_entries: ['user alice|sensors/#|read'],
+        preserved_entries: ['topic readwrite devices/%u/data'],
+        listener_acl_files: [
+          {
+            listener_id: 'plant',
+            path: '/mosquitto/config/acl.plant',
+            diff: '+user plant\n+topic readwrite plant/#',
+          },
+        ],
+        removed_acl_files: ['/mosquitto/config/acl.retired'],
+        has_changes: true,
+      }),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+    expect(await screen.findByText('Access at risk')).toBeInTheDocument()
+    expect(screen.getByText('user alice|sensors/#|read')).toBeInTheDocument()
+    expect(screen.getByText('Preserved entries')).toBeInTheDocument()
+    expect(screen.getByText('topic readwrite devices/%u/data')).toBeInTheDocument()
+    expect(screen.getByText('Listener file — plant')).toBeInTheDocument()
+    expect(screen.getByText('/mosquitto/config/acl.plant')).toBeInTheDocument()
+    expect(screen.getByText('Files the deploy would delete')).toBeInTheDocument()
+    expect(screen.getByText('/mosquitto/config/acl.retired')).toBeInTheDocument()
+  })
+
   // FIX 2: Deploy panel shows friendly 403 message, does not log out
   describe('Deploy panel 403 forbidden handling', () => {
     function deployRoutesWithForbiddenPreview(): Record<string, RouteHandler> {
