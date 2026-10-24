@@ -224,6 +224,24 @@ jobs:
   # one. The job depends on `image` and reuses the mcm:dev image via
   # the artifact uploaded above so we do not rebuild the frontend in
   # a second job.
+  e2e-acl-semantics:
+    name: Native ACL semantics against a live Mosquitto
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Native ACL semantics against a real broker
+        # Issue #301 acceptance criteria: the semantics MCM models are
+        # the semantics of the broker, so they are proven against a real
+        # Mosquitto 2.0 — a deny handled before a grant, the anonymous
+        # section, the pattern rules and the per-listener ACL file.
+        run: bash scripts/tests/test-e2e-acl-semantics.sh
+
   e2e-deploy:
     name: E2E deploy flow against live Mosquitto
     runs-on: ubuntu-latest
