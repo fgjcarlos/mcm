@@ -67,7 +67,8 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 		return verification
 	}
 
-	tlsConfig, reason := buildVerifyConfig(files, leaf[0])
+	state := &verifyState{}
+	tlsConfig, reason := buildVerifyConfig(files, leaf[0], state)
 	if tlsConfig == nil {
 		verification.Status = TLSStatusUnverified
 		verification.Reason = reason
@@ -88,7 +89,7 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 	handshakeCtx, cancel := context.WithTimeout(ctx, s.verifyTimeout)
 	defer cancel()
 	if err := conn.HandshakeContext(handshakeCtx); err != nil {
-		if isClientCertificateRequired(err) {
+		if state.clientCertificateRequested || isClientCertificateRequired(err) {
 			verification.Status = TLSStatusUnverified
 			verification.Reason = "the listener requires a client certificate that MCM does not own"
 			verification.Detail = err.Error()
@@ -97,6 +98,17 @@ func (s *Service) verifyListener(ctx context.Context, profileName string, spec s
 		verification.Status = TLSStatusFailed
 		verification.Reason = "the TLS handshake with the listener failed"
 		verification.Detail = err.Error()
+		return verification
+	}
+
+	// TLS 1.3 completes the handshake before the broker rejects the
+	// missing client certificate, so the rejection is invisible to the
+	// handshake itself. The certificate request still proves that the
+	// listener expects a client certificate MCM does not own, which is
+	// reported as unverified instead of a verified listener.
+	if state.clientCertificateRequested {
+		verification.Status = TLSStatusUnverified
+		verification.Reason = "the listener requires a client certificate that MCM does not own"
 		return verification
 	}
 
@@ -129,11 +141,22 @@ func (s *Service) dialListener(ctx context.Context, address string) (net.Conn, e
 	}
 }
 
+// verifyState carries what one verification handshake observed.
+type verifyState struct {
+	// clientCertificateRequested records that the broker asked the client
+	// for a certificate.
+	//
+	// The verification client never owns a client certificate, so the
+	// request is detected from the handshake itself instead of from the
+	// wording of the alert: the wording depends on the TLS version.
+	clientCertificateRequested bool
+}
+
 // buildVerifyConfig builds the TLS configuration used to check a listener.
 //
 // The broker is reached by service name, so the certificate is verified
 // against its own subject alternative names instead of the dial address.
-func buildVerifyConfig(files certs.Files, leaf *x509.Certificate) (*tls.Config, string) {
+func buildVerifyConfig(files certs.Files, leaf *x509.Certificate, state *verifyState) (*tls.Config, string) {
 	pool := x509.NewCertPool()
 	trusted := false
 	if files.CAPath != "" {
@@ -164,6 +187,10 @@ func buildVerifyConfig(files certs.Files, leaf *x509.Certificate) (*tls.Config, 
 		RootCAs:    pool,
 		ServerName: serverName,
 		MinVersion: tls.VersionTLS12,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			state.clientCertificateRequested = true
+			return &tls.Certificate{}, nil
+		},
 	}, ""
 }
 

@@ -405,6 +405,105 @@ func TestApplyWaitsForTheBrokerToAcceptConnectionsAfterTheRestart(t *testing.T) 
 	}
 }
 
+// startMutualTLSListener starts a TLS listener that demands a client
+// certificate signed by the given certificate authority.
+//
+// The verification client owns no client certificate, so the handshake
+// cannot succeed: the listener must be reported as unverified instead of
+// failing the activation.
+func startMutualTLSListener(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, commonName string, maxVersion uint16) int {
+	t.Helper()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(ca)
+	listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{listenerCertificate(t, ca, caKey, commonName)},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    pool,
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   maxVersion,
+	})
+	if err != nil {
+		t.Fatalf("start the mutual tls listener: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if tlsConn, ok := conn.(*tls.Conn); ok {
+					_ = tlsConn.Handshake()
+				}
+			}()
+		}
+	}()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func TestApplyDoesNotFailAMutualTLSListener(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxVersion uint16
+		want       string
+	}{
+		{
+			// TLS 1.2 rejects the missing client certificate during the
+			// handshake.
+			name:       "the handshake is rejected",
+			maxVersion: tls.VersionTLS12,
+			want:       TLSStatusUnverified,
+		},
+		{
+			// TLS 1.3 completes the handshake before the broker rejects
+			// the missing client certificate, so the rejection is only
+			// visible through the certificate request.
+			name:       "the handshake completes",
+			maxVersion: tls.VersionTLS13,
+			want:       TLSStatusUnverified,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service, repo, _ := serviceFixture(t)
+			ctx := context.Background()
+
+			material, ca, caKey := materialWithCA(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
+			port := startMutualTLSListener(t, ca, caKey, "broker.example.com", test.maxVersion)
+			if _, err := repo.InsertListenerSpec(ctx, storage.ListenerSpecRow{
+				ID:         "mtls-listener",
+				Port:       port,
+				Bind:       "0.0.0.0",
+				Protocols:  []string{"mqtt"},
+				TLSProfile: "production",
+			}); err != nil {
+				t.Fatalf("InsertListenerSpec returned error: %v", err)
+			}
+
+			revision, err := service.CreateRevision(ctx, "operator", "production", "", material, false)
+			if err != nil {
+				t.Fatalf("CreateRevision returned error: %v", err)
+			}
+			result, err := service.Apply(ctx, "admin", "production", revision.RevisionID)
+			if err != nil {
+				t.Fatalf("Apply returned error: %v", err)
+			}
+			if len(result.Verification) != 1 {
+				t.Fatalf("Apply verification = %#v, want one check", result.Verification)
+			}
+			if result.Verification[0].Status != test.want {
+				t.Fatalf("Apply verification status = %q, want %q", result.Verification[0].Status, test.want)
+			}
+			if result.Verification[0].Reason != "the listener requires a client certificate that MCM does not own" {
+				t.Fatalf("Apply verification reason = %q, want the client certificate reason", result.Verification[0].Reason)
+			}
+		})
+	}
+}
+
 func TestApplyReportsAnUnreachableListenerAsUnverified(t *testing.T) {
 	service, repo, _ := serviceFixture(t)
 	ctx := context.Background()
