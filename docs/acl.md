@@ -75,6 +75,84 @@ apply yet, and the apply **refuses** a scope that is not wired: an apply
 that reported success while the rules never reached the broker would be a
 lie.
 
+The `per_listener_settings` directive only works **before** the first
+security setting of the configuration: Mosquitto refuses to start with
+`per_listener_settings must be set before any other security settings.`
+MCM inserts the directive ahead of `allow_anonymous`, `password_file`,
+`acl_file`, `psk_file` and `auth_plugin`, and moves an existing directive
+that sits behind them to the position the broker requires.
+
+### The two paths of a listener file
+
+The file of a listener is written by MCM and read by the broker, and the
+two processes do not necessarily see the same filesystem. In a container
+deployment the shared volume is mounted under a different path in each
+container:
+
+| Process | Path of the file of the listener `plant` |
+|---------|------------------------------------------|
+| MCM | `/var/lib/mosquitto-config/acl.plant` |
+| The broker | `/mosquitto/config/acl.plant` |
+
+MCM writes the file under **its own** path and declares the **broker's**
+path in the `acl_file` of the listener. The broker path is resolved
+against the `acl_file` of the configuration head — the path the broker
+uses for the broker-wide file — so the file of a listener always sits next
+to it. A file MCM does not manage (an operator-provided path) keeps the
+value it was given.
+
+### Activating a listener scope
+
+The file has to exist before the configuration declares it: Mosquitto
+refuses to start when the `acl_file` of a listener is missing. The order is
+therefore:
+
+1. **Apply the deployment.** It writes the broker-wide file and the file of
+   every listener that owns scoped rules.
+2. **Apply the listener configuration.** It declares the `acl_file` of the
+   listener and restarts the broker.
+
+The deploy preview reports the second step as pending, so the operator
+sees it before the first step:
+
+```json
+{
+  "scope_pending_activation": [
+    "listener \"plant\" does not declare \"/mosquitto/config/acl.plant\" in the broker configuration yet; apply the listener configuration to activate its scoped rules"
+  ]
+}
+```
+
+A scope that can never work is **blocking**, and the apply refuses it:
+
+- MCM does not manage the configuration of the broker, so it cannot declare
+  the file at all;
+- the listener of a scoped rule does not exist;
+- the listener owns no `acl_file` of its own;
+- the listener declares a different file than the one MCM writes.
+
+The listener apply refuses a configuration that declares a file MCM has not
+written yet (`the acl file of a listener has not been written yet`), so a
+misordered apply cannot take the broker down.
+
+### The listener on the default port
+
+With `per_listener_settings true` Mosquitto always creates a listener of
+its own on the default port (1883), with the global authentication and
+access control. A `listener` block of the configuration on that port
+collides with it and the broker refuses to start with `Address in use`.
+
+MCM therefore drops the spec of the listener on the default port: the
+broker keeps serving the port with the broker-wide rules, which is the
+access that spec asked for. A listener on that port that owns an ACL file
+of its own is refused instead — Mosquitto would ignore the file and the
+scoped rules would never apply.
+
+The end-to-end test `scripts/tests/test-e2e-acl-scoped-listener.sh` proves
+all of it against a live Mosquitto: the scoped rule reaches a subscriber
+on the scoped listener and nowhere else, and the broker-wide rule does the
+opposite.
+
 ### Backward compatibility
 
 - A request without `selector` keeps the legacy `user` scope, so existing
@@ -413,8 +491,25 @@ payloads.
 ## Limits
 
 The unit tests in this repository cover the stored model, the rendered
-file and the HTTP contract. They do **not** prove the runtime behaviour
-of a Mosquitto broker: the effective permission table of a real broker
-(in particular the interaction between `pattern` lines, `deny` lines and
-the anonymous section) is verified in a later task against a running
-Mosquitto.
+file and the HTTP contract. The runtime behaviour of a real broker is
+covered by two integration tests instead:
+
+- `internal/acl` (`go test -tags integration`) starts a Mosquitto broker and
+  proves the effective permission table of the broker — in particular the
+  interaction between `pattern` lines, `deny` lines and the anonymous
+  section. `scripts/tests/test-e2e-acl-semantics.sh` runs it.
+- `scripts/tests/test-e2e-acl-scoped-listener.sh` starts the whole stack
+  and proves that the scope of a listener reaches the broker: the rules of
+  a listener apply to that listener only, and the broker-wide rules apply
+  everywhere else.
+
+Two things stay outside what MCM can prove on its own:
+
+- MCM does not discover the running broker version, so a broker older
+  than 2.0 is not rejected at creation time (see [Permissions](#permissions)).
+- A verdict of a rule is read from the delivery of a message. MQTT 3.1.1
+  has no negative acknowledgement for a publish: the broker drops a
+  message it refuses and the publishing client sees a successful publish.
+  A subscriber is the only client that can tell a granted rule from a
+  refused one, which is why both the integration test and the end-to-end
+  test assert on delivery.
