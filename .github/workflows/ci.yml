@@ -242,6 +242,37 @@ jobs:
         # section, the pattern rules and the per-listener ACL file.
         run: bash scripts/tests/test-e2e-acl-semantics.sh
 
+  e2e-acl-scoped-listener:
+    name: Listener-scoped ACL rules against live Mosquitto
+    runs-on: ubuntu-latest
+    needs: image
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+
+      - name: Listener-scoped ACL rules against a real broker
+        # Issue #301 acceptance criteria: a rule of the listener scope
+        # applies to its listener only. The job brings up the dev Compose
+        # stack, writes the scoped rule through the API, applies the
+        # deployment and the listener configuration, and asserts that the
+        # broker grants the scoped topic on that listener while the
+        # broker-wide access stays out of it — and the other way round.
+        run: bash scripts/tests/test-e2e-acl-scoped-listener.sh
+
   e2e-deploy:
     name: E2E deploy flow against live Mosquitto
     runs-on: ubuntu-latest
