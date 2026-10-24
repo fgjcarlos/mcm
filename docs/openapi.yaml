@@ -1019,10 +1019,13 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "502":
-          description: The broker did not serve the new material; the previous revision was restored.
+          description: |
+            The broker did not serve the new material. The previous revision was
+            restored, the broker restarted again and the revision was recorded as
+            failed. The response carries the recovery state.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema: { $ref: "#/components/schemas/CertificateApplyFailure" }
   /api/v1/settings:
     get:
       tags: [Settings]
@@ -1914,6 +1917,17 @@ components:
           type: array
           items: { $ref: "#/components/schemas/CertificateVerification" }
       required: [profile, revision_id, restarted, recovered, verification]
+    CertificateApplyFailure:
+      type: object
+      description: |
+        The activation failed. The previous material was restored and the broker
+        restarted again; `result` carries the same state as a successful
+        activation, with the failed revision and the reason.
+      properties:
+        error: { type: string }
+        detail: { type: string }
+        result: { $ref: "#/components/schemas/CertificateApplyResult" }
+      required: [error, result]
     CertificateValidationError:
       type: object
       properties:
