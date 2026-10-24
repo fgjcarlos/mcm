@@ -3,6 +3,7 @@ import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
 import ListenersPanel from './features/broker-config/ListenersPanel'
+import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
@@ -145,6 +146,15 @@ const navItems: NavItem[] = [
     eyebrow: 'MQTT access',
     title: 'MQTT listeners',
     description: 'Manage the broker listener set (TCP and WebSockets).',
+  },
+  {
+    id: 'certificates',
+    label: 'Certificates',
+    path: '/certificates',
+    eyebrow: 'MQTT access',
+    title: 'Broker TLS certificates',
+    description: 'Upload, rotate and activate the TLS material the broker serves.',
+    minRole: 'auditor',
   },
   {
     id: 'deploy',
@@ -352,6 +362,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'listeners' ? (
         <ListenersPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={beginDeployMutation} onApplySuccess={clearDeployPending} />
+      ) : activeId === 'certificates' ? (
+        <CertificatesPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
       ) : activeId === 'broker-config' ? (

@@ -3,16 +3,16 @@ import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerSpec } from './types'
 
 const spec = (overrides: Partial<ListenerSpec> = {}): ListenerSpec => ({
-  id: 'mqtt',
-  port: 1883,
-  bind: '0.0.0.0',
-  protocols: ['mqtt'],
+  ID: 'mqtt',
+  Port: 1883,
+  Bind: '0.0.0.0',
+  Protocols: ['mqtt'],
   ...overrides,
 })
 
 describe('validateListeners', () => {
   it('accepts valid IPv4 and IPv6 listener specifications', () => {
-    expect(validateListeners([spec(), spec({ id: 'secure', port: 8883, bind: '2001:db8::1', protocols: ['mqtt'] })])).toEqual({
+    expect(validateListeners([spec(), spec({ ID: 'secure', Port: 8883, Bind: '2001:db8::1', Protocols: ['mqtt'] })])).toEqual({
       issues: [],
       warnings: [],
     })
@@ -27,7 +27,7 @@ describe('validateListeners', () => {
     ['IPv4-mapped hexadecimal IPv6', '::FFFF:C000:0201'],
     ['expanded IPv4-mapped IPv6', '0:0:0:0:0:ffff:192.0.2.1'],
   ])('accepts %s bind', (_name, bind) => {
-    expect(validateListeners([spec({ bind })]).issues).toEqual([])
+    expect(validateListeners([spec({ Bind: bind })]).issues).toEqual([])
   })
 
   it.each([
@@ -39,22 +39,22 @@ describe('validateListeners', () => {
     ['invalid embedded IPv4', '::ffff:192.0.2.999'],
     ['malformed hexadecimal group', '2001:db8::gggg'],
   ])('rejects %s bind', (_name, bind) => {
-    expect(validateListeners([spec({ bind })]).issues).toContainEqual(
+    expect(validateListeners([spec({ Bind: bind })]).issues).toContainEqual(
       expect.objectContaining({ kind: 'bind', listener_id: 'mqtt' }),
     )
   })
 
   it.each(['mqtts', 'ws', 'wss'])('rejects unsupported protocol alias %s', (protocol) => {
-    expect(validateListeners([spec({ protocols: [protocol] })]).issues).toContainEqual({
+    expect(validateListeners([spec({ Protocols: [protocol] })]).issues).toContainEqual({
       kind: 'protocols_unknown', listener_id: 'mqtt', message: `unknown protocol "${protocol}"`,
     })
   })
 
   it('reports invalid ports, non-IP binds, unsupported protocols, and duplicate tuples', () => {
     const result = validateListeners([
-      spec({ id: 'invalid', port: 65536, bind: 'localhost', protocols: ['http'] }),
-      spec({ id: 'duplicate', port: 1883, bind: '0.0.0.0', protocols: ['mqtt'] }),
-      spec({ id: 'duplicate', port: 1883, bind: '0.0.0.0', protocols: ['mqtt'] }),
+      spec({ ID: 'invalid', Port: 65536, Bind: 'localhost', Protocols: ['http'] }),
+      spec({ ID: 'duplicate', Port: 1883, Bind: '0.0.0.0', Protocols: ['mqtt'] }),
+      spec({ ID: 'duplicate', Port: 1883, Bind: '0.0.0.0', Protocols: ['mqtt'] }),
     ])
 
     expect(result.issues).toEqual(expect.arrayContaining([
@@ -66,7 +66,7 @@ describe('validateListeners', () => {
   })
 
   it('emits non-blocking websocket-on-default-port hints', () => {
-    expect(validateListeners([spec({ protocols: ['websockets'] })])).toEqual({
+    expect(validateListeners([spec({ Protocols: ['websockets'] })])).toEqual({
       issues: [],
       warnings: [
         { kind: 'websocket_default_port', listener_id: 'mqtt', message: 'websocket protocols on port 1883 may conflict with the default MQTT listener' },
@@ -79,8 +79,8 @@ describe('composePortConflicts', () => {
   it('maps matching compose host ports to each listener id', () => {
     expect(composePortConflicts([
       spec(),
-      spec({ id: 'web', port: 8083, protocols: ['websockets'] }),
-      spec({ id: 'secure', port: 8883, protocols: ['mqtt'] }),
+      spec({ ID: 'web', Port: 8083, Protocols: ['websockets'] }),
+      spec({ ID: 'secure', Port: 8883, Protocols: ['mqtt'] }),
     ], [8883, 1883])).toEqual({ mqtt: [1883], secure: [8883] })
   })
 })

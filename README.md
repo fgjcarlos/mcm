@@ -14,12 +14,13 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 
 ## Project status
 
-**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit `mosquitto.conf`, listeners, broker certificates, bridges, persistence, limits or plugins from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the rest of `mosquitto.conf` — bridges, persistence, limits and plugins are not managed from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
 
 | Capability | Current scope |
 | --- | --- |
 | MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
-| Preview, apply and history | Available for password/ACL files only; activation verification and rollback need hardening. |
+| Preview, apply and history | Available for password/ACL files, listeners and certificate material; the certificate activation verifies the handshake and rolls back a rejected activation. |
+| Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
 | Broker configuration editor | Planned, including import and version-aware validation. |
@@ -101,6 +102,7 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_MOSQUITTO_USERNAME` | `admin` | Broker service user. Both `_USERNAME` and `_PASSWORD` must be set or both empty. Dev default matches the Mosquitto bootstrap script. |
 | `MCM_MOSQUITTO_PASSWORD` | `mcm-dev-broker-password` | Broker service user password. Read from a secret manager in production. Dev-only. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | *(unset)* | Directory containing the Mosquitto configuration. |
+| `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | *(unset)* | Broker-side path of the configuration directory that holds the broker certificate material. It must point at the same volume as `MCM_MOSQUITTO_CONFIG_DIR`. |
 | `MCM_MOSQUITTO_DATA_DIR` | *(unset)* | Directory for Mosquitto persistent data (retained messages, persistence file). |
 
 ### Mosquitto TLS
@@ -112,6 +114,17 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | `MCM_MOSQUITTO_TLS_CLIENT_CERT_FILE` | *(unset)* | Path to PEM-encoded client certificate for mTLS to the broker. Required when `MCM_MOSQUITTO_TLS_ENABLED=true`. |
 | `MCM_MOSQUITTO_TLS_CLIENT_KEY_FILE` | *(unset)* | Path to PEM-encoded client private key for mTLS to the broker. Required when `MCM_MOSQUITTO_TLS_ENABLED=true`. |
 | `MCM_MOSQUITTO_TLS_INSECURE_SKIP_VERIFY` | `false` | Skip broker certificate verification. DEV-ONLY escape hatch for self-signed testing; never enable in production. |
+
+### Broker certificate profiles
+
+MCM manages the certificate the broker serves to its own clients. The CA, the certificate, the key and the optional chain are uploaded as an immutable revision, activated atomically, verified against the live broker and rotated without rewriting `mosquitto.conf`. A listener is bound to a profile through its `tls_profile` field, with `options.require_certificate: true` for mutual TLS.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MCM_MOSQUITTO_CONFIG_DIR` | *(unset)* | Directory MCM writes the certificate material into. The certificate surface stays disabled while it is unset. |
+| `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | `/mosquitto/config` | Path the **broker** uses for the same directory. It must be the same volume as `MCM_MOSQUITTO_CONFIG_DIR` under the broker's mount. |
+
+The private key is write-only: it never appears in an API response, in a preview, in a rendered configuration or in the MCM logs. Rotation, recovery, expiry handling and the production checklist are documented in [deploy/mosquitto/README.md](./deploy/mosquitto/README.md#managing-the-broker-tls-material-from-mcm).
 
 ### Mosquitto deploy (file / docker)
 

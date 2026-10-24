@@ -336,6 +336,52 @@ CREATE INDEX IF NOT EXISTS idx_listener_specs_port_bind ON listener_specs(port, 
 CREATE INDEX IF NOT EXISTS idx_listener_specs_updated_at ON listener_specs(updated_at);
 `,
 	},
+	{
+		version: 19,
+		name:    "create_certificate_profiles_and_revisions",
+		sql: `
+CREATE TABLE IF NOT EXISTS certificate_profiles (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
+	updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS certificate_revisions (
+	id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+	profile_id          INTEGER NOT NULL,
+	revision_id         TEXT NOT NULL,
+	actor               TEXT NOT NULL DEFAULT '',
+	state               TEXT NOT NULL DEFAULT 'pending',
+	material_hash       TEXT NOT NULL DEFAULT '',
+	subject             TEXT NOT NULL DEFAULT '',
+	issuer              TEXT NOT NULL DEFAULT '',
+	dns_names           TEXT NOT NULL DEFAULT '[]',
+	ip_addresses        TEXT NOT NULL DEFAULT '[]',
+	not_before          TEXT NOT NULL DEFAULT '',
+	not_after           TEXT NOT NULL DEFAULT '',
+	fingerprint_sha256  TEXT NOT NULL DEFAULT '',
+	key_algorithm       TEXT NOT NULL DEFAULT '',
+	is_ca               INTEGER NOT NULL DEFAULT 0,
+	has_ca              INTEGER NOT NULL DEFAULT 0,
+	has_chain           INTEGER NOT NULL DEFAULT 0,
+	serial_number       TEXT NOT NULL DEFAULT '',
+	failure_reason      TEXT NOT NULL DEFAULT '',
+	created_at          TEXT NOT NULL,
+	activated_at        TEXT NOT NULL DEFAULT '',
+	UNIQUE(profile_id, revision_id)
+);
+CREATE INDEX IF NOT EXISTS idx_certificate_revisions_profile ON certificate_revisions(profile_id, created_at);
+`,
+	},
+	{
+		version: 20,
+		name:    "add_listener_tls_profile",
+		sql: `
+ALTER TABLE listener_specs ADD COLUMN tls_profile TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

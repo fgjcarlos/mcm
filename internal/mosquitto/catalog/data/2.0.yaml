@@ -140,6 +140,7 @@ scope: global
 multiplicity: once
 reload_kind: reload
 since_version: "1.0"
+listener_since_version: "2.0"
 description: |
   Path to a file containing PEM-encoded CA certificates for the broker
   identity and (optionally) client verification.
@@ -150,6 +151,7 @@ scope: global
 multiplicity: once
 reload_kind: reload
 since_version: "1.0"
+listener_since_version: "2.0"
 description: |
   Directory containing PEM-encoded CA certificates (one per file with
   hashed names, see OpenSSL c_re_hash).
@@ -160,6 +162,7 @@ scope: global
 multiplicity: once
 reload_kind: restart
 since_version: "1.0"
+listener_since_version: "2.0"
 description: |
   Path to the broker PEM certificate. Loaded at start-up — changing it
   requires a broker restart.
@@ -170,6 +173,7 @@ scope: global
 multiplicity: once
 reload_kind: restart
 since_version: "1.0"
+listener_since_version: "2.0"
 description: |
   Path to the broker PEM private key. Loaded at start-up — changing it
   requires a broker restart.
@@ -180,6 +184,7 @@ scope: global
 multiplicity: once
 reload_kind: reload
 since_version: "1.0"
+listener_since_version: "2.0"
 description: |
   When true, clients MUST present a valid X.509 certificate (used
   together with cafile / capath).
@@ -190,6 +195,7 @@ scope: global
 multiplicity: many
 reload_kind: reload
 since_version: "1.0"
+listener_since_version: "2.0"
 allowed_values: ["tlsv1", "tlsv1.1", "tlsv1.2", "tlsv1.3"]
 description: |
   TLS protocol versions the broker accepts. Repeatable; latest entry

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strings"
 )
 
 // Issue describes a validation error for one listener directive.
@@ -28,13 +29,14 @@ type OptionWarning struct {
 var ErrInvalidSpec = errors.New("invalid listener spec")
 
 var optionWhitelist = map[string]struct{}{
-	"max_connections": {},
-	"http_dir":        {},
-	"tls_version":     {},
-	"cafile":          {},
-	"certfile":        {},
-	"keyfile":         {},
-	"allow_anonymous": {},
+	"max_connections":     {},
+	"http_dir":            {},
+	"tls_version":         {},
+	"cafile":              {},
+	"certfile":            {},
+	"keyfile":             {},
+	"require_certificate": {},
+	"allow_anonymous":     {},
 }
 
 // Validate reports blocking listener issues and non-blocking option warnings.
@@ -95,6 +97,7 @@ func Validate(specs []ListenerSpec) (issues []Issue, warnings []OptionWarning) {
 				})
 			}
 		}
+		issues = append(issues, tlsIssues(spec)...)
 	}
 
 	sort.Slice(issues, func(i, j int) bool {
@@ -116,4 +119,44 @@ func Validate(specs []ListenerSpec) (issues []Issue, warnings []OptionWarning) {
 		return warnings[i].Message < warnings[j].Message
 	})
 	return issues, warnings
+}
+
+// tlsIssues reports the blocking problems of the TLS directives of one
+// listener.
+//
+// The broker refuses to start a listener whose certificate is incomplete,
+// so MCM blocks the change before the configuration reaches the broker.
+func tlsIssues(spec ListenerSpec) []Issue {
+	var issues []Issue
+	_, hasCertFile := spec.Options["certfile"]
+	_, hasKeyFile := spec.Options["keyfile"]
+	if hasCertFile != hasKeyFile {
+		issues = append(issues, Issue{
+			Kind:       "tls_options",
+			ListenerID: spec.ID,
+			Directive:  "certfile",
+			Message:    "certfile and keyfile must be configured together",
+		})
+	}
+	if optionEnabled(spec.Options, "require_certificate") {
+		if _, hasCAFile := spec.Options["cafile"]; !hasCAFile {
+			issues = append(issues, Issue{
+				Kind:       "tls_options",
+				ListenerID: spec.ID,
+				Directive:  "require_certificate",
+				Message:    "require_certificate needs a cafile",
+			})
+		}
+	}
+	return issues
+}
+
+// optionEnabled reports whether an option is set to a true value.
+func optionEnabled(options map[string]string, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(options[key])) {
+	case "true", "yes", "on", "1":
+		return true
+	default:
+		return false
+	}
 }

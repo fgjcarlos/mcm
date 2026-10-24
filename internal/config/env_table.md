@@ -44,6 +44,7 @@ Regenerate with `go run ./scripts/gen-env-table`.
 | `MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT` | `mosquitto.deploy.healthcheck_timeout` | Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. Default 5s. |
 | `MCM_MOSQUITTO_DEPLOY_WORKDIR` | `mosquitto.deploy.workdir` | Working directory for the deploy service when writing passwd/acl files. Defaults to the deploy service's CWD. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | `mosquitto.config_dir` | Directory containing the Mosquitto configuration. Surfaced for operators that pin the broker config dir separately from deploy paths. |
+| `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | `mosquitto.broker_config_dir` | Broker-side path of the configuration directory that holds the broker certificate material. It must point at the same volume as MCM_MOSQUITTO_CONFIG_DIR. |
 | `MCM_MOSQUITTO_DATA_DIR` | `mosquitto.data_dir` | Directory for Mosquitto persistent data (e.g. retained messages, persistence file). |
 | `MCM_MOSQUITTO_COMPOSE_PATH` | `mosquitto.compose_path` | Docker Compose file used to discover Mosquitto host ports. Empty disables discovery. |
 | `MCM_MOSQUITTO_COMPOSE_SERVICE` | `mosquitto.compose_service` | Compose service name for Mosquitto host-port discovery. Default "mosquitto". |

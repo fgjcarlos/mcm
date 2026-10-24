@@ -142,6 +142,11 @@ type MosquittoConfig struct {
 	// the deploy paths. Empty means "use deploy.acl_path's directory" or
 	// the broker's compiled-in default.
 	ConfigDir string `yaml:"config_dir"`
+	// BrokerConfigDir is the broker-side path of the same configuration
+	// directory. The broker reads the certificate material from it, so it
+	// must point at the same volume as ConfigDir. Empty means the broker
+	// default ("/mosquitto/config").
+	BrokerConfigDir string `yaml:"broker_config_dir"`
 	// DataDir is the broker's persistent data directory (retained
 	// messages, persistence file). Empty means broker default.
 	DataDir string `yaml:"data_dir"`

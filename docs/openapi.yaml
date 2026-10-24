@@ -49,6 +49,8 @@ tags:
     description: Mosquitto broker user CRUD (passwd entries). Password material is returned only on create / reset.
   - name: Deployments
     description: Preview and apply the rendered Mosquitto password_file and acl_file snapshots.
+  - name: Certificates
+    description: Broker TLS certificate profiles, their immutable revisions and the rotation lifecycle. Private key material is write-only and never appears in a response.
   - name: Settings
     description: Redacted view of the running configuration.
 security:
@@ -893,6 +895,137 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/certificates:
+    get:
+      tags: [Certificates]
+      summary: List the broker certificate profiles
+      description: |
+        Requires auditor or higher. Returns every profile with its revisions,
+        the active revision and the expiry status of the material. No response
+        carries private key material.
+      responses:
+        "200":
+          description: Certificate profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items: { $ref: "#/components/schemas/CertificateProfile" }
+                required: [profiles]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/certificates/profiles/{name}/revisions:
+    post:
+      tags: [Certificates]
+      summary: Upload a new certificate revision
+      description: |
+        Requires operator or higher. Validates the uploaded material, stores it
+        as an immutable pending revision and returns its public metadata. The
+        private key is write-only: it is stored on disk and never returned.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Certificate profile name.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertificateRevisionRequest" }
+      responses:
+        "201":
+          description: Revision stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificateRevision" }
+        "400":
+          description: The material was rejected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificateValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/certificates/preview:
+    post:
+      tags: [Certificates]
+      summary: Preview the activation of a certificate revision
+      description: |
+        Requires operator or higher. Describes the rotation without changing
+        anything: the revision, its validity window, the broker-side paths the
+        broker will read and the restart the activation implies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertificateActionRequest" }
+      responses:
+        "200":
+          description: Preview result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificatePreview" }
+        "400":
+          description: Invalid profile name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Profile or revision not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/certificates/apply:
+    post:
+      tags: [Certificates]
+      summary: Activate a certificate revision
+      description: |
+        Requires admin. Installs the revision, restarts the broker and verifies
+        that the broker really serves the new material with a TLS handshake. If
+        the restart or the verification fails, the previous revision is
+        restored, the broker restarts again and the revision is recorded as
+        failed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CertificateActionRequest" }
+      responses:
+        "200":
+          description: Revision activated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificateApplyResult" }
+        "400":
+          description: Invalid profile name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Profile or revision not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The revision is already active.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: |
+            The broker did not serve the new material. The previous revision was
+            restored, the broker restarted again and the revision was recorded as
+            failed. The response carries the recovery state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificateApplyFailure" }
   /api/v1/settings:
     get:
       tags: [Settings]
@@ -1573,6 +1706,13 @@ components:
         Options:
           type: [object, "null"]
           additionalProperties: { type: string }
+        tls_profile:
+          type: string
+          description: |
+            Name of the certificate profile that secures the listener. Empty
+            when the listener serves plain MQTT. The broker-side paths of
+            the profile are injected at render time, so a rotation does not
+            change the rendered configuration.
         RestartNeeded: { type: boolean }
       required: [ID, Port, Bind, Protocols, Options, RestartNeeded]
     ListenerSpecRow:
@@ -1642,6 +1782,163 @@ components:
         applied: { type: boolean }
       required: [revision_id, applied]
       additionalProperties: false
+    CertificateIssue:
+      type: object
+      description: A validation problem or a warning about the uploaded material.
+      properties:
+        kind: { type: string }
+        field: { type: string }
+        message: { type: string }
+      required: [kind, field, message]
+    CertificateRevisionRequest:
+      type: object
+      description: |
+        The uploaded certificate material. The private key is write-only: MCM
+        stores it on disk and never returns it.
+      properties:
+        ca_cert_pem: { type: string, description: "PEM encoded certificate authority." }
+        server_cert_pem: { type: string, description: "PEM encoded server certificate." }
+        server_key_pem: { type: string, description: "PEM encoded server private key. Write-only." }
+        chain_pem: { type: string, description: "Optional PEM encoded intermediate chain." }
+        expected_names:
+          type: array
+          description: Names the server certificate must cover.
+          items: { type: string }
+        description: { type: string }
+        require_ca: { type: boolean, description: "Reject the upload when no certificate authority is supplied." }
+      required: [server_cert_pem, server_key_pem]
+    CertificateRevision:
+      type: object
+      description: Public metadata of a certificate revision. It never carries private key material.
+      properties:
+        revision_id: { type: string }
+        state: { type: string, description: "pending, active, superseded or failed." }
+        actor: { type: string }
+        material_hash: { type: string }
+        subject: { type: string }
+        issuer: { type: string }
+        dns_names:
+          type: array
+          items: { type: string }
+        ip_addresses:
+          type: array
+          items: { type: string }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        fingerprint_sha256: { type: string }
+        key_algorithm: { type: string }
+        is_ca: { type: boolean }
+        has_ca: { type: boolean }
+        has_chain: { type: boolean }
+        serial_number: { type: string }
+        expiry_status: { type: string, description: "valid, expiring, expired or unknown." }
+        failure_reason: { type: string }
+        created_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateIssue" }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateIssue" }
+      required: [revision_id, state, material_hash, expiry_status]
+    CertificateProfile:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        active_revision: { type: string }
+        expiry_status: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        revisions:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateRevision" }
+      required: [name, expiry_status, revisions]
+    CertificateActionRequest:
+      type: object
+      properties:
+        profile: { type: string }
+        revision_id: { type: string }
+      required: [profile, revision_id]
+    CertificateFiles:
+      type: object
+      description: Broker-side paths of the active material. The paths are stable across rotations.
+      properties:
+        ca_path: { type: string }
+        cert_path: { type: string }
+        key_path: { type: string }
+        chain_path: { type: string }
+      required: [ca_path, cert_path, key_path, chain_path]
+    CertificatePreview:
+      type: object
+      properties:
+        profile: { type: string }
+        revision_id: { type: string }
+        current_revision: { type: string }
+        subject: { type: string }
+        issuer: { type: string }
+        dns_names:
+          type: array
+          items: { type: string }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        fingerprint_sha256: { type: string }
+        expiry_status: { type: string }
+        files: { $ref: "#/components/schemas/CertificateFiles" }
+        restart_required: { type: boolean }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateIssue" }
+      required: [profile, revision_id, expiry_status, files, restart_required]
+    CertificateVerification:
+      type: object
+      description: |
+        The outcome of one TLS handshake check. `unverified` means the check
+        could not be completed, for example because MCM cannot reach the port
+        or because the listener demands a client certificate.
+      properties:
+        listener_id: { type: string }
+        port: { type: integer }
+        status: { type: string, description: "verified, unverified or failed." }
+        reason: { type: string }
+        detail: { type: string }
+      required: [port, status]
+    CertificateApplyResult:
+      type: object
+      properties:
+        profile: { type: string }
+        revision_id: { type: string }
+        previous_revision: { type: string }
+        restarted: { type: boolean }
+        recovered: { type: boolean, description: "True when a failed activation restored the previous material." }
+        recovery_note: { type: string }
+        verification:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateVerification" }
+      required: [profile, revision_id, restarted, recovered, verification]
+    CertificateApplyFailure:
+      type: object
+      description: |
+        The activation failed. The previous material was restored and the broker
+        restarted again; `result` carries the same state as a successful
+        activation, with the failed revision and the reason.
+      properties:
+        error: { type: string }
+        detail: { type: string }
+        result: { $ref: "#/components/schemas/CertificateApplyResult" }
+      required: [error, result]
+    CertificateValidationError:
+      type: object
+      properties:
+        error: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateIssue" }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/CertificateIssue" }
+      required: [error, issues]
     BrokerConfig:
       type: object
       description: |

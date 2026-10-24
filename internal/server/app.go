@@ -21,12 +21,14 @@ import (
 	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/certificate"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/listener"
 	listenerwriter "github.com/fgjcarlos/mcm/internal/listener/writer"
 	"github.com/fgjcarlos/mcm/internal/metrics"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/certs"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/listeners"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -51,6 +53,7 @@ type App struct {
 	brokerCfgCatalog      *catalog.Catalog
 	listenerSvc           *listener.ListenerService
 	listenerRestartRunner listener.ListenerRestartRunner
+	certificateSvc        *certificate.Service
 	loginLockoutWindow    time.Duration
 	loginMaxAttempts      int
 	auditRetention        time.Duration
@@ -144,8 +147,61 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		listenerConfPath := filepath.Join(cfg.Mosquitto.ConfigDir, "mosquitto.conf")
 		listenerOpts = append(listenerOpts, listener.WithListenerConfWriter(newListenerConfWriterAdapter(listenerwriter.New(listenerConfPath))))
 	}
+	// Issue #300: the directive catalog gates the per-listener TLS
+	// directives. Without it the listener service refuses every certificate
+	// binding, because it cannot prove that the broker understands the
+	// directives it would render.
+	//
+	// The catalog is not published here: the broker-config surface keeps
+	// its own contract of being disabled until Run wires the service.
+	brokerCatalog, catalogErr := catalog.LoadVersion("2.0")
+	if catalogErr == nil {
+		listenerOpts = append(listenerOpts, listener.WithListenerCatalog(brokerCatalog))
+	}
+	// Issue #300: the certificate surface needs a directory MCM can write
+	// the material into. Without a broker config dir there is no shared
+	// volume to store the certificates, so the surface stays disabled.
+	if cfg.Mosquitto.ConfigDir != "" {
+		certsRoot := filepath.Join(cfg.Mosquitto.ConfigDir, "certs")
+		brokerConfigDir := strings.TrimSpace(cfg.Mosquitto.BrokerConfigDir)
+		if brokerConfigDir == "" {
+			brokerConfigDir = defaultBrokerConfigDir
+		}
+		app.certificateSvc = certificate.NewService(
+			certs.NewStore(certsRoot),
+			store,
+			certificate.WithCertificateAudit(app.recordListenerAudit),
+			certificate.WithCertificateRestarter(certificateRestartAdapter{
+				runner: restartRunner,
+				target: cfg.Mosquitto.ComposeService,
+			}),
+			certificate.WithCertificateBindings(store),
+			certificate.WithBrokerHost(cfg.Mosquitto.Host),
+			certificate.WithBrokerCertsDir(filepath.Join(brokerConfigDir, "certs")),
+		)
+		listenerOpts = append(listenerOpts, listener.WithListenerCertificateResolver(app.certificateSvc))
+	}
 	app.listenerSvc = listener.NewListenerService(store, composeReader, restartRunner, app.recordListenerAudit, listenerOpts...)
 	return app, nil
+}
+
+// defaultBrokerConfigDir is the broker-side configuration directory used when
+// the operator does not pin one.
+const defaultBrokerConfigDir = "/mosquitto/config"
+
+// certificateRestartAdapter adapts the listener restart runner to the
+// certificate service contract.
+type certificateRestartAdapter struct {
+	runner listener.ListenerRestartRunner
+	target string
+}
+
+// Restart restarts the broker so it serves the new certificate material.
+func (a certificateRestartAdapter) Restart(ctx context.Context) error {
+	if a.runner == nil {
+		return nil
+	}
+	return a.runner.Restart(ctx, a.target)
 }
 
 // newListenerConfWriterAdapter wraps the writer package's full
@@ -363,6 +419,13 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/listeners", a.requireRole(auth.RoleViewer, http.HandlerFunc(lAPI.handleList)))
 		mux.Handle("POST /api/v1/listeners/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(lAPI.handlePreview)))
 		mux.Handle("POST /api/v1/listeners/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(lAPI.handleApply)))
+	}
+	if a.certificateSvc != nil {
+		cAPI := &certificateAPI{svc: a.certificateSvc}
+		mux.Handle("GET /api/v1/broker/certificates", a.requireRole(auth.RoleAuditor, http.HandlerFunc(cAPI.handleList)))
+		mux.Handle("POST /api/v1/broker/certificates/profiles/{name}/revisions", a.requireRole(auth.RoleOperator, http.HandlerFunc(cAPI.handleCreateRevision)))
+		mux.Handle("POST /api/v1/broker/certificates/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(cAPI.handlePreview)))
+		mux.Handle("POST /api/v1/broker/certificates/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(cAPI.handleApply)))
 	}
 	{
 		bAPI := a.brokerConfigAPI()

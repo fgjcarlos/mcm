@@ -26,11 +26,17 @@ func (p Protocol) IsValid() bool {
 
 // ListenerSpec describes one Mosquitto listener block.
 type ListenerSpec struct {
-	ID            string
-	Port          int
-	Bind          string
-	Protocols     []Protocol
-	Options       map[string]string
+	ID        string
+	Port      int
+	Bind      string
+	Protocols []Protocol
+	Options   map[string]string
+	// TLSProfile names the certificate profile that secures the listener.
+	//
+	// It is not rendered: the broker-side paths of the profile are injected
+	// into Options before rendering, so a rotation never changes the
+	// rendered configuration.
+	TLSProfile    string `json:"tls_profile"`
 	RestartNeeded bool
 }
 

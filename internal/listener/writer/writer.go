@@ -276,11 +276,18 @@ func (w *FileWriter) renderHead(reader func(string) ([]byte, error)) (string, er
 // filterListenerItems returns the subset of items that does NOT contain
 // listener directives. The line-based mosquitto.conf shape used by the
 // dev stack represents a listener as one `listener <port> <bind>`
-// directive optionally followed by one `protocol <name>` directive on
-// the next line; the braced form (`listener … {…}`) is recognised as a
-// single block and removed wholesale. Both shapes are removed together
-// so the result contains exactly one source of truth — the rendered
+// directive followed by its indented options (`protocol <name>`,
+// `cafile`, `certfile`, `keyfile`, `require_certificate`, …); the braced
+// form (`listener … {…}`) is recognised as a single block and removed
+// wholesale. Both shapes are removed together — options included — so
+// the result contains exactly one source of truth: the rendered
 // listener block.
+//
+// Dropping the option lines matters for more than tidiness. A leftover
+// `certfile`/`keyfile` at the top level configures Mosquitto's default
+// listener, which then binds port 1883 a second time and aborts the
+// broker with "Address in use". Every option line that follows a
+// removed listener header is therefore removed with it.
 //
 // Comment lines and blank lines are preserved between preserved
 // directives; they only count as "separator" when computing whether a
@@ -288,6 +295,10 @@ func (w *FileWriter) renderHead(reader func(string) ([]byte, error)) (string, er
 func filterListenerItems(items []conf.Item) []conf.Item {
 	out := make([]conf.Item, 0, len(items))
 	skipBlock := false
+	// skipOptions is set once a line-based `listener` header is
+	// dropped; it stays set while the following indented directives
+	// (that listener's options) are skipped.
+	skipOptions := false
 	for i := range items {
 		it := items[i]
 		switch it.Kind {
@@ -308,7 +319,15 @@ func filterListenerItems(items []conf.Item) []conf.Item {
 			if skipBlock {
 				continue
 			}
+			if skipOptions {
+				if it.Indent > 0 {
+					// Indented option of the removed listener.
+					continue
+				}
+				skipOptions = false
+			}
 			if it.Key == "listener" {
+				skipOptions = true
 				continue
 			}
 			if it.Key == "protocol" && precedesListener(items, i) {

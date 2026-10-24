@@ -264,6 +264,96 @@ protocol websockets
 	mustContain(t, out, "allow_anonymous false")
 }
 
+// tlsLineBasedConf is a mosquitto.conf that already carries a TLS
+// listener in the line-based shape: a `listener` header followed by its
+// indented options. Replacing that listener must not leave the option
+// lines behind: an orphan `certfile`/`keyfile` at the top level
+// configures Mosquitto's default listener, which then binds port 1883
+// a second time and aborts the broker with "Address in use".
+const tlsLineBasedConf = `persistence true
+allow_anonymous false
+password_file /mosquitto/config/passwd
+
+listener 8883 0.0.0.0
+    protocol mqtt
+    cafile /mosquitto/config/certs/e2e/active/ca.crt
+    certfile /mosquitto/config/certs/e2e/active/server.crt
+    keyfile /mosquitto/config/certs/e2e/active/server.key
+
+listener 8884 0.0.0.0
+    protocol mqtt
+    cafile /mosquitto/config/certs/e2e/active/ca.crt
+    certfile /mosquitto/config/certs/e2e/active/server.crt
+    keyfile /mosquitto/config/certs/e2e/active/server.key
+    require_certificate true
+
+listener 1883 0.0.0.0
+    protocol mqtt
+`
+
+func TestFilterListenerItems_DropsOptionsOfRemovedListeners(t *testing.T) {
+	parsed, err := parseForTest(t, tlsLineBasedConf)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	filtered := filterListenerItems(parsed.Items)
+	out := mustRender(t, parsed, filtered)
+
+	for _, option := range []string{
+		"cafile /mosquitto/config/certs/e2e/active/ca.crt",
+		"certfile /mosquitto/config/certs/e2e/active/server.crt",
+		"keyfile /mosquitto/config/certs/e2e/active/server.key",
+		"require_certificate true",
+	} {
+		mustNotIncludeLine(t, out, option)
+	}
+	mustNotIncludeLine(t, out, "listener 8883 0.0.0.0")
+	mustNotIncludeLine(t, out, "listener 8884 0.0.0.0")
+	mustContain(t, out, "allow_anonymous false")
+	mustContain(t, out, "password_file /mosquitto/config/passwd")
+}
+
+func TestFileWriter_ReplacesTLSListenerWithoutLeavingOrphanOptions(t *testing.T) {
+	tmp := t.TempDir()
+	confPath := filepath.Join(tmp, "mosquitto.conf")
+	if err := os.WriteFile(confPath, []byte(tlsLineBasedConf), 0o644); err != nil {
+		t.Fatalf("seed conf: %v", err)
+	}
+
+	specs := []listeners.ListenerSpec{
+		{ID: "mqtt", Port: 1883, Bind: "0.0.0.0", Protocols: []listeners.Protocol{listeners.ProtocolMQTT}},
+		{
+			ID:        "tls",
+			Port:      8883,
+			Bind:      "0.0.0.0",
+			Protocols: []listeners.Protocol{listeners.ProtocolMQTT},
+			Options: map[string]string{
+				"cafile":   "/mosquitto/config/certs/e2e/active/ca.crt",
+				"certfile": "/mosquitto/config/certs/e2e/active/server.crt",
+				"keyfile":  "/mosquitto/config/certs/e2e/active/server.key",
+			},
+		},
+	}
+
+	w := New(confPath)
+	rendered, err := w.Write(specs)
+	if err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	head := rendered.Head
+	for _, option := range []string{"cafile", "certfile", "keyfile", "require_certificate"} {
+		if strings.Contains(head, option) {
+			t.Fatalf("head still carries the %q option of a replaced listener:\n%s", option, head)
+		}
+	}
+	if strings.Count(rendered.Full, "cafile") != 1 {
+		t.Fatalf("expected exactly one cafile directive, got %d:\n%s", strings.Count(rendered.Full, "cafile"), rendered.Full)
+	}
+	mustContain(t, rendered.Full, "listener 8883 0.0.0.0")
+	mustContain(t, rendered.Full, "    cafile /mosquitto/config/certs/e2e/active/ca.crt")
+}
+
 func parseForTest(t *testing.T, body string) (*confFile, error) {
 	t.Helper()
 	return parseConf(body)

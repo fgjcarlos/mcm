@@ -11,7 +11,15 @@ export const ROLE_RANK: Record<Role, number> = {
 }
 
 // Actions that require a minimum role to perform.
-export type Action = 'acl.write' | 'mqttUser.write' | 'deploy.preview' | 'deploy.apply' | 'adminUser.write'
+export type Action =
+  | 'acl.write'
+  | 'mqttUser.write'
+  | 'deploy.preview'
+  | 'deploy.apply'
+  | 'adminUser.write'
+  | 'certificate.read'
+  | 'certificate.write'
+  | 'certificate.apply'
 
 export const ACTION_MIN_ROLE: Record<Action, Role> = {
   'acl.write': 'operator',
@@ -19,6 +27,11 @@ export const ACTION_MIN_ROLE: Record<Action, Role> = {
   'deploy.preview': 'operator',
   'deploy.apply': 'admin',
   'adminUser.write': 'admin',
+  // Mirrors the certificate route guards: list needs an auditor, uploading
+  // and previewing need an operator, activating needs an admin.
+  'certificate.read': 'auditor',
+  'certificate.write': 'operator',
+  'certificate.apply': 'admin',
 }
 
 /**

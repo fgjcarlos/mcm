@@ -14,7 +14,7 @@ Every `MCM_*` environment variable mentioned below is enforced by the strict tab
 
 MCM is alpha. The complete graphical configuration and recovery workflow is still being built; see [product scope](product-scope.md) and [epic #308](https://github.com/fgjcarlos/mcm/issues/308).
 
-- Deploy currently writes only password/ACL files. It does not edit `mosquitto.conf` or manage broker listeners, certificates or bridges.
+- The deploy flow writes only password/ACL files. Listener and certificate management write the broker configuration through their own paths (issues [#299](https://github.com/fgjcarlos/mcm/issues/299) and [#300](https://github.com/fgjcarlos/mcm/issues/300)); the rest of `mosquitto.conf` — bridges, persistence, limits and plugins — is not managed.
 - The supplied production broker template uses `passwords` and does not reference an `acl_file`. Align both file references with the paths MCM writes before relying on managed permissions.
 - File mode requires compatible filesystem ownership and an explicit activation path. Without a PID path it writes files without signaling; the current connectivity check does not prove that a new policy is active. A broker-side trigger is operator-provided, not a bundled MCM component. See [#293](https://github.com/fgjcarlos/mcm/issues/293) and [#294](https://github.com/fgjcarlos/mcm/issues/294).
 - Partial-write recovery and immutable preview/apply revisions remain open. Test changes and recovery on a disposable deployment before enabling production writes.
@@ -212,6 +212,12 @@ then the env vars override it field-by-field.
   enable in production.
 - `MCM_MOSQUITTO_CONFIG_DIR`, `MCM_MOSQUITTO_DATA_DIR` — broker
   configuration and persistent data directories.
+- `MCM_MOSQUITTO_BROKER_CONFIG_DIR` (default `/mosquitto/config`) —
+  broker-side path of the configuration directory that holds the broker
+  certificate material. It must point at the same volume as
+  `MCM_MOSQUITTO_CONFIG_DIR` under a different mount. The certificate
+  surface stays disabled while `MCM_MOSQUITTO_CONFIG_DIR` is unset; see
+  [the broker TLS guide](../deploy/mosquitto/README.md#managing-the-broker-tls-material-from-mcm).
 
 #### Mosquitto deploy (write passwd/acl + reload)
 
