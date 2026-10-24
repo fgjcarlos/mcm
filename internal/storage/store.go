@@ -389,6 +389,20 @@ ALTER TABLE listener_specs ADD COLUMN tls_profile TEXT NOT NULL DEFAULT '';
 ALTER TABLE acl_rules ADD COLUMN selector TEXT NOT NULL DEFAULT 'user';
 `,
 	},
+	{
+		version: 22,
+		name:    "create_acl_sources",
+		sql: `
+CREATE TABLE IF NOT EXISTS acl_sources (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL UNIQUE,
+	body TEXT NOT NULL,
+	content_hash TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

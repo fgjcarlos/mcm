@@ -393,6 +393,33 @@ func TestHandleDeployApply(t *testing.T) {
 		}
 	})
 
+	t.Run("returns 409 with the blocking entries when the ACL content is unmanaged", func(t *testing.T) {
+		app, store, _ := newTestAppWithDeploy(t, true)
+		t.Cleanup(func() { _ = store.Close() })
+
+		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+		token := loginAs(t, app, "admin", "secret")
+		app.deploySvc = &unmanagedACLDeployService{}
+
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"rev-1"}`, token)
+		app.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
+		}
+		var resp errorResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Error == "" {
+			t.Error("the conflict response must explain the refusal")
+		}
+		if len(resp.Details) != 1 || resp.Details[0] != "unknown | acl_file /etc/mosquitto/extra.acl" {
+			t.Fatalf("details = %v, want the blocking ACL entry", resp.Details)
+		}
+	})
+
 	t.Run("returns 409 when in-progress", func(t *testing.T) {
 		app, store, _ := newTestAppWithDeploy(t, true)
 		t.Cleanup(func() { _ = store.Close() })
@@ -416,6 +443,24 @@ func TestHandleDeployApply(t *testing.T) {
 			t.Fatalf("error response = %q, want deploy already in progress", resp.Error)
 		}
 	})
+}
+
+// unmanagedACLDeployService implements deployServicer and always refuses the
+// apply because the rendered ACL would drop ACL content MCM does not manage.
+type unmanagedACLDeployService struct{}
+
+func (u *unmanagedACLDeployService) Preview(_ context.Context, _ string) (deploy.PreviewResult, error) {
+	return deploy.PreviewResult{}, nil
+}
+
+func (u *unmanagedACLDeployService) Apply(_ context.Context, _, _ string) (storage.Deployment, error) {
+	return storage.Deployment{}, &deploy.UnmanagedACLContentError{
+		Entries: []string{"unknown | acl_file /etc/mosquitto/extra.acl"},
+	}
+}
+
+func (u *unmanagedACLDeployService) List(_ context.Context, _, _ int) ([]storage.Deployment, error) {
+	return nil, nil
 }
 
 // lockedDeployService implements deployServicer and always returns ErrDeployInProgress.
