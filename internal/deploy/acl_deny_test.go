@@ -66,8 +66,10 @@ func TestPickVerificationProbe_SkipsDenyRules(t *testing.T) {
 	if probe.username != "alice" {
 		t.Errorf("probe username = %q, want %q", probe.username, "alice")
 	}
-	if probe.allowedTopic != "cmd/#" {
-		t.Errorf("probe topic = %q, want %q (the grant, never the deny)", probe.allowedTopic, "cmd/#")
+	if probe.allowedTopic != "cmd/mcm-verify" {
+		// The verifier publishes to one concrete topic, so the wildcard
+		// level of the grant is replaced by the fixed probe segment.
+		t.Errorf("probe topic = %q, want %q (the concretized grant, never the deny)", probe.allowedTopic, "cmd/mcm-verify")
 	}
 	if probe.kind != probeKindUserGrant {
 		t.Errorf("probe kind = %q, want %q", probe.kind, probeKindUserGrant)

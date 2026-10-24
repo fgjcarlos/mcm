@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/fgjcarlos/mcm/internal/acl"
 )
 
 // MQTTUserValidationError holds validation failures for an MQTT username.
@@ -211,11 +213,14 @@ func (s *Store) updateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 	}
 
 	if username != oldUsername {
+		// Only user-scoped rules reference an MQTT username. Anonymous and
+		// pattern rules carry no username, so a rename never touches them.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE acl_rules SET principal = ?, updated_at = ? WHERE principal = ?`,
+			`UPDATE acl_rules SET principal = ?, updated_at = ? WHERE principal = ? AND selector = ?`,
 			username,
 			time.Now().UTC().Format(time.RFC3339Nano),
 			oldUsername,
+			string(acl.SelectorUser),
 		); err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				return MQTTUser{}, ErrMQTTUserConflict

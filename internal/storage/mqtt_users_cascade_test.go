@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 )
@@ -149,6 +150,86 @@ func TestFindOrphanRules(t *testing.T) {
 		t.Errorf("aliceRule id %q missing from orphans %+v", aliceRule.ID, orphans)
 	}
 	_ = ghostRule
+}
+
+// TestRenameMQTTUserLeavesNativeRulesAlone ensures that renaming an MQTT
+// user only rewrites user-scoped rules: anonymous and pattern records are
+// not MQTT usernames, so the rename must not touch them.
+func TestRenameMQTTUserLeavesNativeRulesAlone(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	user, err := store.CreateMQTTUser(ctx, CreateMQTTUserParams{Username: "alice"})
+	if err != nil {
+		t.Fatalf("CreateMQTTUser alice: %v", err)
+	}
+
+	anonymousRule, err := store.CreateRule(ctx, acl.Rule{
+		Selector:    acl.SelectorAnonymous,
+		TopicFilter: "public/#",
+		Permission:  acl.PermissionRead,
+	})
+	if err != nil {
+		t.Fatalf("CreateRule anonymous: %v", err)
+	}
+	patternRule, err := store.CreateRule(ctx, acl.Rule{
+		Selector:    acl.SelectorPattern,
+		TopicFilter: "clients/%u/state",
+		Permission:  acl.PermissionDeny,
+	})
+	if err != nil {
+		t.Fatalf("CreateRule pattern: %v", err)
+	}
+
+	if err := store.RenameMQTTUser(ctx, user.ID, "alice2"); err != nil {
+		t.Fatalf("RenameMQTTUser: %v", err)
+	}
+
+	gotAnonymous, err := store.GetRule(ctx, anonymousRule.ID)
+	if err != nil {
+		t.Fatalf("GetRule anonymous: %v", err)
+	}
+	if gotAnonymous.Selector != acl.SelectorAnonymous || gotAnonymous.Principal != "" {
+		t.Fatalf("anonymous rule changed by rename: %#v", gotAnonymous)
+	}
+
+	gotPattern, err := store.GetRule(ctx, patternRule.ID)
+	if err != nil {
+		t.Fatalf("GetRule pattern: %v", err)
+	}
+	if gotPattern.Selector != acl.SelectorPattern || gotPattern.Principal != "" {
+		t.Fatalf("pattern rule changed by rename: %#v", gotPattern)
+	}
+
+	// A row whose principal matches the old username but whose scope is not
+	// the user scope must survive the rename untouched: the cascade must
+	// key on the scope, not on the principal value alone.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := store.db.ExecContext(ctx,
+		`INSERT INTO acl_rules(principal, topic_filter, permission, description, selector, created_at, updated_at)
+		 VALUES('alice2', 'clients/%u/state', 'deny', '', 'pattern', ?, ?)`,
+		now, now)
+	if err != nil {
+		t.Fatalf("insert non-user scoped row: %v", err)
+	}
+	insertedID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("read inserted row id: %v", err)
+	}
+
+	if err := store.RenameMQTTUser(ctx, user.ID, "alice3"); err != nil {
+		t.Fatalf("RenameMQTTUser alice3: %v", err)
+	}
+
+	var principal string
+	if err := store.db.QueryRowContext(ctx, `SELECT principal FROM acl_rules WHERE id = ?`, insertedID).Scan(&principal); err != nil {
+		t.Fatalf("read non-user scoped row: %v", err)
+	}
+	if principal != "alice2" {
+		t.Fatalf("non-user scoped row was rewritten by rename: principal = %q", principal)
+	}
 }
 
 // TestCreateMQTTUserReservesServiceUsername ensures the storage layer rejects

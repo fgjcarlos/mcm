@@ -58,6 +58,7 @@ func (s *MemoryStore) CreateRule(_ context.Context, rule Rule) (Rule, error) {
 	if err := ValidateRule(rule); err != nil {
 		return Rule{}, err
 	}
+	rule = rule.Normalize()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,6 +75,7 @@ func (s *MemoryStore) UpdateRule(_ context.Context, id string, rule Rule) (Rule,
 	if err := ValidateRule(rule); err != nil {
 		return Rule{}, err
 	}
+	rule = rule.Normalize()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -264,6 +264,61 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 			t.Errorf("listed rule = %#v, want principal alice and topic sensors/#", rules[0])
 		}
 	})
+
+	t.Run("create normalizes the legacy selector", func(t *testing.T) {
+		freshStore := acl.NewMemoryStore()
+
+		created, err := freshStore.CreateRule(ctx, acl.Rule{
+			Principal:   "alice",
+			TopicFilter: "sensors/+/temperature",
+			Permission:  acl.PermissionRead,
+		})
+		if err != nil {
+			t.Fatalf("CreateRule returned error: %v", err)
+		}
+		if created.Selector != acl.SelectorUser {
+			t.Errorf("Selector = %q, want %q", created.Selector, acl.SelectorUser)
+		}
+	})
+
+	t.Run("native selectors round-trip", func(t *testing.T) {
+		freshStore := acl.NewMemoryStore()
+
+		anonymous, err := freshStore.CreateRule(ctx, acl.Rule{
+			Selector:    acl.SelectorAnonymous,
+			TopicFilter: "public/#",
+			Permission:  acl.PermissionRead,
+		})
+		if err != nil {
+			t.Fatalf("CreateRule anonymous returned error: %v", err)
+		}
+		if anonymous.Selector != acl.SelectorAnonymous {
+			t.Errorf("Selector = %q, want %q", anonymous.Selector, acl.SelectorAnonymous)
+		}
+
+		pattern, err := freshStore.CreateRule(ctx, acl.Rule{
+			Selector:    acl.SelectorPattern,
+			TopicFilter: "clients/%u/state",
+			Permission:  acl.PermissionDeny,
+		})
+		if err != nil {
+			t.Fatalf("CreateRule pattern returned error: %v", err)
+		}
+		if pattern.Selector != acl.SelectorPattern {
+			t.Errorf("Selector = %q, want %q", pattern.Selector, acl.SelectorPattern)
+		}
+		if pattern.Permission != acl.PermissionDeny {
+			t.Errorf("Permission = %q, want %q", pattern.Permission, acl.PermissionDeny)
+		}
+
+		rules, err := freshStore.ListRules(ctx)
+		if err != nil {
+			t.Fatalf("ListRules returned error: %v", err)
+		}
+		if len(rules) != 2 {
+			t.Fatalf("expected 2 rules, got %d", len(rules))
+		}
+	})
 }
 
 // TestMemoryStoreRunsContract verifies that MemoryStore implements the Store contract.

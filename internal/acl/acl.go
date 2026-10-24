@@ -6,6 +6,29 @@ import (
 	"unicode"
 )
 
+// Selector identifies the native Mosquitto ACL scope a rule applies to.
+//
+// A Mosquitto 2.0 ACL file distinguishes three scopes:
+//
+//   - user: the entry applies to the named username. This is the scope MCM
+//     used before native selectors existed.
+//   - anonymous: the entry applies to unauthenticated clients only. In a
+//     Mosquitto ACL file these are the `topic` lines that appear before the
+//     first `user` line.
+//   - pattern: the entry applies to every user inside the ACL. In a
+//     Mosquitto ACL file these are the `pattern` lines, which stay globally
+//     applicable no matter which `user` section surrounds them.
+type Selector string
+
+const (
+	// SelectorUser binds a rule to the rule principal (an MQTT username).
+	SelectorUser Selector = "user"
+	// SelectorAnonymous binds a rule to anonymous (unauthenticated) clients.
+	SelectorAnonymous Selector = "anonymous"
+	// SelectorPattern binds a rule to every user inside the ACL.
+	SelectorPattern Selector = "pattern"
+)
+
 // Permission describes the allowed MQTT action for an ACL rule.
 type Permission string
 
@@ -35,7 +58,11 @@ const MinimumDenyPermissionVersion = "2.0"
 
 // Rule represents one ACL entry managed by MCM.
 type Rule struct {
-	ID          string     `json:"id"`
+	ID string `json:"id"`
+	// Selector chooses the native Mosquitto scope of the rule. An empty
+	// selector means the legacy user scope, so rules stored before native
+	// selectors existed keep their meaning.
+	Selector    Selector   `json:"selector,omitempty"`
 	Principal   string     `json:"principal"`
 	TopicFilter string     `json:"topic_filter"`
 	Permission  Permission `json:"permission"`
@@ -51,6 +78,31 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("acl validation failed: %s", strings.Join(e.Problems, "; "))
 }
 
+// EffectiveSelector returns the selector the rule applies under. Rules
+// stored before native selectors existed carry an empty selector, which
+// means the legacy user scope.
+func (r Rule) EffectiveSelector() Selector {
+	if r.Selector == "" {
+		return SelectorUser
+	}
+	return r.Selector
+}
+
+// IsUserScoped reports whether the rule is bound to an MQTT username. Only
+// user-scoped rules follow MQTT user renames and can become orphans when
+// their user disappears.
+func (r Rule) IsUserScoped() bool {
+	return r.EffectiveSelector() == SelectorUser
+}
+
+// Normalize returns the rule with its selector resolved to an explicit
+// value. Stores persist the normalized rule so a legacy rule and an
+// explicitly user-scoped rule are stored identically.
+func (r Rule) Normalize() Rule {
+	r.Selector = r.EffectiveSelector()
+	return r
+}
+
 // ValidateRule validates a rule before it is persisted against the
 // Mosquitto version MCM supports.
 func ValidateRule(rule Rule) error {
@@ -64,16 +116,38 @@ func ValidateRule(rule Rule) error {
 func ValidateRuleForMosquittoVersion(rule Rule, version string) error {
 	var problems []string
 
-	if strings.TrimSpace(rule.Principal) == "" {
-		problems = append(problems, "principal is required")
-	} else if containsControlCharacter(rule.Principal) {
-		problems = append(problems, "principal must not contain control characters")
+	switch rule.EffectiveSelector() {
+	case SelectorUser:
+		if strings.TrimSpace(rule.Principal) == "" {
+			problems = append(problems, "principal is required")
+		} else if containsControlCharacter(rule.Principal) {
+			problems = append(problems, "principal must not contain control characters")
+		}
+	case SelectorAnonymous:
+		if rule.Principal != "" {
+			problems = append(problems, "principal must be empty for anonymous rules")
+		}
+	case SelectorPattern:
+		if rule.Principal != "" {
+			problems = append(problems, "principal must be empty for pattern rules")
+		}
+	default:
+		problems = append(problems, `selector must be one of: "user", "anonymous", "pattern"`)
 	}
+
 	if strings.TrimSpace(rule.TopicFilter) == "" {
 		problems = append(problems, "topic_filter is required")
 	} else if err := ValidateTopicFilter(rule.TopicFilter); err != nil {
 		problems = append(problems, err.Error())
+	} else if rule.EffectiveSelector() == SelectorPattern {
+		// Placeholder substitution is a pattern-only feature: Mosquitto
+		// replaces %u/%c when it evaluates a pattern entry. A user-scoped
+		// topic filter keeps a literal %u/%c untouched.
+		if err := ValidatePatternPlaceholders(rule.TopicFilter); err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
+
 	if _, ok := validPermissions[rule.Permission]; !ok {
 		problems = append(problems, `permission must be one of: "read", "write", "readwrite", "deny"`)
 	} else if rule.Permission == PermissionDeny && !mosquittoVersionAtLeast(version, MinimumDenyPermissionVersion) {
@@ -115,6 +189,22 @@ func ValidateTopicFilter(filter string) error {
 		}
 	}
 
+	return nil
+}
+
+// ValidatePatternPlaceholders validates the %u and %c placeholders of a
+// pattern topic filter. Mosquitto substitutes the connecting username (%u)
+// and the client id (%c) when it evaluates a pattern entry, and the
+// documented form places every placeholder on its own topic level.
+func ValidatePatternPlaceholders(filter string) error {
+	for _, level := range strings.Split(filter, "/") {
+		if !strings.Contains(level, "%u") && !strings.Contains(level, "%c") {
+			continue
+		}
+		if level != "%u" && level != "%c" {
+			return fmt.Errorf(`topic_filter %q is invalid: "%%u" and "%%c" must each occupy an entire topic level`, filter)
+		}
+	}
 	return nil
 }
 
@@ -178,7 +268,15 @@ func containsControlCharacter(value string) bool {
 	return false
 }
 
-// MosquittoACL returns the Mosquitto ACL line for a rule.
+// MosquittoACL returns the Mosquitto ACL line for a rule. User-scoped and
+// anonymous rules both render as `topic` lines; the section they are
+// rendered in carries the difference.
 func (r Rule) MosquittoACL() string {
 	return fmt.Sprintf("topic %s %s", r.Permission, r.TopicFilter)
+}
+
+// MosquittoPatternACL returns the Mosquitto pattern ACL line for a rule.
+// Pattern entries apply to every user inside the ACL.
+func (r Rule) MosquittoPatternACL() string {
+	return fmt.Sprintf("pattern %s %s", r.Permission, r.TopicFilter)
 }

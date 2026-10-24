@@ -382,6 +382,13 @@ CREATE INDEX IF NOT EXISTS idx_certificate_revisions_profile ON certificate_revi
 ALTER TABLE listener_specs ADD COLUMN tls_profile TEXT NOT NULL DEFAULT '';
 `,
 	},
+	{
+		version: 21,
+		name:    "add_acl_rules_selector",
+		sql: `
+ALTER TABLE acl_rules ADD COLUMN selector TEXT NOT NULL DEFAULT 'user';
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

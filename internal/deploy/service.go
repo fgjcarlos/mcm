@@ -410,14 +410,19 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 	// broker configuration. They cannot authenticate because their user is
 	// disabled or absent, and retaining them would make the rendered state
 	// disagree with the active user set.
+	//
+	// Only user-scoped rules reference an MQTT username. An anonymous or
+	// pattern rule carries no username, so it is never an orphan.
 	orphanPrincipals := make(map[string]struct{}, len(orphanRules))
 	for _, rule := range orphanRules {
 		orphanPrincipals[rule.Principal] = struct{}{}
 	}
 	activeRules := make([]acl.Rule, 0, len(rules))
 	for _, rule := range rules {
-		if _, orphan := orphanPrincipals[rule.Principal]; orphan {
-			continue
+		if rule.IsUserScoped() {
+			if _, orphan := orphanPrincipals[rule.Principal]; orphan {
+				continue
+			}
 		}
 		activeRules = append(activeRules, rule)
 	}
@@ -663,7 +668,9 @@ func parsePasswdUsers(body string) map[string]string {
 }
 
 // parseACLTopics returns a set of "<principal> <topic> <perm>" tuples
-// that appear in the rendered ACL body.
+// that appear in the rendered ACL body. Anonymous topic lines and pattern
+// lines are counted too: they are ACL entries the operator can add or
+// remove.
 func parseACLTopics(body string) map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, line := range strings.Split(body, "\n") {
@@ -672,7 +679,7 @@ func parseACLTopics(body string) map[string]struct{} {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "topic" {
+		if len(fields) < 2 || (fields[0] != "topic" && fields[0] != "pattern") {
 			continue
 		}
 		out[strings.Join(fields, " ")] = struct{}{}
@@ -927,7 +934,10 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Verification exhausted retries — rollback from snapshot.
-	msg := fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
+	msg := verifyResult.Message
+	if attempts > 0 {
+		msg = fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
+	}
 	if pendingActivationErr != nil {
 		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr))
 	}
@@ -948,7 +958,7 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		return diagnostics.VerifyActiveResult{
 			OK:              false,
 			Stage:           "setup",
-			Message:         "no activation probe available (need a user grant with a known cleartext password, or the configured managed service account)",
+			Message:         "no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account)",
 			PositiveMessage: "skipped: no activation probe",
 		}, 0, ""
 	}
@@ -994,17 +1004,20 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 type verificationProbeKind string
 
 const (
-	// probeKindUserGrant probes a user-scoped grant as that user.
+	// probeKindUserGrant probes a user-scoped readwrite grant as that user.
 	probeKindUserGrant verificationProbeKind = "user grant"
+	// probeKindPatternGrant probes a readwrite pattern grant with the
+	// probe identity substituted into a whole-level %u.
+	probeKindPatternGrant verificationProbeKind = "pattern grant"
 	// probeKindServiceGrant probes the managed service account and the
 	// grant MCM always emits for it. It is an operational fallback: it
-	// shows that the broker serves the freshly rendered credentials and
-	// the service grant, not that every client permission is correct.
+	// proves the broker serves the freshly rendered credentials and the
+	// service grant, not the client policy semantics.
 	probeKindServiceGrant verificationProbeKind = "managed service healthcheck grant (operational fallback)"
 )
 
-// verificationProbe is the identity and the topic the deploy verifier
-// exercises after a deploy.
+// verificationProbe is the identity and the concrete topic the deploy
+// verifier exercises after a deploy.
 type verificationProbe struct {
 	username     string
 	password     string
@@ -1013,57 +1026,141 @@ type verificationProbe struct {
 	kind         verificationProbeKind
 }
 
-// pickVerificationProbe picks the identity and the topic the deploy
+// pickVerificationProbe picks the identity and the concrete topic the deploy
 // verifier exercises.
 //
+// The probe is chosen in this order:
+//
+//  1. A user-scoped readwrite grant. It is the most specific evidence:
+//     the probe identity publishes and subscribes on a topic the
+//     operator granted to that identity.
+//  2. A readwrite pattern grant. A pattern applies to every user inside
+//     the ACL, so the probe identity is substituted into a whole-level
+//     %u placeholder and the broker expands it the same way.
+//  3. The managed service account and the grant MCM always emits for
+//     it. This is an operational fallback: it proves the broker serves
+//     the new credentials and the service grant, not the client policy
+//     semantics.
+//
 // A deny rule is not a grant: it never activates an action, so it is never
-// selected as the positive probe. When the policy grants nothing usable,
-// the probe falls back to the managed service account and the grant MCM
-// always emits for it. That fallback is operational: it shows the broker
-// serves the freshly rendered credentials and the service grant, not that
-// every client permission is correct.
+// selected as the positive probe.
 //
 // A grant whose identity has no known cleartext password yields no probe
 // at all: the verifier must never invent credentials, and the deploy fails
 // instead of falling back to the service account.
+//
+// A grant is only usable as a probe when it yields one concrete topic
+// name: the verifier publishes to a topic, so a wildcard filter is
+// replaced by a fixed probe segment and a %c placeholder is skipped
+// (the verifier does not control the MQTT client id).
 func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody string) (verificationProbe, bool) {
 	entries := mosquitto.ParsePasswdFile(passwdBody)
 	rules := mosquitto.ParseACLFile(aclBody)
+	if len(entries) == 0 {
+		return verificationProbe{}, false
+	}
 
+	// 1. A user-scoped readwrite grant.
 	for _, e := range entries {
 		// Skip the service user — it has # access, so it is never the
 		// probe subject. It is used only as the labelled fallback below.
-		if e.Username == s.mosquittoCfg.Username && s.mosquittoCfg.Username != "" {
+		if s.isServiceAccount(e.Username) {
 			continue
 		}
-		for _, r := range rules {
-			if r.Principal != e.Username {
-				continue
-			}
-			if r.Permission == acl.PermissionDeny {
-				// A deny is not a grant: probing it would exercise a
-				// topic the policy blocks.
+		hasGrant, readwrite := userScopedGrants(rules, e.Username)
+		if !hasGrant {
+			continue
+		}
+		password, hasPassword := s.lookupCleartextPassword(e.Username)
+		if !hasPassword || password == "" {
+			return verificationProbe{}, false
+		}
+		if readwrite == nil {
+			// The identity only has narrower grants. A probe publishes and
+			// subscribes, so it needs a readwrite grant.
+			continue
+		}
+		topic, ok := concreteProbeTopic(readwrite.TopicFilter, e.Username, false)
+		if !ok {
+			continue
+		}
+		return verificationProbe{
+			username:     e.Username,
+			password:     password,
+			allowedTopic: topic,
+			deniedTopic:  deniedTopicFor(rules, e.Username),
+			kind:         probeKindUserGrant,
+		}, true
+	}
+
+	// 2. A readwrite pattern grant.
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorPattern || r.Permission != acl.PermissionReadWrite {
+			continue
+		}
+		for _, e := range entries {
+			if s.isServiceAccount(e.Username) {
 				continue
 			}
 			password, hasPassword := s.lookupCleartextPassword(e.Username)
 			if !hasPassword || password == "" {
-				return verificationProbe{}, false
+				continue
+			}
+			topic, ok := concreteProbeTopic(r.TopicFilter, e.Username, true)
+			if !ok {
+				continue
 			}
 			return verificationProbe{
 				username:     e.Username,
 				password:     password,
-				allowedTopic: r.TopicFilter,
+				allowedTopic: topic,
 				deniedTopic:  deniedTopicFor(rules, e.Username),
-				kind:         probeKindUserGrant,
+				kind:         probeKindPatternGrant,
 			}, true
 		}
 	}
 
+	// 3. The managed service account.
 	return s.serviceVerificationProbe(entries, rules)
 }
 
+// userScopedGrants reports the user-scoped grants of an identity: whether
+// the identity has any grant at all and, separately, its first readwrite
+// grant. Deny rules are grants in neither sense: a deny is not a grant.
+func userScopedGrants(rules []acl.Rule, identity string) (bool, *acl.Rule) {
+	var readwrite *acl.Rule
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission == acl.PermissionDeny {
+			continue
+		}
+		if r.Permission == acl.PermissionReadWrite && readwrite == nil {
+			grant := r
+			readwrite = &grant
+		}
+	}
+	return readwrite != nil || hasNonDenyGrant(rules, identity), readwrite
+}
+
+// hasNonDenyGrant reports whether the identity owns at least one grant
+// that is not a deny.
+func hasNonDenyGrant(rules []acl.Rule, identity string) bool {
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
+			return true
+		}
+	}
+	return false
+}
+
 // serviceVerificationProbe builds the operational fallback probe: the
-// managed service account and the grant MCM always emits for it.
+// managed service account and the healthcheck grant MCM always emits
+// for it.
 //
 // It is an operational fallback, not a proof of the client policy: it
 // shows that the broker serves the freshly rendered credentials and the
@@ -1091,16 +1188,23 @@ func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rule
 	}
 
 	for _, r := range rules {
-		if r.Principal != username || r.Permission != acl.PermissionReadWrite {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != username {
 			continue
 		}
-		if r.TopicFilter != serviceHealthcheckTopic && r.TopicFilter != "" {
+		if r.Permission != acl.PermissionReadWrite {
+			continue
+		}
+		if r.TopicFilter != serviceHealthcheckTopic {
+			continue
+		}
+		topic, ok := concreteProbeTopic(r.TopicFilter, username, false)
+		if !ok {
 			continue
 		}
 		return verificationProbe{
 			username:     username,
 			password:     password,
-			allowedTopic: r.TopicFilter,
+			allowedTopic: topic,
 			deniedTopic:  deniedTopicFor(rules, username),
 			kind:         probeKindServiceGrant,
 		}, true
@@ -1113,15 +1217,84 @@ func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rule
 //
 // The negative stage of the verifier authenticates an unknown user and does
 // not consume this topic. The value documents what the policy denies; it is
-// not a permission evaluation of the rendered ACL.
+// not a permission evaluation of the rendered ACL, so it keeps the filter
+// the operator wrote instead of a concretized probe topic.
 func deniedTopicFor(rules []acl.Rule, identity string) string {
 	for _, r := range rules {
-		if r.Principal != identity || r.Permission != acl.PermissionDeny {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
 			continue
 		}
 		return r.TopicFilter
 	}
 	return ""
+}
+
+// probeTopicSegment is the concrete topic level MCM uses when a grant is
+// expressed as a wildcard filter and the verifier needs one concrete
+// topic name to publish to and subscribe to.
+const probeTopicSegment = "mcm-verify"
+
+// concreteProbeTopic turns an ACL topic filter into one concrete topic
+// name the verifier can use.
+//
+// Wildcard levels are replaced by probeTopicSegment, so the verifier
+// never publishes to a filter. In a pattern rule %u expands to the
+// probe identity, so a whole-level %u is replaced by that identity; a
+// %c placeholder cannot be expanded (the verifier does not control the
+// MQTT client id) and makes the rule unusable as a probe. In a user or
+// anonymous rule %u and %c are literal characters and stay untouched.
+func concreteProbeTopic(filter, identity string, patternRule bool) (string, bool) {
+	if filter == "" {
+		return "", false
+	}
+	levels := strings.Split(filter, "/")
+	out := make([]string, 0, len(levels))
+	for i, level := range levels {
+		switch {
+		case level == "#":
+			if i != len(levels)-1 {
+				return "", false
+			}
+			out = append(out, probeTopicSegment)
+		case level == "+":
+			out = append(out, probeTopicSegment)
+		case patternRule && level == "%u":
+			if !validProbeTopicLevel(identity) {
+				return "", false
+			}
+			out = append(out, identity)
+		case patternRule && (strings.Contains(level, "%u") || strings.Contains(level, "%c")):
+			return "", false
+		case strings.ContainsAny(level, "+#"):
+			return "", false
+		default:
+			out = append(out, level)
+		}
+	}
+	topic := strings.Join(out, "/")
+	if topic == "" {
+		return "", false
+	}
+	return topic, true
+}
+
+// validProbeTopicLevel reports whether the value can be used as one MQTT
+// topic level: it must not be empty and must not contain the path
+// separator, a wildcard character or a NUL byte.
+func validProbeTopicLevel(level string) bool {
+	if level == "" {
+		return false
+	}
+	return !strings.ContainsAny(level, "/+#") && !strings.ContainsRune(level, 0)
+}
+
+// isServiceAccount reports whether the username is the managed broker
+// service account (MCM_MOSQUITTO_USERNAME).
+func (s *Service) isServiceAccount(username string) bool {
+	return username != "" && username == s.mosquittoCfg.Username
 }
 
 // lookupCleartextPassword returns the cleartext password for the test

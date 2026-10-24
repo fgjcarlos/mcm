@@ -1416,6 +1416,8 @@ components:
       type: object
       properties:
         id: { type: string }
+        selector:
+          $ref: "#/components/schemas/ACLSelector"
         principal: { type: string }
         topic_filter:
           type: string
@@ -1426,12 +1428,38 @@ components:
     ACLRuleRequest:
       type: object
       properties:
-        principal: { type: string }
+        selector:
+          $ref: "#/components/schemas/ACLSelector"
+        principal:
+          type: string
+          description: |
+            The MQTT username the rule applies to. Required and non-empty for
+            the `user` selector; must be empty or omitted for the
+            `anonymous` and `pattern` selectors. A request without a
+            principal and without a `selector` is rejected, never treated as
+            an anonymous rule.
         topic_filter: { type: string }
         permission: { $ref: "#/components/schemas/ACLPermission" }
         description: { type: string }
-      required: [principal, topic_filter, permission]
+      required: [topic_filter, permission]
       additionalProperties: false
+    ACLSelector:
+      type: string
+      description: |
+        Native Mosquitto scope of the rule.
+
+        - `user`: the rule applies to the named `principal` (an MQTT
+          username). This is the scope used by rules created before native
+          selectors existed, and the scope a request without a `selector`
+          keeps.
+        - `anonymous`: the rule applies to unauthenticated clients only.
+          The `principal` must be empty. A malformed request without a
+          principal is rejected instead of becoming an anonymous rule.
+        - `pattern`: the rule applies to every user inside the ACL. The
+          `principal` must be empty, and the topic filter may use the `%u`
+          (username) and `%c` (client id) placeholders, each on its own
+          topic level.
+      enum: [user, anonymous, pattern]
     ACLPermission:
       type: string
       description: >-
