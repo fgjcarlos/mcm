@@ -260,6 +260,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		confPath := filepath.Join(cfg.Mosquitto.ConfigDir, "mosquitto.conf")
 		deployService.WithBrokerConfig(confPath, brokerCatalog)
 		app.brokerCfgSvc = deployService
+		app.bridgeSvc = deployService
 		if app.brokerCfgCatalog == nil {
 			app.brokerCfgCatalog = brokerCatalog
 		}
