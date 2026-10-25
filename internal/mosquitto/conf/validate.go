@@ -35,19 +35,11 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	// Multiplicity accounting keyed by directive name.
 	counts := make(map[string]int)
 
-	// listener blocks need their inner items validated against
-	// ScopeListener; the catalog-lookup for listener-only directives
-	// expects to find the enclosing block. We track which items are
-	// inside any listener block so the validator can pass scope
-	// correctly.
-	inListener := make(map[int]bool)
-	for _, b := range f.ListenerBlocks() {
-		for i := range b.Body {
-			// body Items are not indexed by global position so we
-			// use a map keyed by Line instead.
-			inListener[b.Body[i].Line] = true
-		}
-	}
+	// A directive belongs to a listener when Mosquitto would bind it to
+	// one: inside a braced listener block, or after a brace-less
+	// "listener <port>" line, which applies to the directives that
+	// follow it until the next listener.
+	inListener := listenerContext(f)
 
 	for _, it := range f.Items {
 		switch it.Kind {
@@ -74,18 +66,26 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 			}
 			counts[strings.ToLower(it.Key)]++
 
-			// Scope check.
-			if spec.Scope == catalog.ScopeListener && !inListener[it.Line] {
-				issues = append(issues, ValidationIssue{
-					Kind: "scope", Line: it.Line, Directive: it.Key,
-					Message: fmt.Sprintf("%q only valid inside a listener block", it.Key),
-				})
-			}
-			if spec.Scope == catalog.ScopeGlobal && inListener[it.Line] {
-				issues = append(issues, ValidationIssue{
-					Kind: "scope", Line: it.Line, Directive: it.Key,
-					Message: fmt.Sprintf("%q only valid at global scope", it.Key),
-				})
+			// Scope check. A directive that opens a listener is by
+			// definition written at the top level, so it is never
+			// out of scope.
+			if !isBlockDirective(it.Key) {
+				if spec.Scope == catalog.ScopeListener && !inListener[it.Line] {
+					issues = append(issues, ValidationIssue{
+						Kind: "scope", Line: it.Line, Directive: it.Key,
+						Message: fmt.Sprintf("%q only valid inside a listener block", it.Key),
+					})
+				}
+				// Mosquitto applies a global directive globally
+				// wherever it appears, so a global directive inside a
+				// listener context is only worth a warning when the
+				// broker does not accept it per listener at all.
+				if spec.Scope == catalog.ScopeGlobal && inListener[it.Line] && spec.ListenerSinceVersion == "" {
+					issues = append(issues, ValidationIssue{
+						Kind: "scope", Line: it.Line, Directive: it.Key,
+						Message: fmt.Sprintf("%q only valid at global scope", it.Key),
+					})
+				}
 			}
 
 			// Type check (best-effort; we do not understand quoted
@@ -106,12 +106,29 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 					if spec.Name == "listener" && i > 0 {
 						continue
 					}
-					if _, err := strconv.Atoi(v); err != nil {
+					n, err := strconv.Atoi(v)
+					if err != nil {
 						issues = append(issues, ValidationIssue{
 							Kind: "type", Line: it.Line, Directive: it.Key,
 							Message: fmt.Sprintf("%q expects an integer, got %q", it.Key, v),
 						})
 						break
+					}
+					if msg, ok := rangeCheck(spec, n); !ok {
+						issues = append(issues, ValidationIssue{
+							Kind: "range", Line: it.Line, Directive: it.Key,
+							Message: msg,
+						})
+						break
+					}
+				}
+			case spec.Type == catalog.TypeDuration:
+				if len(it.Values) > 0 {
+					if msg, ok := durationCheck(spec, it.Values[0]); !ok {
+						issues = append(issues, ValidationIssue{
+							Kind: "type", Line: it.Line, Directive: it.Key,
+							Message: msg,
+						})
 					}
 				}
 			case spec.Type == catalog.TypeEnum && len(spec.AllowedValues) > 0:
@@ -144,4 +161,94 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	}
 
 	return issues
+}
+
+// listenerContext marks the items that Mosquitto binds to a listener.
+//
+// A listener is opened either by a braced block ("listener 1883 { … }")
+// or by a brace-less "listener <port>" line, which applies to the
+// directives that follow it until the next listener. The map is keyed by
+// the source line of the item.
+func listenerContext(f *File) map[int]bool {
+	out := make(map[int]bool)
+	if f == nil {
+		return out
+	}
+	depth := 0
+	inListener := false
+	for i := range f.Items {
+		it := &f.Items[i]
+		switch it.Kind {
+		case ItemBlockOpen:
+			depth++
+			inListener = true
+			continue
+		case ItemBlockClose:
+			depth--
+			if depth <= 0 {
+				depth = 0
+				inListener = false
+			}
+			continue
+		case ItemDirective:
+		default:
+			continue
+		}
+		if isBlockDirective(it.Key) {
+			// The brace-less form: the directives that follow
+			// belong to this listener.
+			inListener = true
+			continue
+		}
+		if inListener {
+			out[it.Line] = true
+		}
+	}
+	return out
+}
+
+// rangeCheck reports whether an integer value stays inside the bounds the
+// catalog records for the directive. The bounds mirror what the broker
+// itself accepts, so an out-of-range value is refused before the file
+// reaches Mosquitto.
+func rangeCheck(spec catalog.DirectiveSpec, value int) (string, bool) {
+	if spec.Min != nil && int64(value) < *spec.Min {
+		return fmt.Sprintf("%q must be %s or more, got %d", spec.Name, formatBound(*spec.Min, spec.Unit), value), false
+	}
+	if spec.Max != nil && int64(value) > *spec.Max {
+		return fmt.Sprintf("%q must be %s or less, got %d", spec.Name, formatBound(*spec.Max, spec.Unit), value), false
+	}
+	return "", true
+}
+
+// formatBound renders a bound with its unit so the message reads like
+// "must be 20 bytes or more".
+func formatBound(value int64, unit string) string {
+	if unit == "" {
+		return strconv.FormatInt(value, 10)
+	}
+	return strconv.FormatInt(value, 10) + " " + unit
+}
+
+// durationCheck validates a duration value such as "2h". The broker only
+// accepts a positive integer followed by one of the unit suffixes the
+// catalog lists for the version.
+func durationCheck(spec catalog.DirectiveSpec, value string) (string, bool) {
+	if len(value) < 2 {
+		return fmt.Sprintf("%q expects a number followed by a unit (%s)", spec.Name, strings.Join(spec.DurationSuffixes, ", ")), false
+	}
+	digits, suffix := value[:len(value)-1], value[len(value)-1:]
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return fmt.Sprintf("%q expects a number followed by a unit (%s), got %q", spec.Name, strings.Join(spec.DurationSuffixes, ", "), value), false
+	}
+	if n <= 0 {
+		return fmt.Sprintf("%q must be greater than zero, got %q", spec.Name, value), false
+	}
+	for _, allowed := range spec.DurationSuffixes {
+		if suffix == allowed {
+			return "", true
+		}
+	}
+	return fmt.Sprintf("%q does not accept the %q unit, expected one of %s", spec.Name, string(suffix), strings.Join(spec.DurationSuffixes, ", ")), false
 }
