@@ -2480,6 +2480,13 @@ components:
         validation_issues:
           type: array
           items: { $ref: "#/components/schemas/BrokerConfigValidationIssue" }
+        bridge_issues:
+          type: array
+          description: |
+            The findings of a bridge document that passed the validation.
+            Only the warnings reach this field; an error refuses the
+            preview.
+          items: { $ref: "#/components/schemas/BridgeValidationIssue" }
         include_snapshot: { $ref: "#/components/schemas/BrokerConfigIncludeSnapshot" }
         has_changes: { type: boolean }
       required:
