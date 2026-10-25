@@ -14,9 +14,9 @@ This is the agreed target, not a description of completed functionality. Impleme
 | ACL | User/topic rules with read, write and readwrite | Native patterns, deny and listener scope supported by each version |
 | Apply | Password/ACL file diff, write, SIGHUP and limited recovery | Immutable revision, validation, reload/restart selection, verification and recovery |
 | Configuration | Versioned import, catalog-validated preview, explicit adoption and apply of mosquitto.conf (issue #298); directive-level editing not yet exposed | Import and graphical editing of mosquitto.conf and includes |
+| General settings | Catalog-driven forms for persistence, queues, sessions and logging with a preview and a reload/restart distinction (issue #302) | Every supported general setting of every supported version |
 | Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
 | TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
-| General settings | Static broker configuration | Persistence, queues, limits, sessions and logging |
 | Bridges and plugins | No management UI | Bridge editor and supported plugins, including Dynamic Security |
 | Diagnostics | Wildcard-observed traffic and MCM events | Explicit broker metrics/log sources with stated limitations |
 | Recovery | Legacy volume recipes with known defects | Consistent, complete, tested backups and UI restore |
@@ -30,6 +30,12 @@ Import must preserve include ordering, repeated listener/bridge blocks, comments
 Keep desired configuration, reviewed revision, written files and verified active state distinct. Detect external edits before applying. Credentials and private keys must not appear in normal API responses, logs or diffs. MQTT service accounts are visible managed dependencies, not ordinary removable entries.
 
 A deployment adapter reports read, write, reload, restart and log capabilities. MQTT connectivity alone is not an administration transport. A remote broker needs an explicitly configured management path; otherwise the UI must identify observation-only operation. Docker port publication and mounted-file permissions are separate from Mosquitto listener settings.
+
+## General settings (issue #302)
+
+The general settings of the broker are edited through guided forms: persistence and autosave, queues and messages, connections and sessions, and logging. Every field is described by the versioned catalog — type, unit, accepted range, broker default, help text and whether a change needs a reload or a restart — so the bounds the operator sees are the bounds the server enforces.
+
+The forms only manage the global part of `mosquitto.conf`. A directive inside a listener block belongs to that listener and stays in the listener editor. A repeatable directive such as `log_dest` keeps every occurrence, and a directive the operator leaves unset falls back to the broker default. Saving the settings without an edit leaves the file byte-for-byte identical; comments, unknown directives, include order and listener blocks are preserved.
 
 ## Listener management (issue #299)
 
