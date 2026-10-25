@@ -433,6 +433,13 @@ CREATE TABLE IF NOT EXISTS managed_acl_files (
 );
 `,
 	},
+	{
+		version: 26,
+		name:    "add_broker_config_changed_directives",
+		sql: `
+ALTER TABLE broker_config_revisions ADD COLUMN changed_directives TEXT;
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

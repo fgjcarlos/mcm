@@ -19,16 +19,24 @@ var ErrBrokerConfigRevisionConsumed = errors.New("broker config revision already
 // BrokerConfigRevision stores the immutable output of a broker-config preview.
 // It mirrors preview_revisions (issue #296) but for the broker conf + include
 // snapshot produced by the importer (issue #298).
+//
+// ChangedDirectives lists the directives whose value the revision changes,
+// comma separated. It is nil for revisions that did not compute a change set
+// (the importer, which rewrites the whole file) and non-nil — possibly empty
+// — for revisions that know exactly which directives they touch (the settings
+// editor, issue #302). The apply path uses it to tell a SIGHUP apart from a
+// full restart.
 type BrokerConfigRevision struct {
-	ID               string
-	Actor            string
-	BaseConfHash     string
-	RenderedConfHash string
-	BasePath         string
-	ConfRendered     string
-	IncludeSnapshot  string
-	CreatedAt        time.Time
-	AppliedAt        time.Time
+	ID                string
+	Actor             string
+	BaseConfHash      string
+	RenderedConfHash  string
+	BasePath          string
+	ConfRendered      string
+	IncludeSnapshot   string
+	ChangedDirectives *string
+	CreatedAt         time.Time
+	AppliedAt         time.Time
 }
 
 // BrokerConfigAdoption records the operator's acknowledgement that an
@@ -54,10 +62,10 @@ func (s *Store) InsertBrokerConfigRevision(ctx context.Context, r *BrokerConfigR
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO broker_config_revisions(
 	id, actor, base_conf_hash, rendered_conf_hash,
-	base_path, conf_rendered, include_snapshot, created_at, applied_at
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, '')`,
+	base_path, conf_rendered, include_snapshot, changed_directives, created_at, applied_at
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
 		r.ID, r.Actor, r.BaseConfHash, r.RenderedConfHash,
-		r.BasePath, r.ConfRendered, r.IncludeSnapshot,
+		r.BasePath, r.ConfRendered, r.IncludeSnapshot, r.ChangedDirectives,
 		r.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -70,7 +78,7 @@ INSERT INTO broker_config_revisions(
 func (s *Store) GetBrokerConfigRevision(ctx context.Context, id string) (BrokerConfigRevision, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, actor, base_conf_hash, rendered_conf_hash,
-       base_path, conf_rendered, include_snapshot, created_at, applied_at
+       base_path, conf_rendered, include_snapshot, changed_directives, created_at, applied_at
 FROM broker_config_revisions WHERE id = ?`, id)
 	return scanBrokerConfigRevision(row)
 }
@@ -154,6 +162,7 @@ LIMIT 1`, sourcePath)
 func scanBrokerConfigRevision(row interface{ Scan(dest ...any) error }) (BrokerConfigRevision, error) {
 	var r BrokerConfigRevision
 	var createdAt, appliedAt string
+	var changed sql.NullString
 	if err := row.Scan(
 		&r.ID,
 		&r.Actor,
@@ -162,6 +171,7 @@ func scanBrokerConfigRevision(row interface{ Scan(dest ...any) error }) (BrokerC
 		&r.BasePath,
 		&r.ConfRendered,
 		&r.IncludeSnapshot,
+		&changed,
 		&createdAt,
 		&appliedAt,
 	); err != nil {
@@ -169,6 +179,10 @@ func scanBrokerConfigRevision(row interface{ Scan(dest ...any) error }) (BrokerC
 			return BrokerConfigRevision{}, ErrBrokerConfigRevisionNotFound
 		}
 		return BrokerConfigRevision{}, fmt.Errorf("scan broker config revision: %w", err)
+	}
+	if changed.Valid {
+		value := changed.String
+		r.ChangedDirectives = &value
 	}
 	var err error
 	r.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
