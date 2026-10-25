@@ -242,6 +242,25 @@ jobs:
         # section, the pattern rules and the per-listener ACL file.
         run: bash scripts/tests/test-e2e-acl-semantics.sh
 
+  e2e-bridges:
+    name: Bridges against live Mosquitto
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Bridges between two live brokers
+        # Issue #303 acceptance criteria: a bridge is a connection between
+        # two brokers, so the behaviour is proven against two real
+        # Mosquitto 2.0 instances — the configuration MCM renders loads in
+        # the broker, the traffic flows in both directions, and the
+        # connection recovers when the remote broker comes back.
+        run: bash scripts/tests/test-e2e-bridges.sh
+
   e2e-acl-scoped-listener:
     name: Listener-scoped ACL rules against live Mosquitto
     runs-on: ubuntu-latest
