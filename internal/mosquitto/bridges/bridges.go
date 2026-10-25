@@ -387,9 +387,9 @@ func SplitAddress(address string) (host string, port int, err error) {
 
 	// A bare IPv6 literal contains several colons and carries no port.
 	if strings.Count(trimmed, ":") == 1 {
-		idx := strings.Index(trimmed, ":")
-		host = trimmed[:idx]
-		parsed, err := parsePort(trimmed[idx+1:])
+		hostPart, portPart, _ := strings.Cut(trimmed, ":")
+		host = hostPart
+		parsed, err := parsePort(portPart)
 		if err != nil {
 			return "", 0, err
 		}
