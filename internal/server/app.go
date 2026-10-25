@@ -467,6 +467,8 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("POST /api/v1/broker/config/adopt", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleAdopt)))
 		mux.Handle("POST /api/v1/broker/config/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleApply)))
 		mux.Handle("GET /api/v1/broker/config/catalog", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleCatalog)))
+		mux.Handle("GET /api/v1/broker/settings", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleGetSettings)))
+		mux.Handle("POST /api/v1/broker/settings/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handlePreviewSettings)))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {

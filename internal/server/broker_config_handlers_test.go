@@ -15,6 +15,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/settings"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -22,14 +23,19 @@ import (
 // the handler tests. It returns whatever the test sets in err / result
 // fields, then counts calls so the tests can assert handler dispatch.
 type fakeBrokerConfigService struct {
-	getResult  deploy.GetBrokerConfigResult
-	getErr     error
-	previewRes deploy.PreviewResult
-	previewErr error
-	depRes     storage.Deployment
-	applyErr   error
-	adoptRes   storage.BrokerConfigAdoption
-	adoptErr   error
+	getResult          deploy.GetBrokerConfigResult
+	getErr             error
+	previewRes         deploy.PreviewResult
+	previewErr         error
+	depRes             storage.Deployment
+	applyErr           error
+	adoptRes           storage.BrokerConfigAdoption
+	adoptErr           error
+	settingsResult     deploy.BrokerSettingsResult
+	settingsErr        error
+	settingsPreview    deploy.PreviewResult
+	settingsPreviewErr error
+	settingsDoc        settings.Document
 }
 
 func (f *fakeBrokerConfigService) PreviewBrokerConfig(_ context.Context, _ string) (deploy.PreviewResult, error) {
@@ -43,6 +49,13 @@ func (f *fakeBrokerConfigService) AdoptBrokerConfig(_ context.Context, _ string)
 }
 func (f *fakeBrokerConfigService) GetBrokerConfig(_ context.Context) (deploy.GetBrokerConfigResult, error) {
 	return f.getResult, f.getErr
+}
+func (f *fakeBrokerConfigService) GetBrokerSettings(_ context.Context) (deploy.BrokerSettingsResult, error) {
+	return f.settingsResult, f.settingsErr
+}
+func (f *fakeBrokerConfigService) PreviewBrokerSettings(_ context.Context, _ string, doc settings.Document) (deploy.PreviewResult, error) {
+	f.settingsDoc = doc
+	return f.settingsPreview, f.settingsPreviewErr
 }
 
 // newAppWithBroker wires a broker-config fake into the App's

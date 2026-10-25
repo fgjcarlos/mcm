@@ -11,6 +11,7 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/settings"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -23,6 +24,8 @@ type brokerConfigServicer interface {
 	ApplyBrokerConfig(ctx context.Context, actor, revisionID string, force, adopt bool) (storage.Deployment, error)
 	AdoptBrokerConfig(ctx context.Context, actor string) (storage.BrokerConfigAdoption, error)
 	GetBrokerConfig(ctx context.Context) (deploy.GetBrokerConfigResult, error)
+	GetBrokerSettings(ctx context.Context) (deploy.BrokerSettingsResult, error)
+	PreviewBrokerSettings(ctx context.Context, actor string, doc settings.Document) (deploy.PreviewResult, error)
 }
 
 // brokerConfigAPI groups the HTTP handlers for the broker-config
