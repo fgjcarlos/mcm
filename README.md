@@ -273,6 +273,7 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 - [docs/openapi.yaml](./docs/openapi.yaml) — full REST + WebSocket contract.
 - [docs/production.md](./docs/production.md) — production deployment guide.
 - [docs/acl.md](./docs/acl.md) — ACL model and REST shape.
+- [docs/bridges.md](./docs/bridges.md) — bridge model, Mosquitto mapping and REST shape.
 - [docs/json-schemas.md](./docs/json-schemas.md) — JSON Schema validators bound to MQTT topic filters.
 - [docs/sparkplug.md](./docs/sparkplug.md) — Sparkplug B namespace classification.
 - [docs/webhook-alerting.md](./docs/webhook-alerting.md) — outbound operational webhooks.

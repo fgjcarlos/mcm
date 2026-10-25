@@ -724,3 +724,69 @@ func TestDockerApplierReloadBrokerOnly(t *testing.T) {
 		}
 	})
 }
+
+// TestDockerApplierRestartBroker covers the restart the bridge surface
+// needs: Mosquitto reads a bridge only at start-up, so a reload does not
+// activate it.
+func TestDockerApplierRestartBroker(t *testing.T) {
+	t.Run("restarts the container", func(t *testing.T) {
+		runner := &fakeRunner{}
+		da := DockerApplier{ContainerName: "mosquitto-broker", Runner: runner}
+		if err := da.RestartBroker(context.Background()); err != nil {
+			t.Fatalf("RestartBroker returned error: %v", err)
+		}
+		if runner.name != "docker" {
+			t.Errorf("command = %q, want docker", runner.name)
+		}
+		want := []string{"restart", "mosquitto-broker"}
+		if len(runner.args) != len(want) {
+			t.Fatalf("args = %v, want %v", runner.args, want)
+		}
+		for i, arg := range want {
+			if runner.args[i] != arg {
+				t.Errorf("args = %v, want %v", runner.args, want)
+				break
+			}
+		}
+	})
+	t.Run("requires a container name", func(t *testing.T) {
+		da := DockerApplier{Runner: &fakeRunner{}}
+		if err := da.RestartBroker(context.Background()); err == nil {
+			t.Fatal("RestartBroker returned no error for an empty container name")
+		}
+	})
+	t.Run("includes runner output and wraps runner error", func(t *testing.T) {
+		runErr := errors.New("exit status 1")
+		da := DockerApplier{ContainerName: "mosquitto-broker", Runner: &fakeRunner{output: []byte("no such container\n"), err: runErr}}
+		err := da.RestartBroker(context.Background())
+		if !errors.Is(err, runErr) {
+			t.Fatalf("error = %v, want wrapped runner error", err)
+		}
+		if !strings.Contains(err.Error(), "no such container") {
+			t.Fatalf("error = %q, want runner output", err)
+		}
+	})
+}
+
+// TestFileApplierRestartBroker covers the file applier: the restart
+// mechanism of a production deployment is the reload command the operator
+// configures.
+func TestFileApplierRestartBroker(t *testing.T) {
+	t.Run("runs the reload command", func(t *testing.T) {
+		runner := &fakeRunner{}
+		fa := FileApplier{ReloadCommand: []string{"systemctl", "restart", "mosquitto"}, ReloadRunner: runner}
+		if err := fa.RestartBroker(context.Background()); err != nil {
+			t.Fatalf("RestartBroker returned error: %v", err)
+		}
+		if runner.name != "systemctl" {
+			t.Errorf("command = %q, want systemctl", runner.name)
+		}
+	})
+	t.Run("reports that it cannot restart without a command", func(t *testing.T) {
+		fa := FileApplier{}
+		err := fa.RestartBroker(context.Background())
+		if !errors.Is(err, ErrRestartNotSupported) {
+			t.Fatalf("error = %v, want ErrRestartNotSupported", err)
+		}
+	})
+}

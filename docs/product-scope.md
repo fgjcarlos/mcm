@@ -17,7 +17,7 @@ This is the agreed target, not a description of completed functionality. Impleme
 | General settings | Catalog-driven forms for persistence, queues, sessions and logging with a preview and a reload/restart distinction (issue #302) | Every supported general setting of every supported version |
 | Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
 | TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
-| Bridges and plugins | No management UI | Bridge editor and supported plugins, including Dynamic Security |
+| Bridges and plugins | Bridge editor for the connections between brokers: destinations, client ids, credentials, TLS, reconnection and topic rules with a direction, a quality of service and local/remote prefixes, validated against names, dependencies and message loops and activated through a reviewed revision (issue #303). No plugin management. | Bridge editor and supported plugins, including Dynamic Security |
 | Diagnostics | Wildcard-observed traffic and MCM events | Explicit broker metrics/log sources with stated limitations |
 | Recovery | Legacy volume recipes with known defects | Consistent, complete, tested backups and UI restore |
 
@@ -40,6 +40,10 @@ The forms only manage the global part of `mosquitto.conf`. A directive inside a 
 ## Listener management (issue #299)
 
 MCM provides CRUD for MQTT and WebSocket listener specifications through reviewed preview/apply revisions; listener changes require a broker restart, and Compose port mappings remain an independent coexistence constraint that must include every managed listener port.
+
+## Bridge management (issue #303)
+
+MCM provides CRUD for the bridge connections between brokers through reviewed preview/apply revisions. A bridge states its destination, its client ids, its credentials, its TLS material and its reconnection behaviour, and it forwards topic rules with a direction, a quality of service and local/remote prefixes. The validator refuses an invalid name or address, a missing dependency such as a client certificate without its private key, and the three shapes of message loop the broker would fall into. A credential is never returned by the API and never travels through a diff or a log line. Mosquitto reads a bridge at start-up, so an activated bridge needs a broker restart. The behaviour is proven against two real Mosquitto instances, including the recovery of the connection when the remote broker comes back.
 
 ## Operator journey
 

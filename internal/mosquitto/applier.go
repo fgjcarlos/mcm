@@ -52,6 +52,8 @@ var ErrReloadNotSignaled = errors.New("reload not signaled: FileApplier requires
 // flow can reuse the same atomic-rename semantics without duplicating
 // write/commit logic. ReloadBrokerOnly signals a reload without writing
 // any files; the broker-config path uses it after its own write.
+//
+// Write files to the given paths, then signal the broker to reload.
 type Applier interface {
 	// Apply atomically writes the ACL and passwd files, signals the broker
 	// to reload, and restores from snapshot on partial failure.
@@ -72,6 +74,20 @@ type Applier interface {
 	// without writing any files. Used by the broker-config path after it
 	// has already written mosquitto.conf via AtomicWriteConf.
 	ReloadBrokerOnly() error
+}
+
+// ErrRestartNotSupported is returned by an applier that cannot restart the
+// broker. The deploy service then reports the change as pending activation
+// instead of claiming the broker already serves it.
+var ErrRestartNotSupported = errors.New("applier cannot restart the broker")
+
+// BrokerRestarter is implemented by an applier that can restart the broker.
+//
+// Mosquitto reads a bridge only at start-up: a reload does not create the
+// connection, so a change to a bridge needs a restart. An applier that
+// cannot restart returns ErrRestartNotSupported.
+type BrokerRestarter interface {
+	RestartBroker(ctx context.Context) error
 }
 
 // ApplyRequest describes the files one apply writes and the snapshots used
@@ -430,6 +446,23 @@ func (f FileApplier) reloadViaCommand() error {
 	return nil
 }
 
+// RestartBroker restarts the broker so that a change Mosquitto reads only
+// at start-up — a bridge — becomes active.
+//
+// The production deployment configures the restart mechanism as the reload
+// command, because the operator decides how the broker is bounced
+// (systemctl, a container runtime, a rollout). Without that command the
+// file applier cannot restart the broker and says so.
+func (f FileApplier) RestartBroker(_ context.Context) error {
+	if len(f.ReloadCommand) == 0 {
+		return ErrRestartNotSupported
+	}
+	if err := f.reloadViaCommand(); err != nil {
+		return fmt.Errorf("restart broker: %w", err)
+	}
+	return nil
+}
+
 // Apply atomically writes the ACL and password files, then reloads the
 // broker by sending SIGHUP to PID 1 inside the named Docker container.
 // Uses the same two-stage transactional behavior as FileApplier: both
@@ -516,6 +549,23 @@ func (d DockerApplier) ReloadBrokerOnly() error {
 	}
 	if output, err := runner.Run(context.Background(), "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
 		return fmt.Errorf("docker exec reload: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// RestartBroker restarts the broker container so that a change Mosquitto
+// reads only at start-up — a bridge — becomes active. A reload cannot do
+// it: the bridge connection is created when the broker starts.
+func (d DockerApplier) RestartBroker(ctx context.Context) error {
+	if d.ContainerName == "" {
+		return fmt.Errorf("docker applier: container_name must not be empty")
+	}
+	runner := d.Runner
+	if runner == nil {
+		runner = ExecRunner{}
+	}
+	if output, err := runner.Run(ctx, "docker", "restart", d.ContainerName); err != nil {
+		return fmt.Errorf("docker restart: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

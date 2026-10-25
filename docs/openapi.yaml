@@ -1441,6 +1441,115 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/bridges:
+    get:
+      tags: [Broker]
+      summary: Bridge connections to remote brokers
+      description: |
+        Requires auditor or higher. Returns the bridge connections declared
+        in the managed `mosquitto.conf`: the remote address, the client ids,
+        the credentials, the TLS material and the topic rules of every
+        connection.
+
+        A credential is never returned. A bridge that has a password reports
+        it through `password_set`, so the editor can show that a credential
+        exists without ever reading it.
+      responses:
+        "200":
+          description: The managed bridge connections.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BridgeListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Bridge management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/bridges/preview:
+    post:
+      tags: [Broker]
+      summary: Preview the bridge connections the operator edited
+      description: |
+        Requires operator or higher. Replaces the connection sections of the
+        managed configuration with the submitted bridges, validates them and
+        stores an immutable preview revision. The response carries the diff,
+        the rendered file, the directives that changed and whether the change
+        needs a broker restart.
+
+        The preview does not touch the broker. Apply the returned
+        `revision_id` through `POST /api/v1/broker/bridges/apply` to write
+        the file and signal the broker.
+
+        A password the client does not send keeps the value it has on disk.
+        The diff and the rendered body never contain a credential: they are
+        redacted before they leave the server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BridgeDocumentRequest" }
+      responses:
+        "200":
+          description: Preview of the edited bridges.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigPreview" }
+        "400":
+          description: The submitted bridges did not pass the validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BridgeValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Bridge management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/bridges/apply:
+    post:
+      tags: [Broker]
+      summary: Apply a reviewed bridge revision
+      description: |
+        Requires admin or higher. Writes the reviewed revision to the managed
+        configuration and signals the broker.
+
+        Mosquitto reads a bridge at start-up, so a change needs a restart.
+        The apply refuses the revision with 409 when `force` is not set and
+        the deployment has no restart command configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerConfigApplyRequest" }
+      responses:
+        "200":
+          description: The deployment the apply produced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: The revision id is missing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The revision needs a broker restart, is stale, was already
+            applied, or the broker configuration has not been adopted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Bridge management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -2371,6 +2480,13 @@ components:
         validation_issues:
           type: array
           items: { $ref: "#/components/schemas/BrokerConfigValidationIssue" }
+        bridge_issues:
+          type: array
+          description: |
+            The findings of a bridge document that passed the validation.
+            Only the warnings reach this field; an error refuses the
+            preview.
+          items: { $ref: "#/components/schemas/BridgeValidationIssue" }
         include_snapshot: { $ref: "#/components/schemas/BrokerConfigIncludeSnapshot" }
         has_changes: { type: boolean }
       required:
@@ -2541,6 +2657,125 @@ components:
         issues:
           type: array
           items: { $ref: "#/components/schemas/BrokerSettingsIssue" }
+      required: [error, issues]
+    BridgeListResponse:
+      type: object
+      description: |
+        The bridge connections declared in the managed `mosquitto.conf`.
+      properties:
+        bridges:
+          type: array
+          items: { $ref: "#/components/schemas/Bridge" }
+      required: [bridges]
+    BridgeDocumentRequest:
+      type: object
+      description: |
+        The complete set of bridges the operator wants. The connection
+        sections of the managed configuration are replaced with them; every
+        other part of the file is preserved.
+      properties:
+        bridges:
+          type: array
+          items: { $ref: "#/components/schemas/Bridge" }
+      required: [bridges]
+    Bridge:
+      type: object
+      description: |
+        One bridge connection. The credential fields are write-only: the API
+        never returns them, it reports `password_set` and `psk_set` instead.
+        A password the client does not send keeps the value it has on disk.
+      properties:
+        name:
+          type: string
+          description: "Connection name. Unique in the file; letters, digits, dots, dashes and underscores."
+        address:
+          type: string
+          description: "Address of the remote broker as host or host:port."
+        remote_client_id: { type: string, description: "Client id the bridge uses on the remote broker." }
+        local_client_id: { type: string, description: "Client id the bridge uses on the local broker." }
+        username: { type: string, description: "User name the bridge authenticates with on the remote broker." }
+        password:
+          type: string
+          writeOnly: true
+          description: "Password the bridge authenticates with on the remote broker. Never returned."
+        password_set: { type: boolean, description: "A remote password is configured." }
+        local_username: { type: string, description: "User name the bridge authenticates with on the local broker." }
+        local_password:
+          type: string
+          writeOnly: true
+          description: "Password the bridge authenticates with on the local broker. Never returned."
+        local_password_set: { type: boolean, description: "A local password is configured." }
+        protocol_version: { type: string, enum: [mqttv31, mqttv311, mqttv50] }
+        clean_session: { type: boolean }
+        local_clean_session: { type: boolean }
+        keepalive_seconds: { type: integer, minimum: 5, maximum: 65535 }
+        restart_timeout:
+          type: string
+          description: "Reconnection backoff: a number of seconds or a base and cap pair such as '5 30'."
+        notifications: { type: boolean }
+        notifications_local_only: { type: boolean }
+        notification_topic: { type: string }
+        try_private: { type: boolean }
+        start_type: { type: string, enum: [automatic, lazy, once] }
+        threshold: { type: integer, minimum: 1 }
+        idle_timeout_seconds: { type: integer, minimum: 0 }
+        round_robin: { type: boolean }
+        tls: { $ref: "#/components/schemas/BridgeTLSOptions" }
+        topics:
+          type: array
+          items: { $ref: "#/components/schemas/BridgeTopicRule" }
+      required: [name, address, topics]
+    BridgeTLSOptions:
+      type: object
+      description: |
+        The transport security of a bridge connection. Every field maps to a
+        `bridge_*` directive.
+      properties:
+        ca_file: { type: string, description: "CA certificate file used to verify the remote broker." }
+        ca_path: { type: string, description: "Directory of CA certificates used to verify the remote broker." }
+        cert_file: { type: string, description: "Client certificate presented to the remote broker. Requires key_file." }
+        key_file: { type: string, description: "Private key of the client certificate. Requires cert_file." }
+        insecure: { type: boolean, description: "Skip the verification of the certificate of the remote broker." }
+        tls_version: { type: string, enum: [tlsv1.2, tlsv1.3] }
+        alpn: { type: string }
+        psk:
+          type: string
+          writeOnly: true
+          description: "Pre-shared key used instead of a certificate. Never returned."
+        psk_set: { type: boolean, description: "A pre-shared key is configured." }
+        identity: { type: string, description: "Identity of the pre-shared key." }
+        require_ocsp: { type: boolean }
+        outgoing_retain: { type: boolean }
+        max_packet_size: { type: integer, minimum: 0 }
+    BridgeTopicRule:
+      type: object
+      description: |
+        One topic the bridge forwards. The direction defaults to `both`, the
+        quality of service to 0.
+      properties:
+        topic: { type: string, description: "MQTT topic pattern the bridge forwards." }
+        direction: { type: string, enum: [in, out, both] }
+        qos: { type: integer, minimum: 0, maximum: 2 }
+        local_prefix: { type: string, description: "Prefix added to the topic on the local broker." }
+        remote_prefix: { type: string, description: "Prefix added to the topic on the remote broker." }
+      required: [topic, qos]
+    BridgeValidationIssue:
+      type: object
+      properties:
+        kind: { type: string, enum: [name, address, duplicate, dependency, loop, value, secret] }
+        severity: { type: string, enum: [error, warning], description: "An error refuses the preview; a warning is advisory." }
+        bridge: { type: string, description: "Name of the bridge the finding belongs to." }
+        field: { type: string, description: "Field of the bridge the finding belongs to." }
+        topic: { type: string, description: "Topic rule the finding belongs to." }
+        message: { type: string }
+      required: [kind, message]
+    BridgeValidationError:
+      type: object
+      properties:
+        error: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/BridgeValidationIssue" }
       required: [error, issues]
     SettingsResponse:
       type: object

@@ -6,6 +6,7 @@ import ListenersPanel from './features/broker-config/ListenersPanel'
 import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import SettingsPanel from './features/broker-config/SettingsPanel'
+import BridgesPanel from './features/broker-config/BridgesPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
@@ -192,6 +193,15 @@ const navItems: NavItem[] = [
     eyebrow: 'Operations',
     title: 'Persistence, queues, sessions and logging',
     description: 'Edit the general broker settings with the catalog ranges and preview the change before any apply.',
+    minRole: 'auditor',
+  },
+  {
+    id: 'broker-bridges',
+    label: 'Bridges',
+    path: '/broker-bridges',
+    eyebrow: 'Operations',
+    title: 'Bridges to remote brokers',
+    description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
     minRole: 'auditor',
   },
   {
@@ -391,6 +401,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <BrokerConfigPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'broker-settings' ? (
         <SettingsPanel token={token} onLogout={onLogout} role={currentUser.role} />
+      ) : activeId === 'broker-bridges' ? (
+        <BridgesPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : activeId === 'admin-users' ? (

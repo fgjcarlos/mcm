@@ -462,3 +462,341 @@ description: |
   wins. The TLS stack is set up at start-up, so changing this needs a
   restart.
 ---
+---
+name: connection
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Starts a bridge to a remote broker. Every directive that follows the
+  connection line belongs to it until the next connection. Mosquitto reads
+  the bridge only at start-up, so a change needs a restart.
+---
+name: address
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Address of the remote broker as host or host:port. One address per
+  connection.
+---
+name: remote_clientid
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Client id the bridge uses on the remote broker. Must be unique across
+  the bridges of the file: Mosquitto derives the local client id from it.
+---
+name: local_clientid
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Client id the bridge uses on the local broker. Must be unique across
+  the bridges of the file.
+---
+name: remote_username
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  User name the bridge authenticates with on the remote broker.
+---
+name: remote_password
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Password the bridge authenticates with on the remote broker. The value is
+  a secret: it is never returned by the API, only whether it is set.
+---
+name: local_username
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  User name the bridge authenticates with on the local broker.
+---
+name: local_password
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Password the bridge authenticates with on the local broker. The value is
+  a secret: it is never returned by the API, only whether it is set.
+---
+name: bridge_protocol_version
+type: enum
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+allowed_values: ["mqttv31", "mqttv311", "mqttv50"]
+description: |
+  MQTT version the bridge speaks with the remote broker.
+---
+name: cleansession
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Clean session flag of the remote connection.
+---
+name: local_cleansession
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Clean session flag of the local side of the bridge.
+---
+name: keepalive_interval
+type: integer
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+unit: seconds
+min: 5
+max: 65535
+default: "60"
+description: |
+  Keepalive of the remote connection in seconds. Mosquitto refuses a value
+  below 5.
+---
+name: restart_timeout
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Reconnection backoff of the bridge, either a number of seconds or a base
+  and cap pair such as "5 30".
+---
+name: notifications
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Publishes the state of the bridge connection on the notification topic.
+---
+name: notifications_local_only
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Keeps the bridge notifications inside the local broker.
+---
+name: notification_topic
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Topic the bridge publishes its connection state on.
+---
+name: try_private
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Uses the private flag of the messages the bridge forwards. It keeps the
+  broker from forwarding a message it received from the remote broker back
+  to it.
+---
+name: start_type
+type: enum
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+allowed_values: ["automatic", "lazy", "once"]
+description: |
+  When the bridge connection is established.
+---
+name: threshold
+type: integer
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+unit: messages
+min: 1
+description: |
+  Number of queued messages that makes the bridge reconnect.
+---
+name: idle_timeout
+type: integer
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+unit: seconds
+min: 0
+description: |
+  Closes the bridge connection after this many seconds without traffic.
+---
+name: round_robin
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Spreads the outgoing messages over the addresses of the bridge.
+---
+name: bridge_cafile
+type: path
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  CA certificate file used to verify the certificate of the remote broker.
+---
+name: bridge_capath
+type: path
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Directory of CA certificates used to verify the certificate of the remote
+  broker.
+---
+name: bridge_certfile
+type: path
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Client certificate the bridge presents to the remote broker. Requires the
+  matching private key.
+---
+name: bridge_keyfile
+type: path
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Private key of the client certificate the bridge presents. Requires the
+  matching certificate.
+---
+name: bridge_insecure
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Skips the verification of the certificate of the remote broker. The
+  traffic is then readable by anyone able to intercept the connection.
+---
+name: bridge_tls_version
+type: enum
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+allowed_values: ["tlsv1.2", "tlsv1.3"]
+description: |
+  TLS version the bridge accepts from the remote broker.
+---
+name: bridge_alpn
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Application protocol the bridge offers during the TLS handshake.
+---
+name: bridge_identity
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Identity of the pre-shared key the bridge uses instead of a certificate.
+---
+name: bridge_psk
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Pre-shared key the bridge uses instead of a certificate. The value is a
+  secret: it is never returned by the API, only whether it is set.
+---
+name: bridge_require_ocsp
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Requires a stapled OCSP response in the certificate of the remote broker.
+---
+name: bridge_outgoing_retain
+type: boolean
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Keeps the retain flag of the messages the bridge forwards.
+---
+name: bridge_max_packet_size
+type: integer
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+unit: bytes
+min: 0
+description: |
+  Largest message the bridge sends to the remote broker. Zero means no
+  limit.
+---
+name: topic
+type: string
+scope: bridge
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Topic pattern the bridge forwards, optionally followed by the direction
+  (in, out or both), the quality of service and the local and remote
+  prefixes.

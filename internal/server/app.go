@@ -51,6 +51,7 @@ type App struct {
 	deploySvc             deployServicer
 	brokerCfgSvc          brokerConfigServicer
 	brokerCfgCatalog      *catalog.Catalog
+	bridgeSvc             bridgeServicer
 	listenerSvc           *listener.ListenerService
 	listenerRestartRunner listener.ListenerRestartRunner
 	certificateSvc        *certificate.Service
@@ -469,6 +470,12 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/broker/config/catalog", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleCatalog)))
 		mux.Handle("GET /api/v1/broker/settings", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleGetSettings)))
 		mux.Handle("POST /api/v1/broker/settings/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handlePreviewSettings)))
+	}
+	{
+		brAPI := &bridgeAPI{svc: a.bridgeSvc}
+		mux.Handle("GET /api/v1/broker/bridges", a.requireRole(auth.RoleAuditor, http.HandlerFunc(brAPI.handleList)))
+		mux.Handle("POST /api/v1/broker/bridges/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(brAPI.handlePreview)))
+		mux.Handle("POST /api/v1/broker/bridges/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(brAPI.handleApply)))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {

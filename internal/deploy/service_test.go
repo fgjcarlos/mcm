@@ -49,6 +49,7 @@ func (f *fakePasswordLookup) CleartextPassword(username string) (string, bool) {
 type fakeApplier struct {
 	mu       sync.Mutex
 	calls    []applyCall
+	restarts int
 	failOnce bool // fail the first Apply call
 	failAll  bool // fail all Apply calls
 }
@@ -106,6 +107,22 @@ func (f *fakeApplier) callAt(i int) applyCall {
 }
 
 func (f *fakeApplier) ReloadBrokerOnly() error { return nil }
+
+// RestartBroker records the restart. A bridge is only read by Mosquitto at
+// start-up, so the bridge apply needs it.
+func (f *fakeApplier) RestartBroker(_ context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restarts++
+	return nil
+}
+
+// restartCount returns how often the broker was restarted.
+func (f *fakeApplier) restartCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restarts
+}
 
 // fakeDeploymentStore is an in-memory DeploymentStore.
 type fakeDeploymentStore struct {

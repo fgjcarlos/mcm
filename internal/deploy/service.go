@@ -24,6 +24,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
 	"github.com/fgjcarlos/mcm/internal/mosquitto"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/bridges"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/conf"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -272,6 +273,11 @@ type PreviewResult struct {
 	// (issue #302). It is empty for the importer, which rewrites the
 	// whole file.
 	ChangedDirectives []string `json:"changed_directives,omitempty"`
+
+	// BridgeIssues carries the findings of a bridge document that passed
+	// validation (issue #303). Only the warnings reach this field; an
+	// error refuses the preview.
+	BridgeIssues []bridges.Issue `json:"bridge_issues,omitempty"`
 
 	OrphanRules []storage.ACLRuleRow `json:"orphan_rules"`
 	ACLDiff     string               `json:"acl_diff"`
@@ -2262,10 +2268,16 @@ func (s *Service) ApplyBrokerConfig(ctx context.Context, actor, revisionID strin
 	if revisionID == "" {
 		return storage.Deployment{}, ErrRevisionMissing
 	}
-	return s.applyBrokerConfigRevision(ctx, actor, revisionID, force, adopt)
+	return s.applyBrokerConfigRevision(ctx, actor, revisionID, force, adopt, "broker_config")
 }
 
-func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revisionID string, force, adopt bool) (storage.Deployment, error) {
+// applyBrokerConfigRevision writes a reviewed revision to the managed
+// configuration file and signals the broker.
+//
+// kind names the surface the revision belongs to ("broker_config" or
+// "bridges"); it is recorded on the deployment so the operator can tell
+// which change was activated.
+func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revisionID string, force, adopt bool, kind string) (storage.Deployment, error) {
 	if !s.mu.TryLock() {
 		return storage.Deployment{}, ErrDeployInProgress
 	}
@@ -2340,7 +2352,7 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	dep := &storage.Deployment{
 		Actor:        actor,
 		Status:       "saved",
-		Kind:         "broker_config",
+		Kind:         kind,
 		ReloadKind:   reloadKind,
 		ConfRendered: rev.ConfRendered,
 		BaseConfHash: rev.BaseConfHash,
@@ -2368,24 +2380,71 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 		return storage.Deployment{}, fmt.Errorf("write broker config: %w", err)
 	}
 
-	// Reload signal. Restart-required diffs land here only when force
-	// is true; the operator's ReloadCommand is expected to bounce the
-	// broker (systemctl restart, k8s rollout, etc.).
-	if err := s.applier.ReloadBrokerOnly(); err != nil {
-		// Roll back: write the snapshotted bytes back. We re-read
-		// currentBody since the previous Write may have partially
-		// succeeded.
-		_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
-		_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("reload: %s", err))
-		s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
-		return storage.Deployment{}, fmt.Errorf("reload broker after broker-config apply: %w", err)
+	// Activation.
+	//
+	// A bridge is read by Mosquitto at start-up: a reload does not create
+	// the connection, so a bridge change needs a restart. Every other
+	// change uses the reload signal. Restart-required diffs land here only
+	// when force is true; the operator's ReloadCommand is expected to
+	// bounce the broker (systemctl restart, k8s rollout, etc.).
+	restarted := false
+	if kind == "bridges" {
+		restarted, err = s.restartBrokerForBridge(ctx)
+		if err != nil {
+			_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
+			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("restart: %s", err))
+			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
+			return storage.Deployment{}, fmt.Errorf("restart broker after bridge apply: %w", err)
+		}
+	}
+	if !restarted {
+		if err := s.applier.ReloadBrokerOnly(); err != nil {
+			// Roll back: write the snapshotted bytes back. We re-read
+			// currentBody since the previous Write may have partially
+			// succeeded.
+			_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
+			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("reload: %s", err))
+			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
+			return storage.Deployment{}, fmt.Errorf("reload broker after broker-config apply: %w", err)
+		}
 	}
 
-	if err := s.updateDeploymentStatus(dep.ID, "active_verified", ""); err != nil {
-		return storage.Deployment{}, fmt.Errorf("update broker-config deployment to active_verified: %w", err)
+	// A bridge that was written but not restarted is not active yet: the
+	// broker still runs the previous connection set. The deployment says
+	// so instead of claiming a verified activation.
+	status := "active_verified"
+	message := ""
+	if kind == "bridges" && !restarted {
+		status = "pending_activation"
+		message = "the bridge is written to the configuration, but the broker was only reloaded; restart it to activate the bridge"
 	}
-	s.emitAudit(ctx, actor, "deployment.active_verified", dep.ID, "success")
+	if err := s.updateDeploymentStatus(dep.ID, status, message); err != nil {
+		return storage.Deployment{}, fmt.Errorf("update broker-config deployment to %s: %w", status, err)
+	}
+	s.emitAudit(ctx, actor, "deployment."+status, dep.ID, "success")
 	return s.getDeployment(dep.ID)
+}
+
+// restartBrokerForBridge restarts the broker so that an applied bridge
+// becomes active.
+//
+// It reports whether the broker was restarted. A deployment that cannot
+// restart the broker is not an error: the change is written and reported
+// as pending activation, because the operator may bounce the broker
+// themselves.
+func (s *Service) restartBrokerForBridge(ctx context.Context) (bool, error) {
+	restarter, ok := s.applier.(mosquitto.BrokerRestarter)
+	if !ok {
+		return false, nil
+	}
+	err := restarter.RestartBroker(ctx)
+	if errors.Is(err, mosquitto.ErrRestartNotSupported) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // restartDirectiveNames lists the restart-required directives that
