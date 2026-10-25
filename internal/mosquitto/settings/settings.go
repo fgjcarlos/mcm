@@ -503,7 +503,7 @@ func insertionIndex(items []conf.Item) int {
 		it := &items[i]
 		switch it.Kind {
 		case conf.ItemDirective:
-			if it.Key == "listener" || it.Key == "bridge" {
+			if it.Key == "listener" || it.Key == "bridge" || it.Key == "connection" {
 				return last + 1
 			}
 			last = i
