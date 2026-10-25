@@ -142,6 +142,41 @@ func TestVerifyActive(t *testing.T) {
 			t.Fatalf("VerifyActive OK=true, want false (wrong password); result: %+v", result)
 		}
 	})
+
+	t.Run("negative stage checks authentication, not the denied topic", func(t *testing.T) {
+		t.Parallel()
+		// The broker denies nothing for alice, so the denied topic is in
+		// fact allowed. The negative stage must still pass: it
+		// authenticates an unknown user and does not assert a topic
+		// denial.
+		_, addr := startVerifyBroker(t, verifyBrokerACL{
+			users: map[string]verifyUserACL{
+				"alice": {
+					allowed: []string{"sensors/temperature"},
+				},
+			},
+		})
+		host, port := splitHostPort(t, addr)
+
+		opts := VerifyActiveOptions{
+			Config:           cfgWithCreds(host, port, "", ""),
+			Username:         "alice",
+			Password:         "test-pass-alice",
+			AllowedTopic:     "sensors/temperature",
+			DeniedTopic:      "sensors/forbidden",
+			DialTimeout:      2 * time.Second,
+			RoundTripTimeout: 2 * time.Second,
+			SubTimeout:       2 * time.Second,
+		}
+		result := VerifyActive(context.Background(), opts)
+		if !result.OK {
+			t.Fatalf("VerifyActive OK=false, want true (the denied topic is not asserted); stage=%s message=%s",
+				result.Stage, result.Message)
+		}
+		if !strings.Contains(result.NegativeMessage, "rejected") {
+			t.Errorf("NegativeMessage missing 'rejected': %s", result.NegativeMessage)
+		}
+	})
 }
 
 // splitHostPort returns (host, port) for the given "host:port" string.

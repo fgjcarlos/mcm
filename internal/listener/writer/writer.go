@@ -219,14 +219,51 @@ func (w *FileWriter) Write(specs []listeners.ListenerSpec) (Rendered, error) {
 		writer = mosquitto.AtomicWriteConf
 	}
 
-	rendered, err := listeners.RenderAll(specs)
-	if err != nil {
-		return Rendered{}, fmt.Errorf("%w: %v", ErrSpecRender, err)
-	}
-
 	head, err := w.renderHead(reader)
 	if err != nil {
 		return Rendered{}, err
+	}
+
+	// A listener that declares its own ACL file only takes effect when
+	// Mosquitto resolves the access control options per listener, so the
+	// global directive is enabled here.
+	if specsDeclareACLFile(specs) {
+		head, err = ensurePerListenerSettings(head)
+		if err != nil {
+			return Rendered{}, err
+		}
+		// Mosquitto creates the listener on the default port itself once
+		// the per-listener settings are enabled, so the configuration must
+		// not declare it: the broker would refuse to start. The check runs
+		// on the specs of the operator, before the global access control
+		// is copied into them.
+		specs, err = dropDefaultListenerSpec(specs)
+		if err != nil {
+			return Rendered{}, err
+		}
+
+		// The listener blocks lose the global authentication and access
+		// control settings once they are resolved per listener, so the
+		// global values are copied into the blocks that do not declare
+		// their own.
+		specs = inheritGlobalAccessControl(specs, head)
+
+		// The broker refuses to start when the ACL file of a listener is
+		// missing, so the configuration is not written before the deploy
+		// has written the file. The check runs on the path MCM writes
+		// to, before the path is resolved into the broker's filesystem.
+		if err := requireWrittenACLFiles(specs, head); err != nil {
+			return Rendered{}, err
+		}
+
+		// The ACL file of a listener is read by the broker, not by MCM,
+		// so the path in the configuration is the one the broker uses.
+		specs = resolveBrokerACLPaths(specs, head)
+	}
+
+	rendered, err := listeners.RenderAll(specs)
+	if err != nil {
+		return Rendered{}, fmt.Errorf("%w: %v", ErrSpecRender, err)
 	}
 
 	full := composeBody(head, rendered)

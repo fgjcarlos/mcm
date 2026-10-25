@@ -1,25 +1,96 @@
 package mosquitto
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 )
 
+// ListenerACLPath returns the path of the ACL file that carries the rules
+// of one listener.
+//
+// Mosquitto resolves `acl_file` per listener once
+// `per_listener_settings true` is set: the global file applies to every
+// listener that does not declare its own, and a listener that declares one
+// uses only that file. MCM therefore keeps the global file at its
+// configured path and writes the per-listener files next to it, named after
+// the listener they belong to.
+//
+// The listener reference is validated by the acl package before it reaches
+// this function, so it cannot escape the ACL directory.
+func ListenerACLPath(globalACLPath, listenerID string) string {
+	if globalACLPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(globalACLPath), ListenerACLFileName(listenerID))
+}
+
+// ListenerACLFileName returns the name of the ACL file that carries the
+// rules of one listener.
+func ListenerACLFileName(listenerID string) string {
+	return "acl." + listenerID
+}
+
+// BrokerACLPath maps the ACL file MCM writes for a listener onto the path
+// the broker reads.
+//
+// MCM writes the file next to the broker-wide ACL file, but under the path
+// of MCM's own filesystem: in a container deployment the shared volume is
+// mounted under a different path in each container ("/var/lib/mosquitto-config/acl"
+// for MCM, "/mosquitto/config/acl" for the broker), so the broker reads the
+// file under its own path.
+//
+// The broker-wide ACL file of the configuration names the path the broker
+// uses, so the file of a listener is resolved against the same directory.
+//
+// The second return value reports whether the path is the file MCM manages
+// for the listener. A path MCM does not manage (an operator-provided file)
+// keeps the value it was given.
+func BrokerACLPath(path, globalACLFile, listenerID string) (string, bool) {
+	if path == "" || globalACLFile == "" || listenerID == "" {
+		return path, false
+	}
+	if filepath.Base(path) != ListenerACLFileName(listenerID) {
+		return path, false
+	}
+	return filepath.Join(filepath.Dir(globalACLFile), filepath.Base(path)), true
+}
+
 // RenderACLFile produces a Mosquitto-compatible ACL file body.
-// Rules are grouped by Principal (lexicographic sort), with "user <principal>"
-// header per group and blank lines between groups.
+//
+// The layout follows the Mosquitto 2.0 ACL grammar:
+//
+//   - The anonymous section comes first. A `topic` line that appears before
+//     the first `user` line applies to unauthenticated clients only; it is
+//     not a fallback for authenticated users.
+//   - The pattern section follows. `pattern` lines apply to every user
+//     inside the ACL, so they stay globally applicable no matter which
+//     `user` section surrounds them.
+//   - The user sections come last, grouped by principal (lexicographic
+//     sort) with a "user <principal>" header per group.
+//
 // Empty input returns "".
 func RenderACLFile(rules []acl.Rule) string {
 	if len(rules) == 0 {
 		return ""
 	}
 
-	// Group rules by Principal.
-	groups := make(map[string][]acl.Rule)
+	var (
+		anonymous []acl.Rule
+		patterns  []acl.Rule
+		groups    = make(map[string][]acl.Rule)
+	)
 	for _, r := range rules {
-		groups[r.Principal] = append(groups[r.Principal], r)
+		switch r.EffectiveSelector() {
+		case acl.SelectorAnonymous:
+			anonymous = append(anonymous, r)
+		case acl.SelectorPattern:
+			patterns = append(patterns, r)
+		default:
+			groups[r.Principal] = append(groups[r.Principal], r)
+		}
 	}
 
 	// Sort principals lexicographically.
@@ -29,26 +100,42 @@ func RenderACLFile(rules []acl.Rule) string {
 	}
 	sort.Strings(principals)
 
-	var b strings.Builder
-	for i, principal := range principals {
-		if i > 0 {
-			// Each group ends with a '\n' from the last topic line.
-			// One extra '\n' creates the blank line separator.
-			b.WriteByte('\n')
-		}
+	var sections []string
+	if len(anonymous) > 0 {
+		sections = append(sections, renderACLSection(anonymous, func(r acl.Rule) string {
+			return r.MosquittoACL()
+		}))
+	}
+	if len(patterns) > 0 {
+		sections = append(sections, renderACLSection(patterns, func(r acl.Rule) string {
+			return r.MosquittoPatternACL()
+		}))
+	}
+	for _, principal := range principals {
+		var b strings.Builder
 		b.WriteString("user ")
 		b.WriteString(principal)
 		b.WriteByte('\n')
-		for j, r := range groups[principal] {
+		for _, r := range groups[principal] {
 			b.WriteString(r.MosquittoACL())
-			// Write '\n' after every rule except the very last rule of the last group.
-			if i < len(principals)-1 || j < len(groups[principal])-1 {
-				b.WriteByte('\n')
-			}
+			b.WriteByte('\n')
 		}
+		sections = append(sections, strings.TrimSuffix(b.String(), "\n"))
 	}
 
-	return b.String()
+	return strings.Join(sections, "\n\n")
+}
+
+// renderACLSection renders the body of one ACL section. Every line is
+// terminated by a newline; the trailing newline is trimmed so sections can
+// be joined with a blank line separator.
+func renderACLSection(rules []acl.Rule, line func(acl.Rule) string) string {
+	var b strings.Builder
+	for _, r := range rules {
+		b.WriteString(line(r))
+		b.WriteByte('\n')
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // ParseACLFile parses a Mosquitto ACL file body and returns the rules
@@ -59,10 +146,13 @@ func RenderACLFile(rules []acl.Rule) string {
 //
 //	user <principal>
 //	topic {read|readwrite|write|deny} <topic_filter>
+//	pattern {read|readwrite|write|deny} <topic_filter>
 //
 // Comments (#) and blank lines are skipped. Unknown directives are
-// ignored. The principal of each topic line is inherited from the most
-// recent "user" line in the file.
+// ignored. A `topic` line that appears before the first `user` line
+// applies to anonymous clients; every later `topic` line inherits the most
+// recent "user" line. A `pattern` line applies to every user inside the
+// ACL and carries no principal.
 func ParseACLFile(body string) []acl.Rule {
 	var rules []acl.Rule
 	var currentUser string
@@ -79,13 +169,35 @@ func ParseACLFile(body string) []acl.Rule {
 		case "user":
 			currentUser = fields[1]
 		case "topic":
-			if currentUser == "" || len(fields) < 3 {
+			if len(fields) < 3 {
+				continue
+			}
+			perm := strings.ToLower(fields[1])
+			topic := strings.Join(fields[2:], " ")
+			rule := acl.Rule{
+				// A parsed file is always the broker-wide ACL file: the
+				// per-listener files are rendered by MCM, not parsed from
+				// an arbitrary source.
+				Scope:       acl.ScopeGlobal,
+				TopicFilter: topic,
+				Permission:  acl.Permission(mosquittoPermToACLPerm(perm)),
+			}
+			if currentUser == "" {
+				rule.Selector = acl.SelectorAnonymous
+			} else {
+				rule.Selector = acl.SelectorUser
+				rule.Principal = currentUser
+			}
+			rules = append(rules, rule)
+		case "pattern":
+			if len(fields) < 3 {
 				continue
 			}
 			perm := strings.ToLower(fields[1])
 			topic := strings.Join(fields[2:], " ")
 			rules = append(rules, acl.Rule{
-				Principal:   currentUser,
+				Selector:    acl.SelectorPattern,
+				Scope:       acl.ScopeGlobal,
 				TopicFilter: topic,
 				Permission:  acl.Permission(mosquittoPermToACLPerm(perm)),
 			})
@@ -105,7 +217,7 @@ func mosquittoPermToACLPerm(perm string) string {
 	case "readwrite":
 		return string(acl.PermissionReadWrite)
 	case "deny":
-		return "deny"
+		return string(acl.PermissionDeny)
 	default:
 		return ""
 	}

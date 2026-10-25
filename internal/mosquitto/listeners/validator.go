@@ -37,6 +37,17 @@ var optionWhitelist = map[string]struct{}{
 	"keyfile":             {},
 	"require_certificate": {},
 	"allow_anonymous":     {},
+	// acl_file points the listener at the ACL file that carries its own
+	// access control rules. Mosquitto only honours it when
+	// per_listener_settings is enabled.
+	"acl_file": {},
+	// listener_allow_anonymous overrides the global allow_anonymous for
+	// this listener.
+	"listener_allow_anonymous": {},
+	// password_file points the listener at the password file that holds
+	// the accounts of the broker. Mosquitto only honours it when
+	// per_listener_settings is enabled.
+	"password_file": {},
 }
 
 // Validate reports blocking listener issues and non-blocking option warnings.

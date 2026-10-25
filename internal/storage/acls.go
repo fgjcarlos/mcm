@@ -15,7 +15,16 @@ import (
 // The ID is the integer primary key surfaced as a string for compatibility
 // with the existing acl.Store interface.
 type ACLRuleRow struct {
-	ID          string         `json:"id"`
+	ID string `json:"id"`
+	// Selector is the native Mosquitto scope of the rule. A row stored
+	// before native selectors existed carries the user scope.
+	Selector acl.Selector `json:"selector,omitempty"`
+	// Scope is the ACL file the rule is rendered into. A row stored before
+	// scoped rules existed carries the global scope.
+	Scope acl.Scope `json:"scope,omitempty"`
+	// ListenerID names the listener whose ACL file carries the rule. It is
+	// empty for global rules.
+	ListenerID  string         `json:"listener_id,omitempty"`
 	Principal   string         `json:"principal"`
 	TopicFilter string         `json:"topic_filter"`
 	Permission  acl.Permission `json:"permission"`
@@ -30,16 +39,20 @@ func (s *Store) CreateRule(ctx context.Context, rule acl.Rule) (ACLRuleRow, erro
 	if err := acl.ValidateRule(rule); err != nil {
 		return ACLRuleRow{}, err
 	}
+	rule = rule.Normalize()
 	s.LockMutations()
 	defer s.UnlockMutations()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO acl_rules(principal, topic_filter, permission, description, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO acl_rules(principal, topic_filter, permission, description, selector, scope, listener_id, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rule.Principal,
 		rule.TopicFilter,
 		string(rule.Permission),
 		rule.Description,
+		string(rule.Selector),
+		string(rule.Scope),
+		rule.ListenerID,
 		now,
 		now,
 	)
@@ -52,6 +65,9 @@ func (s *Store) CreateRule(ctx context.Context, rule acl.Rule) (ACLRuleRow, erro
 	}
 	return ACLRuleRow{
 		ID:          strconv.FormatInt(id, 10),
+		Selector:    rule.Selector,
+		Scope:       rule.Scope,
+		ListenerID:  rule.ListenerID,
 		Principal:   rule.Principal,
 		TopicFilter: rule.TopicFilter,
 		Permission:  rule.Permission,
@@ -66,7 +82,7 @@ func (s *Store) GetRule(ctx context.Context, id string) (ACLRuleRow, error) {
 		return ACLRuleRow{}, acl.ErrRuleNotFound
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT principal, topic_filter, permission, description FROM acl_rules WHERE id = ?`,
+		`SELECT principal, topic_filter, permission, description, selector, scope, listener_id FROM acl_rules WHERE id = ?`,
 		numericID,
 	)
 	var (
@@ -74,8 +90,11 @@ func (s *Store) GetRule(ctx context.Context, id string) (ACLRuleRow, error) {
 		topicFilter string
 		permission  string
 		description string
+		selector    string
+		scope       string
+		listenerID  string
 	)
-	if err := row.Scan(&principal, &topicFilter, &permission, &description); err != nil {
+	if err := row.Scan(&principal, &topicFilter, &permission, &description, &selector, &scope, &listenerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ACLRuleRow{}, acl.ErrRuleNotFound
 		}
@@ -83,6 +102,9 @@ func (s *Store) GetRule(ctx context.Context, id string) (ACLRuleRow, error) {
 	}
 	return ACLRuleRow{
 		ID:          id,
+		Selector:    acl.Selector(selector),
+		Scope:       acl.Scope(scope),
+		ListenerID:  listenerID,
 		Principal:   principal,
 		TopicFilter: topicFilter,
 		Permission:  acl.Permission(permission),
@@ -94,14 +116,18 @@ func (s *Store) GetRule(ctx context.Context, id string) (ACLRuleRow, error) {
 // enabled MQTT user (issue #297). Disabled and deleted users both produce
 // orphan rules; the deploy service surfaces this list before rendering so
 // operators can decide whether to delete or reassign the rules.
+//
+// Only user-scoped rules can be orphans: an anonymous or pattern rule
+// carries no MQTT username, so it never references an MQTT user.
 func (s *Store) FindOrphanRules(ctx context.Context) ([]ACLRuleRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, principal, topic_filter, permission, description
+SELECT id, principal, topic_filter, permission, description, selector, scope, listener_id
 FROM acl_rules
-WHERE principal NOT IN (
+WHERE selector = ?
+AND principal NOT IN (
 	SELECT username FROM mqtt_users WHERE disabled = 0
 )
-ORDER BY id ASC`)
+ORDER BY id ASC`, string(acl.SelectorUser))
 	if err != nil {
 		return nil, fmt.Errorf("list orphan acl rules: %w", err)
 	}
@@ -115,12 +141,18 @@ ORDER BY id ASC`)
 			topicFilter string
 			permission  string
 			description string
+			selector    string
+			scope       string
+			listenerID  string
 		)
-		if err := rows.Scan(&id, &principal, &topicFilter, &permission, &description); err != nil {
+		if err := rows.Scan(&id, &principal, &topicFilter, &permission, &description, &selector, &scope, &listenerID); err != nil {
 			return nil, fmt.Errorf("scan orphan acl rule: %w", err)
 		}
 		out = append(out, ACLRuleRow{
 			ID:          strconv.FormatInt(id, 10),
+			Selector:    acl.Selector(selector),
+			Scope:       acl.Scope(scope),
+			ListenerID:  listenerID,
 			Principal:   principal,
 			TopicFilter: topicFilter,
 			Permission:  acl.Permission(permission),

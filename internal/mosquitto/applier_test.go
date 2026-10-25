@@ -97,7 +97,7 @@ func TestFileApplierApply(t *testing.T) {
 			},
 		}
 
-		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "acl-content", ACLSnapshot: "", PasswdBody: "passwd-content", PasswdSnapshot: ""})
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
@@ -136,7 +136,7 @@ func TestFileApplierApply(t *testing.T) {
 			},
 		}
 
-		err := fa.Apply(context.Background(), "a", "b", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "a", ACLSnapshot: "", PasswdBody: "b", PasswdSnapshot: ""})
 		if !errors.Is(err, ErrReloadNotSignaled) {
 			t.Fatalf("Apply error = %v, want ErrReloadNotSignaled", err)
 		}
@@ -169,7 +169,7 @@ func TestFileApplierApply(t *testing.T) {
 			ReloadRunner:  runner,
 		}
 
-		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "acl-content", ACLSnapshot: "", PasswdBody: "passwd-content", PasswdSnapshot: ""})
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestFileApplierApply(t *testing.T) {
 			t.Fatalf("seed passwd: %v", err)
 		}
 
-		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if !errors.Is(err, ErrApplyRestored) {
 			t.Fatalf("Apply error = %v, want ErrApplyRestored", err)
 		}
@@ -246,7 +246,7 @@ func TestFileApplierApply(t *testing.T) {
 			},
 		}
 
-		err := fa.Apply(context.Background(), "a", "b", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "a", ACLSnapshot: "", PasswdBody: "b", PasswdSnapshot: ""})
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
@@ -264,7 +264,7 @@ func TestFileApplierApply(t *testing.T) {
 			PIDPath:    filepath.Join(dir, "missing.pid"),
 		}
 
-		err := fa.Apply(context.Background(), "a", "b", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "a", ACLSnapshot: "", PasswdBody: "b", PasswdSnapshot: ""})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error for missing PID file")
 		}
@@ -285,7 +285,7 @@ func TestDockerApplierApply(t *testing.T) {
 			Runner:        runner,
 		}
 
-		err := da.Apply(context.Background(), "acl-body", "passwd-body", "", "")
+		err := da.Apply(context.Background(), ApplyRequest{ACLBody: "acl-body", ACLSnapshot: "", PasswdBody: "passwd-body", PasswdSnapshot: ""})
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
@@ -311,7 +311,7 @@ func TestDockerApplierApply(t *testing.T) {
 			Runner:        runner,
 		}
 
-		err := da.Apply(context.Background(), "a", "b", "", "")
+		err := da.Apply(context.Background(), ApplyRequest{ACLBody: "a", ACLSnapshot: "", PasswdBody: "b", PasswdSnapshot: ""})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want runner error propagated")
 		}
@@ -331,7 +331,7 @@ func TestDockerApplierApply(t *testing.T) {
 			Runner:        runner,
 		}
 
-		err := da.Apply(context.Background(), "my-acl", "my-passwd", "", "")
+		err := da.Apply(context.Background(), ApplyRequest{ACLBody: "my-acl", ACLSnapshot: "", PasswdBody: "my-passwd", PasswdSnapshot: ""})
 		if err != nil {
 			t.Fatalf("Apply returned error: %v", err)
 		}
@@ -364,7 +364,7 @@ func TestDockerApplierApply(t *testing.T) {
 			Runner:        runner,
 		}
 
-		err := da.Apply(context.Background(), "acl", "passwd", "", "")
+		err := da.Apply(context.Background(), ApplyRequest{ACLBody: "acl", ACLSnapshot: "", PasswdBody: "passwd", PasswdSnapshot: ""})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error for empty ContainerName")
 		}
@@ -394,7 +394,7 @@ func TestFileApplierContextCancellation(t *testing.T) {
 			PasswdPath: filepath.Join(dir, "passwd"),
 		}
 
-		err := fa.Apply(ctx, "acl-content", "passwd-content", "", "")
+		err := fa.Apply(ctx, ApplyRequest{ACLBody: "acl-content", ACLSnapshot: "", PasswdBody: "passwd-content", PasswdSnapshot: ""})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want context error")
 		}
@@ -421,7 +421,7 @@ func TestFileApplierInvalidPIDContent(t *testing.T) {
 			PIDPath:    pidPath,
 		}
 
-		err := fa.Apply(context.Background(), "acl-content", "passwd-content", "", "")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "acl-content", ACLSnapshot: "", PasswdBody: "passwd-content", PasswdSnapshot: ""})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want parse error for invalid PID content")
 		}
@@ -476,7 +476,7 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 
 		fa := FileApplier{ACLPath: aclPath, PasswdPath: passwdPath}
 
-		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error when passwd write fails")
 		}
@@ -538,7 +538,7 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 			},
 		}
 
-		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error when SIGHUP fails")
 		}
@@ -601,7 +601,7 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 		}
 		fa := FileApplier{ACLPath: aclPath, PasswdPath: passwdPath, PIDPath: pidPath}
 
-		err := fa.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error")
 		}
@@ -628,7 +628,7 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := fa.Apply(ctx, "new acl", "new passwd", "old acl", "old passwd")
+		err := fa.Apply(ctx, ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want context error")
 		}
@@ -680,7 +680,7 @@ func TestDockerApplierApply_Transactional(t *testing.T) {
 			Runner:        &fakeRunner{err: runErr},
 		}
 
-		err := da.Apply(context.Background(), "new acl", "new passwd", "old acl", "old passwd")
+		err := da.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
 			t.Fatal("Apply returned nil error, want error when docker exec fails")
 		}

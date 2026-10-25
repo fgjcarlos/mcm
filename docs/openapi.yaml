@@ -468,6 +468,128 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/acls/scopes:
+    get:
+      tags: [ACLs]
+      summary: List the ACL files MCM manages
+      description: |
+        Requires auditor or higher.
+
+        Reports the broker-wide ACL file and the per-listener ACL files of
+        the listeners that own scoped rules, together with the wiring the
+        broker configuration needs for them.
+      responses:
+        "200":
+          description: The ACL files MCM manages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items: { $ref: "#/components/schemas/ACLScope" }
+                required: [scopes]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/acls/source:
+    get:
+      tags: [ACLs]
+      summary: Read the adopted ACL source
+      description: |
+        Requires auditor or higher.
+
+        Returns the verbatim content of the ACL file MCM adopted. The
+        deploy composes the managed rules into it, so a file that was
+        already in use keeps every line MCM does not model.
+      parameters:
+        - name: path
+          in: query
+          required: false
+          description: The ACL file to read. Defaults to the file MCM manages.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The adopted ACL source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ACLSource" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/acls/source/adopt:
+    post:
+      tags: [ACLs]
+      summary: Adopt an existing ACL file
+      description: |
+        Requires operator or higher.
+
+        Takes an existing ACL file under the management of MCM. The content
+        is stored verbatim and the deploy composes the managed rules into
+        it. The preview of the deploy reports the access the composition
+        would drop, and an apply that would drop access MCM can neither
+        reproduce nor attribute to a managed MQTT user is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ACLSourceAdoptRequest" }
+      responses:
+        "200":
+          description: The adopted ACL source.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ACLSource" }
+        "400": { $ref: "#/components/responses/ACLValidation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/acls/effective:
+    get:
+      tags: [ACLs]
+      summary: Resolve the effective MQTT permissions
+      description: |
+        Requires auditor or higher.
+
+        Resolves the rules into the permissions every identity really has,
+        with the semantics of Mosquitto: a deny rule is handled before a
+        grant, the anonymous section applies to unauthenticated clients
+        only, and the pattern rules apply to every client.
+      responses:
+        "200":
+          description: The effective permissions per ACL file.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items: { $ref: "#/components/schemas/EffectiveScope" }
+                required: [scopes]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/acls/effective/simulate:
+    post:
+      tags: [ACLs]
+      summary: Simulate one access question
+      description: |
+        Requires auditor or higher.
+
+        Answers what a client may do on a topic, with the same rules the
+        broker applies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ACLSimulationRequest" }
+      responses:
+        "200":
+          description: The verdict of the simulation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ACLSimulationDecision" }
+        "400": { $ref: "#/components/responses/ACLValidation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/json-schemas:
     get:
       tags: [JSON Schemas]
@@ -1416,6 +1538,15 @@ components:
       type: object
       properties:
         id: { type: string }
+        selector:
+          $ref: "#/components/schemas/ACLSelector"
+        scope:
+          $ref: "#/components/schemas/ACLScope"
+        listener_id:
+          type: string
+          description: |
+            The listener whose ACL file carries the rule. It is required for
+            the `listener` scope and empty for the `global` scope.
         principal: { type: string }
         topic_filter:
           type: string
@@ -1426,15 +1557,182 @@ components:
     ACLRuleRequest:
       type: object
       properties:
-        principal: { type: string }
+        selector:
+          $ref: "#/components/schemas/ACLSelector"
+        scope:
+          $ref: "#/components/schemas/ACLScope"
+        listener_id:
+          type: string
+          description: |
+            The listener whose ACL file carries the rule. It is required for
+            the `listener` scope and must be empty for the `global` scope.
+        principal:
+          type: string
+          description: |
+            The MQTT username the rule applies to. Required and non-empty for
+            the `user` selector; must be empty or omitted for the
+            `anonymous` and `pattern` selectors. A request without a
+            principal and without a `selector` is rejected, never treated as
+            an anonymous rule.
         topic_filter: { type: string }
         permission: { $ref: "#/components/schemas/ACLPermission" }
         description: { type: string }
-      required: [principal, topic_filter, permission]
+      required: [topic_filter, permission]
       additionalProperties: false
+    ACLSelector:
+      type: string
+      description: |
+        Native Mosquitto scope of the rule.
+
+        - `user`: the rule applies to the named `principal` (an MQTT
+          username). This is the scope used by rules created before native
+          selectors existed, and the scope a request without a `selector`
+          keeps.
+        - `anonymous`: the rule applies to unauthenticated clients only.
+          The `principal` must be empty. A malformed request without a
+          principal is rejected instead of becoming an anonymous rule.
+        - `pattern`: the rule applies to every user inside the ACL. The
+          `principal` must be empty, and the topic filter may use the `%u`
+          (username) and `%c` (client id) placeholders, each on its own
+          topic level.
+      enum: [user, anonymous, pattern]
     ACLPermission:
       type: string
-      enum: [read, write, readwrite]
+      description: >-
+        Permission of an ACL rule. `deny` blocks the topic filter for the
+        principal and requires Mosquitto 2.0 or later; `read`, `write` and
+        `readwrite` grant access and work on every supported Mosquitto
+        version. A deny rule never grants access.
+      enum: [read, write, readwrite, deny]
+    ACLScope:
+      type: string
+      description: |
+        The ACL file the rule is rendered into.
+
+        - `global`: the broker-wide ACL file. The rule applies to every
+          listener.
+        - `listener`: the ACL file of one listener. The rule applies to that
+          listener only. Mosquitto only honours a listener-local `acl_file`
+          when `per_listener_settings` is enabled, and MCM refuses a deploy
+          whose scoped rules the broker would ignore.
+      enum: [global, listener]
+    ACLScopeInfo:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/ACLScope"
+        listener_id: { type: string }
+        path:
+          type: string
+          description: The absolute path of the ACL file.
+        rule_count: { type: integer }
+        wired:
+          type: boolean
+          description: |
+            Whether the broker configuration applies this file. It is false
+            while the listener does not declare it or while the
+            per-listener settings are disabled.
+        wiring_issue:
+          type: string
+          description: Why the file is not applied.
+      required: [scope, path, rule_count, wired]
+    ACLSource:
+      type: object
+      properties:
+        path: { type: string }
+        adopted: { type: boolean }
+        body:
+          type: string
+          description: The verbatim content of the adopted file.
+        content_hash: { type: string }
+      required: [path, adopted]
+    ACLSourceAdoptRequest:
+      type: object
+      properties:
+        path:
+          type: string
+          description: The ACL file to take over. Defaults to the file MCM manages.
+        body:
+          type: string
+          description: |
+            The verbatim content of the ACL file. It is optional: when it is
+            empty MCM reads the file from `path`.
+      additionalProperties: false
+    EffectiveGrant:
+      type: object
+      properties:
+        topic_filter: { type: string }
+        permission:
+          $ref: "#/components/schemas/ACLPermission"
+        selector:
+          $ref: "#/components/schemas/ACLSelector"
+        principal: { type: string }
+        denied:
+          type: boolean
+          description: Whether a deny rule covers the whole topic filter.
+        denied_by:
+          type: array
+          items: { type: string }
+      required: [topic_filter, permission, selector, denied]
+    EffectiveIdentity:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: The username of the client, or `anonymous`.
+        kind:
+          type: string
+          enum: [user, anonymous]
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/EffectiveGrant" }
+      required: [identity, kind, grants]
+    EffectiveScope:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/ACLScope"
+        listener_id: { type: string }
+        path: { type: string }
+        identities:
+          type: array
+          items: { $ref: "#/components/schemas/EffectiveIdentity" }
+      required: [scope, path, identities]
+    ACLSimulationRequest:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/ACLScope"
+        listener_id:
+          type: string
+          description: The listener whose ACL file the question is about.
+        username:
+          type: string
+          description: The MQTT username of the client. An empty username is an anonymous client.
+        client_id:
+          type: string
+          description: The client id of the client. It is the value the `%c` placeholder substitutes.
+        topic:
+          type: string
+          description: The topic the client wants to access.
+        access:
+          type: string
+          description: |
+            The action the client wants to perform. `read` asks whether the
+            client may receive the messages of the topic, `write` asks
+            whether it may publish to it.
+          enum: [read, write]
+      required: [topic, access]
+      additionalProperties: false
+    ACLSimulationDecision:
+      type: object
+      properties:
+        allowed: { type: boolean }
+        reason: { type: string }
+        matching_rules:
+          type: array
+          items: { $ref: "#/components/schemas/ACLRule" }
+      required: [allowed, reason]
     JSONSchemaDefinition:
       type: object
       properties:
@@ -1667,8 +1965,43 @@ components:
         acl_diff: { type: string }
         passwd_diff: { type: string }
         acl_body: { type: string }
+        scope_issues:
+          type: array
+          description: |
+            Configuration problems that leave the listener-scoped rules
+            without effect. They block the apply.
+          items: { type: string }
+        scope_pending_activation:
+          type: array
+          description: |
+            Scoped rules that the apply writes but that the broker reads
+            only once the broker configuration declares the file of the
+            listener. The rules are active after the listener configuration
+            is applied.
+          items: { type: string }
+        listener_acl_files:
+          type: array
+          description: The per-listener ACL files the apply would write.
+          items: { $ref: "#/components/schemas/ListenerACLPreview" }
+        removed_acl_files:
+          type: array
+          description: The per-listener ACL files the apply would delete.
+          items: { type: string }
         summary: { $ref: "#/components/schemas/DeploymentChangeSummary" }
       required: [revision_id, base_acl_hash, base_passwd_hash, rendered_acl_hash, rendered_passwd_hash, orphan_rules, has_changes, acl_diff, passwd_diff, acl_body, summary]
+    ListenerACLPreview:
+      type: object
+      properties:
+        listener_id: { type: string }
+        path: { type: string }
+        body: { type: string }
+        diff: { type: string }
+        at_risk_entries:
+          type: array
+          items: { type: string }
+        preserved_entries:
+          type: array
+          items: { type: string }
     DeploymentChangeSummary:
       type: object
       properties:

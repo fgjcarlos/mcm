@@ -40,20 +40,27 @@ var ErrDeploymentNotFound = errors.New("deployment not found")
 
 // Deployment is a stored deployment lifecycle record.
 type Deployment struct {
-	ID             int64     `json:"id"`
-	Actor          string    `json:"actor"`
-	Status         string    `json:"status"`
-	Kind           string    `json:"kind"`                  // "passwd_acl" (legacy) or "broker_config" (issue #298)
-	ReloadKind     string    `json:"reload_kind,omitempty"` // empty for passwd/ACL, "reload"/"restart"/"both" for broker_config
-	ACLSnapshot    string    `json:"-"`
-	PasswdSnapshot string    `json:"-"`
-	ACLRendered    string    `json:"-"`
-	PasswdRendered string    `json:"-"`
-	ConfRendered   string    `json:"-"` // broker-config rendered body
-	BaseConfHash   string    `json:"-"`
-	Message        string    `json:"message,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Actor          string `json:"actor"`
+	Status         string `json:"status"`
+	Kind           string `json:"kind"`                  // "passwd_acl" (legacy) or "broker_config" (issue #298)
+	ReloadKind     string `json:"reload_kind,omitempty"` // empty for passwd/ACL, "reload"/"restart"/"both" for broker_config
+	ACLSnapshot    string `json:"-"`
+	PasswdSnapshot string `json:"-"`
+	ACLRendered    string `json:"-"`
+	PasswdRendered string `json:"-"`
+	// ListenerACLSnapshot holds the on-disk content of the per-listener
+	// ACL files as a JSON object keyed by listener id. It is the snapshot
+	// the rollback restores when the apply fails.
+	ListenerACLSnapshot string `json:"-"`
+	// ListenerACLRendered holds the rendered per-listener ACL files as a
+	// JSON object keyed by listener id.
+	ListenerACLRendered string    `json:"-"`
+	ConfRendered        string    `json:"-"` // broker-config rendered body
+	BaseConfHash        string    `json:"-"`
+	Message             string    `json:"message,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // InsertDeployment stores a new deployment record and returns it with its assigned ID.
@@ -67,8 +74,8 @@ func (s *Store) InsertDeployment(ctx context.Context, d *Deployment) error {
 		kind = "passwd_acl"
 	}
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO deployments(actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO deployments(actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.Actor,
 		d.Status,
 		kind,
@@ -77,6 +84,8 @@ func (s *Store) InsertDeployment(ctx context.Context, d *Deployment) error {
 		d.PasswdSnapshot,
 		d.ACLRendered,
 		d.PasswdRendered,
+		d.ListenerACLSnapshot,
+		d.ListenerACLRendered,
 		d.ConfRendered,
 		d.BaseConfHash,
 		d.Message,
@@ -103,7 +112,7 @@ func (s *Store) InsertDeployment(ctx context.Context, d *Deployment) error {
 // GetDeployment returns a deployment record by ID.
 func (s *Store) GetDeployment(ctx context.Context, id int64) (Deployment, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
+		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
 		 FROM deployments WHERE id = ?`, id)
 	d, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -152,7 +161,7 @@ func (s *Store) ListDeployments(ctx context.Context, limit, offset int) ([]Deplo
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
+		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
 		 FROM deployments ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
@@ -189,6 +198,8 @@ func scanDeployment(row interface{ Scan(dest ...any) error }) (Deployment, error
 		&d.PasswdSnapshot,
 		&d.ACLRendered,
 		&d.PasswdRendered,
+		&d.ListenerACLSnapshot,
+		&d.ListenerACLRendered,
 		&d.ConfRendered,
 		&d.BaseConfHash,
 		&d.Message,

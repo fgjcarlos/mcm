@@ -105,6 +105,13 @@ func (d *deployAPI) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, errorResponse{Error: "deploy already in progress"})
 		return
 	}
+	if errors.Is(err, deploy.ErrUnmanagedACLContent) {
+		writeJSON(w, http.StatusConflict, errorResponse{
+			Error:   "the deploy would drop ACL access that is not managed by MCM",
+			Details: unmanagedACLDetails(err),
+		})
+		return
+	}
 	if err != nil {
 		slog.Error("deploy apply failed", "actor", actor, "error", err.Error())
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
@@ -112,6 +119,15 @@ func (d *deployAPI) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, deployment)
+}
+
+// unmanagedACLDetails returns the ACL entries that blocked the apply.
+func unmanagedACLDetails(err error) []string {
+	var unmanaged *deploy.UnmanagedACLContentError
+	if errors.As(err, &unmanaged) {
+		return unmanaged.Entries
+	}
+	return nil
 }
 
 // actorFromRequest extracts the authenticated username from the request context,

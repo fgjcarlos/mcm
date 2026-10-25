@@ -373,6 +373,33 @@ func (a *App) Handler() http.Handler {
 		recordSecurityFailure: a.recordSecurityFailure,
 		recordSecurityChange:  a.recordSecurityChange,
 	}
+	// The listeners own the ACL file of their scope: MCM points a listener
+	// at the file it writes and removes the option again when the last
+	// scoped rule of the listener is gone.
+	if a.mosquitto.Deploy.ACLPath != "" {
+		aclAPI.scopeSync = &aclScopeSync{
+			store:   a.store,
+			rules:   a.aclStore,
+			aclPath: a.mosquitto.Deploy.ACLPath,
+		}
+	}
+
+	// The native ACL surface: the scopes a rule can belong to, the ACL
+	// sources MCM adopted and the effective permissions of an identity.
+	scopeAPI := &aclScopeAPI{
+		store:                 a.aclStore,
+		listeners:             a.store,
+		users:                 a.store,
+		sources:               a.store,
+		aclPath:               a.mosquitto.Deploy.ACLPath,
+		audit:                 a.recordAuditFromRequest,
+		recordSecurityFailure: a.recordSecurityFailure,
+	}
+	if svc, ok := a.deploySvc.(interface {
+		PerListenerSettingsEnabled(context.Context) (bool, error)
+	}); ok {
+		scopeAPI.perListenerSettings = svc.PerListenerSettingsEnabled
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", aclAPI.handleLivez)
@@ -383,6 +410,11 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("POST /api/v1/acls", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleCreateRule)))
 	mux.Handle("PUT /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleUpdateRule)))
 	mux.Handle("DELETE /api/v1/acls/{id}", a.requireRole(auth.RoleOperator, http.HandlerFunc(aclAPI.handleDeleteRule)))
+	mux.Handle("GET /api/v1/acls/scopes", a.requireRole(auth.RoleAuditor, http.HandlerFunc(scopeAPI.handleListScopes)))
+	mux.Handle("GET /api/v1/acls/source", a.requireRole(auth.RoleAuditor, http.HandlerFunc(scopeAPI.handleGetSource)))
+	mux.Handle("POST /api/v1/acls/source/adopt", a.requireRole(auth.RoleOperator, http.HandlerFunc(scopeAPI.handleAdoptSource)))
+	mux.Handle("GET /api/v1/acls/effective", a.requireRole(auth.RoleAuditor, http.HandlerFunc(scopeAPI.handleEffective)))
+	mux.Handle("POST /api/v1/acls/effective/simulate", a.requireRole(auth.RoleAuditor, http.HandlerFunc(scopeAPI.handleSimulate)))
 	mux.HandleFunc("POST /api/v1/auth/login", a.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/login/mfa", a.handleLoginMFA)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))

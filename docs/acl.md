@@ -1,14 +1,207 @@
 # ACL API
 
-MCM's initial ACL model is intentionally small and independently testable.
+MCM manages Mosquitto 2.0 ACL rules. A rule states **who** may act on
+**which topics** with **which permission**, and it renders one-for-one
+into a Mosquitto ACL file.
 
-Each ACL rule contains:
+This page covers the rule model, the native scopes, the validation rules
+and the Mosquitto mapping. The deployment of a rendered file is described
+in the [production guide](production.md).
 
-- `id`: MCM-generated rule identifier.
-- `principal`: the Mosquitto username or application identity the rule applies to.
-- `topic_filter`: an MQTT topic filter, including MQTT wildcards such as `+` and `#`.
-- `permission`: one of `read`, `write`, or `readwrite`.
-- `description`: optional operator-facing note.
+## Rule model
+
+| Field | Meaning |
+|-------|---------|
+| `id` | MCM-generated rule identifier. |
+| `selector` | Native scope of the rule: `user`, `anonymous` or `pattern`. |
+| `scope` | ACL file the rule is rendered into: `global` or `listener`. |
+| `listener_id` | Listener whose ACL file carries the rule. Required for `listener` only. |
+| `principal` | The MQTT username. Required for `user` only. |
+| `topic_filter` | An MQTT topic filter, with wildcards `+` and `#`. |
+| `permission` | `read`, `write`, `readwrite` or `deny`. |
+| `description` | Optional operator-facing note. |
+
+A request without `selector` means `user`. A request with `principal`
+but without `selector` is a legacy user-scoped request. A request without
+`scope` means `global`.
+
+## Scopes
+
+Mosquitto ACL files distinguish three scopes. MCM models them with
+`selector`:
+
+| Selector | Applies to | Rendered as | Principal |
+|----------|------------|-------------|-----------|
+| `user` | The named MQTT user. | `topic` in a `user` section. | Required |
+| `anonymous` | Unauthenticated only. | `topic` before first `user`. | Empty |
+| `pattern` | Every user in the ACL. | `pattern` line. | Empty |
+
+Two rules matter when reading a rendered file:
+
+- An anonymous rule is **not** a fallback for authenticated users. In
+  Mosquitto a `topic` line before the first `user` line applies to
+  anonymous clients only.
+- A pattern rule is **globally applicable**. Mosquitto evaluates
+  `pattern` lines for every user, whatever `user` section surrounds
+  them.
+
+### ACL files
+
+A rule also names the **ACL file** it is rendered into. MCM manages two
+kinds of files:
+
+| Scope | File | Applies to |
+|-------|------|-----------|
+| `global` | The broker-wide ACL file, the `acl_file` of the configuration. | Every listener. |
+| `listener` | The ACL file of one listener, next to the broker-wide one. | That listener only. |
+
+Mosquitto resolves the access control per listener once
+`per_listener_settings true` is set. From that moment a `listener` block
+that declares no `acl_file` has **no access control at all**, and a client
+that authenticates is refused. MCM therefore:
+
+- enables `per_listener_settings` when a listener owns a scoped rule;
+- writes the broker-wide `acl_file` and `password_file` into every listener
+  block that does not declare its own, so the broker-wide rules and the
+  broker-wide accounts keep applying there;
+- points a listener with scoped rules at the file MCM writes for it, and
+  removes the option again when the last scoped rule of that listener is
+  gone;
+- deletes the file it owned for that listener, so the listener cannot keep
+  serving access the operator removed.
+
+The deploy preview names the listeners whose scope the broker does not
+apply yet, and the apply **refuses** a scope that is not wired: an apply
+that reported success while the rules never reached the broker would be a
+lie.
+
+The `per_listener_settings` directive only works **before** the first
+security setting of the configuration: Mosquitto refuses to start with
+`per_listener_settings must be set before any other security settings.`
+MCM inserts the directive ahead of `allow_anonymous`, `password_file`,
+`acl_file`, `psk_file` and `auth_plugin`, and moves an existing directive
+that sits behind them to the position the broker requires.
+
+### The two paths of a listener file
+
+The file of a listener is written by MCM and read by the broker, and the
+two processes do not necessarily see the same filesystem. In a container
+deployment the shared volume is mounted under a different path in each
+container:
+
+| Process | Path of the file of the listener `plant` |
+|---------|------------------------------------------|
+| MCM | `/var/lib/mosquitto-config/acl.plant` |
+| The broker | `/mosquitto/config/acl.plant` |
+
+MCM writes the file under **its own** path and declares the **broker's**
+path in the `acl_file` of the listener. The broker path is resolved
+against the `acl_file` of the configuration head — the path the broker
+uses for the broker-wide file — so the file of a listener always sits next
+to it. A file MCM does not manage (an operator-provided path) keeps the
+value it was given.
+
+### Activating a listener scope
+
+The file has to exist before the configuration declares it: Mosquitto
+refuses to start when the `acl_file` of a listener is missing. The order is
+therefore:
+
+1. **Apply the deployment.** It writes the broker-wide file and the file of
+   every listener that owns scoped rules.
+2. **Apply the listener configuration.** It declares the `acl_file` of the
+   listener and restarts the broker.
+
+The deploy preview reports the second step as pending, so the operator
+sees it before the first step:
+
+```json
+{
+  "scope_pending_activation": [
+    "listener \"plant\" does not declare \"/mosquitto/config/acl.plant\" in the broker configuration yet; apply the listener configuration to activate its scoped rules"
+  ]
+}
+```
+
+A scope that can never work is **blocking**, and the apply refuses it:
+
+- MCM does not manage the configuration of the broker, so it cannot declare
+  the file at all;
+- the listener of a scoped rule does not exist;
+- the listener owns no `acl_file` of its own;
+- the listener declares a different file than the one MCM writes.
+
+The listener apply refuses a configuration that declares a file MCM has not
+written yet (`the acl file of a listener has not been written yet`), so a
+misordered apply cannot take the broker down.
+
+### The listener on the default port
+
+With `per_listener_settings true` Mosquitto always creates a listener of
+its own on the default port (1883), with the global authentication and
+access control. A `listener` block of the configuration on that port
+collides with it and the broker refuses to start with `Address in use`.
+
+MCM therefore drops the spec of the listener on the default port: the
+broker keeps serving the port with the broker-wide rules, which is the
+access that spec asked for. A listener on that port that owns an ACL file
+of its own is refused instead — Mosquitto would ignore the file and the
+scoped rules would never apply.
+
+The end-to-end test `scripts/tests/test-e2e-acl-scoped-listener.sh` proves
+all of it against a live Mosquitto: the scoped rule reaches a subscriber
+on the scoped listener and nowhere else, and the broker-wide rule does the
+opposite.
+
+### Backward compatibility
+
+- A request without `selector` keeps the legacy `user` scope, so existing
+  clients and stored rules keep their meaning.
+- A stored rule created before native selectors existed reads back with
+  `selector: "user"`.
+- A malformed legacy request (no principal, no selector) is **rejected**
+  with `principal is required`. It never silently becomes an anonymous
+  rule. Only an explicit `"selector": "anonymous"` selects anonymous
+  semantics.
+
+## Permissions
+
+| Permission | Meaning | Broker requirement |
+|------------|---------|--------------------|
+| `read` | Receive the messages published to the topic. | Mosquitto 1.x and later |
+| `write` | Publish to the topic. | Mosquitto 1.x and later |
+| `readwrite` | Receive the messages and publish to the topic. | Mosquitto 1.x and later |
+| `deny` | Deny the action. | Mosquitto 2.0 or later |
+
+The `read` permission controls the **delivery** of a message, not the
+subscription itself: the ACL file of Mosquitto accepts a subscription and
+filters the messages the subscriber receives. The integration test in
+`internal/acl` proves this against a real broker.
+
+MCM supports Mosquitto **2.0**. The `deny` permission is validated
+against that version, so a rule that needs a newer broker is rejected at
+creation time instead of failing silently at runtime. MCM does not
+discover the running broker version; the supported version is a
+compile-time constant (`acl.SupportedMosquittoVersion`).
+
+## Placeholders
+
+Mosquitto substitutes two placeholders when it evaluates a pattern rule:
+
+| Placeholder | Substituted with |
+|-------------|------------------|
+| `%u` | The username of the connecting client. |
+| `%c` | The client id of the connecting client. |
+
+Each placeholder must occupy an entire topic level:
+
+- Valid: `clients/%u/state`, `clients/%c/state`
+- Invalid: `clients/%uX/state`, `clients/%u%c/state`
+
+The whole-level rule applies to **pattern rules only**. A `user` or
+`anonymous` topic filter keeps a literal `%u` or `%c`: MCM neither
+rewrites nor rejects it, because Mosquitto only substitutes placeholders
+for pattern entries.
 
 ## REST endpoints
 
@@ -16,6 +209,16 @@ Each ACL rule contains:
 - `POST /api/v1/acls`: create a rule.
 - `PUT /api/v1/acls/{id}`: update a rule.
 - `DELETE /api/v1/acls/{id}`: delete a rule.
+- `GET /api/v1/acls/scopes`: list the ACL files MCM manages and whether the
+  broker configuration applies them.
+- `GET /api/v1/acls/source`: read the adopted ACL source.
+- `POST /api/v1/acls/source/adopt`: adopt an existing ACL file.
+- `GET /api/v1/acls/effective`: resolve the effective permissions of every
+  identity.
+- `POST /api/v1/acls/effective/simulate`: answer one access question.
+
+Role requirements are unchanged: `auditor` may list, `operator` may
+create, update and delete.
 
 Example create request:
 
@@ -33,6 +236,7 @@ Example response:
 ```json
 {
   "id": "1",
+  "selector": "user",
   "principal": "operator",
   "topic_filter": "factory/+/temperature",
   "permission": "read",
@@ -40,9 +244,117 @@ Example response:
 }
 ```
 
-## Topic-filter validation
+Example anonymous rule:
 
-MCM validates MQTT wildcard placement before storing a rule.
+```json
+{
+  "selector": "anonymous",
+  "topic_filter": "public/status",
+  "permission": "read"
+}
+```
+
+Example pattern rule:
+
+```json
+{
+  "selector": "pattern",
+  "topic_filter": "clients/%u/state",
+  "permission": "readwrite"
+}
+```
+
+## Effective permissions
+
+Listing the rules back does not answer the question an operator asks when
+a rule looks wrong: may this client do this on this topic? MCM resolves the
+rules the way Mosquitto does.
+
+- `GET /api/v1/acls/effective` returns, per ACL file and per identity, the
+  grants that apply and the verdict the deny rules have on them.
+- `POST /api/v1/acls/effective/simulate` answers a concrete question.
+
+The resolution follows the documented semantics of Mosquitto:
+
+- a **deny** rule is handled before any grant, so a deny that matches the
+  topic wins over a broader grant;
+- the **anonymous** section applies to unauthenticated clients only and is
+  not a fallback for the authenticated ones;
+- the **pattern** rules apply to every client, with `%u` and `%c`
+  substituted;
+- a client is denied when no rule grants the access.
+
+Example simulation request:
+
+```json
+{
+  "username": "device-01",
+  "client_id": "device-01-7f3a",
+  "topic": "sensors/1/temperature",
+  "access": "read"
+}
+```
+
+Example response:
+
+```json
+{
+  "allowed": true,
+  "reason": "a read rule grants read on the topic",
+  "matching_rules": [
+    {
+      "id": "3",
+      "selector": "user",
+      "scope": "global",
+      "principal": "device-01",
+      "topic_filter": "sensors/#",
+      "permission": "read"
+    }
+  ]
+}
+```
+
+The view and the simulator speak MQTT access control only. The MCM
+administrative roles (viewer, auditor, operator, admin) belong to the
+administration panel and are never presented as MQTT permissions.
+
+## Adopting an existing ACL file
+
+An operator who installs MCM on a running broker usually has an ACL file
+already. `POST /api/v1/acls/source/adopt` takes it under the management of
+MCM:
+
+- the content is stored **verbatim**, with a SHA-256 hash of it;
+- the deploy composes the managed rules into the adopted document, without
+  dropping the original lines and without duplicating a rule that is
+  already present;
+- the preview reports the access the composition would drop (`at_risk_entries`)
+  and the lines that survive (`preserved_entries`);
+- an apply that would drop access MCM can neither reproduce nor attribute
+  to a managed MQTT user is **refused** with the blocking entries.
+
+The adoption works per path, so the ACL file of a listener can be adopted
+the same way as the broker-wide one.
+
+The deploy preview of the graphical interface shows that impact: the access
+at risk, the lines that survive, the file of every listener that owns
+scoped rules (`listener_acl_files`) and the files the deploy would delete
+(`removed_acl_files`).
+
+## Validation
+
+MCM rejects a rule with HTTP `400` and a top-level `error` plus detailed
+messages under `details` when:
+
+- `principal` is missing for a `user` rule, or set on an `anonymous` or
+  `pattern` rule.
+- `selector` is not one of `user`, `anonymous`, `pattern`.
+- `permission` is not one of `read`, `write`, `readwrite`, `deny`, or
+  `deny` is used with a broker older than 2.0.
+- The topic filter breaks the MQTT wildcard rules.
+- A pattern topic filter breaks the whole-level placeholder rule.
+
+### Topic-filter validation
 
 - `#` must occupy an entire topic level.
 - `#` may only appear in the final topic level.
@@ -55,52 +367,154 @@ Examples:
 - Invalid: `factory/#/temperature`
 - Invalid: `factory/area+1/temperature`
 
-Validation failures return HTTP `400` with a top-level `error` plus detailed messages under `details`.
+### Injection safety
+
+A rule can never introduce a new ACL directive. The principal, the topic
+filter and the permission are validated before storage, and a rule whose
+scope is not one of the three known selectors is rejected outright, so no
+stored value can terminate a line or start a new one.
+
+Concretely:
+
+- Control characters (including newline) are rejected in the principal
+  and in the topic filter, so a stored value can never end its ACL line
+  and open a new directive.
+- `selector` and `permission` are allowlists, so they cannot carry a
+  directive or a permission name that Mosquitto would read as something
+  else.
+- The description is operator-facing metadata and is never rendered into
+  the ACL file.
+
+Limitation: the principal is an MQTT username and is rendered verbatim.
+MCM does not reject a username that contains spaces, because MQTT
+usernames may contain them; Mosquitto's own ACL parser decides what to
+do with such a line. Treat unusual usernames as a broker-configuration
+concern rather than an ACL-syntax guarantee.
 
 ## Mosquitto ACL mapping
 
-This first model is designed to map directly onto Mosquitto ACL file concepts.
+MCM renders the rules of one ACL file in a fixed order:
 
-MCM rule:
+1. The **anonymous** section (`topic` lines) comes first.
+2. The **pattern** section (`pattern` lines) follows.
+3. The **user** sections come last, grouped by principal in
+   lexicographic order.
 
-```json
-{
-  "principal": "operator",
-  "topic_filter": "factory/+/temperature",
-  "permission": "read"
-}
+Given these three rules:
+
+```text
+user operator / topic read factory/+/temperature
+anonymous / topic read public/status
+pattern / topic deny clients/%u/state
 ```
 
 Mosquitto ACL output:
 
 ```text
+topic read public/status
+
+pattern deny clients/%u/state
+
 user operator
 topic read factory/+/temperature
 ```
 
-Another example:
+## Deploy behavior
 
-```json
-{
-  "principal": "writer",
-  "topic_filter": "factory/line1/#",
-  "permission": "readwrite"
-}
-```
+- The managed deploy renders every rule kind: anonymous, pattern, user
+  and `deny`, plus the service-generated grants for the MCM broker
+  account.
+- Orphan detection and the username-rename cascade only apply to
+  user-scoped rules. An anonymous or pattern record is not an MQTT
+  username, so it never becomes an orphan and is never rewritten by a
+  rename.
 
-Mosquitto ACL output:
+### Activation probe
 
-```text
-user writer
-topic readwrite factory/line1/#
-```
+After the files are written and the broker is signalled, MCM runs a
+bounded activation probe against the live broker. The probe publishes and
+subscribes as one identity on one concrete topic. The identity and the
+topic are chosen in this order:
 
-The current implementation stores ACL rules in memory so the API and validation logic stay isolated and easy to test. Persisting the same model in SQLite can be added later without changing the HTTP contract.
+1. A **user-scoped `readwrite` grant**. The probe identity is the
+   granted user.
+2. A **`pattern` `readwrite` grant**. The probe identity is substituted
+   into a whole-level `%u` placeholder, so the broker expands the same
+   topic the rule describes.
+3. The **managed service account** and the grant MCM always emits for
+   it (`readwrite mcm/healthcheck`).
+
+The third option is an operational fallback. It proves that the broker
+serves the new credentials and the service grant; it does **not** prove
+the client policy semantics.
+
+Rules for the probe topic:
+
+- The probe publishes to a concrete topic, never to a filter. A wildcard
+  level is replaced by a fixed probe segment.
+- A `%c` placeholder is skipped: the verifier does not control the MQTT
+  client id, so the placeholder cannot be expanded.
+- A grant is only usable when its identity has a known cleartext
+  password. MCM never invents credentials.
+
+The deployment status names the probe, for example
+`activation probe: pattern grant`.
+
+If no probe is available at all (no usable grant and no configured
+service account), the verification stage fails, the deployment is rolled
+back and the deployment record names the missing probe.
+
+### What the activation probe does not prove
+
+- The negative stage of the verifier authenticates an **unknown user**
+  and expects the broker to reject it. It does not assert that a topic
+  is denied.
+- A broker that accepts every subscription therefore still passes.
+- Deny rules, pattern rules and the anonymous section are not evaluated
+  against a running broker by MCM.
 
 ## Security event visibility
 
-MCM records sanitized security events for ACL API changes and ACL API failures. These events include the timestamp, event category/reason, source IP when available, HTTP method, and path. They do not include passwords, JWTs, request bodies, or other secrets.
+MCM records sanitized security events for ACL API changes and ACL API
+failures. These events include the timestamp, event category/reason,
+source IP when available, HTTP method, and path. They do not include
+passwords, JWTs, request bodies, or other secrets.
 
-Recent events are available to authenticated admins through `GET /api/v1/security/events?limit=100`, which returns newest events first.
+Recent events are available to authenticated admins through
+`GET /api/v1/security/events?limit=100`, which returns newest events
+first.
 
-Mosquitto-side authentication and ACL denials are not fully visible in this first slice. The embedded status/event stream currently observes MCM broker connectivity, topic traffic, and MCM-ingested broker log events; it does not parse Mosquitto log files nor subscribe to a broker `$SYS` topic that reliably exposes per-client auth/ACL denials. A future integration should prefer a configured, least-privilege Mosquitto log source or plugin hook and continue to redact client secrets and payloads.
+Mosquitto-side authentication and ACL denials are not fully visible in
+this first slice. The embedded status/event stream currently observes
+MCM broker connectivity, topic traffic, and MCM-ingested broker log
+events; it does not parse Mosquitto log files nor subscribe to a broker
+`$SYS` topic that reliably exposes per-client auth/ACL denials. A future
+integration should prefer a configured, least-privilege Mosquitto log
+source or plugin hook and continue to redact client secrets and
+payloads.
+
+## Limits
+
+The unit tests in this repository cover the stored model, the rendered
+file and the HTTP contract. The runtime behaviour of a real broker is
+covered by two integration tests instead:
+
+- `internal/acl` (`go test -tags integration`) starts a Mosquitto broker and
+  proves the effective permission table of the broker — in particular the
+  interaction between `pattern` lines, `deny` lines and the anonymous
+  section. `scripts/tests/test-e2e-acl-semantics.sh` runs it.
+- `scripts/tests/test-e2e-acl-scoped-listener.sh` starts the whole stack
+  and proves that the scope of a listener reaches the broker: the rules of
+  a listener apply to that listener only, and the broker-wide rules apply
+  everywhere else.
+
+Two things stay outside what MCM can prove on its own:
+
+- MCM does not discover the running broker version, so a broker older
+  than 2.0 is not rejected at creation time (see [Permissions](#permissions)).
+- A verdict of a rule is read from the delivery of a message. MQTT 3.1.1
+  has no negative acknowledgement for a publish: the broker drops a
+  message it refuses and the publishing client sees a successful publish.
+  A subscriber is the only client that can tell a granted rule from a
+  refused one, which is why both the integration test and the end-to-end
+  test assert on delivery.

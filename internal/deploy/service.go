@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,54 @@ var ErrRequiresRestart = errors.New("apply requires broker restart")
 // the importer-supplied tree can replace the managed config. Issue #298
 // acceptance criterion 4.
 var ErrAdoptionRequired = errors.New("broker config adoption required")
+
+// ErrUnmanagedACLContent is returned when an apply would drop ACL access
+// that MCM can neither reproduce nor attribute to a managed MQTT user.
+//
+// The access is reported by the preview as an at-risk entry; the apply
+// refuses so a destructive render never lands silently. The operator can
+// resolve the refusal by adopting the current ACL file as an ACL source
+// (which preserves the content) or by removing the entries.
+var ErrUnmanagedACLContent = errors.New("unmanaged acl content would be dropped")
+
+// ErrACLScopeNotWired is returned when an apply would leave the
+// listener-scoped rules without effect.
+//
+// Mosquitto only applies the ACL file of a listener when the listener
+// declares it and the broker resolves the access control options per
+// listener. An apply that ignored this would report success while the
+// broker kept serving the broker-wide access, so the apply is refused.
+var ErrACLScopeNotWired = errors.New("acl scope is not wired to the broker configuration")
+
+// ACLScopeNotWiredError carries the configuration problems that block an
+// apply.
+type ACLScopeNotWiredError struct {
+	Issues []string
+}
+
+func (e *ACLScopeNotWiredError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrACLScopeNotWired, strings.Join(e.Issues, "; "))
+}
+
+// Unwrap exposes ErrACLScopeNotWired to errors.Is.
+func (e *ACLScopeNotWiredError) Unwrap() error {
+	return ErrACLScopeNotWired
+}
+
+// UnmanagedACLContentError carries the ACL entries that block an apply.
+type UnmanagedACLContentError struct {
+	// Entries are the semantic keys of the blocking ACL entries.
+	Entries []string
+}
+
+func (e *UnmanagedACLContentError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrUnmanagedACLContent, strings.Join(e.Entries, ", "))
+}
+
+// Unwrap makes errors.Is(err, ErrUnmanagedACLContent) match.
+func (e *UnmanagedACLContentError) Unwrap() error {
+	return ErrUnmanagedACLContent
+}
 
 // Revision errors are mapped to HTTP 400/409 by the deploy handler.
 var (
@@ -175,6 +224,16 @@ type OrphanRuleLister interface {
 	FindOrphanRules(ctx context.Context) ([]storage.ACLRuleRow, error)
 }
 
+// ACLSourceStore is the optional durable store of an adopted ACL source.
+//
+// The production *storage.Store implements it; the deploy service resolves
+// it with a type assertion on the deployment store, exactly like the
+// broker-config store. When the store does not implement it, the deploy
+// service renders the managed-only ACL.
+type ACLSourceStore interface {
+	GetACLSource(ctx context.Context, path string) (storage.ACLSourceRow, error)
+}
+
 // MutationCoordinator serializes managed MQTT/ACL mutations with the
 // validation-to-apply window. Production storage implements this so a
 // revision cannot become stale after it has been validated for apply.
@@ -213,8 +272,57 @@ type PreviewResult struct {
 	PasswdDiff  string               `json:"passwd_diff"`
 	ACLBody     string               `json:"acl_body"`
 	PasswdBody  string               `json:"-"`
-	Summary     ChangeSummary        `json:"summary"`
-	HasChanges  bool                 `json:"has_changes"`
+
+	// AtRiskEntries are the semantic ACL keys the current on-disk file
+	// grants and the rendered file does not. They are the access the
+	// deploy would drop. An entry that belongs to a managed MQTT user is
+	// reported here only; an entry MCM can neither reproduce nor
+	// attribute to a managed MQTT user blocks the apply.
+	AtRiskEntries []string `json:"at_risk_entries,omitempty"`
+	// PreservedEntries are the verbatim lines of the adopted ACL source
+	// that survive into the rendered ACL.
+	PreservedEntries []string `json:"preserved_entries,omitempty"`
+	// CompositionWarnings name the managed rules the composition inserted
+	// into the adopted source and the duplicates it skipped.
+	CompositionWarnings []string `json:"composition_warnings,omitempty"`
+
+	// ListenerACLFiles are the per-listener ACL files the deploy would
+	// write. A listener that owns scoped rules uses only its own file, so
+	// the preview has to show it separately from the broker-wide file.
+	ListenerACLFiles []ListenerACLPreview `json:"listener_acl_files,omitempty"`
+	// RemovedACLFiles are the per-listener ACL files the deploy would
+	// delete because their listener no longer owns any scoped rule.
+	RemovedACLFiles []string `json:"removed_acl_files,omitempty"`
+	// ScopeIssues name the configuration problems that would leave the
+	// listener-scoped rules without effect. They block the apply.
+	ScopeIssues []string `json:"scope_issues,omitempty"`
+	// ScopePendingActivation names the scoped rules that the apply writes
+	// but that the broker does not read yet. The broker reads the file of
+	// a listener once the broker configuration declares it, and the
+	// configuration is applied after the deploy: the rules are active once
+	// the operator applies the listener configuration.
+	ScopePendingActivation []string `json:"scope_pending_activation,omitempty"`
+
+	Summary    ChangeSummary `json:"summary"`
+	HasChanges bool          `json:"has_changes"`
+}
+
+// ListenerACLPreview describes one per-listener ACL file in a preview.
+type ListenerACLPreview struct {
+	// ListenerID names the listener whose file this is.
+	ListenerID string `json:"listener_id"`
+	// Path is the absolute path of the file.
+	Path string `json:"path"`
+	// Body is the rendered content of the file.
+	Body string `json:"body,omitempty"`
+	// Diff is the unified diff between the on-disk file and the render.
+	Diff string `json:"diff,omitempty"`
+	// AtRiskEntries are the semantic ACL keys the on-disk file grants and
+	// the rendered file does not.
+	AtRiskEntries []string `json:"at_risk_entries,omitempty"`
+	// PreservedEntries are the verbatim lines of the adopted source that
+	// survive into the rendered file.
+	PreservedEntries []string `json:"preserved_entries,omitempty"`
 }
 
 // Service orchestrates deploy preview, apply, and history.
@@ -228,6 +336,9 @@ type Service struct {
 	deployStore         DeploymentStore
 	revisionStore       previewRevisionStore
 	brokerCfgStore      BrokerConfigRevisionStore
+	aclSourceStore      ACLSourceStore
+	managedACLFileStore ManagedACLFileStore
+	listenerLister      ListenerScopeLister
 	confCatalog         ConfCatalog
 	confPath            string // broker config absolute path; empty disables the broker-config path
 	verifier            ActiveVerifier
@@ -262,6 +373,9 @@ func NewService(
 	orphanRuleLister, _ := mqttStore.(OrphanRuleLister)
 	mutationCoordinator, _ := mqttStore.(MutationCoordinator)
 	brokerCfgStore, _ := deployStore.(BrokerConfigRevisionStore)
+	aclSourceStore, _ := deployStore.(ACLSourceStore)
+	managedACLFileStore, _ := deployStore.(ManagedACLFileStore)
+	listenerLister, _ := deployStore.(ListenerScopeLister)
 	return &Service{
 		applier:             applier,
 		aclStore:            aclStore,
@@ -271,6 +385,9 @@ func NewService(
 		deployStore:         deployStore,
 		revisionStore:       revisionStore,
 		brokerCfgStore:      brokerCfgStore,
+		aclSourceStore:      aclSourceStore,
+		managedACLFileStore: managedACLFileStore,
+		listenerLister:      listenerLister,
 		verifier:            verifier,
 		passwordLookup:      passwordLookup,
 		readFile:            defaultFileReader,
@@ -362,7 +479,50 @@ func contentHash(body string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// render fetches rules and users from the stores and produces rendered ACL and passwd bodies.
+// renderedConfig is the outcome of one render: the bodies the deploy would
+// write plus the impact information the preview reports.
+type renderedConfig struct {
+	// ACLBody is the rendered ACL file body.
+	ACLBody string
+	// ACLFiles lists every ACL file the deploy would write: the
+	// broker-wide file first, then one file per listener that owns a
+	// scoped rule.
+	ACLFiles []ACLFileRender
+	// PasswdBody is the rendered passwd file body.
+	PasswdBody string
+	// OrphanRules are the managed rules excluded from the render because
+	// their MQTT user is disabled or absent.
+	OrphanRules []storage.ACLRuleRow
+	// CompositionWarnings name the managed rules the composition inserted
+	// into the adopted ACL source and the duplicates it skipped.
+	CompositionWarnings []string
+	// AdoptedSource is the adopted ACL source of the configured ACL path,
+	// or nil when no source was adopted.
+	AdoptedSource *storage.ACLSourceRow
+}
+
+// ACLFileRender is one rendered ACL file.
+//
+// Mosquitto resolves `acl_file` per listener once
+// `per_listener_settings true` is set: the broker-wide file applies to
+// every listener that does not declare its own file, and a listener that
+// declares one uses only that file. MCM renders one file per scope so the
+// two behaviours stay distinguishable.
+type ACLFileRender struct {
+	// Scope is the scope the file serves.
+	Scope acl.Scope `json:"scope"`
+	// ListenerID names the listener whose file this is. It is empty for
+	// the broker-wide file.
+	ListenerID string `json:"listener_id,omitempty"`
+	// Path is the absolute path of the file.
+	Path string `json:"path"`
+	// Body is the rendered content of the file.
+	Body string `json:"body,omitempty"`
+}
+
+// render renders the broker configuration and returns the ACL body, the
+// passwd body and the orphan rules.
+//
 // The service user block (MCM_MOSQUITTO_USERNAME) and its ACL grants are
 // always emitted so the deploy healthcheck and the broker events feed
 // keep working after every apply. The service user's existing hash on
@@ -370,17 +530,34 @@ func contentHash(body string) string {
 // has_changes non-idempotent (salt is random), forcing the applier to
 // rewrite the file and SIGHUP the broker on every preview/apply cycle
 // even when nothing changed.
+//
+// render is the four-value view of renderConfig: the adopted ACL source and
+// the composition warnings of the render live on renderConfig.
 func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orphanRules []storage.ACLRuleRow, err error) {
+	rendered, err := s.renderConfig(ctx)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return rendered.ACLBody, rendered.PasswdBody, rendered.OrphanRules, nil
+}
+
+// renderConfig renders the broker configuration.
+//
+// Without an adopted ACL source the rendered ACL is byte-identical to the
+// managed-only renderer output. With an adopted source the managed rules are
+// composed into the source document, so the content MCM does not model
+// (comments, blank lines, unrecognised directives) survives the deploy.
+func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	rules, err := s.aclStore.ListRules(ctx)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("list acl rules: %w", err)
+		return renderedConfig{}, fmt.Errorf("list acl rules: %w", err)
 	}
 
-	orphanRules = make([]storage.ACLRuleRow, 0)
+	orphanRules := make([]storage.ACLRuleRow, 0)
 	if s.orphanRuleLister != nil {
 		orphanRules, err = s.orphanRuleLister.FindOrphanRules(ctx)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("find orphan acl rules: %w", err)
+			return renderedConfig{}, fmt.Errorf("find orphan acl rules: %w", err)
 		}
 		if orphanRules == nil {
 			orphanRules = make([]storage.ACLRuleRow, 0)
@@ -389,7 +566,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 
 	users, err := s.mqttStore.ListMQTTUsers(ctx)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("list mqtt users: %w", err)
+		return renderedConfig{}, fmt.Errorf("list mqtt users: %w", err)
 	}
 
 	// Read the on-disk passwd so we can preserve the service user's
@@ -398,7 +575,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 	// (first boot) we recompute the hash.
 	existingPasswd, err := s.readFile(s.deployCfg.PasswdPath)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("read current passwd file: %w", err)
+		return renderedConfig{}, fmt.Errorf("read current passwd file: %w", err)
 	}
 	existingEntries := mosquitto.ParsePasswdFile(existingPasswd)
 	existingHashByUser := make(map[string]string, len(existingEntries))
@@ -410,25 +587,92 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 	// broker configuration. They cannot authenticate because their user is
 	// disabled or absent, and retaining them would make the rendered state
 	// disagree with the active user set.
+	//
+	// Only user-scoped rules reference an MQTT username. An anonymous or
+	// pattern rule carries no username, so it is never an orphan.
 	orphanPrincipals := make(map[string]struct{}, len(orphanRules))
 	for _, rule := range orphanRules {
 		orphanPrincipals[rule.Principal] = struct{}{}
 	}
 	activeRules := make([]acl.Rule, 0, len(rules))
 	for _, rule := range rules {
-		if _, orphan := orphanPrincipals[rule.Principal]; orphan {
-			continue
+		if rule.IsUserScoped() {
+			if _, orphan := orphanPrincipals[rule.Principal]; orphan {
+				continue
+			}
 		}
 		activeRules = append(activeRules, rule)
 	}
 
+	// Split the active rules by scope. The global rules go into the
+	// broker-wide ACL file; every listener that owns scoped rules gets its
+	// own file.
+	globalRules, listenerRules := splitRulesByScope(activeRules)
+
 	// Build the ACL body: active managed rules + service user block.
-	allRules := make([]acl.Rule, 0, len(activeRules)+1)
-	allRules = append(allRules, activeRules...)
+	allRules := make([]acl.Rule, 0, len(globalRules)+1)
+	allRules = append(allRules, globalRules...)
 	if s.mosquittoCfg.Username != "" {
 		allRules = append(allRules, serviceUserACL(s.mosquittoCfg.Username)...)
 	}
-	aclBody = mosquitto.RenderACLFile(allRules)
+	rendered := renderedConfig{
+		ACLBody:     mosquitto.RenderACLFile(allRules),
+		OrphanRules: orphanRules,
+	}
+
+	// An adopted ACL source owns the on-disk file: the managed rules are
+	// composed into it so the content MCM does not model is preserved.
+	source, err := s.adoptedACLSource(ctx)
+	if err != nil {
+		return renderedConfig{}, err
+	}
+	if source != nil {
+		document := mosquitto.ParseACLDocument(source.Body)
+		composed, warnings := mosquitto.ComposeACLDocument(document, allRules)
+		rendered.ACLBody = composed.Render()
+		rendered.CompositionWarnings = warnings
+		rendered.AdoptedSource = source
+	}
+
+	// The broker-wide ACL file is always part of the file set, even when
+	// every managed rule belongs to a listener: a listener that declares
+	// no file of its own falls back to the broker-wide one.
+	files := []ACLFileRender{{
+		Scope: acl.ScopeGlobal,
+		Path:  s.deployCfg.ACLPath,
+		Body:  rendered.ACLBody,
+	}}
+
+	// One file per listener that owns scoped rules. The service user block
+	// is emitted in every file: a listener with its own ACL file no longer
+	// inherits the broker-wide one, so MCM's own account would lose the
+	// access it needs to keep the runtime working there.
+	for _, listenerID := range sortedListenerIDs(listenerRules) {
+		scoped := make([]acl.Rule, 0, len(listenerRules[listenerID])+1)
+		scoped = append(scoped, listenerRules[listenerID]...)
+		if s.mosquittoCfg.Username != "" {
+			scoped = append(scoped, serviceUserACL(s.mosquittoCfg.Username)...)
+		}
+		path := mosquitto.ListenerACLPath(s.deployCfg.ACLPath, listenerID)
+		body := mosquitto.RenderACLFile(scoped)
+		scopedSource, err := s.adoptedACLSourceForPath(ctx, path)
+		if err != nil {
+			return renderedConfig{}, err
+		}
+		if scopedSource != nil {
+			document := mosquitto.ParseACLDocument(scopedSource.Body)
+			composed, warnings := mosquitto.ComposeACLDocument(document, scoped)
+			body = composed.Render()
+			rendered.CompositionWarnings = append(rendered.CompositionWarnings, warnings...)
+		}
+		files = append(files, ACLFileRender{
+			Scope:      acl.ScopeListener,
+			ListenerID: listenerID,
+			Path:       path,
+			Body:       body,
+		})
+	}
+	rendered.ACLFiles = files
 
 	entries := make([]mosquitto.PasswdEntry, 0, len(users)+1)
 	for _, u := range users {
@@ -458,7 +702,7 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 			var hashErr error
 			hash, hashErr = mosquitto.HashPassword(s.mosquittoCfg.Password, mosquitto.DefaultIterations)
 			if hashErr != nil {
-				return "", "", nil, fmt.Errorf("hash service user password: %w", hashErr)
+				return renderedConfig{}, fmt.Errorf("hash service user password: %w", hashErr)
 			}
 		}
 		entries = append(entries, mosquitto.PasswdEntry{
@@ -466,10 +710,187 @@ func (s *Service) render(ctx context.Context) (aclBody, passwdBody string, orpha
 			Hash:     hash,
 		})
 	}
-	passwdBody = mosquitto.RenderPasswdFile(entries)
+	rendered.PasswdBody = mosquitto.RenderPasswdFile(entries)
 
-	return aclBody, passwdBody, orphanRules, nil
+	return rendered, nil
 }
+
+// splitRulesByScope partitions rules into the global rules and the rules
+// of every listener. The returned map is keyed by listener id.
+func splitRulesByScope(rules []acl.Rule) ([]acl.Rule, map[string][]acl.Rule) {
+	global := make([]acl.Rule, 0, len(rules))
+	byListener := make(map[string][]acl.Rule)
+	for _, rule := range rules {
+		if !rule.IsListenerScoped() {
+			global = append(global, rule)
+			continue
+		}
+		byListener[rule.ListenerID] = append(byListener[rule.ListenerID], rule)
+	}
+	return global, byListener
+}
+
+// sortedListenerIDs returns the listener ids in a stable order so the
+// rendered file set and every hash over it are deterministic.
+func sortedListenerIDs(byListener map[string][]acl.Rule) []string {
+	ids := make([]string, 0, len(byListener))
+	for id := range byListener {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// adoptedACLSource returns the adopted ACL source of the configured ACL
+// path. It returns nil when no source was adopted for that path.
+func (s *Service) adoptedACLSource(ctx context.Context) (*storage.ACLSourceRow, error) {
+	return s.adoptedACLSourceForPath(ctx, s.deployCfg.ACLPath)
+}
+
+// adoptedACLSourceForPath returns the adopted ACL source of one ACL path.
+// Every ACL file MCM writes can own an adopted source: the broker-wide
+// file and each per-listener file are addressed by their own path, so
+// adopting a listener's existing ACL file preserves its content the same
+// way adopting the broker-wide file does.
+func (s *Service) adoptedACLSourceForPath(ctx context.Context, path string) (*storage.ACLSourceRow, error) {
+	if s.aclSourceStore == nil || path == "" {
+		return nil, nil
+	}
+	row, err := s.aclSourceStore.GetACLSource(ctx, path)
+	if err != nil {
+		if errors.Is(err, storage.ErrACLSourceNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read adopted acl source: %w", err)
+	}
+	return &row, nil
+}
+
+// blockingACLEntries returns the at-risk ACL entries that block an apply.
+//
+// The refusal protects access MCM can neither reproduce nor attribute to a
+// managed MQTT user:
+//
+//   - a user-scoped grant for a principal MCM does not know blocks, because
+//     MCM cannot reproduce it and cannot tell whether the access is
+//     intentional;
+//   - an unknown directive blocks when the on-disk file is an ACL document
+//     MCM recognizes (it carries at least one user, topic or pattern
+//     directive). Such a directive carries access MCM does not model, so
+//     dropping it silently would be destructive. A file with no recognizable
+//     ACL directive grants nothing: the deploy keeps its replace-the-file
+//     behavior for it and the preview still reports the at-risk entries.
+//
+// A grant for a known MQTT user is only reported as at risk: MCM reproduces
+// it from the managed rules. An anonymous or a pattern grant is report-only
+// as well — MCM cannot attribute it to an MQTT identity, but blocking it
+// would make a deliberate removal of a managed anonymous or pattern rule
+// impossible.
+func (s *Service) blockingACLEntries(ctx context.Context, base mosquitto.ACLDocument, atRisk []string) ([]string, error) {
+	if len(atRisk) == 0 {
+		return nil, nil
+	}
+	known, err := s.knownPrincipals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	carriesACLContent := baseCarriesACLContent(base)
+	var blocking []string
+	for _, key := range atRisk {
+		if strings.HasPrefix(key, "unknown | ") {
+			if !carriesACLContent {
+				continue
+			}
+			blocking = append(blocking, key)
+			continue
+		}
+		principal, ok := aclKeyPrincipal(key)
+		if !ok {
+			continue
+		}
+		if _, ok := known[principal]; !ok {
+			blocking = append(blocking, key)
+		}
+	}
+	return blocking, nil
+}
+
+// baseCarriesACLContent reports whether the document carries at least one
+// directive MCM recognizes.
+func baseCarriesACLContent(doc mosquitto.ACLDocument) bool {
+	for _, entry := range doc.Entries {
+		switch entry.Kind {
+		case mosquitto.ACLEntryUser, mosquitto.ACLEntryTopic, mosquitto.ACLEntryPattern:
+			return true
+		}
+	}
+	return false
+}
+
+// knownPrincipals returns the principals MCM knows:
+//
+//   - every stored MQTT user, enabled or disabled — the identity exists in
+//     MCM even when it is temporarily disabled;
+//   - the broker service account;
+//   - every principal of a managed ACL rule, including an orphan rule. A
+//     rule whose user was deleted is excluded from the render on purpose;
+//     blocking that render would make the deletion of an MQTT user
+//     impossible.
+func (s *Service) knownPrincipals(ctx context.Context) (map[string]struct{}, error) {
+	known := make(map[string]struct{})
+	users, err := s.mqttStore.ListMQTTUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list mqtt users: %w", err)
+	}
+	for _, user := range users {
+		known[user.Username] = struct{}{}
+	}
+	if s.mosquittoCfg.Username != "" {
+		known[s.mosquittoCfg.Username] = struct{}{}
+	}
+	rules, err := s.aclStore.ListRules(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list acl rules: %w", err)
+	}
+	for _, rule := range rules {
+		if rule.IsUserScoped() && rule.Principal != "" {
+			known[rule.Principal] = struct{}{}
+		}
+	}
+	if s.orphanRuleLister != nil {
+		orphans, err := s.orphanRuleLister.FindOrphanRules(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("find orphan acl rules: %w", err)
+		}
+		for _, rule := range orphans {
+			if rule.Principal != "" {
+				known[rule.Principal] = struct{}{}
+			}
+		}
+	}
+	return known, nil
+}
+
+// aclKeyPrincipal returns the principal named by a semantic ACL key. It
+// returns false for a key that names no principal (anonymous, pattern or
+// unknown).
+func aclKeyPrincipal(key string) (string, bool) {
+	const prefix = "user "
+	if !strings.HasPrefix(key, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(key, prefix)
+	index := strings.Index(rest, " | ")
+	if index < 0 {
+		return "", false
+	}
+	return rest[:index], true
+}
+
+// serviceHealthcheckTopic is the topic of the grant MCM always emits for
+// the managed broker service account. The deploy healthcheck authenticates
+// with that account and uses this grant.
+const serviceHealthcheckTopic = "mcm/healthcheck"
 
 // serviceUserACL returns the set of ACL rules MCM always emits for the
 // broker service user (MCM_MOSQUITTO_USERNAME). The list is the minimum
@@ -493,7 +914,7 @@ func serviceUserACL(username string) []acl.Rule {
 		},
 		{
 			Principal:   username,
-			TopicFilter: "mcm/healthcheck",
+			TopicFilter: serviceHealthcheckTopic,
 			Permission:  acl.PermissionReadWrite,
 		},
 	}
@@ -658,7 +1079,9 @@ func parsePasswdUsers(body string) map[string]string {
 }
 
 // parseACLTopics returns a set of "<principal> <topic> <perm>" tuples
-// that appear in the rendered ACL body.
+// that appear in the rendered ACL body. Anonymous topic lines and pattern
+// lines are counted too: they are ACL entries the operator can add or
+// remove.
 func parseACLTopics(body string) map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, line := range strings.Split(body, "\n") {
@@ -667,7 +1090,7 @@ func parseACLTopics(body string) map[string]struct{} {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "topic" {
+		if len(fields) < 2 || (fields[0] != "topic" && fields[0] != "pattern") {
 			continue
 		}
 		out[strings.Join(fields, " ")] = struct{}{}
@@ -703,10 +1126,11 @@ func (s *Service) Preview(ctx context.Context, actor string) (PreviewResult, err
 }
 
 func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResult, error) {
-	aclBody, passwdBody, orphanRules, err := s.render(ctx)
+	rendered, err := s.renderConfig(ctx)
 	if err != nil {
 		return PreviewResult{}, fmt.Errorf("render config: %w", err)
 	}
+	aclBody, passwdBody, orphanRules := rendered.ACLBody, rendered.PasswdBody, rendered.OrphanRules
 
 	currentACL, err := s.readFile(s.deployCfg.ACLPath)
 	if err != nil {
@@ -745,27 +1169,168 @@ func (s *Service) previewLocked(ctx context.Context, actor string) (PreviewResul
 		PasswdRendered:     passwdBody,
 		CreatedAt:          time.Now().UTC(),
 	}
+	listenerRendered, renderErr := listenerACLRenderedJSON(rendered.ACLFiles)
+	if renderErr != nil {
+		return PreviewResult{}, renderErr
+	}
+	revision.ListenerACLRendered = listenerRendered
+	revision.RenderedACLFilesHash = aclFilesHash(rendered.ACLFiles)
 	if err := s.revisionStore.InsertPreviewRevision(ctx, revision); err != nil {
 		return PreviewResult{}, fmt.Errorf("store preview revision: %w", err)
 	}
 	summary := summarizeChanges(currentPasswd, passwdBody, currentACL, aclBody)
 	hasChanges = hasChanges || summary.HasPasswdChanges || summary.HasACLChanges
 
+	// Report the access the render would drop. The base document is the
+	// on-disk ACL file, the next document is the rendered one: an entry the
+	// base grants and the render does not is at risk.
+	base := mosquitto.ParseACLDocument(currentACL)
+	next := mosquitto.ParseACLDocument(aclBody)
+	atRisk := mosquitto.MissingSemanticEntries(base, next)
+	preserved := preservedACLEntries(rendered.AdoptedSource, next)
+
+	// The per-listener ACL files are previewed separately: a listener that
+	// owns scoped rules uses only its own file, so the broker-wide diff
+	// says nothing about the access that listener keeps or loses.
+	listenerPreviews, removedFiles, listenerChanged, err := s.previewListenerACLFiles(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	hasChanges = hasChanges || listenerChanged
+
+	// Report the configuration problems that would leave the scoped rules
+	// without effect. They are blocking: the apply refuses them.
+	scopeIssues, err := s.scopeWiringIssues(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+
+	// Report the scoped rules that are written by the apply but that the
+	// broker reads only once the listener configuration is applied.
+	scopePending, err := s.scopeActivationPending(ctx, rendered)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+
 	return PreviewResult{
-		RevisionID:         revisionID,
-		Kind:               "passwd_acl",
-		BaseACLHash:        revision.BaseACLHash,
-		BasePasswdHash:     revision.BasePasswdHash,
-		RenderedACLHash:    revision.RenderedACLHash,
-		RenderedPasswdHash: revision.RenderedPasswdHash,
-		OrphanRules:        orphanRules,
-		ACLDiff:            aclDiff,
-		PasswdDiff:         passwdDiff,
-		ACLBody:            aclBody,
-		PasswdBody:         passwdBody,
-		Summary:            summary,
-		HasChanges:         hasChanges,
+		RevisionID:             revisionID,
+		Kind:                   "passwd_acl",
+		BaseACLHash:            revision.BaseACLHash,
+		BasePasswdHash:         revision.BasePasswdHash,
+		RenderedACLHash:        revision.RenderedACLHash,
+		RenderedPasswdHash:     revision.RenderedPasswdHash,
+		OrphanRules:            orphanRules,
+		ACLDiff:                aclDiff,
+		PasswdDiff:             passwdDiff,
+		ACLBody:                aclBody,
+		PasswdBody:             passwdBody,
+		AtRiskEntries:          atRisk,
+		PreservedEntries:       preserved,
+		CompositionWarnings:    rendered.CompositionWarnings,
+		ListenerACLFiles:       listenerPreviews,
+		RemovedACLFiles:        removedFiles,
+		ScopeIssues:            scopeIssues,
+		ScopePendingActivation: scopePending,
+		Summary:                summary,
+		HasChanges:             hasChanges,
 	}, nil
+}
+
+// previewListenerACLFiles renders the preview of the per-listener ACL
+// files. It returns the preview of every file the deploy would write, the
+// paths of the files it would delete, and whether any of them changes.
+func (s *Service) previewListenerACLFiles(ctx context.Context, rendered renderedConfig) ([]ListenerACLPreview, []string, bool, error) {
+	var (
+		previews []ListenerACLPreview
+		removed  []string
+		changed  bool
+	)
+
+	for _, file := range rendered.ACLFiles {
+		if file.Scope != acl.ScopeListener {
+			continue
+		}
+		current, err := s.readFile(file.Path)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("read on-disk listener acl file %q: %w", file.Path, err)
+		}
+		diff, err := unifiedDiff("current", "rendered", current, file.Body)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if diff != "" {
+			changed = true
+		}
+		atRisk := mosquitto.MissingSemanticEntries(
+			mosquitto.ParseACLDocument(current),
+			mosquitto.ParseACLDocument(file.Body),
+		)
+		source, err := s.adoptedACLSourceForPath(ctx, file.Path)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		preserved := preservedACLEntries(source, mosquitto.ParseACLDocument(file.Body))
+		previews = append(previews, ListenerACLPreview{
+			ListenerID:       file.ListenerID,
+			Path:             file.Path,
+			Body:             file.Body,
+			Diff:             diff,
+			AtRiskEntries:    atRisk,
+			PreservedEntries: preserved,
+		})
+	}
+
+	// The files of listeners that no longer own a scoped rule are removed,
+	// otherwise the listener would keep serving the access the operator
+	// deleted.
+	current := make(map[string]struct{}, len(rendered.ACLFiles))
+	for _, file := range rendered.ACLFiles {
+		current[file.Path] = struct{}{}
+	}
+	managed, err := s.managedACLFiles(ctx)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	for _, row := range managed {
+		if _, stillUsed := current[row.Path]; stillUsed {
+			continue
+		}
+		removed = append(removed, row.Path)
+		changed = true
+	}
+	sort.Strings(removed)
+
+	return previews, removed, changed, nil
+}
+
+// preservedACLEntries returns the verbatim lines of the adopted ACL source
+// that survive into the rendered ACL document.
+//
+// A source line survives when the rendered document still carries it. The
+// rendered document is composed from the source, so the lines that survive
+// are the ones the composition kept. Only the directives MCM does not model
+// are reported: a comment and a blank line also survive, but they carry no
+// access.
+func preservedACLEntries(source *storage.ACLSourceRow, rendered mosquitto.ACLDocument) []string {
+	if source == nil {
+		return nil
+	}
+	renderedLines := make(map[string]int)
+	for _, entry := range rendered.Entries {
+		renderedLines[entry.Raw]++
+	}
+	var preserved []string
+	for _, entry := range mosquitto.ParseACLDocument(source.Body).Entries {
+		if entry.Kind != mosquitto.ACLEntryUnknown {
+			continue
+		}
+		if renderedLines[entry.Raw] == 0 {
+			continue
+		}
+		renderedLines[entry.Raw]--
+		preserved = append(preserved, entry.Raw)
+	}
+	return preserved
 }
 
 // Apply applies the supplied immutable preview revision, verifies the broker is
@@ -821,24 +1386,81 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	if contentHash(aclSnapshot) != revision.BaseACLHash || contentHash(passwdSnapshot) != revision.BasePasswdHash {
 		return storage.Deployment{}, ErrRevisionMismatch
 	}
-	currentACLRendered, currentPasswdRendered, _, err := s.render(ctx)
+	currentRendered, err := s.renderConfig(ctx)
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("validate rendered revision: %w", err)
 	}
+	currentACLRendered, currentPasswdRendered := currentRendered.ACLBody, currentRendered.PasswdBody
 	if contentHash(currentACLRendered) != revision.RenderedACLHash || contentHash(currentPasswdRendered) != revision.RenderedPasswdHash {
+		return storage.Deployment{}, ErrRevisionMismatch
+	}
+	// The per-listener files drift independently of the broker-wide one,
+	// so the file set is hashed as a whole.
+	if aclFilesHash(currentRendered.ACLFiles) != revision.RenderedACLFilesHash {
 		return storage.Deployment{}, ErrRevisionMismatch
 	}
 	aclRendered, passwdRendered := revision.ACLRendered, revision.PasswdRendered
 
+	// The apply writes exactly the content the preview showed: the
+	// broker-wide body and the per-listener bodies come from the revision.
+	listenerBodies, err := decodeListenerACLRendered(revision.ListenerACLRendered)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+	bodies := map[string]string{s.deployCfg.ACLPath: aclRendered}
+	for path, body := range listenerBodies {
+		bodies[path] = body
+	}
+	plan, err := s.planACLFiles(ctx, currentRendered, bodies)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("plan acl files: %w", err)
+	}
+
+	// Refuse an apply whose listener-scoped rules would never reach the
+	// broker: the configuration does not point the listener at the file MCM
+	// writes, or Mosquitto does not resolve the access control options per
+	// listener.
+	scopeIssues, err := s.scopeWiringIssues(ctx, currentRendered)
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("evaluate acl scope wiring: %w", err)
+	}
+	if len(scopeIssues) > 0 {
+		return storage.Deployment{}, &ACLScopeNotWiredError{Issues: scopeIssues}
+	}
+
+	// Refuse a destructive apply: the render would drop ACL access that MCM
+	// can neither reproduce nor attribute to a managed MQTT user. The
+	// refusal happens before the deployment record is created and before any
+	// file is written, so a refused apply leaves the broker untouched.
+	base := mosquitto.ParseACLDocument(aclSnapshot)
+	next := mosquitto.ParseACLDocument(currentACLRendered)
+	blocking, err := s.blockingACLEntries(ctx, base, mosquitto.MissingSemanticEntries(base, next))
+	if err != nil {
+		return storage.Deployment{}, fmt.Errorf("evaluate unmanaged acl content: %w", err)
+	}
+	if len(blocking) > 0 {
+		return storage.Deployment{}, &UnmanagedACLContentError{Entries: blocking}
+	}
+
 	// Issue #293: insert with status="saved" so the lifecycle starts
 	// at "rendered content exists, not yet applied to disk".
+	listenerSnapshots, err := listenerSnapshotJSON(plan)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+	listenerRendered, err := listenerRenderedJSON(plan)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
 	d := &storage.Deployment{
-		Actor:          actor,
-		Status:         "saved",
-		ACLSnapshot:    aclSnapshot,
-		PasswdSnapshot: passwdSnapshot,
-		ACLRendered:    aclRendered,
-		PasswdRendered: passwdRendered,
+		Actor:               actor,
+		Status:              "saved",
+		ACLSnapshot:         aclSnapshot,
+		PasswdSnapshot:      passwdSnapshot,
+		ACLRendered:         aclRendered,
+		PasswdRendered:      passwdRendered,
+		ListenerACLSnapshot: listenerSnapshots,
+		ListenerACLRendered: listenerRendered,
 	}
 	if err := s.deployStore.InsertDeployment(ctx, d); err != nil {
 		return storage.Deployment{}, fmt.Errorf("insert deployment: %w", err)
@@ -863,11 +1485,28 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		return storage.Deployment{}, fmt.Errorf("consume preview revision: %w", err)
 	}
 
+	// The registry of the per-listener ACL files MCM owns follows the
+	// apply: it is captured before the write so a rollback can restore it.
+	previousManaged, err := s.managedACLFiles(ctx)
+	if err != nil {
+		return storage.Deployment{}, err
+	}
+
 	// Apply rendered configuration. The applier restores from snapshot
 	// internally on partial failure (issue #292).
-	applyErr := s.applier.Apply(ctx, aclRendered, passwdRendered, aclSnapshot, passwdSnapshot)
+	applyErr := s.applier.Apply(ctx, mosquitto.ApplyRequest{
+		ACLBody:          plan.Global.Body,
+		ACLSnapshot:      plan.Global.Snapshot,
+		ListenerACLFiles: plan.Listener,
+		RemovedACLFiles:  plan.Remove,
+		PasswdBody:       passwdRendered,
+		PasswdSnapshot:   passwdSnapshot,
+	})
 	if applyErr != nil {
 		return s.recordApplyFailure(ctx, actor, d, applyErr)
+	}
+	if err := s.recordManagedACLFiles(ctx, currentRendered); err != nil {
+		return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, err.Error(), previousManaged)
 	}
 
 	// Move to "pending_activation" — files on disk, reload signalled,
@@ -894,14 +1533,14 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Bounded-retry verification (issue #293, acceptance criterion 4).
-	verifyResult, attempts := s.runVerifier(ctx, aclRendered, passwdRendered)
+	verifyResult, attempts, probeKind := s.runVerifier(ctx, aclRendered, passwdRendered)
 	if verifyResult.OK {
-		msg := ""
+		msg := fmt.Sprintf("activation probe: %s", probeKind)
 		if attempts > 1 {
-			msg = fmt.Sprintf("verified after %d attempts", attempts)
+			msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
 		}
 		if pendingActivationErr != nil {
-			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr)
+			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr, previousManaged)
 		}
 		if err := s.updateDeploymentStatus(d.ID, "active_verified", msg); err != nil {
 			return s.rollbackAfterPersistenceFailure(
@@ -911,6 +1550,7 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 				aclSnapshot,
 				passwdSnapshot,
 				fmt.Errorf("persist active_verified status: %w", err),
+				previousManaged,
 			)
 		}
 		s.emitAudit(ctx, actor, "deployment.active_verified", d.ID, "success")
@@ -922,30 +1562,33 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Verification exhausted retries — rollback from snapshot.
-	msg := fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
-	if pendingActivationErr != nil {
-		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr))
+	msg := verifyResult.Message
+	if attempts > 0 {
+		msg = fmt.Sprintf("verification failed after %d attempts: %s", attempts, verifyResult.Message)
 	}
-	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg)
+	if pendingActivationErr != nil {
+		return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, fmt.Errorf("%s; %w", msg, pendingActivationErr), previousManaged)
+	}
+	return s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, msg, previousManaged)
 }
 
 // runVerifier invokes the ActiveVerifier with bounded retries and
-// backoff. Returns the last result and the number of attempts made.
+// backoff. Returns the last result, the number of attempts made and the
+// kind of probe that was exercised.
 // The verifier context is bounded by HealthcheckTimeout so the deploy
 // respects the operator's overall budget.
-func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int) {
-	// Pick a test user + topics from the rendered config. If we cannot
-	// find a usable test subject, the verifier is invoked with empty
-	// credentials/topics and will fail — the deploy is then rolled back.
-	testUser, allowedTopic, deniedTopic := s.pickVerificationSubject(ctx, aclBody, passwdBody)
-	password, hasPassword := s.lookupCleartextPassword(testUser)
-	if testUser == "" || !hasPassword || allowedTopic == "" || deniedTopic == "" {
+func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int, verificationProbeKind) {
+	// Pick the probe identity and topic from the rendered config. If no
+	// usable probe exists the verifier is never invoked and the deploy is
+	// rolled back.
+	probe, ok := s.pickVerificationProbe(ctx, aclBody, passwdBody)
+	if !ok {
 		return diagnostics.VerifyActiveResult{
 			OK:              false,
 			Stage:           "setup",
-			Message:         "no test subject available (need a non-service user with an ACL grant and a known cleartext password)",
-			PositiveMessage: "skipped: no test subject",
-		}, 0
+			Message:         "no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account)",
+			PositiveMessage: "skipped: no activation probe",
+		}, 0, ""
 	}
 
 	timeout := s.deployCfg.HealthcheckTimeout
@@ -958,10 +1601,10 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		verifyCtx, cancel := context.WithTimeout(ctx, timeout)
 		result := s.verifier.VerifyActive(verifyCtx, diagnostics.VerifyActiveOptions{
 			Config:           s.mosquittoCfg,
-			Username:         testUser,
-			Password:         password,
-			AllowedTopic:     allowedTopic,
-			DeniedTopic:      deniedTopic,
+			Username:         probe.username,
+			Password:         probe.password,
+			AllowedTopic:     probe.allowedTopic,
+			DeniedTopic:      probe.deniedTopic,
 			DialTimeout:      2 * time.Second,
 			RoundTripTimeout: 2 * time.Second,
 			SubTimeout:       2 * time.Second,
@@ -969,46 +1612,317 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		cancel()
 		last = result
 		if result.OK {
-			return result, attempt
+			return result, attempt, probe.kind
 		}
 		if attempt < verifyAttempts {
 			select {
 			case <-time.After(time.Duration(attempt) * verifyBackoff):
 			case <-ctx.Done():
 				last.Message = fmt.Sprintf("verification cancelled after %d attempts: %v", attempt, ctx.Err())
-				return last, attempt
+				return last, attempt, probe.kind
 			}
 		}
 	}
-	return last, verifyAttempts
+	last.Message = fmt.Sprintf("%s (activation probe: %s)", last.Message, probe.kind)
+	return last, verifyAttempts, probe.kind
 }
 
-// pickVerificationSubject picks a non-service user from the rendered
-// passwd, the first topic granted to that user, and a topic the user
-// does NOT have access to (negative test). Returns empty strings when
-// no suitable subject is available.
-func (s *Service) pickVerificationSubject(_ context.Context, aclBody, passwdBody string) (user, allowed, denied string) {
+// verificationProbeKind labels how the deploy activation probe was built,
+// so the deployment status can say what was actually exercised.
+type verificationProbeKind string
+
+const (
+	// probeKindUserGrant probes a user-scoped readwrite grant as that user.
+	probeKindUserGrant verificationProbeKind = "user grant"
+	// probeKindPatternGrant probes a readwrite pattern grant with the
+	// probe identity substituted into a whole-level %u.
+	probeKindPatternGrant verificationProbeKind = "pattern grant"
+	// probeKindServiceGrant probes the managed service account and the
+	// grant MCM always emits for it. It is an operational fallback: it
+	// proves the broker serves the freshly rendered credentials and the
+	// service grant, not the client policy semantics.
+	probeKindServiceGrant verificationProbeKind = "managed service healthcheck grant (operational fallback)"
+)
+
+// verificationProbe is the identity and the concrete topic the deploy
+// verifier exercises after a deploy.
+type verificationProbe struct {
+	username     string
+	password     string
+	allowedTopic string
+	deniedTopic  string
+	kind         verificationProbeKind
+}
+
+// pickVerificationProbe picks the identity and the concrete topic the deploy
+// verifier exercises.
+//
+// The probe is chosen in this order:
+//
+//  1. A user-scoped readwrite grant. It is the most specific evidence:
+//     the probe identity publishes and subscribes on a topic the
+//     operator granted to that identity.
+//  2. A readwrite pattern grant. A pattern applies to every user inside
+//     the ACL, so the probe identity is substituted into a whole-level
+//     %u placeholder and the broker expands it the same way.
+//  3. The managed service account and the grant MCM always emits for
+//     it. This is an operational fallback: it proves the broker serves
+//     the new credentials and the service grant, not the client policy
+//     semantics.
+//
+// A deny rule is not a grant: it never activates an action, so it is never
+// selected as the positive probe.
+//
+// A grant whose identity has no known cleartext password yields no probe
+// at all: the verifier must never invent credentials, and the deploy fails
+// instead of falling back to the service account.
+//
+// A grant is only usable as a probe when it yields one concrete topic
+// name: the verifier publishes to a topic, so a wildcard filter is
+// replaced by a fixed probe segment and a %c placeholder is skipped
+// (the verifier does not control the MQTT client id).
+func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody string) (verificationProbe, bool) {
 	entries := mosquitto.ParsePasswdFile(passwdBody)
 	rules := mosquitto.ParseACLFile(aclBody)
-	if len(entries) == 0 || len(rules) == 0 {
-		return "", "", ""
+	if len(entries) == 0 {
+		return verificationProbe{}, false
 	}
+
+	// 1. A user-scoped readwrite grant.
 	for _, e := range entries {
-		// Skip the service user — it has # access so the negative test
-		// would be vacuous.
-		if e.Username == s.mosquittoCfg.Username && s.mosquittoCfg.Username != "" {
+		// Skip the service user — it has # access, so it is never the
+		// probe subject. It is used only as the labelled fallback below.
+		if s.isServiceAccount(e.Username) {
 			continue
 		}
-		for _, r := range rules {
-			if r.Principal != e.Username {
+		hasGrant, readwrite := userScopedGrants(rules, e.Username)
+		if !hasGrant {
+			continue
+		}
+		password, hasPassword := s.lookupCleartextPassword(e.Username)
+		if !hasPassword || password == "" {
+			return verificationProbe{}, false
+		}
+		if readwrite == nil {
+			// The identity only has narrower grants. A probe publishes and
+			// subscribes, so it needs a readwrite grant.
+			continue
+		}
+		topic, ok := concreteProbeTopic(readwrite.TopicFilter, e.Username, false)
+		if !ok {
+			continue
+		}
+		return verificationProbe{
+			username:     e.Username,
+			password:     password,
+			allowedTopic: topic,
+			deniedTopic:  deniedTopicFor(rules, e.Username),
+			kind:         probeKindUserGrant,
+		}, true
+	}
+
+	// 2. A readwrite pattern grant.
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorPattern || r.Permission != acl.PermissionReadWrite {
+			continue
+		}
+		for _, e := range entries {
+			if s.isServiceAccount(e.Username) {
 				continue
 			}
-			allowed = r.TopicFilter
-			denied = r.TopicFilter + "/denied"
-			return e.Username, allowed, denied
+			password, hasPassword := s.lookupCleartextPassword(e.Username)
+			if !hasPassword || password == "" {
+				continue
+			}
+			topic, ok := concreteProbeTopic(r.TopicFilter, e.Username, true)
+			if !ok {
+				continue
+			}
+			return verificationProbe{
+				username:     e.Username,
+				password:     password,
+				allowedTopic: topic,
+				deniedTopic:  deniedTopicFor(rules, e.Username),
+				kind:         probeKindPatternGrant,
+			}, true
 		}
 	}
-	return "", "", ""
+
+	// 3. The managed service account.
+	return s.serviceVerificationProbe(entries, rules)
+}
+
+// userScopedGrants reports the user-scoped grants of an identity: whether
+// the identity has any grant at all and, separately, its first readwrite
+// grant. Deny rules are grants in neither sense: a deny is not a grant.
+func userScopedGrants(rules []acl.Rule, identity string) (bool, *acl.Rule) {
+	var readwrite *acl.Rule
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission == acl.PermissionDeny {
+			continue
+		}
+		if r.Permission == acl.PermissionReadWrite && readwrite == nil {
+			grant := r
+			readwrite = &grant
+		}
+	}
+	return readwrite != nil || hasNonDenyGrant(rules, identity), readwrite
+}
+
+// hasNonDenyGrant reports whether the identity owns at least one grant
+// that is not a deny.
+func hasNonDenyGrant(rules []acl.Rule, identity string) bool {
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceVerificationProbe builds the operational fallback probe: the
+// managed service account and the healthcheck grant MCM always emits
+// for it.
+//
+// It is an operational fallback, not a proof of the client policy: it
+// shows that the broker serves the freshly rendered credentials and the
+// service grant. The fallback is only used when the service account is
+// configured with known credentials, is present in the rendered passwd and
+// owns the generated readwrite healthcheck grant in the rendered ACL. Any
+// other rule that grants the service account a topic is not the generated
+// healthcheck grant and is never used as the fallback probe.
+func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rules []acl.Rule) (verificationProbe, bool) {
+	username := s.mosquittoCfg.Username
+	password := s.mosquittoCfg.Password
+	if username == "" || password == "" {
+		return verificationProbe{}, false
+	}
+
+	provisioned := false
+	for _, e := range entries {
+		if e.Username == username {
+			provisioned = true
+			break
+		}
+	}
+	if !provisioned {
+		return verificationProbe{}, false
+	}
+
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != username {
+			continue
+		}
+		if r.Permission != acl.PermissionReadWrite {
+			continue
+		}
+		if r.TopicFilter != serviceHealthcheckTopic {
+			continue
+		}
+		topic, ok := concreteProbeTopic(r.TopicFilter, username, false)
+		if !ok {
+			continue
+		}
+		return verificationProbe{
+			username:     username,
+			password:     password,
+			allowedTopic: topic,
+			deniedTopic:  deniedTopicFor(rules, username),
+			kind:         probeKindServiceGrant,
+		}, true
+	}
+	return verificationProbe{}, false
+}
+
+// deniedTopicFor returns the topic filter the rendered ACL explicitly
+// denies for the given identity, or "" when the ACL denies nothing for it.
+//
+// The negative stage of the verifier authenticates an unknown user and does
+// not consume this topic. The value documents what the policy denies; it is
+// not a permission evaluation of the rendered ACL, so it keeps the filter
+// the operator wrote instead of a concretized probe topic.
+func deniedTopicFor(rules []acl.Rule, identity string) string {
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
+			continue
+		}
+		return r.TopicFilter
+	}
+	return ""
+}
+
+// probeTopicSegment is the concrete topic level MCM uses when a grant is
+// expressed as a wildcard filter and the verifier needs one concrete
+// topic name to publish to and subscribe to.
+const probeTopicSegment = "mcm-verify"
+
+// concreteProbeTopic turns an ACL topic filter into one concrete topic
+// name the verifier can use.
+//
+// Wildcard levels are replaced by probeTopicSegment, so the verifier
+// never publishes to a filter. In a pattern rule %u expands to the
+// probe identity, so a whole-level %u is replaced by that identity; a
+// %c placeholder cannot be expanded (the verifier does not control the
+// MQTT client id) and makes the rule unusable as a probe. In a user or
+// anonymous rule %u and %c are literal characters and stay untouched.
+func concreteProbeTopic(filter, identity string, patternRule bool) (string, bool) {
+	if filter == "" {
+		return "", false
+	}
+	levels := strings.Split(filter, "/")
+	out := make([]string, 0, len(levels))
+	for i, level := range levels {
+		switch {
+		case level == "#":
+			if i != len(levels)-1 {
+				return "", false
+			}
+			out = append(out, probeTopicSegment)
+		case level == "+":
+			out = append(out, probeTopicSegment)
+		case patternRule && level == "%u":
+			if !validProbeTopicLevel(identity) {
+				return "", false
+			}
+			out = append(out, identity)
+		case patternRule && (strings.Contains(level, "%u") || strings.Contains(level, "%c")):
+			return "", false
+		case strings.ContainsAny(level, "+#"):
+			return "", false
+		default:
+			out = append(out, level)
+		}
+	}
+	topic := strings.Join(out, "/")
+	if topic == "" {
+		return "", false
+	}
+	return topic, true
+}
+
+// validProbeTopicLevel reports whether the value can be used as one MQTT
+// topic level: it must not be empty and must not contain the path
+// separator, a wildcard character or a NUL byte.
+func validProbeTopicLevel(level string) bool {
+	if level == "" {
+		return false
+	}
+	return !strings.ContainsAny(level, "/+#") && !strings.ContainsRune(level, 0)
+}
+
+// isServiceAccount reports whether the username is the managed broker
+// service account (MCM_MOSQUITTO_USERNAME).
+func (s *Service) isServiceAccount(username string) bool {
+	return username != "" && username == s.mosquittoCfg.Username
 }
 
 // lookupCleartextPassword returns the cleartext password for the test
@@ -1021,12 +1935,37 @@ func (s *Service) lookupCleartextPassword(username string) (string, bool) {
 	return s.passwordLookup.CleartextPassword(username)
 }
 
+// rollbackRequest builds the apply request that restores the broker from
+// the snapshot the deployment record carries.
+func (s *Service) rollbackRequest(d *storage.Deployment, aclSnapshot, passwdSnapshot string) mosquitto.ApplyRequest {
+	request := mosquitto.ApplyRequest{
+		ACLBody:        aclSnapshot,
+		PasswdBody:     passwdSnapshot,
+		PasswdSnapshot: "",
+	}
+	if snapshots, err := decodeListenerACLRendered(d.ListenerACLSnapshot); err == nil {
+		paths := make([]string, 0, len(snapshots))
+		for path := range snapshots {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			request.ListenerACLFiles = append(request.ListenerACLFiles,
+				mosquitto.ACLFile{Path: path, Body: snapshots[path]})
+		}
+	}
+	return request
+}
+
 // rollbackAfterVerifyFailure rolls back from snapshot after verification
 // exhausted retries and persists the appropriate status / audit event.
-func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot, msg string) (storage.Deployment, error) {
+//
+// The rollback restores every ACL file the apply touched: the broker-wide
+// file, the per-listener files and the files the apply deleted.
+func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot, msg string, previousManaged []storage.ManagedACLFileRow) (storage.Deployment, error) {
 	rollbackCtx, cancelRollback := context.WithTimeout(context.Background(), rollbackTimeout)
 	defer cancelRollback()
-	rollbackErr := s.applier.Apply(rollbackCtx, aclSnapshot, passwdSnapshot, "", "")
+	rollbackErr := s.applier.Apply(rollbackCtx, s.rollbackRequest(d, aclSnapshot, passwdSnapshot))
 	if rollbackErr != nil {
 		full := fmt.Sprintf("%s; rollback also failed: %s", msg, rollbackErr.Error())
 		statusErr := s.updateDeploymentStatus(d.ID, "rollback_failed", full)
@@ -1039,6 +1978,9 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 			return storage.Deployment{}, fmt.Errorf("verification rollback failed: %w; get deployment: %v", rollbackErr, getErr)
 		}
 		return deployment, fmt.Errorf("verification rollback failed: %w", rollbackErr)
+	}
+	if err := s.restoreManagedACLFiles(ctx, previousManaged); err != nil {
+		msg = fmt.Sprintf("%s; restore managed acl file registry: %s", msg, err.Error())
 	}
 	if err := s.updateDeploymentStatus(d.ID, "rolled_back", msg); err != nil {
 		return storage.Deployment{}, fmt.Errorf("persist rolled_back status: %w", err)
@@ -1057,8 +1999,8 @@ func (s *Service) rollbackAfterVerifyFailure(ctx context.Context, actor string, 
 // safety path. A successful rollback leaves a known broker state but still
 // reports the persistence failure; a failed rollback makes the full state
 // indeterminate.
-func (s *Service) rollbackAfterPersistenceFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot string, persistenceErr error) (storage.Deployment, error) {
-	deployment, rollbackErr := s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, persistenceErr.Error())
+func (s *Service) rollbackAfterPersistenceFailure(ctx context.Context, actor string, d *storage.Deployment, aclSnapshot, passwdSnapshot string, persistenceErr error, previousManaged []storage.ManagedACLFileRow) (storage.Deployment, error) {
+	deployment, rollbackErr := s.rollbackAfterVerifyFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, persistenceErr.Error(), previousManaged)
 	if rollbackErr != nil {
 		return deployment, fmt.Errorf("%w: %w; rollback: %w", ErrDeploymentStateIndeterminate, persistenceErr, rollbackErr)
 	}

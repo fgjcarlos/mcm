@@ -9,6 +9,9 @@ import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
+import ACLSourcePanel from './features/acl/ACLSourcePanel'
+import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
+import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLPermission, type ACLRule, type ACLScope, type ACLSelector } from './features/acl/types'
 import {
   defaultClientNote,
   useBrokerStream,
@@ -45,14 +48,6 @@ type SecurityEvent = {
   observed_at: string
 }
 
-type ACLRule = {
-  id: string
-  principal: string
-  topic_filter: string
-  permission: 'read' | 'write' | 'readwrite'
-  description?: string
-}
-
 type Deployment = {
   id: number | string
   status: 'applied' | 'rolled_back' | 'rollback_failed' | string
@@ -60,11 +55,27 @@ type Deployment = {
   created_at: string
 }
 
+type ListenerACLFilePreview = {
+  listener_id: string
+  path: string
+  body?: string
+  diff?: string
+  at_risk_entries?: string[]
+  preserved_entries?: string[]
+}
+
 type DeployPreview = {
   revision_id: string
   acl_diff: string
   passwd_diff: string
   orphan_rules?: ACLRule[]
+  at_risk_entries?: string[]
+  preserved_entries?: string[]
+  composition_warnings?: string[]
+  listener_acl_files?: ListenerACLFilePreview[]
+  removed_acl_files?: string[]
+  scope_issues?: string[]
+  scope_pending_activation?: string[]
   has_changes: boolean
 }
 
@@ -863,7 +874,10 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
   const [editRule, setEditRule] = useState<ACLRule | null>(null)
   const [formPrincipal, setFormPrincipal] = useState('')
   const [formTopicFilter, setFormTopicFilter] = useState('')
-  const [formPermission, setFormPermission] = useState<ACLRule['permission']>('read')
+  const [formPermission, setFormPermission] = useState<ACLPermission>('read')
+  const [formSelector, setFormSelector] = useState<ACLSelector>('user')
+  const [formScope, setFormScope] = useState<ACLScope>('global')
+  const [formListenerID, setFormListenerID] = useState('')
   const [formDescription, setFormDescription] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -899,6 +913,9 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
     setFormPrincipal('')
     setFormTopicFilter('')
     setFormPermission('read')
+    setFormSelector('user')
+    setFormScope('global')
+    setFormListenerID('')
     setFormDescription('')
     setFormError('')
     setShowForm(true)
@@ -909,6 +926,9 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
     setFormPrincipal(rule.principal)
     setFormTopicFilter(rule.topic_filter)
     setFormPermission(rule.permission)
+    setFormSelector(rule.selector ?? 'user')
+    setFormScope(rule.scope ?? 'global')
+    setFormListenerID(rule.listener_id ?? '')
     setFormDescription(rule.description ?? '')
     setFormError('')
     setShowForm(true)
@@ -925,6 +945,9 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
         principal: formPrincipal.trim(),
         topic_filter: formTopicFilter.trim(),
         permission: formPermission,
+        selector: formSelector,
+        scope: formScope,
+        listener_id: formScope === 'listener' ? formListenerID.trim() : '',
         description: formDescription.trim(),
       })
       const url = editRule ? `/api/v1/acls/${editRule.id}` : '/api/v1/acls'
@@ -981,8 +1004,11 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
     <section className="mt-8 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">ACL rules</p>
-          <p className="mt-1 text-sm text-slate-300">{rules.length} rule{rules.length !== 1 ? 's' : ''} configured</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT permissions</p>
+          <p className="mt-1 text-sm text-slate-300">
+            {rules.length} rule{rules.length !== 1 ? 's' : ''} configured. These are the permissions Mosquitto grants on
+            a topic; the MCM administrative roles are managed in the admin panel.
+          </p>
         </div>
         <button
           type="button"
@@ -1004,17 +1030,35 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{editRule ? 'Edit rule' : 'New rule'}</p>
           <form onSubmit={handleSubmit} className="mt-4 space-y-4">
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Principal</span>
-              <input
-                type="text"
-                required
-                value={formPrincipal}
-                onChange={(e) => setFormPrincipal(e.target.value)}
-                placeholder="mqtt-username"
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Source</span>
+              <select
+                value={formSelector}
+                onChange={(e) => setFormSelector(e.target.value as ACLSelector)}
                 className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
-              />
-              <span className="mt-1 block text-xs text-slate-400">Use an MQTT username from the Users panel. MCM renders this as Mosquitto&apos;s <code>user &lt;username&gt;</code> directive; client-ID placeholders are not supported.</span>
+              >
+                <option value="user">User &mdash; the rule applies to one MQTT user</option>
+                <option value="anonymous">Anonymous &mdash; the rule applies to unauthenticated clients</option>
+                <option value="pattern">Pattern &mdash; the rule applies to every client</option>
+              </select>
+              <span className="mt-1 block text-xs text-slate-400">
+                The native scope of the ACL entry in Mosquitto. A pattern rule may use the <code>%u</code> (username) and
+                <code> %c</code> (client id) placeholders, each one on a whole topic level.
+              </span>
             </label>
+            {formSelector === 'user' ? (
+              <label className="block">
+                <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Principal</span>
+                <input
+                  type="text"
+                  required
+                  value={formPrincipal}
+                  onChange={(e) => setFormPrincipal(e.target.value)}
+                  placeholder="mqtt-username"
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                />
+                <span className="mt-1 block text-xs text-slate-400">Use an MQTT username from the Users panel. MCM renders this as Mosquitto&apos;s <code>user &lt;username&gt;</code> directive.</span>
+              </label>
+            ) : null}
             <label className="block">
               <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Topic filter</span>
               <input
@@ -1037,8 +1081,44 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
                 <option value="read">read</option>
                 <option value="write">write</option>
                 <option value="readwrite">readwrite</option>
+                <option value="deny">deny</option>
               </select>
+              <span className="mt-1 block text-xs text-slate-400">
+                Mosquitto handles a deny before any grant, so a deny that matches a topic removes the access a broader
+                rule would grant.
+              </span>
             </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">ACL file</span>
+              <select
+                value={formScope}
+                onChange={(e) => setFormScope(e.target.value as ACLScope)}
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              >
+                <option value="global">Broker-wide &mdash; the rule applies to every listener</option>
+                <option value="listener">One listener &mdash; the rule applies to that listener only</option>
+              </select>
+              <span className="mt-1 block text-xs text-slate-400">
+                A listener with its own ACL file uses only that file, so the other listeners keep the broker-wide rules.
+              </span>
+            </label>
+            {formScope === 'listener' ? (
+              <label className="block">
+                <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener</span>
+                <input
+                  type="text"
+                  required
+                  value={formListenerID}
+                  onChange={(e) => setFormListenerID(e.target.value)}
+                  placeholder="tls"
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                />
+                <span className="mt-1 block text-xs text-slate-400">
+                  The id of the listener that owns the rule. The listener must declare the ACL file MCM writes for it,
+                  otherwise the deploy refuses the scope.
+                </span>
+              </label>
+            ) : null}
             <label className="block">
               <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Description (optional)</span>
               <input
@@ -1082,7 +1162,8 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10">
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Principal</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Source</th>
+                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">ACL file</th>
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Topic filter</th>
                 <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Permission</th>
                 <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
@@ -1091,10 +1172,22 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
             <tbody>
               {rules.map((rule) => (
                 <tr key={rule.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-sm text-slate-200">{rule.principal}</td>
+                  <td className="px-4 py-3 text-sm text-slate-200">
+                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{SELECTOR_LABELS[rule.selector ?? 'user']}</span>
+                    {rule.principal ? <span className="ml-2 font-mono text-sm text-slate-200">{rule.principal}</span> : null}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-400">
+                    {rule.scope === 'listener' ? rule.listener_id : 'broker-wide'}
+                  </td>
                   <td className="px-4 py-3 font-mono text-sm text-cyan-100">{rule.topic_filter}</td>
                   <td className="px-4 py-3">
-                    <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 font-mono text-xs text-cyan-200">{rule.permission}</span>
+                    <span
+                      className={`rounded-full px-2.5 py-1 font-mono text-xs ${
+                        rule.permission === 'deny' ? 'bg-rose-400/10 text-rose-200' : 'bg-cyan-400/10 text-cyan-200'
+                      }`}
+                    >
+                      {PERMISSION_LABELS[rule.permission]}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {deleteConfirmId === rule.id ? (
@@ -1144,6 +1237,10 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
           </table>
         )}
       </div>
+
+      <ACLSourcePanel token={token} onLogout={onLogout} canWrite={canWrite} />
+
+      <EffectivePermissionsPanel token={token} onLogout={onLogout} />
     </section>
   )
 }
@@ -1382,6 +1479,108 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                     </tbody>
                   </table>
                 </div>
+              </div>
+            ) : null}
+            {preview.at_risk_entries?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Access at risk</p>
+                  <span className="rounded-full bg-amber-300/15 px-2.5 py-1 text-xs font-semibold text-amber-100">{preview.at_risk_entries.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-amber-50">The current file grants these entries and the rendered one does not. The deploy would drop that access.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+                  {preview.at_risk_entries.map((entry) => (
+                    <li key={entry} className="break-all">{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.preserved_entries?.length ? (
+              <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Preserved entries</p>
+                  <span className="rounded-full bg-emerald-300/15 px-2.5 py-1 text-xs font-semibold text-emerald-100">{preview.preserved_entries.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-emerald-50">These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-emerald-50">
+                  {preview.preserved_entries.map((entry) => (
+                    <li key={entry} className="break-all">{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.composition_warnings?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Composition warnings</p>
+                <ul className="mt-3 space-y-2 text-sm text-amber-50">
+                  {preview.composition_warnings.map((warning) => (
+                    <li key={warning} className="break-words">{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.listener_acl_files?.length ? (
+              <div className="space-y-4">
+                {preview.listener_acl_files.map((file) => (
+                  <div key={file.path} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+                        Listener file — {file.listener_id}
+                      </p>
+                      <span className="break-all font-mono text-xs text-slate-400">{file.path}</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      This listener reads only this file, so its rules apply to that listener alone.
+                    </p>
+                    {file.at_risk_entries?.length ? (
+                      <ul className="mt-3 space-y-1 font-mono text-xs text-amber-100">
+                        {file.at_risk_entries.map((entry) => (
+                          <li key={entry} className="break-all">at risk: {entry}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {file.diff ? <div className="mt-4"><DiffBlock content={file.diff} /></div> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {preview.removed_acl_files?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Files the deploy would delete</p>
+                <p className="mt-2 text-sm leading-6 text-amber-50">These listener files lose their last scoped rule, so the deploy removes them.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+                  {preview.removed_acl_files.map((path) => (
+                    <li key={path} className="break-all">{path}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.scope_issues?.length ? (
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
+                  <span className="rounded-full bg-rose-300/15 px-2.5 py-1 text-xs font-semibold text-rose-100">{preview.scope_issues.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-rose-50">The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
+                <ul className="mt-4 space-y-2 text-sm text-rose-50">
+                  {preview.scope_issues.map((issue) => (
+                    <li key={issue} className="break-words">{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview.scope_pending_activation?.length ? (
+              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Pending listener activation</p>
+                  <span className="rounded-full bg-cyan-300/15 px-2.5 py-1 text-xs font-semibold text-cyan-50">{preview.scope_pending_activation.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-cyan-50">The files of these listeners are written by this deployment. Their rules become active once the listener configuration declares them.</p>
+                <ul className="mt-4 space-y-2 text-sm text-cyan-50">
+                  {preview.scope_pending_activation.map((notice) => (
+                    <li key={notice} className="break-words">{notice}</li>
+                  ))}
+                </ul>
               </div>
             ) : null}
             {preview.acl_diff ? (
