@@ -1378,6 +1378,69 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/settings:
+    get:
+      tags: [Broker]
+      summary: General broker settings and the catalog description of the form
+      description: |
+        Requires auditor or higher. Returns the current value of every setting
+        MCM manages — persistence and autosave, queues and messages,
+        connections and sessions, and logging — together with the versioned
+        catalog that describes each field: type, unit, accepted range, broker
+        default, help text and whether a change needs a reload or a restart.
+
+        The form is rendered from this payload, so the bounds the operator
+        sees are the bounds the server enforces.
+      responses:
+        "200":
+          description: Current settings and the form description.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerSettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker settings are not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/settings/preview:
+    post:
+      tags: [Broker]
+      summary: Preview the settings the operator edited
+      description: |
+        Requires operator or higher. Applies the submitted settings to the
+        on-disk configuration, validates them against the catalog and stores
+        an immutable preview revision. The response carries the diff, the
+        directives that changed and whether the change needs a broker reload
+        or a full restart.
+
+        The preview does not touch the broker. Apply the returned
+        `revision_id` through `POST /api/v1/broker/config/apply` to write
+        the file and signal the broker.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerSettingsDocument" }
+      responses:
+        "200":
+          description: Preview of the edited settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigPreview" }
+        "400":
+          description: The submitted settings do not pass the catalog checks.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerSettingsError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker settings are not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -2363,11 +2426,12 @@ components:
       type: object
       properties:
         name: { type: string }
-        type: { type: string, enum: [string, integer, boolean, enum, string_list, path] }
-        scope: { type: string, enum: [global, listener, bridge] }
+        type: { type: string, enum: [string, integer, boolean, enum, string_list, path, duration] }
+        scope: { type: string, enum: [global, listener, bridge, any] }
         multiplicity: { type: string, enum: [once, many, once_per_block] }
         reload_kind: { type: string, enum: [reload, restart, both] }
         since_version: { type: string }
+        listener_since_version: { type: string }
         allowed_values:
           type: array
           items: { type: string }
@@ -2375,7 +2439,109 @@ components:
           type: array
           items: { type: string }
         description: { type: string }
+        section:
+          type: string
+          enum: [persistence, queues, sessions, logging]
+          description: |
+            Settings form the directive belongs to. Absent when the directive
+            is not exposed as an editable field.
+        unit: { type: string, description: "Unit of an integer value, e.g. seconds or bytes." }
+        min: { type: integer, format: int64, description: "Lowest accepted value." }
+        max: { type: integer, format: int64, description: "Highest accepted value." }
+        default: { type: string, description: "Broker default, shown as help text." }
+        duration_suffixes:
+          type: array
+          items: { type: string }
+          description: "Unit suffixes a duration directive accepts in this broker version."
       required: [name, type, scope, multiplicity, reload_kind, since_version]
+    BrokerSettingsResponse:
+      type: object
+      properties:
+        path: { type: string, description: "Absolute path of the configuration file MCM manages." }
+        hash: { type: string, description: "sha256 of the on-disk configuration." }
+        version: { type: string, description: "Mosquitto version the catalog describes." }
+        document: { $ref: "#/components/schemas/BrokerSettingsDocument" }
+        sections:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerSettingsSection" }
+        warnings:
+          type: array
+          items: { type: string }
+          description: "Settings that are also set in an included file."
+      required: [path, hash, version, document, sections]
+    BrokerSettingsDocument:
+      type: object
+      description: |
+        The state of every setting MCM manages. A repeatable directive such as
+        `log_dest` appears once per occurrence. An entry marked `unset` is
+        written without a value, which means the broker default applies.
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerSettingsEntry" }
+      required: [entries]
+    BrokerSettingsEntry:
+      type: object
+      properties:
+        directive: { type: string }
+        values:
+          type: array
+          items: { type: string }
+        unset: { type: boolean, description: "The broker default applies; the directive is removed from the file." }
+      required: [directive]
+    BrokerSettingsSection:
+      type: object
+      properties:
+        id: { type: string, enum: [persistence, queues, sessions, logging] }
+        title: { type: string }
+        hint: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerSettingsField" }
+      required: [id, title, fields]
+    BrokerSettingsField:
+      type: object
+      description: |
+        One editable field. Everything the form needs comes from the catalog,
+        so the UI never hard-codes a range or a unit.
+      properties:
+        directive: { type: string }
+        section: { type: string, enum: [persistence, queues, sessions, logging] }
+        type: { type: string, enum: [string, integer, boolean, enum, string_list, path, duration] }
+        unit: { type: string }
+        min: { type: integer, format: int64 }
+        max: { type: integer, format: int64 }
+        default: { type: string }
+        multiplicity: { type: string, enum: [once, many, once_per_block] }
+        reload_kind: { type: string, enum: [reload, restart, both] }
+        scope: { type: string, enum: [global, listener, bridge, any] }
+        allowed_values:
+          type: array
+          items: { type: string }
+        duration_suffixes:
+          type: array
+          items: { type: string }
+        description: { type: string }
+        present: { type: boolean, description: "The configuration file sets this directive." }
+        values:
+          type: array
+          items: { type: string }
+      required: [directive, section, type, multiplicity, reload_kind, scope, description, present]
+    BrokerSettingsIssue:
+      type: object
+      properties:
+        kind: { type: string, enum: [unknown, type, range, multiplicity, duplicate, conflict] }
+        directive: { type: string }
+        message: { type: string }
+      required: [kind, directive, message]
+    BrokerSettingsError:
+      type: object
+      properties:
+        error: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerSettingsIssue" }
+      required: [error, issues]
     SettingsResponse:
       type: object
       properties:

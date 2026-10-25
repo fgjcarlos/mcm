@@ -1,11 +1,85 @@
-# Mosquitto 2.1 directive catalog — issue #298.
+# Mosquitto 2.1 directive catalog — issues #298 and #302.
 #
-# Mosquitto 2.1 inherits the full 2.0 directive set without renaming or
-# removing any of the entries MCM relies on. We keep the file present so
-# LoadVersion("2.1") returns a usable (empty of new entries) catalog and
-# operators can preview applying a 2.0-managed file against a 2.1 broker.
+# Mosquitto 2.1 keeps the whole 2.0 directive set, so this file inherits
+# it through the `extends` header and only lists the differences. An
+# entry with the same name as an inherited one replaces it, which is how
+# a version changes a default or widens an accepted range.
 #
-# Add new entries here when MCM starts managing directives introduced in
-# 2.1 (e.g. the loaders / plugin directives scheduled for issue #304).
+# The reload_kind values follow Mosquitto's own parser: a directive the
+# broker skips when it re-reads the file on SIGHUP is marked `restart`.
 ---
-# (no 2.1-specific entries yet — 2.0 catalog covers the supported set)
+extends: "2.0"
+---
+name: global_max_clients
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "2.1"
+section: sessions
+unit: clients
+min: -1
+max: 2147483647
+default: "-1"
+description: |
+  Maximum number of clients connected to the broker across every
+  listener. -1 means unlimited. New in Mosquitto 2.1.
+---
+name: global_max_connections
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "2.1"
+section: sessions
+unit: connections
+min: -1
+max: 2147483647
+default: "-1"
+description: |
+  Maximum number of client connections the broker accepts across every
+  listener. -1 means unlimited. New in Mosquitto 2.1.
+---
+name: max_packet_size
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: bytes
+min: 20
+max: 4294967295
+default: "2000000"
+description: |
+  Largest MQTT packet the broker accepts, in bytes. The broker refuses
+  values below 20 bytes. Mosquitto 2.1 caps packets at 2000000 bytes by
+  default; Mosquitto 2.0 has no default limit.
+---
+name: persistent_client_expiration
+type: duration
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: sessions
+duration_suffixes: [s, h, d, w, m, y]
+description: |
+  How long the broker keeps the network connection of a disconnected
+  persistent client, written as an integer and a unit: 30s, 1h, 7d, 2w,
+  6m or 1y. Without this option the broker never expires them.
+---
+name: log_dest
+type: enum
+scope: global
+multiplicity: many
+reload_kind: reload
+since_version: "1.0"
+section: logging
+allowed_values: [none, syslog, stdout, stderr, topic, dlt, file, android]
+default: "stderr"
+description: |
+  Destination of log messages. Repeatable to write to several
+  destinations. The 'file' value takes the log file path as an extra
+  argument and only one file destination is allowed. The 'android'
+  destination is only available on Android builds.

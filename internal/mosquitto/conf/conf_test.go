@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -247,5 +248,125 @@ func TestValidate_SadMultiplicity(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected multiplicity issue, got: %+v", issues)
+	}
+}
+
+// TestValidate_SadOutOfRange checks that a value outside the range the
+// broker accepts is reported instead of reaching Mosquitto.
+func TestValidate_SadOutOfRange(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "below the minimum", body: "max_packet_size 10\n"},
+		{name: "above the maximum", body: "max_inflight_messages 70000\n"},
+		{name: "negative value", body: "max_connections -5\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := ParseString(tc.body, "mosquitto.conf")
+			if err != nil {
+				t.Fatalf("ParseString: %v", err)
+			}
+			issues := Validate(f, cat)
+			var found bool
+			for _, iss := range issues {
+				if iss.Kind == "range" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected a 'range' issue, got: %+v", issues)
+			}
+		})
+	}
+}
+
+// TestValidate_SadDuration checks the duration format against the units
+// the broker version accepts.
+func TestValidate_SadDuration(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	// Mosquitto 2.0 does not accept the seconds suffix.
+	bad := "persistent_client_expiration 30s\n"
+	f, err := ParseString(bad, "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	issues := Validate(f, cat)
+	var found bool
+	for _, iss := range issues {
+		if iss.Kind == "type" && iss.Directive == "persistent_client_expiration" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'type' issue for the duration, got: %+v", issues)
+	}
+
+	// The units 2.0 does accept must pass.
+	good := "persistent_client_expiration 14d\n"
+	f, err = ParseString(good, "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if issues := Validate(f, cat); len(issues) != 0 {
+		t.Errorf("issues = %+v, want none", issues)
+	}
+}
+
+// TestValidate_ShippedConfiguration checks the configuration MCM ships
+// against the catalog. The brace-less listener form is the canonical
+// Mosquitto syntax, so it must not produce scope issues.
+func TestValidate_ShippedConfiguration(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	body, err := os.ReadFile("../../../deploy/mosquitto/config/mosquitto.conf")
+	if err != nil {
+		t.Fatalf("read the shipped configuration: %v", err)
+	}
+	f, err := ParseString(string(body), "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if issues := Validate(f, cat); len(issues) != 0 {
+		t.Errorf("issues = %+v, want none", issues)
+	}
+}
+
+// TestValidate_SadScopeAnyInsideListener checks that a directive Mosquitto
+// accepts in both scopes is not reported at either one.
+func TestValidate_SadScopeAnyInsideListener(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	// max_connections is bound to the listener in scope, so it is valid
+	// at global scope and inside a listener block.
+	global := "max_connections 100\n"
+	f, err := ParseString(global, "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if issues := Validate(f, cat); len(issues) != 0 {
+		t.Errorf("global scope issues = %+v, want none", issues)
+	}
+	inBlock := "listener 1883 0.0.0.0\n{\n  max_connections 100\n}\n"
+	f, err = ParseString(inBlock, "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	for _, iss := range Validate(f, cat) {
+		if iss.Kind == "scope" {
+			t.Errorf("unexpected scope issue inside a listener block: %+v", iss)
+		}
 	}
 }

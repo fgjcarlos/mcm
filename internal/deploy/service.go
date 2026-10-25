@@ -208,6 +208,7 @@ type BrokerConfigRevisionStore interface {
 type ConfCatalog interface {
 	VersionName() string
 	Lookup(name string) (catalog.DirectiveSpec, bool)
+	Specs() []catalog.DirectiveSpec
 }
 
 // MQTTUserLister is the subset of storage.Store needed to list MQTT users.
@@ -266,6 +267,11 @@ type PreviewResult struct {
 	RequiresRestart  bool                   `json:"requires_restart,omitempty"`
 	ValidationIssues []conf.ValidationIssue `json:"validation_issues,omitempty"`
 	IncludeSnapshot  conf.IncludeSnapshot   `json:"include_snapshot,omitempty"`
+
+	// ChangedDirectives lists the directives the revision changes
+	// (issue #302). It is empty for the importer, which rewrites the
+	// whole file.
+	ChangedDirectives []string `json:"changed_directives,omitempty"`
 
 	OrphanRules []storage.ACLRuleRow `json:"orphan_rules"`
 	ACLDiff     string               `json:"acl_diff"`
@@ -2293,12 +2299,19 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	}
 
 	// Re-classify reload against the rendered body so we cannot apply
-	// a restart-required diff without force=true.
+	// a restart-required diff without force=true. A revision that
+	// knows its change set (the settings editor, issue #302) is
+	// classified from the directives it actually touched: an
+	// untouched restart-required directive must not block it.
 	parsed, err := conf.ParseString(rev.ConfRendered, s.confPath)
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("re-parse rendered conf: %w", err)
 	}
 	reloadKind, requiresRestart := classifyReload(parsed, s.confCatalog)
+	if rev.ChangedDirectives != nil {
+		changed := changedDirectiveNames(*rev.ChangedDirectives)
+		reloadKind, requiresRestart = classifyChangedDirectives(changed, s.confCatalog)
+	}
 	if requiresRestart && !force {
 		return storage.Deployment{}, fmt.Errorf("%w: directives %s", ErrRequiresRestart, restartDirectiveNames(parsed, s.confCatalog))
 	}

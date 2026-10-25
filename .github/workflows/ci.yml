@@ -438,6 +438,60 @@ jobs:
           docker compose -f docker-compose.yml \
             -f /tmp/docker-compose.e2e.yml down -v
 
+  e2e-broker-settings:
+    needs: image
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 6
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+      - name: Start mcm + mosquitto
+        env:
+          MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          # Issue #302: the settings editor writes mosquitto.conf, so MCM
+          # must know where the broker keeps it. The variable points at
+          # the named volume the broker reads.
+          MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
+        run: |
+          docker compose -f docker-compose.yml -p mcm up --no-build -d
+          for i in $(seq 1 30); do
+            sleep 1
+            if curl -fsS http://127.0.0.1:8080/livez >/dev/null; then break; fi
+          done
+          LOG_FILE=$(docker compose logs mcm 2>&1 | tail -200)
+          ADMIN_PASS=$(echo "$LOG_FILE" | grep -oE '"password":"[^"]+"' | \
+            head -1 | sed 's/.*:"\(.*\)"/\1/')
+          if [ -z "$ADMIN_PASS" ]; then
+            echo "Could not extract bootstrap admin password"; exit 1
+          fi
+          LOGIN=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}")
+          MCM_AUTH_TOKEN=$(echo "$LOGIN" | jq -r .token)
+          if [ -z "$MCM_AUTH_TOKEN" ] || [ "$MCM_AUTH_TOKEN" = "null" ]; then
+            echo "Could not extract JWT"; exit 1
+          fi
+          echo "MCM_AUTH_TOKEN=$MCM_AUTH_TOKEN" >> $GITHUB_ENV
+      - name: Run broker settings e2e script
+        # Issue #302 acceptance criteria: prove the settings surface
+        # end-to-end on the dev stack. The script asserts the catalog
+        # describes the fields, an out-of-range value is refused, the
+        # preview reports the changed directive and a reload, the apply
+        # writes the file, the settings read the value back and saving
+        # the unchanged settings leaves the file alone.
+        run: bash scripts/e2e-broker-settings.sh
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.yml -p mcm down -v
+
   e2e-broker-tls:
     needs: image
     if: github.event_name == 'pull_request'

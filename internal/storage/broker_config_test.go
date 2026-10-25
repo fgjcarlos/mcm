@@ -51,6 +51,58 @@ func TestBrokerConfigRevisionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBrokerConfigRevisionChangedDirectives checks that the change set of
+// a revision survives the round-trip, and that a revision without one
+// stays distinguishable from a revision that changed nothing.
+func TestBrokerConfigRevisionChangedDirectives(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	changed := "persistence,max_connections"
+	rev := &BrokerConfigRevision{
+		ID:                "rev-changed",
+		Actor:             "admin",
+		BaseConfHash:      "basehash",
+		RenderedConfHash:  "renderedhash",
+		BasePath:          "/mosquitto/config/mosquitto.conf",
+		ConfRendered:      "persistence true\n",
+		ChangedDirectives: &changed,
+	}
+	if err := store.InsertBrokerConfigRevision(context.Background(), rev); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, err := store.GetBrokerConfigRevision(context.Background(), "rev-changed")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ChangedDirectives == nil {
+		t.Fatal("the change set was lost")
+	}
+	if *got.ChangedDirectives != changed {
+		t.Errorf("changed directives = %q, want %q", *got.ChangedDirectives, changed)
+	}
+
+	// A revision without a change set must not gain one.
+	plain := &BrokerConfigRevision{
+		ID:               "rev-plain",
+		Actor:            "admin",
+		BaseConfHash:     "basehash",
+		RenderedConfHash: "renderedhash",
+		BasePath:         "/mosquitto/config/mosquitto.conf",
+		ConfRendered:     "persistence true\n",
+	}
+	if err := store.InsertBrokerConfigRevision(context.Background(), plain); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, err = store.GetBrokerConfigRevision(context.Background(), "rev-plain")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ChangedDirectives != nil {
+		t.Errorf("changed directives = %q, want none", *got.ChangedDirectives)
+	}
+}
+
 func TestBrokerConfigAdoptionRoundTrip(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()

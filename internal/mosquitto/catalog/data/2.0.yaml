@@ -1,9 +1,19 @@
-# Mosquitto 2.0 directive catalog — issue #298.
+# Mosquitto 2.0 directive catalog — issues #298 and #302.
 #
 # Each entry pins the value shape, scope (global vs listener-block),
 # multiplicity, restart-vs-reload semantics, the earliest version Mosquitto
 # accepts the directive, optional enum allowed values, and any
 # co-dependencies the validator should enforce.
+#
+# Entries that carry a `section` are exposed as editable fields in the
+# graphical settings form (issue #302): persistence, queues, sessions and
+# logging. `unit`, `min` and `max` describe the accepted range so the form
+# can show the bounds and the server can refuse out-of-range values before
+# the broker is touched. `default` is the broker default and is shown as
+# help text.
+#
+# The reload_kind values follow Mosquitto's own parser: a directive the
+# broker skips when it re-reads the file on SIGHUP is marked `restart`.
 #
 # The set covers the directives we ship today in
 # deploy/mosquitto/config/mosquitto.conf plus the TLS directives that
@@ -34,11 +44,21 @@ description: |
 ---
 name: max_connections
 type: integer
-scope: global
-multiplicity: once
-reload_kind: reload
+scope: any
+multiplicity: once_per_block
+reload_kind: restart
 since_version: "1.0"
-description: Maximum number of concurrent client connections.
+section: sessions
+unit: connections
+min: -1
+max: 2147483647
+default: "-1"
+description: |
+  Maximum number of concurrent client connections. Mosquitto applies the
+  value to the listener it is written in; at global scope it configures
+  the default listener. -1 means unlimited. A limit set inside a listener
+  block belongs to that listener only. Listeners are not re-read on
+  SIGHUP, so changing this needs a broker restart.
 ---
 name: protocol
 type: enum
@@ -82,19 +102,210 @@ scope: global
 multiplicity: once
 reload_kind: reload
 since_version: "1.0"
+section: persistence
+default: "false"
 description: |
-  Enable persistent store for retained messages, subscriptions and
-  in-flight QoS 1/2 messages.
+  Enable the persistent store for retained messages, subscriptions and
+  in-flight QoS 1/2 messages. When disabled the broker keeps no state
+  across a restart.
+---
+name: persistence_file
+type: string
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: persistence
+default: "mosquitto.db"
+description: |
+  Name of the persistence database inside the persistence directory. The
+  broker rewrites this file on every save cycle, so point it at a
+  writable location.
 ---
 name: persistence_location
 type: path
 scope: global
 multiplicity: once
-reload_kind: restart
+reload_kind: reload
 since_version: "1.0"
+section: persistence
 description: |
-  Directory holding the persistence database. Path cannot be reloaded —
-  Mosquitto opens it at start-up.
+  Directory holding the persistence database. The broker re-opens the
+  directory when it reloads its configuration, but it does not move an
+  existing database to a new location — copy it by hand after the change.
+---
+name: autosave_interval
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: persistence
+unit: seconds
+min: 0
+max: 2147483647
+default: "1800"
+description: |
+  How often the broker writes the persistence database to disk, in
+  seconds. 0 disables the periodic write.
+---
+name: autosave_on_changes
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: persistence
+default: "false"
+description: |
+  Write the persistence database to disk as soon as it holds unsaved
+  changes instead of waiting for the autosave interval.
+---
+name: max_queued_messages
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: messages
+min: 0
+max: 2147483647
+default: "1000"
+description: |
+  Maximum number of QoS 1 and 2 messages held for a client that is not
+  connected. 0 means no limit. Clients that exceed the limit are
+  disconnected.
+---
+name: max_inflight_messages
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: messages
+min: 0
+max: 65535
+default: "20"
+description: |
+  Maximum number of QoS 1 and 2 messages in flight to a client at the
+  same time. 0 means no limit.
+---
+name: max_queued_bytes
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: bytes
+min: 0
+max: 9223372036854775807
+default: "0"
+description: |
+  Maximum number of bytes held in the message queues of disconnected
+  clients. 0 means no limit.
+---
+name: max_inflight_bytes
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: bytes
+min: 0
+max: 9223372036854775807
+default: "0"
+description: |
+  Maximum number of bytes held for messages in flight to connected
+  clients. 0 means no limit.
+---
+name: queue_qos0_messages
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+default: "false"
+description: |
+  Keep QoS 0 messages in the queue for disconnected clients. QoS 0 is not
+  acknowledged, so the broker cannot tell whether the client received
+  them.
+---
+name: max_packet_size
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: queues
+unit: bytes
+min: 20
+max: 4294967295
+default: "0"
+description: |
+  Largest MQTT packet the broker accepts, in bytes. The broker refuses
+  values below 20 bytes. In Mosquitto 2.0 the default 0 means no limit;
+  Mosquitto 2.1 defaults to 2000000 bytes instead.
+---
+name: memory_limit
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+unit: bytes
+min: 0
+max: 9223372036854775807
+description: |
+  Cap on the memory the broker uses for its queues. Only effective on a
+  broker built with memory tracking (WITH_MEMORY_TRACKING); other builds
+  ignore the value.
+---
+name: message_size_limit
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "2.0.18"
+unit: bytes
+min: 0
+max: 268435455
+description: |
+  Largest MQTT payload the broker accepts, in bytes. Mosquitto reports
+  this option as deprecated in favour of max_packet_size, so MCM keeps it
+  out of the settings form and only recognises it.
+---
+name: max_keepalive
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: sessions
+unit: seconds
+min: 0
+max: 65535
+default: "0"
+description: |
+  Keepalive the broker accepts from a client, in seconds. 0 accepts any
+  keepalive the client asks for.
+---
+name: persistent_client_expiration
+type: duration
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: sessions
+duration_suffixes: [h, d, w, m, y]
+description: |
+  How long the broker keeps the network connection of a disconnected
+  persistent client, written as an integer and a unit: 1h, 7d, 2w, 6m
+  or 1y. Without this option the broker never expires them.
 ---
 name: log_dest
 type: enum
@@ -102,10 +313,13 @@ scope: global
 multiplicity: many
 reload_kind: reload
 since_version: "1.0"
-allowed_values: [stdout, stderr, syslog, file]
+section: logging
+allowed_values: [none, syslog, stdout, stderr, topic, dlt, file]
+default: "stderr"
 description: |
-  Destination of log messages. Repeatable. The 'file' value requires an
-  additional path argument (string_list below).
+  Destination of log messages. Repeatable to write to several
+  destinations. The 'file' value takes the log file path as an extra
+  argument and only one file destination is allowed.
 ---
 name: log_type
 type: enum
@@ -113,8 +327,34 @@ scope: global
 multiplicity: many
 reload_kind: reload
 since_version: "1.0"
-allowed_values: [debug, error, warning, notice, information, subscribe, unsubscribe]
-description: Which categories of messages to log.
+section: logging
+allowed_values: [none, information, notice, warning, error, debug, subscribe, unsubscribe, internal, websockets, all]
+default: "error, warning, notice, information"
+description: |
+  Categories of messages the broker writes to the log. Repeatable to log
+  several categories.
+---
+name: log_timestamp
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: logging
+default: "true"
+description: |
+  Prefix every log line with a timestamp.
+---
+name: log_timestamp_format
+type: string
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: logging
+description: |
+  strftime format used for the log timestamp, for example
+  "%Y-%m-%dT%H:%M:%S". Without it the broker writes the Unix time.
 ---
 name: connection_messages
 type: boolean
@@ -122,7 +362,24 @@ scope: global
 multiplicity: once
 reload_kind: reload
 since_version: "1.0"
+section: logging
+default: "false"
 description: Log a message for every client connect / disconnect.
+---
+name: log_facility
+type: integer
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+section: logging
+unit: facility
+min: 0
+max: 7
+default: "3"
+description: |
+  Syslog facility the broker logs to, from 0 (local0) to 7 (local7).
+  Only used when a syslog destination is configured.
 ---
 name: user
 type: string
@@ -138,23 +395,25 @@ name: cafile
 type: path
 scope: global
 multiplicity: once
-reload_kind: reload
+reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
 description: |
   Path to a file containing PEM-encoded CA certificates for the broker
-  identity and (optionally) client verification.
+  identity and (optionally) client verification. The broker reads the
+  file at start-up, so changing it needs a restart.
 ---
 name: capath
 type: path
 scope: global
 multiplicity: once
-reload_kind: reload
+reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
 description: |
   Directory containing PEM-encoded CA certificates (one per file with
-  hashed names, see OpenSSL c_re_hash).
+  hashed names, see OpenSSL c_re_hash). The broker reads the directory
+  at start-up, so changing it needs a restart.
 ---
 name: certfile
 type: path
@@ -182,22 +441,24 @@ name: require_certificate
 type: boolean
 scope: global
 multiplicity: once
-reload_kind: reload
+reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
 description: |
   When true, clients MUST present a valid X.509 certificate (used
-  together with cafile / capath).
+  together with cafile / capath). Enforced from the next connection, so
+  the broker needs a restart to apply it to existing listeners.
 ---
 name: tls_version
 type: enum
 scope: global
 multiplicity: many
-reload_kind: reload
+reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
 allowed_values: ["tlsv1", "tlsv1.1", "tlsv1.2", "tlsv1.3"]
 description: |
   TLS protocol versions the broker accepts. Repeatable; latest entry
-  wins.
+  wins. The TLS stack is set up at start-up, so changing this needs a
+  restart.
 ---

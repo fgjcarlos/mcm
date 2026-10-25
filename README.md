@@ -14,7 +14,7 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 
 ## Project status
 
-**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the rest of `mosquitto.conf` — bridges, persistence, limits and plugins are not managed from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the rest of `mosquitto.conf` — bridges and plugins are not managed from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
 
 | Capability | Current scope |
 | --- | --- |
@@ -23,7 +23,8 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 | Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
-| Broker configuration editor | Planned, including import and version-aware validation. |
+| Broker configuration editor | Import, version-aware validation and an explicit adoption gate are available; directive-level editing is exposed for the general settings only. |
+| General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
 | Backup and restore | Existing Taskfile recipes have known limitations; do not rely on them for recovery until corrected. |
 | Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
 
