@@ -7,6 +7,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -23,7 +24,27 @@ const (
 	TypeEnum       DirectiveType = "enum"
 	TypeStringList DirectiveType = "string_list"
 	TypePath       DirectiveType = "path"
+	// TypeDuration is an integer followed by a unit suffix, e.g. "2h" or
+	// "14d". The accepted suffixes are listed per directive in
+	// DurationSuffixes because they differ between broker versions.
+	TypeDuration DirectiveType = "duration"
 )
+
+// Settings sections group directives into the forms offered by the
+// graphical broker editor (issue #302). A directive without a section is
+// known to the broker but is not exposed as an editable settings field.
+const (
+	SectionPersistence = "persistence"
+	SectionQueues      = "queues"
+	SectionSessions    = "sessions"
+	SectionLogging     = "logging"
+)
+
+// KnownSections lists every settings section the catalog may assign, in
+// the order the graphical editor presents them.
+func KnownSections() []string {
+	return []string{SectionPersistence, SectionQueues, SectionSessions, SectionLogging}
+}
 
 // Multiplicity distinguishes directives that must appear once from those
 // that may repeat (e.g. multiple log_dest lines).
@@ -55,6 +76,11 @@ const (
 	ScopeGlobal   Scope = "global"
 	ScopeListener Scope = "listener"
 	ScopeBridge   Scope = "bridge"
+	// ScopeAny marks a directive Mosquitto accepts both at global scope
+	// and inside a listener block. max_connections is the canonical
+	// example: outside a block it configures the default listener,
+	// inside one it configures that listener.
+	ScopeAny Scope = "any"
 )
 
 // DirectiveSpec is the catalog entry for one directive in one Mosquitto
@@ -74,6 +100,27 @@ type DirectiveSpec struct {
 	AllowedValues        []string `yaml:"allowed_values,omitempty" json:"allowed_values,omitempty"`
 	Deps                 []string `yaml:"deps,omitempty" json:"deps,omitempty"`
 	Description          string   `yaml:"description,omitempty" json:"description,omitempty"`
+	// Section groups the directive into one of the graphical settings
+	// forms. It is empty for directives that are recognised by the broker
+	// but edited elsewhere (or not editable at all).
+	Section string `yaml:"section,omitempty" json:"section,omitempty"`
+	// Unit names the unit of an integer value ("seconds", "bytes",
+	// "messages"). It is shown next to the field and quoted in
+	// validation messages so the operator knows what the number means.
+	Unit string `yaml:"unit,omitempty" json:"unit,omitempty"`
+	// Min and Max bound an integer directive. A nil bound means the
+	// value is unbounded on that side.
+	Min *int64 `yaml:"min,omitempty" json:"min,omitempty"`
+	Max *int64 `yaml:"max,omitempty" json:"max,omitempty"`
+	// Default is the broker default for the directive. It is shown as
+	// help text next to the field and marks the value MCM writes when
+	// the operator asks for the broker default explicitly.
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	// DurationSuffixes lists the unit suffixes a duration directive
+	// accepts, e.g. ["h", "d"] for persistent_client_expiration. The
+	// suffix set is version specific: Mosquitto 2.0 rejects "30s" while
+	// 2.1 accepts it.
+	DurationSuffixes []string `yaml:"duration_suffixes,omitempty" json:"duration_suffixes,omitempty"`
 }
 
 // Catalog is the immutable set of directive specs known for one broker
@@ -243,6 +290,25 @@ func (s DirectiveSpec) Validate(c ValidateSentinels) error {
 			return fmt.Errorf("directive %q: invalid listener_since_version %q", s.Name, s.ListenerSinceVersion)
 		}
 	}
+	if s.Section != "" && !slices.Contains(KnownSections(), s.Section) {
+		return fmt.Errorf("directive %q: unknown section %q", s.Name, s.Section)
+	}
+	if (s.Min != nil || s.Max != nil) && s.Type != TypeInteger {
+		return fmt.Errorf("directive %q: min/max only apply to integer directives", s.Name)
+	}
+	if s.Min != nil && s.Max != nil && *s.Min > *s.Max {
+		return fmt.Errorf("directive %q: min %d is greater than max %d", s.Name, *s.Min, *s.Max)
+	}
+	if s.Type == TypeDuration {
+		if len(s.DurationSuffixes) == 0 {
+			return fmt.Errorf("directive %q: duration type requires duration_suffixes", s.Name)
+		}
+		if s.Min != nil || s.Max != nil {
+			return fmt.Errorf("directive %q: min/max do not apply to duration directives", s.Name)
+		}
+	} else if len(s.DurationSuffixes) > 0 {
+		return fmt.Errorf("directive %q: duration_suffixes only apply to duration directives", s.Name)
+	}
 	return nil
 }
 
@@ -251,11 +317,11 @@ func (s DirectiveSpec) Validate(c ValidateSentinels) error {
 // without restating the maps.
 var DefaultSentinels = ValidateSentinels{
 	AllowedScopes: map[Scope]struct{}{
-		ScopeGlobal: {}, ScopeListener: {}, ScopeBridge: {},
+		ScopeGlobal: {}, ScopeListener: {}, ScopeBridge: {}, ScopeAny: {},
 	},
 	AllowedTypes: map[DirectiveType]struct{}{
 		TypeString: {}, TypeInteger: {}, TypeBoolean: {},
-		TypeEnum: {}, TypeStringList: {}, TypePath: {},
+		TypeEnum: {}, TypeStringList: {}, TypePath: {}, TypeDuration: {},
 	},
 	AllowedRel: map[ReloadKind]struct{}{
 		ReloadOK: {}, Restart: {}, ReloadOrRestart: {},
