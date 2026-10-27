@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,36 @@ func withRequestLogging(next http.Handler, logger *slog.Logger, reg *metrics.Reg
 			reg.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(recorder.status)).Inc()
 			reg.HTTPRequestDuration.WithLabelValues(r.Method, route).Observe(duration.Seconds())
 		}
+	})
+}
+
+// withPanicRecovery wraps next so that a panic in a handler answers with
+// the standard JSON error envelope instead of dropping the connection.
+//
+// Without it the standard library closes the socket without a response,
+// so the client sees a broken connection and never learns what happened.
+// The panic itself is only written to the log: the value of a panic can
+// carry a credential, so it never reaches the client.
+func withPanicRecovery(next http.Handler, logger *slog.Logger) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			logger.LogAttrs(r.Context(), slog.LevelError, "http_panic",
+				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Any("panic", rec),
+				slog.String("stack", string(debug.Stack())),
+			)
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 

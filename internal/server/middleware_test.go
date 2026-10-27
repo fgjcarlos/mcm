@@ -319,3 +319,37 @@ func discardSlogLogger() *slog.Logger {
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestPanicRecoveryAnswersWithJSONError verifies that a panic in a handler
+// answers with the standard JSON error envelope and the status 500,
+// instead of dropping the connection without a response.
+func TestPanicRecoveryAnswersWithJSONError(t *testing.T) {
+	handler := withPanicRecovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom: the secret is hunter2")
+	}), discardSlogLogger())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/example", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d (500); body = %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", ct)
+	}
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("body is not valid JSON: %v; raw=%s", err, rec.Body.String())
+	}
+	if errResp.Error == "" {
+		t.Fatal("error envelope missing 'error' field")
+	}
+	// The value of the panic may carry a credential, so it never reaches
+	// the client.
+	if strings.Contains(rec.Body.String(), "hunter2") {
+		t.Fatalf("the panic leaked into the response: %s", rec.Body.String())
+	}
+}
