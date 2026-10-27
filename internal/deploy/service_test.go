@@ -129,6 +129,9 @@ type fakeDeploymentStore struct {
 	mu          sync.Mutex
 	deployments map[int64]*storage.Deployment
 	nextID      int64
+	// dynsecPlans holds the immutable plans of the dynamic security
+	// changes (issue #304).
+	dynsecPlans map[string]storage.DynSecPlan
 }
 
 type persistenceRecordingDeploymentStore struct {
@@ -169,7 +172,47 @@ func newFakeDeploymentStore() *fakeDeploymentStore {
 	return &fakeDeploymentStore{
 		deployments: make(map[int64]*storage.Deployment),
 		nextID:      1,
+		dynsecPlans: make(map[string]storage.DynSecPlan),
 	}
+}
+
+// InsertDynSecPlan persists a plan of the dynamic security surface.
+func (f *fakeDeploymentStore) InsertDynSecPlan(_ context.Context, plan *storage.DynSecPlan) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if plan.CreatedAt.IsZero() {
+		plan.CreatedAt = time.Now().UTC()
+	}
+	f.dynsecPlans[plan.ID] = *plan
+	return nil
+}
+
+// GetDynSecPlan returns a plan of the dynamic security surface.
+func (f *fakeDeploymentStore) GetDynSecPlan(_ context.Context, id string) (storage.DynSecPlan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	plan, ok := f.dynsecPlans[id]
+	if !ok {
+		return storage.DynSecPlan{}, storage.ErrDynSecPlanNotFound
+	}
+	return plan, nil
+}
+
+// ConsumeDynSecPlan marks a plan of the dynamic security surface as
+// applied exactly once.
+func (f *fakeDeploymentStore) ConsumeDynSecPlan(_ context.Context, id string, appliedAt time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	plan, ok := f.dynsecPlans[id]
+	if !ok {
+		return storage.ErrDynSecPlanNotFound
+	}
+	if !plan.AppliedAt.IsZero() {
+		return storage.ErrDynSecPlanConsumed
+	}
+	plan.AppliedAt = appliedAt
+	f.dynsecPlans[id] = plan
+	return nil
 }
 
 func (f *fakeDeploymentStore) InsertDeployment(_ context.Context, d *storage.Deployment) error {
