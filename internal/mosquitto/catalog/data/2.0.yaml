@@ -800,3 +800,25 @@ description: |
   Topic pattern the bridge forwards, optionally followed by the direction
   (in, out or both), the quality of service and the local and remote
   prefixes.
+---
+name: plugin
+type: path
+scope: global
+multiplicity: many
+reload_kind: restart
+since_version: "1.0"
+description: |
+  Loads a Mosquitto plugin from a shared object. Repeatable. Mosquitto
+  loads a plugin at start-up and never re-reads the directive on SIGHUP,
+  so changing it needs a broker restart. The plugin catalog of MCM
+  describes the plugins it is able to configure.
+---
+name: plugin_opt_config_file
+type: path
+scope: global
+multiplicity: many
+reload_kind: restart
+since_version: "2.0"
+description: |
+  Path of the JSON security database of the dynamic security plugin. The
+  option belongs to the `plugin` directive that precedes it.
