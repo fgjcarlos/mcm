@@ -2392,19 +2392,12 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 
 	// Activation.
 	//
-	// A bridge is read by Mosquitto at start-up: a reload does not create
-	// the connection, so a bridge change needs a restart. Every other
-	// change uses the reload signal. Restart-required diffs land here only
-	// when force is true; the operator's ReloadCommand is expected to
-	// bounce the broker (systemctl restart, k8s rollout, etc.).
-	// Activation.
-	//
-	// Mosquitto reads a bridge and a plugin at start-up: a reload does
-	// not create the connection and does not load the plugin, so a change
-	// that needs a restart needs a restart. Every other change uses the
-	// reload signal. Restart-required diffs land here only when force is
-	// true; the operator's ReloadCommand is expected to bounce the broker
-	// (systemctl restart, k8s rollout, etc.).
+	// Mosquitto reads a bridge and a plugin at start-up: a reload does not
+	// create the connection and does not load the plugin, so a change that
+	// needs a restart needs a restart. Every other change uses the reload
+	// signal. Restart-required diffs land here only when force is true; the
+	// operator's ReloadCommand is expected to bounce the broker (systemctl
+	// restart, k8s rollout, etc.).
 	restarted := false
 	if requiresRestart || kindNeedsRestart(kind) {
 		restarted, err = s.restartBroker(ctx)
@@ -2413,17 +2406,6 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("restart: %s", err))
 			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
 			return storage.Deployment{}, fmt.Errorf("restart broker after broker-config apply: %w", err)
-		}
-		if restarted {
-			// The deployment is only active once the broker runs the
-			// new configuration, so the broker has to be back before
-			// the deployment is reported as verified.
-			if err := s.waitForBroker(ctx); err != nil {
-				_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
-				_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("restart: %s", err))
-				s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
-				return storage.Deployment{}, fmt.Errorf("the broker did not come back after the restart: %w", err)
-			}
 		}
 	}
 	if !restarted {
