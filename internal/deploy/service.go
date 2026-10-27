@@ -6,14 +6,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +30,9 @@ import (
 	"github.com/fgjcarlos/mcm/internal/mosquitto/bridges"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/conf"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/plugins"
 	"github.com/fgjcarlos/mcm/internal/storage"
+	"github.com/fgjcarlos/mcm/internal/tlsutil"
 )
 
 // ErrDeployDisabled is returned when the deploy mode is not configured.
@@ -352,6 +357,9 @@ type Service struct {
 	managedACLFileStore ManagedACLFileStore
 	listenerLister      ListenerScopeLister
 	confCatalog         ConfCatalog
+	pluginCatalog       *plugins.Catalog
+	dynsecFactory       DynSecTransportFactory
+	dynsecStore         DynSecPlanStore
 	confPath            string // broker config absolute path; empty disables the broker-config path
 	verifier            ActiveVerifier
 	passwordLookup      CleartextPasswordLookup
@@ -385,6 +393,7 @@ func NewService(
 	orphanRuleLister, _ := mqttStore.(OrphanRuleLister)
 	mutationCoordinator, _ := mqttStore.(MutationCoordinator)
 	brokerCfgStore, _ := deployStore.(BrokerConfigRevisionStore)
+	dynsecStore, _ := deployStore.(DynSecPlanStore)
 	aclSourceStore, _ := deployStore.(ACLSourceStore)
 	managedACLFileStore, _ := deployStore.(ManagedACLFileStore)
 	listenerLister, _ := deployStore.(ListenerScopeLister)
@@ -397,6 +406,7 @@ func NewService(
 		deployStore:         deployStore,
 		revisionStore:       revisionStore,
 		brokerCfgStore:      brokerCfgStore,
+		dynsecStore:         dynsecStore,
 		aclSourceStore:      aclSourceStore,
 		managedACLFileStore: managedACLFileStore,
 		listenerLister:      listenerLister,
@@ -2382,19 +2392,20 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 
 	// Activation.
 	//
-	// A bridge is read by Mosquitto at start-up: a reload does not create
-	// the connection, so a bridge change needs a restart. Every other
-	// change uses the reload signal. Restart-required diffs land here only
-	// when force is true; the operator's ReloadCommand is expected to
-	// bounce the broker (systemctl restart, k8s rollout, etc.).
+	// Mosquitto reads a bridge and a plugin at start-up: a reload does not
+	// create the connection and does not load the plugin, so a change that
+	// needs a restart needs a restart. Every other change uses the reload
+	// signal. Restart-required diffs land here only when force is true; the
+	// operator's ReloadCommand is expected to bounce the broker (systemctl
+	// restart, k8s rollout, etc.).
 	restarted := false
-	if kind == "bridges" {
-		restarted, err = s.restartBrokerForBridge(ctx)
+	if requiresRestart || kindNeedsRestart(kind) {
+		restarted, err = s.restartBroker(ctx)
 		if err != nil {
 			_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
 			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("restart: %s", err))
 			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
-			return storage.Deployment{}, fmt.Errorf("restart broker after bridge apply: %w", err)
+			return storage.Deployment{}, fmt.Errorf("restart broker after broker-config apply: %w", err)
 		}
 	}
 	if !restarted {
@@ -2409,14 +2420,14 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 		}
 	}
 
-	// A bridge that was written but not restarted is not active yet: the
-	// broker still runs the previous connection set. The deployment says
+	// A change that was written but not restarted is not active yet: the
+	// broker still runs the previous configuration. The deployment says
 	// so instead of claiming a verified activation.
 	status := "active_verified"
 	message := ""
-	if kind == "bridges" && !restarted {
+	if (requiresRestart || kindNeedsRestart(kind)) && !restarted {
 		status = "pending_activation"
-		message = "the bridge is written to the configuration, but the broker was only reloaded; restart it to activate the bridge"
+		message = "the change is written to the configuration, but the broker was only reloaded; restart it to activate it"
 	}
 	if err := s.updateDeploymentStatus(dep.ID, status, message); err != nil {
 		return storage.Deployment{}, fmt.Errorf("update broker-config deployment to %s: %w", status, err)
@@ -2425,14 +2436,27 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	return s.getDeployment(dep.ID)
 }
 
-// restartBrokerForBridge restarts the broker so that an applied bridge
-// becomes active.
+// kindNeedsRestart reports whether a deployment of this kind always
+// needs a restart of the broker.
+//
+// Mosquitto reads a bridge and a plugin at start-up, so neither becomes
+// active with a reload.
+func kindNeedsRestart(kind string) bool {
+	switch kind {
+	case "bridges", "plugins", "dynsec":
+		return true
+	}
+	return false
+}
+
+// restartBroker restarts the broker so that an applied change becomes
+// active.
 //
 // It reports whether the broker was restarted. A deployment that cannot
 // restart the broker is not an error: the change is written and reported
 // as pending activation, because the operator may bounce the broker
 // themselves.
-func (s *Service) restartBrokerForBridge(ctx context.Context) (bool, error) {
+func (s *Service) restartBroker(ctx context.Context) (bool, error) {
 	restarter, ok := s.applier.(mosquitto.BrokerRestarter)
 	if !ok {
 		return false, nil
@@ -2445,6 +2469,60 @@ func (s *Service) restartBrokerForBridge(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// waitForBroker waits until the broker accepts connections again.
+//
+// A restart returns before the broker listens, so a change that needs the
+// broker right after the restart — the adoption of the dynamic security
+// plugin, which opens the control channel of the plugin that the restart
+// just loaded — has to wait for it.
+func (s *Service) waitForBroker(ctx context.Context) error {
+	host := strings.TrimSpace(s.mosquittoCfg.Host)
+	if host == "" {
+		return fmt.Errorf("the address of the broker is not configured")
+	}
+	port := s.mosquittoCfg.Port
+	if port <= 0 {
+		port = 1883
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+
+	var tlsConfig *tls.Config
+	if s.mosquittoCfg.TLS.Enabled {
+		built, err := tlsutil.BuildMosquittoTLSConfig(s.mosquittoCfg)
+		if err != nil {
+			return fmt.Errorf("build broker TLS config: %w", err)
+		}
+		tlsConfig = built
+	}
+
+	const timeout = 30 * time.Second
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		dialer := &net.Dialer{Timeout: time.Second}
+		var (
+			conn net.Conn
+			err  error
+		)
+		if tlsConfig != nil {
+			conn, err = tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
+		} else {
+			conn, err = dialer.DialContext(ctx, "tcp", address)
+		}
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("the broker at %s did not accept connections again within %s: %w", address, timeout, lastErr)
 }
 
 // restartDirectiveNames lists the restart-required directives that

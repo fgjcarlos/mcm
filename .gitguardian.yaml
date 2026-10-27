@@ -2,6 +2,8 @@ version: 2
 secret:
   ignored-paths:
     - "**/*_test.go"
+    - "**/*.test.ts"
+    - "**/*.test.tsx"
     - "**/testdata/**"
     - "**/config.example.yaml"
     - "deploy/mcm/config.yaml"

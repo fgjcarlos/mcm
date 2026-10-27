@@ -1,0 +1,37 @@
+# Mosquitto 2.0 plugin catalog — issue #304.
+#
+# The catalog lists the plugins MCM is able to configure for this broker
+# version, and the options of those plugins MCM writes. A plugin or an
+# option that is not listed here is preserved byte-for-byte: MCM never
+# drops a directive it does not understand.
+#
+# Mosquitto loads a plugin at start-up and never re-reads the `plugin` or
+# `plugin_opt_*` directives on SIGHUP, so every plugin carries
+# `reload_kind: restart`.
+#
+# The `plugin_opt_*` options belong to the `plugin` directive that
+# precedes them.
+---
+id: dynamic-security
+title: Dynamic Security
+description: |
+  Manages the clients, groups, roles and topic permissions of the broker
+  at run time, without rewriting an ACL file. The plugin keeps its own
+  JSON database and exposes it on the `$CONTROL/dynamic-security/v1`
+  control topic, which MCM uses as the management channel.
+module: /usr/lib/mosquitto_dynamic_security.so
+modules:
+  - /usr/lib/mosquitto_dynamic_security.so
+  - /usr/lib/x86_64-linux-gnu/mosquitto_dynamic_security.so
+  - /usr/local/lib/mosquitto_dynamic_security.so
+since_version: "2.0"
+reload_kind: restart
+options:
+  - name: config_file
+    description: |
+      Path of the JSON security database the plugin reads at start-up and
+      writes back after every change. The file must be readable by the
+      broker user and must not be world readable.
+    required: true
+    default: /mosquitto/config/dynamic-security.json
+    placeholder: true

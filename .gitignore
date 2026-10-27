@@ -11,3 +11,11 @@ frontend/node_modules/
 coverage.out
 # Local Pi runtime state
 .atl/
+
+# Local tooling state
+# Git worktrees of the sibling branches, checked out next to the repo.
+.worktrees/
+# The code graph index of the local codegraph daemon.
+.codegraph/
+# Local task notes of the working session.
+odd/

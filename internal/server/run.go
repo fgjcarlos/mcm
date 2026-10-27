@@ -22,6 +22,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/plugins"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
@@ -264,6 +265,19 @@ func Run(ctx context.Context, cfg config.Config) error {
 		if app.brokerCfgCatalog == nil {
 			app.brokerCfgCatalog = brokerCatalog
 		}
+	}
+
+	// Issue #304: the plugin catalog lists the plugins MCM is able to
+	// configure for the broker version, and the control channel of the
+	// dynamic security plugin is how MCM administers its database.
+	pluginCatalog, pluginCatalogErr := plugins.LoadVersion("2.0")
+	if pluginCatalogErr != nil {
+		logger.Warn("plugin catalog load failed; plugin endpoints disabled", "err", pluginCatalogErr)
+	} else {
+		deployService.WithPluginCatalog(pluginCatalog)
+		deployService.WithDynSec(buildDynSecTransportFactory(cfg.Mosquitto))
+		app.pluginSvc = deployService
+		app.dynsecSvc = deployService
 	}
 
 	if dist, fErr := frontend.DistFS(); fErr == nil {

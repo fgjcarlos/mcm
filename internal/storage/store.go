@@ -440,6 +440,24 @@ CREATE TABLE IF NOT EXISTS managed_acl_files (
 ALTER TABLE broker_config_revisions ADD COLUMN changed_directives TEXT;
 `,
 	},
+	{
+		version: 27,
+		name:    "create_dynsec_plans",
+		sql: `
+CREATE TABLE IF NOT EXISTS dynsec_plans (
+	id TEXT PRIMARY KEY,
+	actor TEXT NOT NULL,
+	kind TEXT NOT NULL DEFAULT 'update',
+	base_hash TEXT NOT NULL DEFAULT '',
+	plan TEXT NOT NULL DEFAULT '',
+	desired TEXT NOT NULL DEFAULT '',
+	management_client TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	applied_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_dynsec_plans_created ON dynsec_plans(created_at);
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

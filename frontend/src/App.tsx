@@ -7,6 +7,8 @@ import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import SettingsPanel from './features/broker-config/SettingsPanel'
 import BridgesPanel from './features/broker-config/BridgesPanel'
+import PluginsPanel from './features/broker-config/PluginsPanel'
+import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
@@ -202,6 +204,24 @@ const navItems: NavItem[] = [
     eyebrow: 'Operations',
     title: 'Bridges to remote brokers',
     description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
+    minRole: 'auditor',
+  },
+  {
+    id: 'broker-plugins',
+    label: 'Plugins',
+    path: '/broker-plugins',
+    eyebrow: 'Operations',
+    title: 'Mosquitto plugins',
+    description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
+    minRole: 'auditor',
+  },
+  {
+    id: 'broker-dynsec',
+    label: 'Dynamic security',
+    path: '/broker-dynsec',
+    eyebrow: 'Authorization',
+    title: 'Dynamic security database',
+    description: 'Manage the clients, groups and roles the dynamic security plugin enforces, and watch the management channel of the plugin.',
     minRole: 'auditor',
   },
   {
@@ -403,6 +423,10 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <SettingsPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'broker-bridges' ? (
         <BridgesPanel token={token} onLogout={onLogout} role={currentUser.role} />
+      ) : activeId === 'broker-plugins' ? (
+        <PluginsPanel token={token} onLogout={onLogout} role={currentUser.role} />
+      ) : activeId === 'broker-dynsec' ? (
+        <DynSecPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'account' ? (
         <AccountSecurityPanel token={token} currentUser={currentUser} onLogout={onLogout} onMFAChange={onRefreshUser} />
       ) : activeId === 'admin-users' ? (

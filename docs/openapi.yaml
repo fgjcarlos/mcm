@@ -1550,6 +1550,270 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/plugins:
+    get:
+      tags: [Broker]
+      summary: The plugin catalog of the broker version and the loaded plugins
+      description: |
+        Requires auditor or higher. Returns the catalog of the plugins MCM is
+        able to configure for the broker version, together with the plugins the
+        managed `mosquitto.conf` loads.
+
+        A plugin or an option the catalog does not know is preserved: MCM
+        never drops a directive it does not understand. The `backend` field
+        tells which backend owns the access control of the broker.
+      responses:
+        "200":
+          description: The catalog and the loaded plugins.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Plugin management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/plugins/preview:
+    post:
+      tags: [Broker]
+      summary: Preview the plugins the operator edited
+      description: |
+        Requires operator or higher. Replaces the plugin directives of the
+        managed configuration with the submitted plugins, validates them
+        against the catalog and stores an immutable preview revision. The
+        response carries the diff, the rendered file, the directives that
+        changed and whether the change needs a broker restart.
+
+        The preview does not touch the broker. Apply the returned
+        `revision_id` through `POST /api/v1/broker/plugins/apply` to write the
+        file and signal the broker.
+
+        A plugin or an option the catalog does not know is preserved
+        byte-for-byte.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PluginDocumentRequest" }
+      responses:
+        "200":
+          description: Preview of the edited plugins.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerConfigPreview" }
+        "400":
+          description: The submitted plugins did not pass the validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Plugin management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/plugins/apply:
+    post:
+      tags: [Broker]
+      summary: Apply a reviewed plugin revision
+      description: |
+        Requires admin or higher. Writes the reviewed revision to the managed
+        configuration and signals the broker.
+
+        Mosquitto loads a plugin at start-up and never re-reads the directive
+        on SIGHUP, so a change needs a restart. The apply refuses the revision
+        with 409 when `force` is not set and the deployment has no restart
+        command configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrokerConfigApplyRequest" }
+      responses:
+        "200":
+          description: The deployment the apply produced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400":
+          description: The revision id is missing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The revision needs a broker restart, is stale, was already
+            applied, or the broker configuration has not been adopted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Plugin management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/dynsec:
+    get:
+      tags: [Broker]
+      summary: The security database of the dynamic security plugin
+      description: |
+        Requires auditor or higher. Returns the clients, the groups, the roles
+        with their access entries and the default access of the dynamic
+        security plugin, read from the broker itself.
+
+        The `guard` field reports who may reach the management channel of the
+        plugin. A client that must not reach it is listed under `violations`.
+
+        A password is never returned: the server reports `password_set`
+        instead.
+      responses:
+        "200":
+          description: The security database of the plugin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DynSecResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Dynamic security management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/dynsec/preview:
+    post:
+      tags: [Broker]
+      summary: Preview the security database the operator edited
+      description: |
+        Requires operator or higher. Compares the submitted security database
+        with the state of the broker and stores the plan as an immutable
+        revision the operator can review. The response carries the plan, the
+        commands MCM is about to run and the report of the management channel.
+
+        The preview refuses a change that would open the management channel of
+        the plugin to clients that must not reach it, and refuses a change
+        while the file backend is still in charge.
+
+        The preview does not touch the broker. Apply the returned `plan_id`
+        through `POST /api/v1/broker/dynsec/apply`.
+
+        A password never travels through the response: the plan shows the
+        commands of a client creation with the password masked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DynSecDocumentRequest" }
+      responses:
+        "200":
+          description: Preview of the edited security database.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DynSecPreviewResponse" }
+        "400":
+          description: The submitted security database did not pass the validation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DynSecValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            The management channel would be open, or the dynamic security
+            backend has not been adopted yet.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Dynamic security management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/dynsec/apply:
+    post:
+      tags: [Broker]
+      summary: Apply a reviewed dynamic security plan
+      description: |
+        Requires admin or higher. Runs the reviewed plan against the plugin and
+        verifies that the broker ended up in the requested state. A change that
+        cannot be verified is reported as a failure.
+
+        The `document` carries the passwords of the clients the plan creates.
+        It is compared with the reviewed plan, so a change that was not
+        reviewed is refused with 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DynSecApplyRequest" }
+      responses:
+        "200":
+          description: The state of the security database after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DynSecApplyResponse" }
+        "400":
+          description: The plan id is missing or the document is invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            The plan was already applied, the security database changed after
+            the preview, or the management channel is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Dynamic security management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/dynsec/adopt:
+    post:
+      tags: [Broker]
+      summary: Prepare the migration to the dynamic security backend
+      description: |
+        Requires admin or higher. Prepares the migration from the file backend
+        to the dynamic security backend: the users and the rules of the file
+        backend become the clients and the roles of the plugin, the database
+        of the plugin is written, and the configuration revision that loads the
+        plugin and drops the file backend is stored.
+
+        The adoption is never implicit. The response carries the plan, the
+        difference the configuration revision brings and the passwords of the
+        clients the migration creates. Those passwords are shown once.
+
+        Apply the returned `plan_id` through `POST /api/v1/broker/dynsec/apply`
+        to load the plugin and hand the access control over to it.
+      responses:
+        "200":
+          description: The prepared migration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DynSecPreviewResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            The broker already uses the dynamic security backend, or the
+            broker account of MCM cannot administer the plugin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Dynamic security management is not configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -2658,6 +2922,367 @@ components:
           type: array
           items: { $ref: "#/components/schemas/BrokerSettingsIssue" }
       required: [error, issues]
+    PluginListResponse:
+      type: object
+      description: |
+        The plugin catalog of the broker version and the plugins the managed
+        `mosquitto.conf` loads.
+      properties:
+        path: { type: string, description: "Path of the managed configuration file." }
+        version: { type: string, description: "Broker version the catalog describes." }
+        catalog:
+          type: array
+          items: { $ref: "#/components/schemas/PluginSpec" }
+        document: { $ref: "#/components/schemas/PluginDocument" }
+        backend:
+          type: string
+          enum: [none, file, dynamic-security]
+          description: |
+            The backend that owns the access control of the broker. `file` is
+            the password and ACL files, `dynamic-security` is the database of
+            the plugin.
+        warnings:
+          type: array
+          items: { type: string }
+      required: [path, version, catalog, document, backend]
+    PluginSpec:
+      type: object
+      description: |
+        One plugin MCM is able to configure for the broker version.
+      properties:
+        id: { type: string, description: "Identifier of the plugin inside MCM." }
+        title: { type: string }
+        description: { type: string }
+        module: { type: string, description: "Default path of the shared object." }
+        modules:
+          type: array
+          items: { type: string }
+          description: "Paths the plugin is known to live at."
+        since_version: { type: string }
+        reload_kind:
+          type: string
+          enum: [restart]
+          description: "A plugin is loaded at start-up, so a change needs a restart."
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/PluginOptionSpec" }
+      required: [id, title, module, since_version, reload_kind]
+    PluginOptionSpec:
+      type: object
+      properties:
+        name: { type: string, description: "Option name without the `plugin_opt_` prefix." }
+        description: { type: string }
+        required: { type: boolean }
+        default: { type: string }
+        placeholder: { type: boolean, description: "The option carries a path." }
+      required: [name]
+    PluginDocument:
+      type: object
+      description: |
+        The plugins the managed configuration declares.
+      properties:
+        plugins:
+          type: array
+          items: { $ref: "#/components/schemas/Plugin" }
+      required: [plugins]
+    Plugin:
+      type: object
+      description: |
+        One plugin of the managed configuration. A plugin the catalog does not
+        know carries no `id` and is preserved byte-for-byte, as are the
+        options the catalog does not manage.
+      properties:
+        id:
+          type: string
+          description: "Catalog id of the plugin. Empty for a plugin the catalog does not know."
+        module: { type: string, description: "Path of the shared object the broker loads." }
+        options:
+          type: object
+          additionalProperties: { type: string }
+          description: "The options MCM writes, keyed by the name without the `plugin_opt_` prefix."
+        unknown_options:
+          type: object
+          additionalProperties: { type: string }
+          description: "The `plugin_opt_*` options the catalog does not know. They are preserved."
+      required: [module]
+    PluginDocumentRequest:
+      type: object
+      description: |
+        The complete set of plugins the operator wants. The plugin directives
+        of the managed configuration are replaced with them; every other part
+        of the file is preserved.
+      properties:
+        plugins:
+          type: array
+          items: { $ref: "#/components/schemas/Plugin" }
+      required: [plugins]
+    PluginValidationError:
+      type: object
+      properties:
+        error: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/PluginValidationIssue" }
+      required: [error, issues]
+    PluginValidationIssue:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [unknown_plugin, duplicate, missing_option, value]
+        plugin: { type: string }
+        option: { type: string }
+        message: { type: string }
+      required: [kind, message]
+    DynSecResponse:
+      type: object
+      description: |
+        The security database of the dynamic security plugin, read from the
+        broker itself.
+      properties:
+        backend:
+          type: string
+          enum: [none, file, dynamic-security]
+        enabled: { type: boolean, description: "The plugin is loaded by the broker." }
+        management_client: { type: string, description: "The account that administers the broker." }
+        document: { $ref: "#/components/schemas/DynSecDocument" }
+        guard: { $ref: "#/components/schemas/DynSecGuard" }
+        warnings:
+          type: array
+          items: { type: string }
+      required: [backend, enabled, document, guard]
+    DynSecDocument:
+      type: object
+      properties:
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecClient" }
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecGroup" }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecRole" }
+        default_access: { $ref: "#/components/schemas/DynSecDefaultAccess" }
+        anonymous_group: { type: string }
+      required: [clients, groups, roles, default_access]
+    DynSecClient:
+      type: object
+      description: |
+        One broker client. The password is write-only: the API never returns
+        it, it reports `password_set` instead.
+      properties:
+        username: { type: string }
+        textname: { type: string }
+        textdescription: { type: string }
+        clientid: { type: string }
+        password:
+          type: string
+          description: "Password of the client. Write-only; only the request carries it."
+        password_set: { type: boolean, description: "A password is configured." }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecRoleRef" }
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecGroupRef" }
+        disabled: { type: boolean }
+      required: [username, roles, groups]
+    DynSecGroup:
+      type: object
+      properties:
+        groupname: { type: string }
+        textname: { type: string }
+        textdescription: { type: string }
+        roles:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecRoleRef" }
+        clients:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecClientRef" }
+      required: [groupname, roles, clients]
+    DynSecRole:
+      type: object
+      properties:
+        rolename: { type: string }
+        textname: { type: string }
+        textdescription: { type: string }
+        acls:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecACL" }
+      required: [rolename, acls]
+    DynSecACL:
+      type: object
+      properties:
+        acltype:
+          type: string
+          enum:
+            [publishClientSend, publishClientReceive, subscribeLiteral, subscribePattern, unsubscribeLiteral, unsubscribePattern]
+        topic: { type: string }
+        allow: { type: boolean }
+        priority: { type: integer }
+      required: [acltype, topic, allow]
+    DynSecRoleRef:
+      type: object
+      properties:
+        rolename: { type: string }
+        priority: { type: integer }
+      required: [rolename]
+    DynSecGroupRef:
+      type: object
+      properties:
+        groupname: { type: string }
+        priority: { type: integer }
+      required: [groupname]
+    DynSecClientRef:
+      type: object
+      properties:
+        username: { type: string }
+        priority: { type: integer }
+      required: [username]
+    DynSecDefaultAccess:
+      type: object
+      description: |
+        The access the plugin grants when no access entry matches.
+      properties:
+        publish_client_send: { type: boolean }
+        publish_client_receive: { type: boolean }
+        subscribe: { type: boolean }
+        unsubscribe: { type: boolean }
+      required: [publish_client_send, publish_client_receive, subscribe, unsubscribe]
+    DynSecGuard:
+      type: object
+      description: |
+        Who may reach the management channel of the plugin. The channel
+        administers every permission of the broker, so a client that must not
+        reach it is listed under `violations`.
+      properties:
+        ok: { type: boolean }
+        management_client: { type: string }
+        allowed:
+          type: array
+          items: { type: string }
+        violations:
+          type: array
+          items: { type: string }
+        reasons:
+          type: array
+          items: { type: string }
+      required: [ok]
+    DynSecDocumentRequest:
+      type: object
+      description: |
+        The complete security database the operator wants. The password of a
+        client travels with the request and never reaches the store.
+      properties:
+        document: { $ref: "#/components/schemas/DynSecDocument" }
+      required: [document]
+    DynSecApplyRequest:
+      type: object
+      properties:
+        plan_id: { type: string, minLength: 1 }
+        document:
+          allOf:
+            - $ref: "#/components/schemas/DynSecDocument"
+          description: |
+            The security database of the plan, with the passwords of the
+            clients the plan creates. Optional for an adoption, which reads
+            the state from the database of the plugin.
+      required: [plan_id]
+    DynSecPreviewResponse:
+      type: object
+      description: |
+        The plan that turns the state of the broker into the requested one.
+      properties:
+        plan_id: { type: string }
+        kind: { type: string, enum: [update, adopt] }
+        plan: { $ref: "#/components/schemas/DynSecPlan" }
+        guard: { $ref: "#/components/schemas/DynSecGuard" }
+        backend:
+          type: string
+          enum: [none, file, dynamic-security]
+        has_changes: { type: boolean }
+        credentials:
+          type: array
+          description: "The passwords of the clients the migration created. They are shown once."
+          items: { $ref: "#/components/schemas/DynSecCredential" }
+        config_revision_id:
+          type: string
+          description: "The configuration revision that loads the plugin. Set for an adoption."
+        config_diff: { type: string, description: "The difference the configuration revision brings." }
+        warnings:
+          type: array
+          items: { type: string }
+      required: [plan_id, kind, plan, guard, backend, has_changes]
+    DynSecPlan:
+      type: object
+      properties:
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecChange" }
+      required: [changes]
+    DynSecChange:
+      type: object
+      properties:
+        kind: { type: string, enum: [client, group, role, default_access, anonymous_group] }
+        name: { type: string }
+        action: { type: string, enum: [create, update, delete] }
+        summary: { type: string }
+        commands:
+          type: array
+          description: "The plugin commands that apply the change. A password is masked."
+          items: { $ref: "#/components/schemas/DynSecCommand" }
+      required: [kind, name, action, summary, commands]
+    DynSecCommand:
+      type: object
+      properties:
+        command: { type: string }
+        username: { type: string }
+        password: { type: string, description: "Masked in every response." }
+        clientid: { type: string }
+        textname: { type: string }
+        textdescription: { type: string }
+        groupname: { type: string }
+        rolename: { type: string }
+        acltype: { type: string }
+        topic: { type: string }
+        allow: { type: boolean }
+        priority: { type: integer }
+        verbose: { type: boolean }
+        count: { type: integer }
+        offset: { type: integer }
+      required: [command]
+    DynSecCredential:
+      type: object
+      properties:
+        username: { type: string }
+        password: { type: string, description: "The new password of the client. Shown once." }
+        reason: { type: string }
+      required: [username, password, reason]
+    DynSecApplyResponse:
+      type: object
+      properties:
+        plan_id: { type: string }
+        document: { $ref: "#/components/schemas/DynSecDocument" }
+        guard: { $ref: "#/components/schemas/DynSecGuard" }
+        deployment: { $ref: "#/components/schemas/Deployment" }
+      required: [plan_id, document, guard]
+    DynSecValidationError:
+      type: object
+      properties:
+        error: { type: string }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/DynSecValidationIssue" }
+      required: [error, issues]
+    DynSecValidationIssue:
+      type: object
+      properties:
+        kind: { type: string, enum: [name, topic, value, reference, duplicate] }
+        object: { type: string }
+        field: { type: string }
+        message: { type: string }
+      required: [kind, message]
     BridgeListResponse:
       type: object
       description: |

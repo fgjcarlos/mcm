@@ -261,6 +261,34 @@ jobs:
         # connection recovers when the remote broker comes back.
         run: bash scripts/tests/test-e2e-bridges.sh
 
+  e2e-dynsec:
+    name: Dynamic Security against live Mosquitto
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: pull the Mosquitto image with the dynamic security plugin
+        # The test starts the broker itself. The image is the one the
+        # repository proves the ACL and the bridge behaviour against, and
+        # it ships the dynamic security plugin MCM administers.
+        run: docker pull eclipse-mosquitto:2.0
+
+      - name: Dynamic Security against a real broker
+        # Issue #304 acceptance criteria: the dynamic security database
+        # lives in the broker and only the broker can prove that the
+        # access entries MCM writes are the ones the broker enforces and
+        # that the clients that must not reach the management channel are
+        # refused. MCM_REQUIRE_BROKER turns a missing broker into a
+        # failure, so the job cannot pass without proving anything.
+        env:
+          MCM_REQUIRE_BROKER: "1"
+        run: go test -tags integration -count=1 -v ./internal/dynsec/... ./internal/deploy/...
+
   e2e-acl-scoped-listener:
     name: Listener-scoped ACL rules against live Mosquitto
     runs-on: ubuntu-latest

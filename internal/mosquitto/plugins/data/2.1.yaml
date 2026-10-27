@@ -1,0 +1,7 @@
+# Mosquitto 2.1 plugin catalog — issue #304.
+#
+# Mosquitto 2.1 keeps the whole 2.0 plugin set, so this file inherits it
+# through the `extends` header and only lists the differences. An entry
+# with the same id as an inherited one replaces it.
+---
+extends: "2.0"

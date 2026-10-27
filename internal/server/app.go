@@ -52,6 +52,8 @@ type App struct {
 	brokerCfgSvc          brokerConfigServicer
 	brokerCfgCatalog      *catalog.Catalog
 	bridgeSvc             bridgeServicer
+	pluginSvc             pluginServicer
+	dynsecSvc             dynSecServicer
 	listenerSvc           *listener.ListenerService
 	listenerRestartRunner listener.ListenerRestartRunner
 	certificateSvc        *certificate.Service
@@ -476,12 +478,30 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/broker/bridges", a.requireRole(auth.RoleAuditor, http.HandlerFunc(brAPI.handleList)))
 		mux.Handle("POST /api/v1/broker/bridges/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(brAPI.handlePreview)))
 		mux.Handle("POST /api/v1/broker/bridges/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(brAPI.handleApply)))
+
+		// Issue #304: the plugin surface and the dynamic security
+		// surface. The plugin catalog is readable by an auditor, the
+		// preview needs an operator and the apply needs an admin.
+		plAPI := &pluginAPI{svc: a.pluginSvc}
+		mux.Handle("GET /api/v1/broker/plugins", a.requireRole(auth.RoleAuditor, http.HandlerFunc(plAPI.handleList)))
+		mux.Handle("POST /api/v1/broker/plugins/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(plAPI.handlePreview)))
+		mux.Handle("POST /api/v1/broker/plugins/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(plAPI.handleApply)))
+
+		dsAPI := &dynSecAPI{svc: a.dynsecSvc}
+		mux.Handle("GET /api/v1/broker/dynsec", a.requireRole(auth.RoleAuditor, http.HandlerFunc(dsAPI.handleGet)))
+		mux.Handle("POST /api/v1/broker/dynsec/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(dsAPI.handlePreview)))
+		mux.Handle("POST /api/v1/broker/dynsec/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dsAPI.handleApply)))
+		mux.Handle("POST /api/v1/broker/dynsec/adopt", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dsAPI.handleAdopt)))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {
 		mux.Handle("/", spaHandler(a.frontendFS))
 	}
-	return withSecurityHeaders(withCORS(withBodyLimit(mux, apiBodyLimitBytes), a.cfg.HTTP.CORS.AllowedOrigins))
+	// The panic recovery sits closest to the handlers: it turns a bug in a
+	// handler into a normal JSON error instead of a connection the client
+	// cannot read. The security headers and the CORS headers still wrap it,
+	// so the answer of the recovery is a well-formed response.
+	return withSecurityHeaders(withCORS(withBodyLimit(withPanicRecovery(mux, a.logger), apiBodyLimitBytes), a.cfg.HTTP.CORS.AllowedOrigins))
 }
 
 type statusResponse struct {
