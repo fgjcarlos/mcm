@@ -16,7 +16,7 @@ The current alpha is **not feature-complete for this goal**. [Epic #308](https:/
 - Operator accounts, roles, MFA, audit/security events, observed traffic and connection events.
 - SQLite persistence for MCM; Prometheus integration and optional JSON Schema/Sparkplug diagnostics.
 
-There is no graphical `mosquitto.conf` editor, listener/bridge editor, broker certificate manager or graphical backup/restore workflow. The general broker settings (persistence, queues, sessions and logging) are editable through the settings forms of issue #302; the other directives are not exposed for directive-level editing yet. The current image family is Mosquitto 2.0; a tested directive/version matrix remains to be built.
+There is no graphical `mosquitto.conf` editor, broker certificate manager or graphical backup/restore workflow. The listener, bridge, plugin and Dynamic Security editors are in place. The general broker settings (persistence, queues, sessions and logging) are editable through the settings forms of issue #302; the other directives are not exposed for directive-level editing yet. The current image family is Mosquitto 2.0; a tested directive/version matrix remains to be built.
 
 ## Delivery order and tracked work
 
@@ -37,13 +37,14 @@ P0 fixes precede expansion of configuration writes. P1 completes the core admini
 | P1 | Native authentication and ACL coverage | [#301](https://github.com/fgjcarlos/mcm/issues/301) |
 | P1 | Persistence, limits, sessions and logging | [#302](https://github.com/fgjcarlos/mcm/issues/302) |
 | P1 | Bridges between brokers | [#303](https://github.com/fgjcarlos/mcm/issues/303) |
-| P2 | Plugins and Dynamic Security | [#304](https://github.com/fgjcarlos/mcm/issues/304) |
+| P2 | Plugins and Dynamic Security (in progress) | [#304](https://github.com/fgjcarlos/mcm/issues/304) |
 | P1 | Configuration and recovery UI workflow | [#305](https://github.com/fgjcarlos/mcm/issues/305) |
 | P2 | Broker diagnostics with explicit data sources | [#306](https://github.com/fgjcarlos/mcm/issues/306) |
 | P2 | Remove unsupported options and isolate optional extensions | [#307](https://github.com/fgjcarlos/mcm/issues/307) |
 
 Landed: #298 (versioned configuration model and lossless import) — parser, catalog, adoption, preview/apply lifecycle and UI panel.
 Landed: #302 (persistence, limits, sessions and logging) — catalog-driven settings forms with units and bounds, a byte-exact round-trip, and the reload/restart distinction.
+In progress: #304 (plugins and Dynamic Security) — the plugin catalog per broker version with a lossless editor of the plugin directives, the Dynamic Security adapter over the control channel of the plugin with verified answers, the separation of the file backend from the plugin and the explicit adoption between them, and the management-channel report. The behaviour is proven against a real Mosquitto with the plugin.
 
 ### Dependencies
 

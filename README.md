@@ -14,7 +14,7 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 
 ## Project status
 
-**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the rest of `mosquitto.conf` — bridges and plugins are not managed from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), manages the bridge connections to remote brokers and the plugins of the broker — including the security database of the dynamic security plugin — and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the whole of `mosquitto.conf`; the directives that are not exposed yet are not editable from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
 
 | Capability | Current scope |
 | --- | --- |
@@ -23,7 +23,8 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 | Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
-| Broker configuration editor | Import, version-aware validation and an explicit adoption gate are available; directive-level editing is exposed for the general settings only. |
+| Broker configuration editor | Import, version-aware validation and an explicit adoption gate are available; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins only. |
+| Plugins and Dynamic Security | A plugin catalog per broker version with a lossless editor of the plugin directives, and a Dynamic Security editor that reads the security database of the plugin from the broker itself. The file backend and the plugin backend are kept apart, and the migration between them is an explicit, reviewed operation. |
 | General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
 | Backup and restore | Existing Taskfile recipes have known limitations; do not rely on them for recovery until corrected. |
 | Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
@@ -274,6 +275,7 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 - [docs/production.md](./docs/production.md) — production deployment guide.
 - [docs/acl.md](./docs/acl.md) — ACL model and REST shape.
 - [docs/bridges.md](./docs/bridges.md) — bridge model, Mosquitto mapping and REST shape.
+- [docs/plugins.md](./docs/plugins.md) — plugin catalog, Dynamic Security model, management channel and REST shape.
 - [docs/json-schemas.md](./docs/json-schemas.md) — JSON Schema validators bound to MQTT topic filters.
 - [docs/sparkplug.md](./docs/sparkplug.md) — Sparkplug B namespace classification.
 - [docs/webhook-alerting.md](./docs/webhook-alerting.md) — outbound operational webhooks.
