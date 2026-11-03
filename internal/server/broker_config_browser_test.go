@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -36,11 +37,19 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 	defer cancel()
 	run := func(args ...string) string {
 		t.Helper()
-		output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker %v: %v\n%s", args, err, output)
+		// Only stdout carries the answer (the container id, the published
+		// port, the broker version). The streams are kept apart on
+		// purpose: Docker writes the image pull progress to stderr, and
+		// a merged output would prepend it to the container id, so every
+		// later command would address a container that does not exist.
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("docker %v: %v\n%s", args, err, stderr.String())
 		}
-		return strings.TrimSpace(string(output))
+		return strings.TrimSpace(stdout.String())
 	}
 	directory := t.TempDir()
 	const servicePassword = "isolated-mcm-service-password"
