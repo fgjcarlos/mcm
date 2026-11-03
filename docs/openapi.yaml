@@ -1412,6 +1412,79 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/revisions:
+    get:
+      tags: [Broker]
+      summary: List the latest 100 broker configuration revisions and exact deployment outcomes
+      responses:
+        "200":
+          description: Configuration metadata, root copy, or fresh immutable preview. No broker files are written.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/config/revisions/{id}/recover:
+    post:
+      tags: [Broker]
+      summary: Prepare a new preview from a previous revision
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_hash]
+              properties:
+                base_hash: { type: string }
+      responses:
+        "200":
+          description: Configuration metadata, root copy, or fresh immutable preview. No broker files are written.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/config/copy:
+    get:
+      tags: [Broker]
+      summary: Export a root configuration copy (not a complete broker backup)
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
+      responses:
+        "200":
+          description: Configuration metadata, root copy, or fresh immutable preview. No broker files are written.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Broker]
+      summary: Validate and preview a root configuration copy
+      description: |
+        Requires admin and recent MFA. Accepts format mcm-broker-config/v1, body,
+        and its SHA-256 hash. References existing includes; does not restore
+        include files, certificates, passwords, SQLite or broker data. Never
+        applies immediately. Review the returned revision before explicit apply.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format, body, hash]
+              additionalProperties: false
+              properties:
+                format: { type: string, enum: [mcm-broker-config/v1] }
+                body: { type: string }
+                hash: { type: string }
+      responses:
+        "200":
+          description: Fresh immutable preview; apply still requires confirmation.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Invalid copy format, hash, or configuration; no revision created.
   /api/v1/broker/settings:
     get:
       tags: [Broker]
@@ -1858,6 +1931,12 @@ components:
         JWT obtained from `POST /api/v1/auth/login`. Carries `user_id`, `username`,
         and `role` claims. Tokens are signed with HS256 using `auth.jwt_secret`.
   parameters:
+    RecentMFA:
+      in: header
+      name: X-MCM-MFA
+      required: true
+      description: Five-minute proof from POST /api/v1/auth/mfa/step-up, bound to the current session. Missing, stale or revoked proof returns 403 with code mfa_required.
+      schema: { type: string }
     AdminUserID:
       in: path
       name: id
@@ -2756,6 +2835,22 @@ components:
         path: { type: string }
         body: { type: string }
         hash: { type: string, description: "hex-encoded sha256 of `body`" }
+        broker_version: { type: string, description: "unknown when not independently observed; never inferred from the catalog" }
+        catalog_version: { type: string }
+        capabilities:
+          type: object
+          description: Configured operations, not a guarantee of runtime permissions or successful activation.
+          additionalProperties: { type: boolean }
+        include_snapshot: { $ref: "#/components/schemas/BrokerConfigIncludeSnapshot" }
+        external_drift: { type: boolean, description: "Root or include hashes differ from the last verified revision, when one exists" }
+        last_verified:
+          type: [object, "null"]
+          properties:
+            deployment_id: { type: integer }
+            revision_id: { type: string }
+            hash: { type: string }
+            body: { type: string }
+            verified_at: { type: string, format: date-time }
       required: [path, body, hash]
     BrokerConfigImportRequest:
       type: object
@@ -2765,6 +2860,12 @@ components:
         it was wired with via `WithBrokerConfig`, so the field is ignored.
       properties:
         path: { type: string }
+        body:
+          type: string
+          description: Optional root-file draft. Omit to import the on-disk file. Includes are validated separately, never concatenated into this body.
+        base_hash:
+          type: string
+          description: Expected on-disk root hash. A stale draft returns 409 without creating a revision. Invalid typed values return 422 with validation_issues and no revision.
       additionalProperties: false
     BrokerConfigPreview:
       type: object
@@ -2778,7 +2879,7 @@ components:
         rendered_conf_hash: { type: string }
         conf_diff: { type: string }
         conf_body: { type: string }
-        reload_kind: { type: string, enum: [reload, restart, both] }
+        reload_kind: { type: string, enum: [none, reload, restart, both] }
         requires_restart: { type: boolean }
         validation_issues:
           type: array
@@ -2848,7 +2949,7 @@ components:
         type: { type: string, enum: [string, integer, boolean, enum, string_list, path, duration] }
         scope: { type: string, enum: [global, listener, bridge, any] }
         multiplicity: { type: string, enum: [once, many, once_per_block] }
-        reload_kind: { type: string, enum: [reload, restart, both] }
+        reload_kind: { type: string, enum: [none, reload, restart, both] }
         since_version: { type: string }
         listener_since_version: { type: string }
         allowed_values:
@@ -2932,7 +3033,7 @@ components:
         max: { type: integer, format: int64 }
         default: { type: string }
         multiplicity: { type: string, enum: [once, many, once_per_block] }
-        reload_kind: { type: string, enum: [reload, restart, both] }
+        reload_kind: { type: string, enum: [none, reload, restart, both] }
         scope: { type: string, enum: [global, listener, bridge, any] }
         allowed_values:
           type: array

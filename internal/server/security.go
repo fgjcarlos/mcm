@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 )
 
 // withSecurityHeaders wraps next so that every response carries a baseline set
@@ -82,7 +83,11 @@ func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 		// Handle preflight (OPTIONS + Access-Control-Request-Method).
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			allowedHeaders := "Content-Type, Authorization"
+			if strings.HasPrefix(r.URL.Path, "/api/v1/broker/config/") {
+				allowedHeaders += ", X-MCM-MFA"
+			}
+			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return

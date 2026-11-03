@@ -8,12 +8,10 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1475,6 +1473,7 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 		return storage.Deployment{}, err
 	}
 	d := &storage.Deployment{
+		RevisionID:          revisionID,
 		Actor:               actor,
 		Status:              "saved",
 		ACLSnapshot:         aclSnapshot,
@@ -2106,12 +2105,14 @@ func (s *Service) getDeployment(id int64) (storage.Deployment, error) {
 // Broker-config path — issue #298
 // ---------------------------------------------------------------------------
 
-// brokerConfigDeployStatus enumerates the lifecycle stages the
-// broker-config flow walks through. They re-use the same strings as the
-// passwd/ACL flow (saved, applying, …) so a single API consumer can
-// render both surfaces identically. The distinguishing axis is
-// Deployment.Kind, not Status.
-const brokerConfigPerm = 0o644
+// The broker-config flow re-uses the deployment lifecycle strings of the
+// passwd/ACL flow (saved, applying, failed, pending_activation,
+// active_verified) so a single API consumer can render both surfaces
+// identically. The distinguishing axis is Deployment.Kind, not Status.
+//
+// The root file is never given permissions it did not already have: the
+// activation writes it with the mode it had on disk, and a rollback
+// restores those bytes with those same permissions.
 
 // PreviewBrokerConfig parses the configured mosquitto.conf, walks its
 // include_dir tree, validates against the catalog, and stores an
@@ -2119,6 +2120,10 @@ const brokerConfigPerm = 0o644
 // PreviewResult to the operator; apply binds the returned RevisionID
 // back through ApplyBrokerConfig.
 func (s *Service) PreviewBrokerConfig(ctx context.Context, actor string) (PreviewResult, error) {
+	return s.previewBrokerConfig(ctx, actor, nil)
+}
+
+func (s *Service) previewBrokerConfig(ctx context.Context, actor string, draft *BrokerConfigDraft) (PreviewResult, error) {
 	if s.confPath == "" || s.confCatalog == nil {
 		return PreviewResult{}, ErrBrokerConfigDisabled
 	}
@@ -2132,10 +2137,10 @@ func (s *Service) PreviewBrokerConfig(ctx context.Context, actor string) (Previe
 	)
 	if s.mutationCoordinator != nil {
 		s.mutationCoordinator.LockMutations()
-		preview, err = s.previewBrokerConfigLocked(ctx, actor)
+		preview, err = s.previewBrokerConfigLocked(ctx, actor, draft)
 		s.mutationCoordinator.UnlockMutations()
 	} else {
-		preview, err = s.previewBrokerConfigLocked(ctx, actor)
+		preview, err = s.previewBrokerConfigLocked(ctx, actor, draft)
 	}
 	if err != nil {
 		return PreviewResult{}, err
@@ -2144,117 +2149,6 @@ func (s *Service) PreviewBrokerConfig(ctx context.Context, actor string) (Previe
 		s.auditFn(ctx, actor, "deployment.preview", "broker_config", "", "success", nil)
 	}
 	return preview, nil
-}
-
-func (s *Service) previewBrokerConfigLocked(ctx context.Context, actor string) (PreviewResult, error) {
-	topBytes, err := os.ReadFile(s.confPath)
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("read broker config: %w", err)
-	}
-	top, err := conf.Parse(strings.NewReader(string(topBytes)), s.confPath)
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("parse broker config: %w", err)
-	}
-	root := filepath.Dir(s.confPath)
-	resolved, snapshot, err := conf.NewIncludeResolver(root).Resolve(top)
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("resolve includes: %w", err)
-	}
-	renderedBytes, err := resolved.Render()
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("render broker config: %w", err)
-	}
-	rendered := string(renderedBytes)
-
-	// Cast the catalog to the underlying *catalog.Catalog so Validate
-	// can iterate spec entries. ConfCatalog.Lookup already filters
-	// unknown directives; Validate is the cheaper structural pass.
-	var catForValidate *catalog.Catalog
-	if c, ok := s.confCatalog.(*catalog.Catalog); ok {
-		catForValidate = c
-	}
-	issues := conf.Validate(resolved, catForValidate)
-
-	// Reload classification: if any restart-required directive changed
-	// value, mark RequiresRestart so the apply path can refuse without
-	// force. We compare the live parser view of top+includes against
-	// itself for this preview (the rendered bytes are the future); the
-	// apply path performs the actual on-disk hash check.
-	reloadKind, requiresRestart := classifyReload(resolved, s.confCatalog)
-
-	baseHash := contentHash(string(topBytes))
-	renderedHash := contentHash(rendered)
-
-	diffStr, err := conf.Diff(s.confPath, s.confPath, topBytes, renderedBytes)
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("generate conf diff: %w", err)
-	}
-
-	revisionID, err := newRevisionID()
-	if err != nil {
-		return PreviewResult{}, err
-	}
-	includeJSON, err := json.Marshal(snapshot)
-	if err != nil {
-		return PreviewResult{}, fmt.Errorf("serialise include snapshot: %w", err)
-	}
-	rev := &storage.BrokerConfigRevision{
-		ID:               revisionID,
-		Actor:            actor,
-		BaseConfHash:     baseHash,
-		RenderedConfHash: renderedHash,
-		BasePath:         s.confPath,
-		ConfRendered:     rendered,
-		IncludeSnapshot:  string(includeJSON),
-		CreatedAt:        time.Now().UTC(),
-	}
-	if err := s.brokerCfgStore.InsertBrokerConfigRevision(ctx, rev); err != nil {
-		return PreviewResult{}, fmt.Errorf("store broker-config preview revision: %w", err)
-	}
-
-	return PreviewResult{
-		RevisionID:       revisionID,
-		Kind:             "broker_config",
-		BaseConfHash:     baseHash,
-		RenderedConfHash: renderedHash,
-		ConfDiff:         diffStr,
-		ConfBody:         rendered,
-		ReloadKind:       reloadKind,
-		RequiresRestart:  requiresRestart,
-		ValidationIssues: issues,
-		IncludeSnapshot:  snapshot,
-		HasChanges:       baseHash != renderedHash,
-	}, nil
-}
-
-// classifyReload returns the worst reload_kind seen across the parsed
-// conf and whether any restart-required directive has at least one
-// occurrence. The classification is intentionally conservative: a
-// single restart-required directive flips the whole preview to
-// RequiresRestart, because Mosquitto will not pick up the new
-// certificate / persistence_location until a broker restart.
-func classifyReload(f *conf.File, cat ConfCatalog) (string, bool) {
-	worst := "reload"
-	requiresRestart := false
-	for _, it := range f.Items {
-		if it.Kind != conf.ItemDirective && it.Kind != conf.ItemBlockOpen {
-			continue
-		}
-		spec, ok := cat.Lookup(it.Key)
-		if !ok {
-			continue
-		}
-		switch spec.ReloadKind {
-		case "restart":
-			worst = "restart"
-			requiresRestart = true
-		case "both":
-			if worst != "restart" {
-				worst = "both"
-			}
-		}
-	}
-	return worst, requiresRestart
 }
 
 // ApplyBrokerConfig applies the immutable preview revision and signals
@@ -2305,6 +2199,13 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("get broker-config revision: %w", err)
 	}
+	// Issue #305: a root-configuration revision must belong to this path
+	// and must still hash to the body it was created from. The settings,
+	// bridge and plugin revisions store a fragment, so the check applies to
+	// the root configuration only.
+	if kind == "broker_config" && (rev.BasePath != s.confPath || contentHash(rev.ConfRendered) != rev.RenderedConfHash) {
+		return storage.Deployment{}, ErrRevisionMismatch
+	}
 	if !rev.AppliedAt.IsZero() {
 		return storage.Deployment{}, ErrRevisionConsumed
 	}
@@ -2329,10 +2230,37 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	if err != nil {
 		return storage.Deployment{}, fmt.Errorf("re-parse rendered conf: %w", err)
 	}
+	// Issue #305: the include tree must still match the snapshot the
+	// preview was taken against, the body must not carry inline
+	// credentials that the editor and the diffs would expose, and the
+	// catalog must not report a value the broker cannot accept.
+	if strings.TrimSpace(rev.IncludeSnapshot) != "" {
+		if err := s.checkBrokerConfigIncludes(parsed, rev.IncludeSnapshot); err != nil {
+			return storage.Deployment{}, err
+		}
+	}
+	if kind == "broker_config" {
+		if hasInlineCredentials(parsed) {
+			return storage.Deployment{}, ErrSensitiveBrokerConfig
+		}
+		if cat, ok := s.confCatalog.(*catalog.Catalog); ok {
+			for _, issue := range conf.Validate(parsed, cat) {
+				if issue.Kind == "type" || issue.Kind == "dependency" {
+					return storage.Deployment{}, ErrInvalidBrokerConfig
+				}
+			}
+		}
+	}
 	reloadKind, requiresRestart := classifyReload(parsed, s.confCatalog)
 	if rev.ChangedDirectives != nil {
 		changed := changedDirectiveNames(*rev.ChangedDirectives)
 		reloadKind, requiresRestart = classifyChangedDirectives(changed, s.confCatalog)
+	} else if kind == "broker_config" {
+		// A root-configuration revision without a change set is classified
+		// from the difference between the file the preview was taken
+		// against and the reviewed body: an untouched restart-required
+		// directive must not turn a reload-only edit into a restart.
+		reloadKind, requiresRestart = s.brokerConfigImpact(string(currentBody), rev.ConfRendered)
 	}
 	if requiresRestart && !force {
 		return storage.Deployment{}, fmt.Errorf("%w: directives %s", ErrRequiresRestart, restartDirectiveNames(parsed, s.confCatalog))
@@ -2360,6 +2288,7 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 
 	// Persist the deployment row first; lifecycle starts at "saved".
 	dep := &storage.Deployment{
+		RevisionID:   revisionID,
 		Actor:        actor,
 		Status:       "saved",
 		Kind:         kind,
@@ -2382,58 +2311,7 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 		return storage.Deployment{}, fmt.Errorf("consume broker-config revision: %w", err)
 	}
 
-	// Atomic single-file write. The applier is the
-	// mosquitto.atomicWrite helper, reused from the passwd/ACL path
-	// to avoid a second file-writer (project rule: reuse internal/mosquitto.Applier).
-	if err := mosquitto.AtomicWriteConf(s.confPath, rev.ConfRendered, brokerConfigPerm); err != nil {
-		_ = s.updateDeploymentStatus(dep.ID, "failed", fmt.Sprintf("write broker config: %s", err))
-		return storage.Deployment{}, fmt.Errorf("write broker config: %w", err)
-	}
-
-	// Activation.
-	//
-	// Mosquitto reads a bridge and a plugin at start-up: a reload does not
-	// create the connection and does not load the plugin, so a change that
-	// needs a restart needs a restart. Every other change uses the reload
-	// signal. Restart-required diffs land here only when force is true; the
-	// operator's ReloadCommand is expected to bounce the broker (systemctl
-	// restart, k8s rollout, etc.).
-	restarted := false
-	if requiresRestart || kindNeedsRestart(kind) {
-		restarted, err = s.restartBroker(ctx)
-		if err != nil {
-			_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
-			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("restart: %s", err))
-			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
-			return storage.Deployment{}, fmt.Errorf("restart broker after broker-config apply: %w", err)
-		}
-	}
-	if !restarted {
-		if err := s.applier.ReloadBrokerOnly(); err != nil {
-			// Roll back: write the snapshotted bytes back. We re-read
-			// currentBody since the previous Write may have partially
-			// succeeded.
-			_ = mosquitto.AtomicWriteConf(s.confPath, string(currentBody), brokerConfigPerm)
-			_ = s.updateDeploymentStatus(dep.ID, "rolled_back", fmt.Sprintf("reload: %s", err))
-			s.emitAudit(ctx, actor, "deployment.rolled_back", dep.ID, "failure")
-			return storage.Deployment{}, fmt.Errorf("reload broker after broker-config apply: %w", err)
-		}
-	}
-
-	// A change that was written but not restarted is not active yet: the
-	// broker still runs the previous configuration. The deployment says
-	// so instead of claiming a verified activation.
-	status := "active_verified"
-	message := ""
-	if (requiresRestart || kindNeedsRestart(kind)) && !restarted {
-		status = "pending_activation"
-		message = "the change is written to the configuration, but the broker was only reloaded; restart it to activate it"
-	}
-	if err := s.updateDeploymentStatus(dep.ID, status, message); err != nil {
-		return storage.Deployment{}, fmt.Errorf("update broker-config deployment to %s: %w", status, err)
-	}
-	s.emitAudit(ctx, actor, "deployment."+status, dep.ID, "success")
-	return s.getDeployment(dep.ID)
+	return s.activateBrokerConfig(ctx, actor, dep, string(currentBody), rev.ConfRendered, kind, requiresRestart)
 }
 
 // kindNeedsRestart reports whether a deployment of this kind always
@@ -2587,7 +2465,7 @@ func (s *Service) AdoptBrokerConfig(ctx context.Context, actor string) (storage.
 // without touching the include tree or the catalog. Used by the GET
 // /api/v1/broker/config endpoint.
 func (s *Service) GetBrokerConfig(ctx context.Context) (GetBrokerConfigResult, error) {
-	if s.confPath == "" {
+	if s.confPath == "" || s.confCatalog == nil || s.brokerCfgStore == nil {
 		return GetBrokerConfigResult{}, ErrBrokerConfigDisabled
 	}
 	body, err := os.ReadFile(s.confPath)
@@ -2598,20 +2476,30 @@ func (s *Service) GetBrokerConfig(ctx context.Context) (GetBrokerConfigResult, e
 	if err != nil {
 		return GetBrokerConfigResult{}, fmt.Errorf("parse broker config: %w", err)
 	}
-	return GetBrokerConfigResult{
-		Path:   s.confPath,
-		Body:   string(body),
-		Hash:   contentHash(string(body)),
-		Parsed: parsed,
-	}, nil
+	if hasInlineCredentials(parsed) {
+		return GetBrokerConfigResult{}, ErrSensitiveBrokerConfig
+	}
+	result := GetBrokerConfigResult{
+		Path: s.confPath, Body: string(body), Hash: contentHash(string(body)), Parsed: parsed,
+	}
+	if err := s.brokerConfigState(ctx, &result); err != nil {
+		return GetBrokerConfigResult{}, err
+	}
+	return result, nil
 }
 
 // GetBrokerConfigResult is the GET /api/v1/broker/config payload. The
 // Parsed field is intentionally not serialised — the API returns Body
 // and a derived summary, not the raw AST.
 type GetBrokerConfigResult struct {
-	Path   string     `json:"path"`
-	Body   string     `json:"body"`
-	Hash   string     `json:"hash"`
-	Parsed *conf.File `json:"-"`
+	Path            string                  `json:"path"`
+	Body            string                  `json:"body"`
+	Hash            string                  `json:"hash"`
+	Parsed          *conf.File              `json:"-"`
+	BrokerVersion   string                  `json:"broker_version"`
+	CatalogVersion  string                  `json:"catalog_version"`
+	Capabilities    map[string]bool         `json:"capabilities"`
+	IncludeSnapshot conf.IncludeSnapshot    `json:"include_snapshot"`
+	LastVerified    *BrokerConfigActivation `json:"last_verified"`
+	ExternalDrift   bool                    `json:"external_drift"`
 }

@@ -473,6 +473,14 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("GET /api/v1/broker/config/catalog", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleCatalog)))
 		mux.Handle("GET /api/v1/broker/settings", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleGetSettings)))
 		mux.Handle("POST /api/v1/broker/settings/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handlePreviewSettings)))
+
+		// Issue #305: revision history, recovery to a new preview, and
+		// root-configuration copies. Recovery and copies change what the
+		// broker serves, so they require admin and recent MFA.
+		mux.Handle("GET /api/v1/broker/config/revisions", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleBrokerConfigRevisions)))
+		mux.Handle("POST /api/v1/broker/config/revisions/{id}/recover", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(a.handleBrokerConfigRecover))))
+		mux.Handle("GET /api/v1/broker/config/copy", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(a.handleBrokerConfigExport))))
+		mux.Handle("POST /api/v1/broker/config/copy", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(a.handleBrokerConfigCopyImport))))
 	}
 	{
 		brAPI := &bridgeAPI{svc: a.bridgeSvc}

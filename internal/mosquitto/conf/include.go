@@ -164,6 +164,13 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 
 	for _, name := range names {
 		childPath := filepath.Join(resolved, name)
+		actualPath, err := filepath.EvalSymlinks(childPath)
+		if err != nil {
+			return err
+		}
+		if actualPath != r.root && !strings.HasPrefix(actualPath, r.root+string(filepath.Separator)) {
+			return fmt.Errorf("%w: included file %q", ErrIncludeSymlinkEscape, name)
+		}
 		info, err := os.Stat(childPath)
 		if err != nil {
 			return fmt.Errorf("stat %q: %w", childPath, err)
@@ -178,7 +185,7 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 			}
 			continue
 		}
-		if !info.Mode().IsRegular() {
+		if !info.Mode().IsRegular() || filepath.Ext(name) != ".conf" || filepath.Ext(actualPath) != ".conf" {
 			continue
 		}
 		if pattern != "" {
@@ -194,7 +201,14 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 		if _, dup := visited[rel]; dup {
 			continue
 		}
-		content, err := os.ReadFile(childPath)
+		// OpenRoot also enforces confinement at open time, closing the
+		// symlink-swap gap between EvalSymlinks and reading the bytes.
+		readRoot, err := os.OpenRoot(r.root)
+		if err != nil {
+			return err
+		}
+		content, err := readRoot.ReadFile(rel)
+		_ = readRoot.Close()
 		if err != nil {
 			return fmt.Errorf("read include %q: %w", childPath, err)
 		}
