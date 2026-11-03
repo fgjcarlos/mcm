@@ -23,6 +23,7 @@ type brokerConfigCopy struct {
 func (a *App) handleBrokerConfigRevisions(w http.ResponseWriter, r *http.Request) {
 	revisions, err := a.store.ListBrokerConfigRevisions(r.Context())
 	if err != nil {
+		a.recordAuditFromRequest(r, "broker_config.revisions", "broker_config", "", "failure", nil)
 		writeJSON(w, 500, errorResponse{Error: "internal server error"})
 		return
 	}
@@ -33,12 +34,15 @@ func (a *App) handleBrokerConfigRevisions(w http.ResponseWriter, r *http.Request
 // Recovery never reuses a consumed revision. It validates the selected bytes
 // against today's files and returns a new immutable preview for explicit apply.
 func (a *App) handleBrokerConfigRecover(w http.ResponseWriter, r *http.Request) {
-	rev, err := a.store.GetBrokerConfigRevision(r.Context(), r.PathValue("id"))
+	revisionID := r.PathValue("id")
+	rev, err := a.store.GetBrokerConfigRevision(r.Context(), revisionID)
 	if errors.Is(err, storage.ErrBrokerConfigRevisionNotFound) {
+		a.recordAuditFromRequest(r, "broker_config.recover", "broker_config", revisionID, "failure", nil)
 		writeJSON(w, 404, errorResponse{Error: "broker config revision not found"})
 		return
 	}
 	if err != nil {
+		a.recordAuditFromRequest(r, "broker_config.recover", "broker_config", revisionID, "failure", nil)
 		writeJSON(w, 500, errorResponse{Error: "internal server error"})
 		return
 	}
@@ -46,6 +50,7 @@ func (a *App) handleBrokerConfigRecover(w http.ResponseWriter, r *http.Request) 
 		BaseHash string `json:"base_hash"`
 	}
 	if err = json.NewDecoder(r.Body).Decode(&req); err != nil || req.BaseHash == "" {
+		a.recordAuditFromRequest(r, "broker_config.recover", "broker_config", revisionID, "failure", nil)
 		writeJSON(w, 400, errorResponse{Error: "base_hash is required"})
 		return
 	}
@@ -56,11 +61,13 @@ func (a *App) handleBrokerConfigRecover(w http.ResponseWriter, r *http.Request) 
 // to be a complete broker/database/certificate/credential backup (#295).
 func (a *App) handleBrokerConfigExport(w http.ResponseWriter, r *http.Request) {
 	if a.brokerCfgSvc == nil {
+		a.recordAuditFromRequest(r, "broker_config.export", "broker_config", "", "failure", nil)
 		writeJSON(w, 503, errorResponse{Error: "broker config is not configured"})
 		return
 	}
 	cfg, err := a.brokerCfgSvc.GetBrokerConfig(r.Context())
 	if err != nil {
+		a.recordAuditFromRequest(r, "broker_config.export", "broker_config", "", "failure", nil)
 		writeJSON(w, 503, errorResponse{Error: "broker config is unavailable"})
 		return
 	}
@@ -75,6 +82,7 @@ func (a *App) handleBrokerConfigCopyImport(w http.ResponseWriter, r *http.Reques
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&copy); err != nil {
+		a.recordAuditFromRequest(r, "broker_config.import_copy", "broker_config", "", "failure", nil)
 		if isMaxBytesError(err) {
 			writeJSON(w, 413, errorResponse{Error: "request body too large"})
 			return
@@ -84,6 +92,7 @@ func (a *App) handleBrokerConfigCopyImport(w http.ResponseWriter, r *http.Reques
 	}
 	digest := sha256.Sum256([]byte(copy.Body))
 	if copy.Format != brokerCopyFormat || copy.Hash != hex.EncodeToString(digest[:]) {
+		a.recordAuditFromRequest(r, "broker_config.import_copy", "broker_config", "", "failure", nil)
 		writeJSON(w, 422, errorResponse{Error: "invalid configuration copy format or hash"})
 		return
 	}
@@ -95,6 +104,7 @@ func (a *App) writeRecoveryPreview(w http.ResponseWriter, r *http.Request, draft
 		PreviewBrokerConfigDraft(context.Context, string, deploy.BrokerConfigDraft) (deploy.PreviewResult, error)
 	})
 	if !ok {
+		a.recordAuditFromRequest(r, action, "broker_config", id, "failure", nil)
 		writeJSON(w, 503, errorResponse{Error: "configuration editing is unavailable"})
 		return
 	}

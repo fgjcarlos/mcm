@@ -7,7 +7,7 @@ MCM manages the configured `mosquitto.conf` through immutable previews. Importin
 1. Open **Configuration** and import the existing root configuration. Review the on-disk body and catalog warnings before editing.
 2. Edit the draft and validate it. Review the exact revision, diff, affected file, and reload/restart impact. Reload disk state to check for external edits; a changed base requires a new preview.
 3. As an administrator, enable MFA under **Administration → Account**. Confirm a fresh TOTP code before apply or recovery. An enrollment/login code already used in the same 30-second window cannot be reused.
-4. Apply the reviewed revision. Read its result in **Changes**; saved files and a successful reload signal are not, by themselves, proof of MQTT activation.
+4. Apply the reviewed revision. Read its result in **Changes**; saved files and a successful reload signal are not, by themselves, proof of MQTT activation. If the apply is refused because the broker cannot be restarted or because the activation could not be verified, nothing is written: fix the cause and apply the same revision again.
 5. To recover, select an earlier revision and prepare a new preview. Review it against today's configuration, then explicitly apply it.
 
 ## The workflow

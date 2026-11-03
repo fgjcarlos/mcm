@@ -16,6 +16,9 @@ import (
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
 
+// ErrBrokerRestartUnavailable reports that the configured adapter cannot
+// restart the broker. A change that needs a restart is refused instead of
+// being written and left inactive behind a reload.
 var ErrBrokerRestartUnavailable = errors.New("broker restart capability is unavailable")
 
 // ErrBrokerVerificationFailed reports that the broker did not serve the
@@ -83,20 +86,44 @@ func (s *Service) checkBrokerConfigIncludes(parsed *conf.File, serialized string
 	return nil
 }
 
+// verificationPrerequisites checks everything an activation probe needs
+// before it can run: a configured verifier, readable managed files and a
+// usable probe identity. It returns the file bodies so the caller does not
+// read them twice.
+func (s *Service) verificationPrerequisites(ctx context.Context) (aclBody, passwdBody string, available bool, reason string) {
+	if s.verifier == nil {
+		return "", "", false, "MQTT verification unavailable: no verifier is configured"
+	}
+	aclBody, err := s.readFile(s.deployCfg.ACLPath)
+	if err != nil {
+		return "", "", false, "MQTT verification unavailable: the managed ACL file is unreadable"
+	}
+	passwdBody, err = s.readFile(s.deployCfg.PasswdPath)
+	if err != nil {
+		return "", "", false, "MQTT verification unavailable: the managed password file is unreadable"
+	}
+	if _, ok := s.pickVerificationProbe(ctx, aclBody, passwdBody); !ok {
+		return "", "", false, "MQTT verification unavailable: no managed test identity with a known password and an ACL grant"
+	}
+	return aclBody, passwdBody, true, ""
+}
+
+// verificationAvailable is the preflight of the broker-configuration apply.
+// It reports whether the activation of a change could be observed at all.
+// A change that can never be verified is refused before anything is
+// written, because the operator would have no way to trust it.
+func (s *Service) verificationAvailable(ctx context.Context) (bool, string) {
+	_, _, available, reason := s.verificationPrerequisites(ctx)
+	return available, reason
+}
+
 // verifyActivation runs the positive+negative MQTT probe when the deployment
 // has a usable subject. It reports whether the probe ran at all so an
 // unverifiable activation is never presented as verified.
 func (s *Service) verifyActivation(ctx context.Context) (ok bool, ran bool, message string) {
-	if s.verifier == nil {
-		return false, false, "MQTT verification unavailable: no verifier is configured"
-	}
-	aclBody, err := s.readFile(s.deployCfg.ACLPath)
-	if err != nil {
-		return false, false, "MQTT verification unavailable: the managed ACL file is unreadable"
-	}
-	passwdBody, err := s.readFile(s.deployCfg.PasswdPath)
-	if err != nil {
-		return false, false, "MQTT verification unavailable: the managed password file is unreadable"
+	aclBody, passwdBody, available, reason := s.verificationPrerequisites(ctx)
+	if !available {
+		return false, false, reason
 	}
 	result, _, _ := s.runVerifier(ctx, aclBody, passwdBody)
 	if strings.HasPrefix(result.Message, "no activation probe available") {

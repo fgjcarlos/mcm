@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/conf"
 )
 
@@ -18,10 +17,9 @@ type BrokerConfigActivation struct {
 }
 
 func (s *Service) brokerConfigState(ctx context.Context, result *GetBrokerConfigResult) error {
-	_, restart := s.applier.(mosquitto.BrokerRestarter)
 	result.BrokerVersion = "unknown" // The catalog must never masquerade as detection.
 	result.CatalogVersion = s.confCatalog.VersionName()
-	result.Capabilities = map[string]bool{"read": true, "preview": true, "reload": s.applier != nil, "restart": restart, "verify_mqtt": s.verifier != nil, "write": s.applier != nil}
+	result.Capabilities = map[string]bool{"read": true, "preview": true, "reload": s.applier != nil, "restart": s.canRestartBroker(), "verify_mqtt": s.verifier != nil, "write": s.applier != nil}
 	_, snapshot, err := conf.NewIncludeResolver(filepath.Dir(s.confPath)).Resolve(result.Parsed)
 	if err != nil {
 		return err

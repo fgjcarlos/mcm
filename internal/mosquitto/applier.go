@@ -88,6 +88,12 @@ var ErrRestartNotSupported = errors.New("applier cannot restart the broker")
 // cannot restart returns ErrRestartNotSupported.
 type BrokerRestarter interface {
 	RestartBroker(ctx context.Context) error
+	// CanRestart reports whether RestartBroker can succeed in the current
+	// configuration, without restarting anything. The deploy service uses
+	// it to refuse a change that needs a restart the adapter cannot
+	// perform, instead of writing the file and leaving the broker on the
+	// previous configuration.
+	CanRestart() bool
 }
 
 // ApplyRequest describes the files one apply writes and the snapshots used
@@ -463,6 +469,12 @@ func (f FileApplier) RestartBroker(_ context.Context) error {
 	return nil
 }
 
+// CanRestart reports whether the file applier has a command that can bounce
+// the broker. Without one it can only reload it.
+func (f FileApplier) CanRestart() bool {
+	return len(f.ReloadCommand) > 0
+}
+
 // Apply atomically writes the ACL and password files, then reloads the
 // broker by sending SIGHUP to PID 1 inside the named Docker container.
 // Uses the same two-stage transactional behavior as FileApplier: both
@@ -568,4 +580,10 @@ func (d DockerApplier) RestartBroker(ctx context.Context) error {
 		return fmt.Errorf("docker restart: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// CanRestart reports whether the docker applier knows which container to
+// restart. Without a container name it cannot bounce the broker.
+func (d DockerApplier) CanRestart() bool {
+	return d.ContainerName != ""
 }

@@ -2265,6 +2265,21 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	if requiresRestart && !force {
 		return storage.Deployment{}, fmt.Errorf("%w: directives %s", ErrRequiresRestart, restartDirectiveNames(parsed, s.confCatalog))
 	}
+	if kind == "broker_config" {
+		// `force` authorizes applying a change that needs a restart, not
+		// pretending a reload is a restart. An adapter that cannot restart
+		// leaves the broker on the previous configuration, so the change
+		// is refused before anything is written.
+		if requiresRestart && !s.canRestartBroker() {
+			return storage.Deployment{}, fmt.Errorf("%w: directives %s", ErrBrokerRestartUnavailable, restartDirectiveNames(parsed, s.confCatalog))
+		}
+		// Preflight: a change whose activation could never be observed
+		// would leave the operator with no way to trust it. Refuse it
+		// before the file is written.
+		if available, reason := s.verificationAvailable(ctx); !available {
+			return storage.Deployment{}, fmt.Errorf("%w: %s", ErrBrokerVerificationFailed, reason)
+		}
+	}
 
 	// Adoption: adopt-in-this-call records a fresh row that the next
 	// preview compares against; /adopt handler records it up front.
@@ -2347,6 +2362,20 @@ func (s *Service) restartBroker(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// canRestartBroker reports whether the configured adapter can really
+// restart the broker. A type assertion is not enough: the file applier
+// implements the interface but refuses without a reload command, and the
+// docker applier needs a container name. A change that needs a restart is
+// refused when this is false, because writing the file and reloading would
+// leave the broker serving the previous configuration.
+func (s *Service) canRestartBroker() bool {
+	restarter, ok := s.applier.(mosquitto.BrokerRestarter)
+	if !ok {
+		return false
+	}
+	return restarter.CanRestart()
 }
 
 // waitForBroker waits until the broker accepts connections again.
