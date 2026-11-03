@@ -145,7 +145,7 @@ rm -f "$login_body"
 # Sensitive operations require a recent, session-bound MFA proof. The
 # helper enrolls TOTP for the authenticated account (fresh stacks only),
 # confirms it, and exchanges an unused time step for the proof.
-MFA_PROOF="$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
 if [ -z "$MFA_PROOF" ]; then
     echo "could not obtain a recent MFA proof" >&2
     exit 1
@@ -218,7 +218,7 @@ apply_body="$(mktemp)"
 apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
     -H "X-MCM-MFA: ${MFA_PROOF}" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$apply_code" != "200" ]; then
@@ -301,7 +301,7 @@ fail_body="$(mktemp)"
 fail_code="$(curl -sS -o "$fail_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
     -H "X-MCM-MFA: ${MFA_PROOF}" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$fail_code" = "200" ]; then

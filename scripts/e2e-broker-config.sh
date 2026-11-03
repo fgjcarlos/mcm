@@ -140,7 +140,7 @@ echo "login OK"
 # Sensitive operations require a recent, session-bound MFA proof. The
 # helper enrolls TOTP for the authenticated account (fresh stacks only),
 # confirms it, and exchanges an unused time step for the proof.
-MFA_PROOF="$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
 if [ -z "$MFA_PROOF" ]; then
     echo "could not obtain a recent MFA proof" >&2
     exit 1
@@ -166,7 +166,7 @@ auth_curl() {
 apply_curl() {
     local path="$1" body="$2"
     curl -sS -X POST "${HOST_URL}${path}" \
-        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Authorization: Bearer ${MFA_TOKEN}" \
         -H "X-MCM-MFA: ${MFA_PROOF}" \
         -H 'Content-Type: application/json' \
         -d "$body"

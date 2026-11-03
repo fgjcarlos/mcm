@@ -216,6 +216,19 @@ if [ -z "$TOKEN" ]; then
 fi
 pass 2 'the operator is authenticated'
 
+# --- recent MFA ------------------------------------------------------------
+# Applying a deployment requires a recent MFA proof. The helper creates a
+# dedicated operator, enrolls TOTP for it and exchanges an unused time step
+# for the proof; the apply then runs as that operator, because the proof is
+# bound to the session that requested it. The bootstrap operator keeps its
+# plain login, so the other steps of this script are unaffected.
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
+if [ -z "$MFA_PROOF" ]; then
+    echo "could not obtain a recent MFA proof" >&2
+    exit 1
+fi
+echo "recent MFA proof acquired"
+
 # post_json sends a request and writes the response body into $BODY_FILE.
 # It returns the HTTP status code.
 post_json() {
@@ -224,6 +237,20 @@ post_json() {
     curl -sS -o "$BODY_FILE" -w '%{http_code}' \
         -X POST "${HOST_URL}${path}" \
         -H "Authorization: Bearer ${TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d "$body" || echo "000"
+}
+
+# post_json_mfa sends a request that needs a recent MFA proof. The proof is
+# bound to the session that requested it, so the request runs as the
+# dedicated operator the helper creates.
+post_json_mfa() {
+    local path="$1"
+    local body="$2"
+    curl -sS -o "$BODY_FILE" -w '%{http_code}' \
+        -X POST "${HOST_URL}${path}" \
+        -H "Authorization: Bearer ${MFA_TOKEN}" \
+        -H "X-MCM-MFA: ${MFA_PROOF}" \
         -H 'Content-Type: application/json' \
         -d "$body" || echo "000"
 }
@@ -335,7 +362,7 @@ fi
 pass 6 'the preview shows the per-listener file'
 
 echo "--- e2e-acl-scoped-listener: POST /api/v1/deployments/apply ---"
-apply_code="$(post_json '/api/v1/deployments/apply' \
+apply_code="$(post_json_mfa '/api/v1/deployments/apply' \
     "$(jq -cn --arg id "$DEPLOY_REVISION_ID" '{revision_id: $id}')")"
 if [ "$apply_code" != "200" ]; then
     echo "the deployment apply failed with HTTP ${apply_code}:" >&2
