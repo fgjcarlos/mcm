@@ -59,6 +59,28 @@ func (a *App) handleMFAStepUp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"proof": proof, "expires_at": expires})
 }
 
+// requireRecentMFA is nested inside requireRole, so a proof cannot elevate
+// privileges. It rechecks live enrollment instead of trusting JWT role/MFA data.
+func (a *App) requireRecentMFA(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := currentUserFromContext(r.Context())
+		if !ok {
+			writeJSON(w, 401, errorResponse{Error: "authentication required"})
+			return
+		}
+		user, err := a.loadCurrentUser(r.Context(), claims)
+		if err != nil {
+			writeJSON(w, 500, errorResponse{Error: "internal server error"})
+			return
+		}
+		if !user.MFAEnabled || user.MFASecret == "" || a.tokens.VerifyActionMFA(r.Header.Get("X-MCM-MFA"), user.ID, r.Header.Get("Authorization"), user.MFASecret, a.now().UTC()) != nil {
+			a.denyRecentMFA(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (a *App) denyRecentMFA(w http.ResponseWriter, r *http.Request) {
 	a.recordAuditFromRequest(r, "mfa.required", "operation", r.URL.Path, "failure", nil)
 	writeJSON(w, 403, struct {

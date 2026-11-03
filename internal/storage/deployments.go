@@ -40,6 +40,10 @@ var ErrDeploymentNotFound = errors.New("deployment not found")
 
 // Deployment is a stored deployment lifecycle record.
 type Deployment struct {
+	// RevisionID binds the deployment to the exact immutable revision it
+	// applied, so a revision's outcome is read from the deployment that
+	// consumed it instead of being inferred.
+	RevisionID     string `json:"revision_id,omitempty"`
 	ID             int64  `json:"id"`
 	Actor          string `json:"actor"`
 	Status         string `json:"status"`
@@ -74,8 +78,9 @@ func (s *Store) InsertDeployment(ctx context.Context, d *Deployment) error {
 		kind = "passwd_acl"
 	}
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO deployments(actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO deployments(revision_id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.RevisionID,
 		d.Actor,
 		d.Status,
 		kind,
@@ -112,7 +117,7 @@ func (s *Store) InsertDeployment(ctx context.Context, d *Deployment) error {
 // GetDeployment returns a deployment record by ID.
 func (s *Store) GetDeployment(ctx context.Context, id int64) (Deployment, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
+		`SELECT id, revision_id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
 		 FROM deployments WHERE id = ?`, id)
 	d, err := scanDeployment(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -161,7 +166,7 @@ func (s *Store) ListDeployments(ctx context.Context, limit, offset int) ([]Deplo
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
+		`SELECT id, revision_id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
 		 FROM deployments ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
@@ -190,6 +195,7 @@ func scanDeployment(row interface{ Scan(dest ...any) error }) (Deployment, error
 
 	if err := row.Scan(
 		&d.ID,
+		&d.RevisionID,
 		&d.Actor,
 		&d.Status,
 		&d.Kind,

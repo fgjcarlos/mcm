@@ -36,15 +36,12 @@ type brokerConfigAPI struct {
 	catalog *catalog.Catalog
 }
 
-// brokerConfigImportRequest is the optional body for POST
-// /api/v1/broker/config/import and /preview. The operator can pin a
-// different conf path; today the field is accepted and ignored because
-// the production deploy service only manages the path it was wired with
-// via WithBrokerConfig. We keep the field so the contract matches what
-// the UI sends; a future change to switchable paths is then a non-
-// breaking addition.
+// brokerConfigImportRequest optionally supplies an edited root and its base
+// hash. Path is retained for compatibility but cannot select another file.
 type brokerConfigImportRequest struct {
-	Path string `json:"path,omitempty"`
+	Path     string  `json:"path,omitempty"`
+	Body     *string `json:"body,omitempty"`
+	BaseHash string  `json:"base_hash,omitempty"`
 }
 
 // brokerConfigApplyRequest is the body of POST /api/v1/broker/config/apply.
@@ -64,6 +61,10 @@ func (b *brokerConfigAPI) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := b.svc.GetBrokerConfig(r.Context())
+	if errors.Is(err, deploy.ErrSensitiveBrokerConfig) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
 	if errors.Is(err, deploy.ErrBrokerConfigDisabled) {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "broker config is not configured"})
 		return
@@ -72,11 +73,8 @@ func (b *brokerConfigAPI) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"path": res.Path,
-		"body": res.Body,
-		"hash": res.Hash,
-	})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, res)
 }
 
 // handleImportBrokerConfig serves POST /api/v1/broker/config/import —
@@ -89,11 +87,40 @@ func (b *brokerConfigAPI) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromRequest(r)
-	if _, err := decodeBrokerImport(r); err != nil && !errors.Is(err, io.EOF) {
+	req, err := decodeBrokerImport(r)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if isMaxBytesError(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	res, err := b.svc.PreviewBrokerConfig(r.Context(), actor)
+	var res deploy.PreviewResult
+	if req != nil && req.Body != nil {
+		drafter, ok := b.svc.(interface {
+			PreviewBrokerConfigDraft(context.Context, string, deploy.BrokerConfigDraft) (deploy.PreviewResult, error)
+		})
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "configuration editing is unavailable"})
+			return
+		}
+		res, err = drafter.PreviewBrokerConfigDraft(r.Context(), actor, deploy.BrokerConfigDraft{Body: *req.Body, BaseHash: req.BaseHash})
+	} else {
+		res, err = b.svc.PreviewBrokerConfig(r.Context(), actor)
+	}
+	if errors.Is(err, deploy.ErrSensitiveBrokerConfig) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
+	if errors.Is(err, deploy.ErrRevisionMismatch) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "preview revision base no longer matches the on-disk configuration"})
+		return
+	}
+	if errors.Is(err, deploy.ErrInvalidBrokerConfig) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "broker configuration validation failed", "validation_issues": res.ValidationIssues})
+		return
+	}
 	if errors.Is(err, deploy.ErrBrokerConfigDisabled) {
 		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "broker config is not configured"})
 		return
@@ -158,6 +185,10 @@ func (b *brokerConfigAPI) handleApply(w http.ResponseWriter, r *http.Request) {
 			"error":      "apply requires broker restart",
 			"directives": directives,
 		})
+	case errors.Is(err, deploy.ErrBrokerRestartUnavailable), errors.Is(err, deploy.ErrBrokerVerificationFailed), errors.Is(err, deploy.ErrSensitiveBrokerConfig):
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+	case errors.Is(err, deploy.ErrInvalidBrokerConfig):
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: "broker configuration validation failed"})
 	case errors.Is(err, deploy.ErrAdoptionRequired):
 		writeJSON(w, http.StatusConflict, errorResponse{Error: "broker config adoption required; call POST /api/v1/broker/config/adopt first or pass adopt=true"})
 	case errors.Is(err, deploy.ErrRevisionMismatch):
@@ -206,9 +237,8 @@ func directivesFromRestartErr(err error) string {
 	return strings.TrimSpace(msg[i+len(sep):])
 }
 
-// decodeBrokerImport reads (and ignores) the import body so we accept
-// the same payload the UI sends today while not rejecting requests
-// that omit the body.
+// decodeBrokerImport accepts an optional draft body; an omitted body imports
+// the current configured root. A request cannot select an arbitrary path.
 func decodeBrokerImport(r *http.Request) (*brokerConfigImportRequest, error) {
 	if r.Body == nil {
 		return nil, io.EOF

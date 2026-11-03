@@ -1,6 +1,14 @@
 # Broker configuration workflow and recent MFA
 
-MCM manages the configured `mosquitto.conf` through immutable previews. This guide describes the confirmation prerequisite that the sensitive steps of that workflow share, and the workflow itself.
+MCM manages the configured `mosquitto.conf` through immutable previews. Importing, editing, recovering a revision, or importing a configuration copy prepares a candidate; none of those operations changes broker files. Only an explicit apply can do that.
+
+## The workflow
+
+1. **Import.** `POST /api/v1/broker/config/import` with an empty body previews the root file as it is on disk. Include files stay separate: the root file is never rewritten with their bodies appended, and unknown directives are preserved.
+2. **Edit and validate.** `POST /api/v1/broker/config/preview` takes the edited `body` and the `base_hash` it was derived from. A stale base hash is refused with 409 and no revision is created; an invalid value is refused with 422 and the `validation_issues` that explain it. The response carries an immutable `revision_id`.
+3. **Adopt.** `POST /api/v1/broker/config/adopt` records the explicit adoption that the apply requires. It is an administrative decision, not a preview.
+4. **Apply.** `POST /api/v1/broker/config/apply` applies that exact `revision_id` with `adopt: true`. Every attempt consumes the revision, including an attempt that rolls back.
+5. **Recover.** `GET /api/v1/broker/config/revisions` lists the latest 100 revisions. `POST /api/v1/broker/config/revisions/{id}/recover` never reuses a consumed revision: it revalidates the selected bytes against today's files and returns a **new** preview against the current base, which then goes through review and an explicit apply like any other candidate.
 
 ## Authorization and recent MFA
 
@@ -30,3 +38,23 @@ The proof is a JWT with a dedicated `action_mfa` purpose. It is **not** an acces
 Send the proof in the `X-MCM-MFA` header alongside the original bearer token. Keep it in browser memory only — do not store it in `localStorage` and do not log it.
 
 In the UI, open **Administration → Account**. With MFA enabled, the *Recent MFA confirmation* form asks for an authenticator code and reports that the session is confirmed for up to five minutes. A code already used to confirm the enrollment or to sign in cannot be reused within the same 30-second window; wait for the next one.
+
+## Configuration copies are not full backups
+
+`GET /api/v1/broker/config/copy` exports a JSON attachment with format `mcm-broker-config/v1`, the root `body`, and its SHA-256 `hash`. `POST` to the same path validates the format/hash and returns a fresh preview. Treat exported configuration as sensitive operator material.
+
+These copies **do not contain or restore** include files, MQTT passwords, ACL files, certificates/private keys, SQLite, retained messages, or broker persistence. They reference the include files and dependencies already present on this instance. They are not a replacement for a complete deployment backup; full backup/restore remains tracked separately in #295. Never delete an existing broker or its volumes to test this workflow.
+
+Revision history returns the latest 100 entries. An apply-attempt timestamp is not a successful activation: the deployment linked to the exact revision supplies the outcome. Recovering historical content always revalidates it and uses a new revision against the current base.
+
+## State and compatibility limits
+
+- The displayed root body/hash describe disk state, not an independently observed runtime configuration.
+- The loaded directive catalog is a validation aid, not proof of the broker's detected version or complete Mosquitto syntax validation. An unobserved broker version is explicitly shown as unknown.
+- Known inline password/secret/token directives are rejected rather than exposing their values in the editor or diffs; archived bodies containing them are withheld. Externalize inline credentials before graphical import. Configuration copies still require sensitive handling.
+- Unknown syntax is preserved; catalog warnings and unsupported activation capabilities must remain visible. Review unknown directives carefully.
+- Includes remain separate; the root file is never rewritten with their bodies appended. Included `.conf` files are hashed again before apply; escaping symlinks are rejected.
+- A restart-required change is refused unless the configured adapter actually supports restart; `force` cannot turn SIGHUP into restart.
+- Configuration apply requires a usable managed MQTT test user, a known in-memory password and ACL grant, and a configured verifier. After a server restart, rotate/create the test credential through MCM before applying. Preflight fails before writing if verification is unavailable.
+- Successful activation verifies allowed/denied MQTT access after reload. It does not prove every directive's runtime value. On failure, MCM restores the previous root bytes and file permissions, signals activation again, and verifies recovery; `rollback_failed` requires operator intervention.
+- See [product scope](product-scope.md) and [OpenAPI](openapi.yaml) for boundaries and HTTP contracts.

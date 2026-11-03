@@ -458,6 +458,13 @@ CREATE TABLE IF NOT EXISTS dynsec_plans (
 CREATE INDEX IF NOT EXISTS idx_dynsec_plans_created ON dynsec_plans(created_at);
 `,
 	},
+	{
+		version: 28,
+		name:    "bind_deployments_to_revisions",
+		sql: `
+ALTER TABLE deployments ADD COLUMN revision_id TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // AdminUser is the stored administrative user model.

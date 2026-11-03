@@ -24,8 +24,8 @@
 #   2. GET /broker/config returns 200 with a non-empty body and hash.
 #   3. POST /broker/config/import returns 200 with revision_id.
 #   4. POST /broker/config/adopt returns 200.
-#   5. POST /broker/config/apply returns 200 with
-#      status="active_verified".
+#   5. POST /broker/config/apply returns 200 with a truthful activation
+#      state (active_verified only when MQTT access could be probed).
 #   6. After apply, the on-disk conf hash (as seen by the mosquitto
 #      container) matches the rendered hash from the preview.
 #   7. After an external edit, the next import reports a different
@@ -193,10 +193,23 @@ echo "--- invariant 5+6: POST /broker/config/apply, verify on-disk hash ---"
 apply_resp="$(auth_curl POST /api/v1/broker/config/apply \
     "{\"revision_id\":\"${revision_id}\",\"force\":true,\"adopt\":true}")"
 apply_status="$(jq -r '.status // empty' <<<"$apply_resp")"
-if [ "$apply_status" != "active_verified" ]; then
-    echo "apply did not reach active_verified: $apply_resp" >&2
-    exit 1
-fi
+apply_message="$(jq -r '.message // empty' <<<"$apply_resp")"
+# The apply must report a truthful activation state. This stack manages no
+# MQTT user with a known password, so MQTT access cannot be probed here and
+# the record must say so instead of claiming a verified activation.
+case "$apply_status" in
+    active_verified) ;;
+    pending_activation)
+        if ! printf '%s' "$apply_message" | grep -qi 'verification unavailable'; then
+            echo "unverified activation did not explain the missing verification: $apply_resp" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "apply did not report a truthful activation state: $apply_resp" >&2
+        exit 1
+        ;;
+esac
 sleep "$SETTLE_SECONDS"
 
 # The mosquitto container reads the same volume at /mosquitto/config.
@@ -223,10 +236,13 @@ echo "--- invariant 8: apply the drift revision (adopt=true) ---"
 drift_apply="$(auth_curl POST /api/v1/broker/config/apply \
     "{\"revision_id\":\"${drift_revision}\",\"force\":true,\"adopt\":true}")"
 drift_status="$(jq -r '.status // empty' <<<"$drift_apply")"
-if [ "$drift_status" != "active_verified" ]; then
-    echo "drift apply did not reach active_verified: $drift_apply" >&2
-    exit 1
-fi
+case "$drift_status" in
+    active_verified|pending_activation) ;;
+    *)
+        echo "drift apply did not report a truthful activation state: $drift_apply" >&2
+        exit 1
+        ;;
+esac
 echo "drift apply OK"
 
 echo "--- e2e-broker-config: all invariants passed ---"
