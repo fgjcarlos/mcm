@@ -85,7 +85,35 @@ post_json() {
         -d "$payload"
 }
 
+# post_json_mfa sends a request that needs a recent MFA proof. The proof is
+# bound to the session that requested it, so the request runs as the
+# dedicated operator the helper creates.
+post_json_mfa() {
+    local endpoint="$1"
+    local payload="$2"
+    local output="$3"
+    curl -sS -o "$output" -w '%{http_code}' \
+        -X POST "${MCM_BASE_URL}${endpoint}" \
+        -H "Authorization: Bearer ${MFA_TOKEN}" \
+        -H "X-MCM-MFA: ${MFA_PROOF}" \
+        -H 'Content-Type: application/json' \
+        -d "$payload"
+}
+
 wait_for_ready
+
+# --- recent MFA ------------------------------------------------------------
+# Applying the configuration requires a recent MFA proof. The helper creates
+# a dedicated operator, enrolls TOTP for it and exchanges an unused time step
+# for the proof; the apply then runs as that operator, because the proof is
+# bound to the session that requested it. The bootstrap administrator keeps
+# its plain login, so the rest of this script is unaffected.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$MCM_BASE_URL" "$MCM_AUTH_TOKEN")"
+if [ -z "$MFA_PROOF" ]; then
+    fail "could not obtain a recent MFA proof"
+fi
 
 # --- step 2: the settings form is described by the catalog -----------------
 response_file
@@ -170,7 +198,7 @@ pass 5 "the preview reports the changed directive and a reload"
 # --- step 6: the apply writes the file -------------------------------------
 response_file
 apply_file="$RESPONSE_FILE"
-apply_code="$(post_json '/api/v1/broker/config/apply' \
+apply_code="$(post_json_mfa '/api/v1/broker/config/apply' \
     "$(jq -cn --arg revision_id "$revision_id" '{revision_id: $revision_id, force: false, adopt: true}')" "$apply_file")"
 if [[ "$apply_code" != '200' ]]; then
     fail "the apply failed with HTTP ${apply_code}: $(<"$apply_file")"
@@ -236,7 +264,7 @@ else
     restore_revision="$(jq -r '.revision_id // empty' "$restore_preview_file")"
     response_file
     restore_apply_file="$RESPONSE_FILE"
-    restore_code="$(post_json '/api/v1/broker/config/apply' \
+    restore_code="$(post_json_mfa '/api/v1/broker/config/apply' \
         "$(jq -cn --arg revision_id "$restore_revision" '{revision_id: $revision_id, force: false, adopt: true}')" "$restore_apply_file")"
     if [[ "$restore_code" != '200' ]]; then
         fail "the restore apply failed with HTTP ${restore_code}: $(<"$restore_apply_file")"

@@ -54,6 +54,12 @@ export type BrokerConfig = {
   path: string
   body: string
   hash: string
+  broker_version?: string
+  catalog_version?: string
+  capabilities?: Record<string, boolean>
+  external_drift?: boolean
+  last_verified?: { revision_id: string; hash: string; body: string; verified_at: string } | null
+  include_snapshot?: { files?: { path: string; sha256: string }[] }
 }
 
 export type ValidationIssue = {
@@ -101,4 +107,21 @@ export type DirectiveSpec = {
 export type CatalogResponse = {
   version: string
   directives: DirectiveSpec[]
+}
+
+export type Revision = {
+  id: string
+  actor: string
+  hash: string
+  created_at: string
+  status: string
+  message?: string
+  deployment_id?: number
+}
+
+export type ConfigApplyResult = {
+  id: number
+  revision_id?: string
+  status: string
+  message?: string
 }

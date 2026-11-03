@@ -16,7 +16,7 @@ The current alpha is **not feature-complete for this goal**. [Epic #308](https:/
 - Operator accounts, roles, MFA, audit/security events, observed traffic and connection events.
 - SQLite persistence for MCM; Prometheus integration and optional JSON Schema/Sparkplug diagnostics.
 
-There is no graphical `mosquitto.conf` editor, broker certificate manager or graphical backup/restore workflow. The listener, bridge, plugin and Dynamic Security editors are in place. The general broker settings (persistence, queues, sessions and logging) are editable through the settings forms of issue #302; the other directives are not exposed for directive-level editing yet. The current image family is Mosquitto 2.0; a tested directive/version matrix remains to be built.
+The advanced root `mosquitto.conf` editor and the root-configuration revision/copy recovery are available, next to the listener, bridge, plugin and Dynamic Security editors. The general broker settings (persistence, queues, sessions and logging) are editable through the settings forms of issue #302; the other directives are not exposed for directive-level editing yet, and there is no complete graphical backup/restore workflow. The current image family is Mosquitto 2.0; a tested directive/version matrix remains to be built.
 
 ## Delivery order and tracked work
 

@@ -131,6 +131,17 @@ if [ "$login_code" != "200" ]; then
 fi
 TOKEN="$(jq -r '.token // .access_token // .jwt // empty' "$login_body")"
 rm -f "$login_body"
+
+# --- Recent MFA -----------------------------------------------------------
+# Sensitive operations require a recent, session-bound MFA proof. The
+# helper enrolls TOTP for the authenticated account (fresh stacks only),
+# confirms it, and exchanges an unused time step for the proof.
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
+if [ -z "$MFA_PROOF" ]; then
+    echo "could not obtain a recent MFA proof" >&2
+    exit 1
+fi
+echo "recent MFA proof acquired"
 if [ -z "$TOKEN" ]; then
     echo "login returned 200 but no token field was present" >&2
     exit 1
@@ -198,7 +209,8 @@ echo "--- e2e-rollback: POST /api/v1/deployments/apply (initial) ---"
 apply_body="$(mktemp)"
 apply_code="$(curl -sS -o "$apply_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "X-MCM-MFA: ${MFA_PROOF}" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 if [ "$apply_code" != "200" ]; then
@@ -247,7 +259,8 @@ echo "--- e2e-rollback: POST /api/v1/deployments/apply (must fail and roll back)
 fail_body="$(mktemp)"
 fail_code="$(curl -sS -o "$fail_body" -w '%{http_code}' \
     -X POST "${HOST_URL}/api/v1/deployments/apply" \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -H "X-MCM-MFA: ${MFA_PROOF}" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"revision_id\":\"${REVISION_ID}\"}" || echo "000")"
 # Either HTTP 500 (apply error) or some other error code is acceptable,

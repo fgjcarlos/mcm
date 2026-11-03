@@ -1,282 +1,139 @@
 import { useEffect, useState } from 'react'
 import { useBrokerConfig } from './useBrokerConfig'
-import type { ValidationIssue } from './types'
-const reloadKindColor: Record<string, string> = {
-  reload: 'bg-cyan-400/10 text-cyan-200',
-  restart: 'bg-amber-400/10 text-amber-200',
-  none: 'bg-slate-400/10 text-slate-200',
-}
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 
-// Map validation issue kinds to a visual severity. Errors block apply;
-// warnings and info are advisory. Unknown-directive is treated as info
-// because the importer preserves them byte-for-byte (see
-// internal/mosquitto/conf/validate.go).
-function severityFor(issue: ValidationIssue): 'error' | 'warning' | 'info' {
-  if (issue.kind === 'type' || issue.kind === 'dependency') return 'error'
-  if (issue.kind === 'scope' || issue.kind === 'multiplicity') return 'warning'
-  if (issue.kind === 'since_version' || issue.kind === 'unknown') return 'info'
-  return 'warning'
-}
+const card = 'rounded-2xl border border-white/10 bg-slate-900/60 p-6 space-y-4'
+const button = 'rounded-xl border border-white/20 px-4 py-2 text-sm text-slate-100 disabled:opacity-40'
+const codeBlock = 'max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-slate-950 p-4 font-mono text-xs text-slate-200'
 
-const severityClasses = {
-  error: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
-  warning: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
-  info: 'border-cyan-300/20 bg-cyan-400/10 text-cyan-100',
-} as const
-
-function statusPill(status: ReturnType<typeof useBrokerConfig>['status']): { label: string; tone: string } {
-  switch (status) {
-    case 'previewing':
-      return { label: 'previewing', tone: 'bg-cyan-400/10 text-cyan-200' }
-    case 'adoption_required':
-      return { label: 'adoption required', tone: 'bg-amber-400/10 text-amber-200' }
-    case 'applying':
-      return { label: 'applying', tone: 'bg-violet-400/10 text-violet-200' }
-    default:
-      return { label: 'active', tone: 'bg-emerald-400/10 text-emerald-200' }
-  }
-}
-
-export default function BrokerConfigPanel({
-  token,
-  onLogout,
-  role = '',
-}: {
+type Props = {
   token: string
   onLogout: () => void
   role?: string
-}) {
-  const { config, preview, catalog, status, loading, error, load, importPreview, adopt, apply, loadCatalog } =
-    useBrokerConfig(token, onLogout)
-  const isAdmin = role === 'admin'
-  const [confirmRestart, setConfirmRestart] = useState(false)
-  const [catalogOpen, setCatalogOpen] = useState(false)
+  view?: 'configuration' | 'changes'
+  onReview?: () => void
+}
 
+export default function BrokerConfigPanel({ token, onLogout, role = '', view = 'configuration', onReview }: Props) {
+  const state = useBrokerConfig(token, onLogout)
+  const mfa = useRecentMFA(token, onLogout)
+  const [adopt, setAdopt] = useState(false)
+  const [confirmRestart, setConfirmRestart] = useState(false)
+  const { config, draft, preview, catalog, status } = state
+  const isAdmin = role === 'admin'
+  const canEdit = isAdmin || role === 'operator'
+  const busy = status !== 'idle'
+  const drift = Boolean(config && draft && draft.baseHash !== config.hash)
+  const canApply = isAdmin && Boolean(preview && mfa.proof && adopt) && !busy && !drift && config?.capabilities?.write !== false && (!preview?.requires_restart || config?.capabilities?.restart === true)
+
+  const { load, loadCatalog, loadHistory } = state
   useEffect(() => {
     void load()
     void loadCatalog()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    void loadHistory()
+  }, [load, loadCatalog, loadHistory])
 
-  const pill = statusPill(status)
-
-  const handleApply = () => {
-    if (!preview) return
-    if (preview.requires_restart && !confirmRestart) {
-      setConfirmRestart(true)
-      return
-    }
+  function changed() {
+    setAdopt(false)
     setConfirmRestart(false)
-    void apply({ revision_id: preview.revision_id, force: preview.requires_restart, adopt: preview.requires_restart })
   }
 
-  if (loading && !config && !preview) {
-    return (
-      <section className="mt-8">
-        <p className="text-sm text-slate-400">Loading broker configuration…</p>
-      </section>
-    )
+  function apply() {
+    if (!preview || !canApply) return
+    if (preview.requires_restart && !confirmRestart) { setConfirmRestart(true); return }
+    setConfirmRestart(false)
+    void state.apply({ revision_id: preview.revision_id, force: preview.requires_restart, adopt: true }, mfa.proof)
   }
+
+  if (state.loading && !config) return <section className="mt-8"><p>Loading broker configuration…</p></section>
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Broker configuration</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Import, preview and apply versioned changes to <span className="font-mono">{config?.path ?? 'mosquitto.conf'}</span>.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${pill.tone}`}>
-              {pill.label}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                void load()
-              }}
-              disabled={loading}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-            >
-              {loading ? 'Reloading…' : 'Reload'}
-            </button>
-          </div>
-        </div>
-
-        {config ? (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
-              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-400">Path</p>
-              <p className="mt-1 break-all font-mono text-sm text-white">{config.path}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
-              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-400">Hash</p>
-              <p className="mt-1 break-all font-mono text-sm text-white">{config.hash.slice(0, 12)}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-4 text-sm text-slate-300">
-            Broker config is not configured on this MCM instance.
-          </div>
-        )}
-
-        {error ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
-            {error}
-          </div>
-        ) : null}
-
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              void importPreview()
-            }}
-            disabled={!config || status === 'previewing'}
-            className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-          >
-            {status === 'previewing' ? 'Generating…' : 'Import / Refresh preview'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void adopt()
-            }}
-            disabled={!isAdmin || !preview || !preview.requires_restart || status === 'adoption_required'}
-            title={!isAdmin ? 'Requires admin role' : undefined}
-            className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-          >
-            Adopt
-          </button>
-          {confirmRestart ? (
-            <span className="inline-flex items-center gap-2">
-              <span className="text-xs text-amber-200">Apply restart-required change?</span>
-              <button
-                type="button"
-                onClick={handleApply}
-                disabled={!isAdmin || status === 'applying'}
-                className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-400 disabled:opacity-50"
-              >
-                {status === 'applying' ? 'Applying…' : 'Force Apply'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmRestart(false)}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
-              >
-                Cancel
-              </button>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={handleApply}
-              disabled={!isAdmin || !preview || status === 'applying'}
-              title={!isAdmin ? 'Requires admin role' : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-            >
-              {status === 'applying' ? 'Applying…' : 'Apply'}
-            </button>
-          )}
-        </div>
-
-        {preview?.requires_restart && preview.reload_kind ? (
-          <p className="mt-3 text-xs text-amber-200">
-            This preview requires a broker restart (directives: <span className="font-mono">{preview.reload_kind}</span>). Adoption must be recorded before apply.
-          </p>
-        ) : null}
-      </div>
-
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Current body</p>
-        <pre className="mt-4 max-h-96 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5 text-slate-200">
-          {config?.body ?? ''}
-        </pre>
-      </div>
-
-      {preview ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Preview</p>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindColor[preview.reload_kind] ?? reloadKindColor.reload}`}>
-              {preview.reload_kind || 'reload'}
-            </span>
-          </div>
-          <p className="mt-2 break-all font-mono text-xs text-slate-400">revision {preview.revision_id}</p>
-          {preview.conf_diff ? (
-            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-              {preview.conf_diff.split('\n').map((line, idx) => (
-                <span
-                  key={idx}
-                  className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-red-500/10 text-red-200' : 'text-slate-300'}`}
-                >
-                  {line || ' '}
-                </span>
-              ))}
-            </pre>
-          ) : (
-            <p className="mt-4 text-sm text-slate-300">No changes — configuration is up to date.</p>
-          )}
-
-          {preview.validation_issues?.length ? (
-            <div className="mt-5 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Validation</p>
-              {preview.validation_issues.map((issue, idx) => {
-                const sev = severityFor(issue)
-                return (
-                  <div key={idx} className={`rounded-xl border px-3 py-2 text-sm ${severityClasses[sev]}`}>
-                    <p className="font-mono text-xs">
-                      line {issue.line}
-                      {issue.directive ? ` · ${issue.directive}` : ''} · {issue.kind}
-                    </p>
-                    <p className="mt-1">{issue.message}</p>
-                  </div>
-                )
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <button
-          type="button"
-          onClick={() => setCatalogOpen((v) => !v)}
-          className="flex w-full items-center justify-between text-left"
-        >
-          <span className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Directive catalog</span>
-          <span className="text-xs text-slate-400">{catalogOpen ? '▾' : '▸'}</span>
-        </button>
-        {catalogOpen ? (
-          <div className="mt-4">
-            {!catalog ? (
-              <p className="text-sm text-slate-400">Loading catalog…</p>
-            ) : catalog.directives.length === 0 ? (
-              <p className="text-sm text-slate-400">Catalog is empty.</p>
-            ) : (
+    <section className="mt-8 space-y-6" aria-label="Broker configuration workspace">
+      {state.error ? <p role="alert" className="rounded-xl border border-rose-300/30 bg-rose-400/10 p-4 text-rose-100">{state.error}</p> : null}
+      {state.result ? <div role="status" className={card}><strong>Revision result: {state.result.status}</strong><p>{state.result.message}</p><p className="font-mono text-xs">{state.result.revision_id}</p></div> : null}
+      {view === 'configuration' ? (
+        <>
+          <article className={card}>
+            <h3 className="text-xl font-semibold">Broker configuration</h3>
+            {!config ? <p>Broker config is not configured on this MCM instance.</p> : (
               <>
-                <p className="text-xs text-slate-400">Mosquitto {catalog.version} · {catalog.directives.length} directives</p>
-                <ul className="mt-3 max-h-64 divide-y divide-white/5 overflow-auto rounded-xl border border-white/10 bg-slate-950/40">
-                  {catalog.directives.map((d) => (
-                    <li key={d.name} className="px-3 py-2 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-cyan-100">{d.name}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindColor[d.reload_kind] ?? reloadKindColor.reload}`}>
-                          {d.reload_kind}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-400">{d.description || '—'}</p>
-                    </li>
-                  ))}
-                </ul>
+                <p className="break-all font-mono text-sm">{config.path}</p>
+                <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div><dt>Broker version</dt><dd>{config.broker_version || 'unknown — not observed'}</dd></div>
+                  <div><dt>Catalog version</dt><dd>{config.catalog_version || catalog?.version || 'unavailable'} (not broker detection)</dd></div>
+                  <div><dt>On-disk hash</dt><dd className="break-all font-mono">{config.hash}</dd></div>
+                  <div><dt>Management capabilities (configured)</dt><dd>{config.capabilities ? Object.entries(config.capabilities).map(([key, enabled]) => `${key}: ${enabled ? 'yes' : 'no'}`).join(' · ') : 'Not reported'}</dd></div>
+                </dl>
+                {config.external_drift || drift ? <p role="status" className="text-amber-200">External drift detected. Refresh disk state and explicitly reset or reconcile the draft before generating a new preview.</p> : null}
+                <button className={button} onClick={() => { void state.load() }} disabled={state.loading || busy}>Refresh disk state</button>
+                <p className="text-xs text-slate-400">Refreshing never overwrites your draft. Disk state is not proof of active broker configuration.</p>
+                <details><summary>On-disk configuration</summary><pre className={codeBlock}>{config.body}</pre></details>
+                <details><summary>Last verified active configuration</summary>{config.last_verified ? <><p>{config.last_verified.verified_at} · {config.last_verified.revision_id}</p><pre className={codeBlock}>{config.last_verified.body}</pre></> : <p>No verified configuration activation recorded. Importing a file is not activation.</p>}</details>
+                {config.include_snapshot?.files?.length ? <details><summary>Included files (read-only)</summary><ul>{config.include_snapshot.files.map((file) => <li className="break-all font-mono text-xs" key={file.path}>{file.path} · {file.sha256}</li>)}</ul></details> : null}
               </>
             )}
-          </div>
-        ) : null}
-      </div>
+          </article>
+          <article className={card}>
+            <h3 className="text-xl font-semibold">Draft</h3>
+            <label className="block text-sm">Draft configuration
+              <textarea aria-label="Draft configuration" value={draft?.body ?? ''} onChange={(event) => { changed(); state.editDraft(event.target.value) }} disabled={!config || !canEdit || status === 'applying'} spellCheck={false} rows={14} className="mt-2 w-full rounded-xl border border-white/20 bg-slate-950 p-4 font-mono text-sm" />
+            </label>
+            <p className="text-xs text-slate-400">Advanced root-file editor. Includes stay separate; unknown directives are preserved, not silently removed. Catalog checks are not complete Mosquitto syntax validation.</p>
+            <div className="flex flex-wrap gap-3">
+              <button className={button} disabled={!config || !canEdit || busy || draft?.body !== config.body} onClick={() => { changed(); void state.importPreview() }}>Import / Refresh preview</button>
+              <button className={button} disabled={!config || !canEdit || busy || drift} onClick={() => { changed(); void state.previewTyped() }}>Validate draft</button>
+              <button className={button} disabled={!config || busy} onClick={() => { changed(); state.resetDraft() }}>Discard draft and use disk</button>
+              {onReview ? <button className={button} disabled={!preview} onClick={onReview}>Review changes</button> : null}
+            </div>
+          </article>
+        </>
+      ) : null}
 
+      {isAdmin ? <RecentMFAConfirmation state={mfa} /> : null}
+      {preview ? (
+        <article className={card}>
+          <h3 className="text-xl font-semibold">Preview</h3>
+          <p className="break-all font-mono text-xs">revision {preview.revision_id}</p>
+          <p>Affected file: {config?.path}. Operational impact: <strong>{preview.reload_kind || 'reload'}</strong>.</p>
+          {preview.requires_restart && !config?.capabilities?.restart ? <p className="text-amber-200">Restart required, but this adapter cannot restart the broker. Apply is unavailable; force never substitutes a reload for a restart.</p> : null}
+          {preview.conf_diff ? <pre className={codeBlock}>{preview.conf_diff.split('\n').map((line, index) => <span key={index} className={`block ${line.startsWith('+') ? 'text-emerald-200' : line.startsWith('-') ? 'text-rose-200' : ''}`}>{line || ' '}</span>)}</pre> : <p>No root-file changes.</p>}
+          <label className="block text-sm"><input type="checkbox" checked={adopt} disabled={!isAdmin || busy} onChange={(event) => setAdopt(event.target.checked)} /> I adopt this reviewed configuration and authorize replacing the root file.</label>
+          <div className="flex gap-3">
+            <button className={button} disabled={!canApply} onClick={apply}>{confirmRestart ? 'Force Apply' : 'Apply'}</button>
+            {confirmRestart ? <button className={button} onClick={() => setConfirmRestart(false)}>Cancel</button> : null}
+          </div>
+        </article>
+      ) : null}
+      {(preview?.validation_issues ?? state.issues).length ? <article className={card}><h3>Validation</h3><ul>{(preview?.validation_issues ?? state.issues).map((issue, index) => <li key={index} className="text-sm">Line {issue.line} · {issue.kind}: {issue.message}</li>)}</ul></article> : null}
+
+      {view === 'changes' ? (
+        <>
+          <article className={card}>
+            <h3 className="text-xl font-semibold">Configuration revisions</h3>
+            <button className={button} onClick={() => { void state.load(); void state.loadHistory() }} disabled={busy}>Refresh revisions</button>
+            {!state.revisions.length ? <p>No configuration revisions recorded.</p> : <ul className="space-y-4">{state.revisions.map((revision) => (
+              <li key={revision.id} className="space-y-2 border-b border-white/10 pb-4">
+                <p className="break-all font-mono text-xs">{revision.id}</p>
+                <p>{revision.actor} · {revision.created_at} · <strong>{revision.status}</strong>{revision.deployment_id ? ` · deployment ${revision.deployment_id}` : ''}</p>
+                {revision.message ? <p>{revision.message}</p> : null}
+                <button className={button} disabled={!isAdmin || !mfa.proof || busy} onClick={() => { changed(); void state.recover(revision.id, mfa.proof) }}>Recover revision {revision.id.slice(0, 8)}</button>
+              </li>
+            ))}</ul>}
+          </article>
+          <article className={card}>
+            <h3 className="text-xl font-semibold">Configuration copies</h3>
+            <p className="text-sm text-amber-100">Root configuration only — not a complete backup. Includes, credentials, ACLs, certificates, SQLite and broker data are excluded. Import prepares a preview; it does not apply automatically.</p>
+            <button className={button} disabled={!isAdmin || !mfa.proof || busy} onClick={() => { void state.exportCopy(mfa.proof) }}>Export configuration copy</button>
+            <label className="block text-sm">Import configuration copy<input type="file" accept="application/json,.json" disabled={!isAdmin || !mfa.proof || busy} onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) { changed(); void state.importCopyFile(file, mfa.proof) }
+              event.target.value = ''
+            }} /></label>
+          </article>
+        </>
+      ) : null}
+      <details className={card}><summary>Directive catalog</summary><p>Catalog {catalog?.version || 'unavailable'}; not a detected broker version.</p><ul>{catalog?.directives.map((directive) => <li key={directive.name} className="text-sm"><code>{directive.name}</code> · {directive.type} · {directive.reload_kind}<p>{directive.description}</p></li>)}</ul></details>
     </section>
   )
 }

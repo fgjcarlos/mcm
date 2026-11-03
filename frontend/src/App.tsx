@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
+import RecentMFAConfirmation from './features/mfa/RecentMFAConfirmation'
+import { useRecentMFA } from './features/mfa/useRecentMFA'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
 import ListenersPanel from './features/broker-config/ListenersPanel'
 import CertificatesPanel from './features/broker-config/CertificatesPanel'
@@ -114,82 +116,20 @@ type LoginResponse = {
 }
 
 const navItems: NavItem[] = [
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    path: '/dashboard',
-    eyebrow: 'Broker overview',
-    title: 'Live broker snapshot',
-    description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
-  },
-  {
-    id: 'topics',
-    label: 'Topics',
-    path: '/topics',
-    eyebrow: 'Traffic',
-    title: 'Topic explorer',
-    description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
-  },
-  {
-    id: 'logs',
-    label: 'Logs',
-    path: '/logs',
-    eyebrow: 'Operations',
-    title: 'Realtime broker logs',
-    description: 'Monitor connection transitions and MCM broker operational events as they are ingested.',
-  },
-  {
-    id: 'users',
-    label: 'Users',
-    path: '/users',
-    eyebrow: 'Identity',
-    title: 'MQTT user directory',
-    description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
-  },
-  {
-    id: 'acls',
-    label: 'ACLs',
-    path: '/acls',
-    eyebrow: 'Authorization',
-    title: 'ACL policy workspace',
-    description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
-  },
-  {
-    id: 'listeners',
-    label: 'Listeners',
-    path: '/listeners',
-    eyebrow: 'MQTT access',
-    title: 'MQTT listeners',
-    description: 'Manage the broker listener set (TCP and WebSockets).',
-  },
-  {
-    id: 'certificates',
-    label: 'Certificates',
-    path: '/certificates',
-    eyebrow: 'MQTT access',
-    title: 'Broker TLS certificates',
-    description: 'Upload, rotate and activate the TLS material the broker serves.',
-    minRole: 'auditor',
-  },
-  {
-    id: 'deploy',
-    label: 'Deploy',
-    path: '/deploy',
-    eyebrow: 'Operations',
-    title: 'Mosquitto configuration deploy',
-    description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
-  },
+  // Configuration
   {
     id: 'broker-config',
+    group: 'Configuration',
     label: 'Configuration',
     path: '/broker-config',
     eyebrow: 'Operations',
     title: 'Broker configuration manager',
-    description: 'Import, validate, and version mosquitto.conf with explicit adoption before any apply.',
+    description: 'Import, edit, validate and version mosquitto.conf with explicit adoption before any apply.',
     minRole: 'auditor',
   },
   {
     id: 'broker-settings',
+    group: 'Configuration',
     label: 'Broker settings',
     path: '/broker-settings',
     eyebrow: 'Operations',
@@ -199,6 +139,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'broker-bridges',
+    group: 'Configuration',
     label: 'Bridges',
     path: '/broker-bridges',
     eyebrow: 'Operations',
@@ -208,6 +149,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'broker-plugins',
+    group: 'Configuration',
     label: 'Plugins',
     path: '/broker-plugins',
     eyebrow: 'Operations',
@@ -215,8 +157,47 @@ const navItems: NavItem[] = [
     description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
     minRole: 'auditor',
   },
+  // MQTT Access
+  {
+    id: 'users',
+    group: 'MQTT Access',
+    label: 'Users',
+    path: '/users',
+    eyebrow: 'Identity',
+    title: 'MQTT user directory',
+    description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
+  },
+  {
+    id: 'acls',
+    group: 'MQTT Access',
+    label: 'ACLs',
+    path: '/acls',
+    eyebrow: 'Authorization',
+    title: 'ACL policy workspace',
+    description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
+  },
+  {
+    id: 'listeners',
+    group: 'MQTT Access',
+    label: 'Listeners',
+    path: '/listeners',
+    eyebrow: 'MQTT access',
+    title: 'MQTT listeners',
+    description: 'Manage the broker listener set (TCP and WebSockets).',
+  },
+  {
+    id: 'certificates',
+    group: 'MQTT Access',
+    label: 'Certificates',
+    path: '/certificates',
+    eyebrow: 'MQTT access',
+    title: 'Broker TLS certificates',
+    description: 'Upload, rotate and activate the TLS material the broker serves.',
+    minRole: 'auditor',
+  },
   {
     id: 'broker-dynsec',
+    group: 'MQTT Access',
     label: 'Dynamic security',
     path: '/broker-dynsec',
     eyebrow: 'Authorization',
@@ -224,8 +205,58 @@ const navItems: NavItem[] = [
     description: 'Manage the clients, groups and roles the dynamic security plugin enforces, and watch the management channel of the plugin.',
     minRole: 'auditor',
   },
+  // Changes
+  {
+    id: 'deploy',
+    group: 'Changes',
+    label: 'Deploy',
+    path: '/deploy',
+    eyebrow: 'Operations',
+    title: 'Mosquitto configuration deploy',
+    description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
+  },
+  {
+    id: 'changes',
+    group: 'Changes',
+    label: 'Configuration revisions',
+    path: '/changes',
+    eyebrow: 'Review and recovery',
+    title: 'Configuration changes',
+    description: 'Review exact configuration revisions, activation results and recoverable copies.',
+    minRole: 'auditor',
+  },
+  // Diagnostics
+  {
+    id: 'dashboard',
+    group: 'Diagnostics',
+    label: 'Dashboard',
+    path: '/dashboard',
+    eyebrow: 'Broker overview',
+    title: 'Live broker snapshot',
+    description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
+  },
+  {
+    id: 'topics',
+    group: 'Diagnostics',
+    label: 'Topics',
+    path: '/topics',
+    eyebrow: 'Traffic',
+    title: 'Topic explorer',
+    description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
+  },
+  {
+    id: 'logs',
+    group: 'Diagnostics',
+    label: 'Logs',
+    path: '/logs',
+    eyebrow: 'Operations',
+    title: 'Realtime broker logs',
+    description: 'Monitor connection transitions and MCM broker operational events as they are ingested.',
+  },
+  // Administration
   {
     id: 'security',
+    group: 'Administration',
     label: 'Security',
     path: '/security',
     eyebrow: 'Audit',
@@ -234,6 +265,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'audit',
+    group: 'Administration',
     label: 'Audit',
     path: '/audit',
     eyebrow: 'Security',
@@ -242,6 +274,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'account',
+    group: 'Administration',
     label: 'Account',
     path: '/account',
     eyebrow: 'Security',
@@ -250,6 +283,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'admin-users',
+    group: 'Administration',
     label: 'Operators',
     path: '/admin-users',
     eyebrow: 'Administration',
@@ -261,7 +295,7 @@ const navItems: NavItem[] = [
 
 function navIdFromPath(pathname: string) {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/dashboard'
-  return navItems.find((item) => item.path === normalizedPath)?.id ?? navItems[0].id
+  return navItems.find((item) => item.path === normalizedPath)?.id ?? 'dashboard'
 }
 
 function App() {
@@ -284,6 +318,7 @@ function App() {
 
 function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: string; currentUser: AdminUser; onLogout: () => void; onRefreshUser: () => void }) {
   const [activeId, setActiveId] = useState<string>(() => navIdFromPath(window.location.pathname))
+  const [visitedBroker, setVisitedBroker] = useState(() => ['broker-config', 'changes'].includes(navIdFromPath(window.location.pathname)))
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [securityError, setSecurityError] = useState<string>('')
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
@@ -309,6 +344,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   } = useBrokerStream(token, onLogout)
 
   const handleSelectNav = useCallback((item: NavItem) => {
+    if (item.id === 'broker-config' || item.id === 'changes') setVisitedBroker(true)
     if (window.location.pathname !== item.path) {
       window.history.pushState(null, '', item.path)
     }
@@ -332,7 +368,11 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   }, [])
 
   useEffect(() => {
-    const handlePopState = () => setActiveId(navIdFromPath(window.location.pathname))
+    const handlePopState = () => {
+      const selected = navIdFromPath(window.location.pathname)
+      if (selected === 'broker-config' || selected === 'changes') setVisitedBroker(true)
+      setActiveId(selected)
+    }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
@@ -399,7 +439,12 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         </div>
       ) : null}
 
-      {activeId === 'logs' ? (
+      {visitedBroker && visibleNavItems.some((item) => item.id === 'broker-config') ? (
+        <div hidden={activeId !== 'broker-config' && activeId !== 'changes'}>
+          <BrokerConfigPanel token={token} onLogout={onLogout} role={currentUser.role} view={activeId === 'changes' ? 'changes' : 'configuration'} onReview={() => handleSelectNav(navItems.find((item) => item.id === 'changes')!)} />
+        </div>
+      ) : null}
+      {activeId === 'broker-config' || activeId === 'changes' ? null : activeId === 'logs' ? (
         <LogsPanel logs={logs} streamState={streamState} />
       ) : activeId === 'security' ? (
         <SecurityPanel events={securityEvents} error={securityError} />
@@ -417,8 +462,6 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <CertificatesPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'deploy' ? (
         <DeployPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
-      ) : activeId === 'broker-config' ? (
-        <BrokerConfigPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'broker-settings' ? (
         <SettingsPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : activeId === 'broker-bridges' ? (
@@ -1294,6 +1337,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
 }
 
 function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
+  const mfa = useRecentMFA(token, onLogout)
   const canPreview = can(role, 'deploy.preview')
   const canApply = can(role, 'deploy.apply')
   const [preview, setPreview] = useState<DeployPreview | null>(null)
@@ -1370,6 +1414,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   }
 
   const handleApply = async () => {
+    if (!mfa.proof) { setApplyError('Confirm recent MFA before applying.'); return }
     if (!preview?.revision_id) {
       setApplyError('Preview revision is missing. Generate a new preview before applying.')
       return
@@ -1385,7 +1430,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': mfa.proof },
         body: JSON.stringify({ revision_id: preview.revision_id }),
       })
       if (response.status === 404 || response.status === 422) {
@@ -1426,6 +1471,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
 
   return (
     <section className="mt-8 space-y-6">
+      {canApply ? <RecentMFAConfirmation state={mfa} /> : null}
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1440,7 +1486,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                   <button
                     type="button"
                     onClick={() => { void handleApply() }}
-                    disabled={applying || !canApply}
+                    disabled={applying || !canApply || !mfa.proof}
                     title={!canApply ? permissionTitle('deploy.apply') : undefined}
                     className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                   >

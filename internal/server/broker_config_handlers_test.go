@@ -268,6 +268,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply", "{}", token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
@@ -291,6 +294,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply",
 			`{"revision_id":"rev-1","force":true,"adopt":false}`, token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
@@ -319,6 +325,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply",
 			`{"revision_id":"rev-1"}`, token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
@@ -345,6 +354,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply",
 			`{"revision_id":"rev-1"}`, token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
@@ -366,6 +378,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply",
 			`{"revision_id":"rev-1"}`, token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409", rec.Code)
@@ -382,6 +397,9 @@ func TestHandleBrokerConfigApply(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/config/apply",
 			`{"revision_id":"rev-1"}`, token)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want 503, body = %s", rec.Code, rec.Body.String())
@@ -454,6 +472,9 @@ func TestBrokerConfigDisabledDefaults(t *testing.T) {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := authedRequest(tc.method, tc.path, tc.body, token)
+			if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+				withRecentMFATest(t, app, req)
+			}
 			app.Handler().ServeHTTP(rec, req)
 			// The catalog endpoint reads a nil catalog and returns 503
 			// (different message). All other endpoints hit the service

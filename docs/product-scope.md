@@ -13,13 +13,13 @@ This is the agreed target, not a description of completed functionality. Impleme
 | Users | Create, remove, disable and rotate generated passwords | Coherent identity lifecycle with ACL references and pending/active state |
 | ACL | User/topic rules with read, write and readwrite | Native patterns, deny and listener scope supported by each version |
 | Apply | Password/ACL file diff, write, SIGHUP and limited recovery | Immutable revision, validation, reload/restart selection, verification and recovery |
-| Configuration | Versioned import, catalog-validated preview, explicit adoption and apply of mosquitto.conf (issue #298); directive-level editing not yet exposed | Import and graphical editing of mosquitto.conf and includes |
+| Configuration | Versioned import, advanced root-file editor, catalog preview, explicit adoption, apply and revision recovery; includes are inspected but not edited | Import and graphical editing of mosquitto.conf and includes |
 | General settings | Catalog-driven forms for persistence, queues, sessions and logging with a preview and a reload/restart distinction (issue #302) | Every supported general setting of every supported version |
 | Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
 | TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
 | Bridges and plugins | Bridge editor for the connections between brokers: destinations, client ids, credentials, TLS, reconnection and topic rules with a direction, a quality of service and local/remote prefixes, validated against names, dependencies and message loops and activated through a reviewed revision (issue #303). Plugin catalog per broker version with the supported plugins and their options, a lossless editor of the plugin directives of the managed file and a Dynamic Security editor that reads the security database of the plugin from the broker itself (issue #304). | Bridge editor and supported plugins, including Dynamic Security |
 | Diagnostics | Wildcard-observed traffic and MCM events | Explicit broker metrics/log sources with stated limitations |
-| Recovery | Legacy volume recipes with known defects | Consistent, complete, tested backups and UI restore |
+| Recovery | Root-configuration copy/revision recovery from UI; full volume/SQLite/certificate backup recipes still have known defects | Consistent, complete, tested backups and UI restore |
 
 ## Configuration ownership and compatibility
 

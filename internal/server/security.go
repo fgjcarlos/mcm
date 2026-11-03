@@ -84,7 +84,7 @@ func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			allowedHeaders := "Content-Type, Authorization"
-			if strings.HasPrefix(r.URL.Path, "/api/v1/broker/config/") {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/broker/config/") || r.URL.Path == "/api/v1/deployments/apply" {
 				allowedHeaders += ", X-MCM-MFA"
 			}
 			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)

@@ -14,22 +14,22 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 
 ## Project status
 
-**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), manages the bridge connections to remote brokers and the plugins of the broker — including the security database of the dynamic security plugin — and provides observed traffic, operator accounts, MFA and audit views. It does **not** edit the whole of `mosquitto.conf`; the directives that are not exposed yet are not editable from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), manages the bridge connections to remote brokers and the plugins of the broker — including the security database of the dynamic security plugin — and provides observed traffic, operator accounts, MFA and audit views. The advanced root `mosquitto.conf` editor supports import, draft validation, immutable review, apply and revision recovery, while the directives that are not exposed yet are not editable from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
 
 | Capability | Current scope |
 | --- | --- |
 | MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
-| Preview, apply and history | Available for password/ACL files, listeners and certificate material; the certificate activation verifies the handshake and rolls back a rejected activation. |
+| Preview, apply and history | Available for password/ACL files, listeners, certificate material and the root configuration; apply requires recent MFA. Configuration recovery restores, reloads and verifies MQTT access after an activation failure. |
 | Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
-| Broker configuration editor | Import, version-aware validation and an explicit adoption gate are available; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins only. |
+| Broker configuration editor | Advanced root editor with catalog checks, disk/draft/last-verified state and drift detection, plus an explicit adoption gate. Includes remain read-only; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins too. |
 | Plugins and Dynamic Security | A plugin catalog per broker version with a lossless editor of the plugin directives, and a Dynamic Security editor that reads the security database of the plugin from the broker itself. The file backend and the plugin backend are kept apart, and the migration between them is an explicit, reviewed operation. |
 | General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
-| Backup and restore | Existing Taskfile recipes have known limitations; do not rely on them for recovery until corrected. |
+| Backup and restore | UI configuration copies contain the root file only, not a full backup. The Taskfile recipes have known limitations; complete backup/restore stays tracked in #295. |
 | Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
 
-Track the work in [epic #308](https://github.com/fgjcarlos/mcm/issues/308), the [roadmap](./ROADMAP.md), and the [configuration scope and acceptance criteria](./docs/product-scope.md). The Compose broker currently targets the `eclipse-mosquitto:2.0` image family; this is not a full compatibility guarantee across every Mosquitto release.
+See the [configuration workflow and security prerequisites](./docs/configuration-workflow.md). Track the work in [epic #308](https://github.com/fgjcarlos/mcm/issues/308), the [roadmap](./ROADMAP.md), and the [configuration scope and acceptance criteria](./docs/product-scope.md). The Compose broker currently targets the `eclipse-mosquitto:2.0` image family; this is not a full compatibility guarantee across every Mosquitto release.
 
 ---
 
