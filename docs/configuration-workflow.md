@@ -63,6 +63,22 @@ These copies **do not contain or restore** include files, MQTT passwords, ACL fi
 
 Revision history returns the latest 100 entries. An apply-attempt timestamp is not a successful activation: the deployment linked to the exact revision supplies the outcome. Recovering historical content always revalidates it and uses a new revision against the current base.
 
+## Isolated real-broker/browser check
+
+Run from the repository root:
+
+```bash
+npm --prefix frontend ci
+PLAYWRIGHT_BROWSERS_PATH="$PWD/frontend/node_modules/.cache/ms-playwright" frontend/node_modules/.bin/playwright install chromium
+scripts/e2e-configuration-ui.sh
+```
+
+The runner builds the embedded UI and starts one uniquely named disposable Mosquitto container on a random loopback port, with its own temporary storage. A real Chromium browser creates an MQTT test identity and ACL, enrolls/confirms MFA, applies access rules, imports/edits/validates/reviews/applies configuration, exports/imports a root copy and recovers the initial revision. Backend probes verify allowed and denied MQTT behavior. No broker files are hand-edited after startup. Cleanup removes only the container this fixture created; it never runs `compose down -v` or touches existing volumes.
+
+The normal Go suite skips this opt-in test. `MCM_E2E_UI=1` makes missing Docker, browser or other prerequisites a failure, not a skipped success. First-time browser installation requires network access and platform browser libraries. The check may wait for fresh 30-second TOTP windows to avoid replaying enrollment/confirmation codes. `scripts/e2e-configuration-ui.sh --help` describes the runner.
+
+CI runs the same script in the *Configuration journey in a real browser* job, and `scripts/e2e-broker-config.sh` covers the API surface of recovery, copies and the MFA refusals against the same live broker.
+
 ## State and compatibility limits
 
 - The displayed root body/hash describe disk state, not an independently observed runtime configuration.
