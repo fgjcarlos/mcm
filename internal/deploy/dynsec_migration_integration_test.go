@@ -240,6 +240,9 @@ func (a *restartApplier) RestartBroker(_ context.Context) error {
 	return nil
 }
 
+// CanRestart reports that this applier can bounce the broker.
+func (a *restartApplier) CanRestart() bool { return true }
+
 // TestTheMigrationMovesTheFileBackendToThePlugin proves the whole
 // migration against a real broker: the operator adopts the dynamic
 // security backend, the configuration loads the plugin, the broker comes

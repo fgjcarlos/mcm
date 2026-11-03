@@ -1352,7 +1352,9 @@ paths:
         required `revision_id`; callers must preview first. Returns the
         resulting `Deployment` row. 409 covers the lifecycle sentinels
         (`requires_restart`, `adoption_required`, revision mismatch/expired/
-        consumed, deploy in progress); 400 covers `revision_id` missing;
+        consumed, deploy in progress) and the two preflight refusals of the
+        root configuration (`broker restart capability is unavailable`,
+        `broker verification failed`); 400 covers `revision_id` missing;
         503 covers broker-config not configured.
       parameters:
         - { $ref: "#/components/parameters/RecentMFA" }
@@ -1379,7 +1381,12 @@ paths:
             Apply refused. The body's `error` distinguishes the reason;
             `requires_restart` additionally includes a `directives` array
             listing the directives that would change the broker's reload
-            semantics.
+            semantics. A root-configuration apply is also refused when the
+            adapter cannot restart the broker the change needs, and when
+            the activation could not be verified (no usable managed MQTT
+            test user with a known password and an ACL grant, no
+            configured verifier, or unreadable managed files). Nothing is
+            written when the apply is refused.
           content:
             application/json:
               schema:

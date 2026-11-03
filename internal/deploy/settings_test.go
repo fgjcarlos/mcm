@@ -11,6 +11,7 @@ import (
 
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/diagnostics"
+	"github.com/fgjcarlos/mcm/internal/mosquitto"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/catalog"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/conf"
 	"github.com/fgjcarlos/mcm/internal/mosquitto/settings"
@@ -79,6 +80,13 @@ func (f *fakeBrokerConfigStore) LatestBrokerConfigAdoption(_ context.Context, so
 // enabled and a configuration file holding the given body.
 func settingsService(t *testing.T, body string) (*Service, *fakeBrokerConfigStore, string) {
 	t.Helper()
+	return settingsServiceWith(t, &fakeApplier{}, body)
+}
+
+// settingsServiceWith builds the settings fixture with the given applier, so
+// a test can exercise an adapter that cannot bounce the broker.
+func settingsServiceWith(t *testing.T, applier mosquitto.Applier, body string) (*Service, *fakeBrokerConfigStore, string) {
+	t.Helper()
 	dir := t.TempDir()
 	confPath := filepath.Join(dir, "mosquitto.conf")
 	if err := os.WriteFile(confPath, []byte(body), 0o644); err != nil {
@@ -89,14 +97,23 @@ func settingsService(t *testing.T, body string) (*Service, *fakeBrokerConfigStor
 		t.Fatalf("load catalog: %v", err)
 	}
 	store := newFakeBrokerConfigStore()
+	// The apply path verifies the activation against a probe identity, so
+	// the fixture provides the managed ACL/passwd files the verification
+	// reads and a lookup that knows the probe password.
+	aclPath := filepath.Join(dir, "acl")
+	passwdPath := filepath.Join(dir, "passwd")
+	writeFile(t, aclPath, "user probe\ntopic readwrite probe/allowed\n")
+	writeFile(t, passwdPath, "probe:hash\n")
+	lookup := newFakePasswordLookup()
+	lookup.remember("probe", "probe-secret")
 	svc := newTestService(
-		&fakeApplier{},
+		applier,
 		&fakeACLStore{},
 		&fakeMQTTUserLister{},
 		newFakeDeploymentStore(),
 		diagnostics.VerifierFunc(okVerifier),
-		&fakePasswordLookup{},
-		config.DeployConfig{Mode: "file"},
+		lookup,
+		config.DeployConfig{Mode: "file", ACLPath: aclPath, PasswdPath: passwdPath},
 	)
 	svc.WithBrokerConfig(confPath, cat)
 	svc.brokerCfgStore = store
@@ -303,6 +320,30 @@ func TestApplyBrokerSettings_RefusesRestartWithoutForce(t *testing.T) {
 	}
 	if _, err := svc.ApplyBrokerConfig(context.Background(), "operator", preview.RevisionID, false, true); !errors.Is(err, ErrRequiresRestart) {
 		t.Errorf("err = %v, want ErrRequiresRestart", err)
+	}
+	body, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read conf: %v", err)
+	}
+	if strings.Contains(string(body), "max_connections") {
+		t.Errorf("the refused apply wrote the file:\n%s", body)
+	}
+}
+
+// TestApplyBrokerSettings_RefusesARestartTheAdapterCannotPerform proves that
+// `force` does not turn a reload into a restart: a restart-required change is
+// refused when the adapter cannot bounce the broker, and nothing is written.
+func TestApplyBrokerSettings_RefusesARestartTheAdapterCannotPerform(t *testing.T) {
+	svc, _, confPath := settingsServiceWith(t, reloadOnlyApplier{}, settingsConf)
+	doc := settings.Document{Entries: []settings.Entry{
+		{Directive: "max_connections", Values: []string{"100"}},
+	}}
+	preview, err := svc.PreviewBrokerSettings(context.Background(), "operator", doc)
+	if err != nil {
+		t.Fatalf("PreviewBrokerSettings: %v", err)
+	}
+	if _, err := svc.ApplyBrokerConfig(context.Background(), "operator", preview.RevisionID, true, true); !errors.Is(err, ErrBrokerRestartUnavailable) {
+		t.Errorf("err = %v, want ErrBrokerRestartUnavailable", err)
 	}
 	body, err := os.ReadFile(confPath)
 	if err != nil {

@@ -87,24 +87,23 @@ func TestBrokerConfigApplyWithoutVerificationSubject(t *testing.T) {
 	applyReq := authedRequest("POST", "/api/v1/broker/config/apply", `{"revision_id":"`+preview.RevisionID+`","adopt":true}`, token)
 	applyReq.Header.Set("X-MCM-MFA", proof)
 	app.Handler().ServeHTTP(applied, applyReq)
-	var result storage.Deployment
-	if applied.Code != 200 || json.Unmarshal(applied.Body.Bytes(), &result) != nil {
-		t.Fatalf("apply: %d %s", applied.Code, applied.Body.String())
+	if applied.Code != 409 {
+		t.Fatalf("apply without a verification subject: %d %s", applied.Code, applied.Body.String())
 	}
-	if result.Status != "pending_activation" {
-		t.Fatalf("unverifiable apply claimed %q instead of pending_activation", result.Status)
-	}
-	if !strings.Contains(result.Message, "verification unavailable") {
-		t.Fatalf("apply did not explain the missing verification: %q", result.Message)
+	if !strings.Contains(applied.Body.String(), "verification unavailable") {
+		t.Fatalf("apply did not explain the missing verification: %s", applied.Body.String())
 	}
 	if verifier.calls != 0 {
 		t.Fatalf("verification ran without a usable subject: %d calls", verifier.calls)
 	}
-	// The change was written and the reload signalled, so the disk state
-	// must reflect the applied revision.
+	// The preflight refuses the change before anything is written, so the
+	// broker keeps serving the previous configuration.
+	if applier.reloads != 0 {
+		t.Fatalf("a refused apply still signalled the broker: %d reloads", applier.reloads)
+	}
 	disk, err := os.ReadFile(path)
-	if err != nil || string(disk) != strings.Replace(original, "connection_messages true", "connection_messages false", 1) {
-		t.Fatalf("apply did not write the reviewed revision: %q %v", disk, err)
+	if err != nil || string(disk) != original {
+		t.Fatalf("a refused apply wrote the configuration: %q %v", disk, err)
 	}
 }
 

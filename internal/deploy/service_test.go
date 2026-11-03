@@ -117,6 +117,9 @@ func (f *fakeApplier) RestartBroker(_ context.Context) error {
 	return nil
 }
 
+// CanRestart reports that this fake can bounce the broker.
+func (f *fakeApplier) CanRestart() bool { return true }
+
 // restartCount returns how often the broker was restarted.
 func (f *fakeApplier) restartCount() int {
 	f.mu.Lock()
