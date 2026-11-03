@@ -366,7 +366,7 @@ if [ "$invalid_status" != "422" ]; then
     echo "a corrupted copy returned ${invalid_status}, want 422" >&2
     exit 1
 fi
-reimport="$(mfa_curl POST /api/v1/broker/config/copy "$copy_body")"
+reimport="$(mfa_curl POST /api/v1/broker/config/copy "$(cat "$copy_body")")"
 reimport_revision="$(jq -r '.revision_id // empty' <<<"$reimport")"
 if [ -z "$reimport_revision" ]; then
     echo "re-importing the copy did not return a revision: $reimport" >&2
