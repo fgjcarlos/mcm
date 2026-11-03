@@ -296,6 +296,10 @@ func TestHandleDeployApply(t *testing.T) {
 		token := loginAs(t, app, "admin", "secret")
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
@@ -313,6 +317,10 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"`+revisionID+`"}`, token)
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
@@ -333,6 +341,10 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", "")
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
@@ -349,6 +361,10 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", "", token)
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
@@ -378,6 +394,10 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"`+revisionID+`"}`, token)
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -404,6 +424,7 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"rev-1"}`, token)
+		withRecentMFATest(t, app, req)
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusConflict {
@@ -431,6 +452,10 @@ func TestHandleDeployApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/deployments/apply", `{"revision_id":"locked"}`, token)
+		withRecentMFATest(t, app, req)
+		if req.Method == http.MethodPost && (req.URL.Path == "/api/v1/broker/config/apply" || req.URL.Path == "/api/v1/deployments/apply") && req.Header.Get("Authorization") != "" {
+			withRecentMFATest(t, app, req)
+		}
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusConflict {

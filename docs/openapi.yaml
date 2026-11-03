@@ -933,6 +933,8 @@ paths:
         resulting `Deployment` row and (when configured) triggers a reload on
         the broker. Returns 409 if a deploy is already in progress or the
         preview revision has already been consumed.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -1352,6 +1354,8 @@ paths:
         (`requires_restart`, `adoption_required`, revision mismatch/expired/
         consumed, deploy in progress); 400 covers `revision_id` missing;
         503 covers broker-config not configured.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:

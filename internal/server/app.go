@@ -448,7 +448,7 @@ func (a *App) Handler() http.Handler {
 		dAPI := &deployAPI{svc: a.deploySvc}
 		mux.Handle("GET /api/v1/deployments", a.requireRole(auth.RoleAuditor, http.HandlerFunc(dAPI.handleList)))
 		mux.Handle("POST /api/v1/deployments/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(dAPI.handlePreview)))
-		mux.Handle("POST /api/v1/deployments/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dAPI.handleApply)))
+		mux.Handle("POST /api/v1/deployments/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(dAPI.handleApply))))
 	}
 	if a.listenerSvc != nil {
 		lAPI := &listenerAPI{svc: a.listenerSvc}
@@ -469,7 +469,7 @@ func (a *App) Handler() http.Handler {
 		mux.Handle("POST /api/v1/broker/config/import", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handleImport)))
 		mux.Handle("POST /api/v1/broker/config/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handleImport)))
 		mux.Handle("POST /api/v1/broker/config/adopt", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleAdopt)))
-		mux.Handle("POST /api/v1/broker/config/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(bAPI.handleApply)))
+		mux.Handle("POST /api/v1/broker/config/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(bAPI.handleApply))))
 		mux.Handle("GET /api/v1/broker/config/catalog", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleCatalog)))
 		mux.Handle("GET /api/v1/broker/settings", a.requireRole(auth.RoleAuditor, http.HandlerFunc(bAPI.handleGetSettings)))
 		mux.Handle("POST /api/v1/broker/settings/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(bAPI.handlePreviewSettings)))

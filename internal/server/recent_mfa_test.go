@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/storage"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -165,5 +166,75 @@ func TestRecentMFAStepUpRequiresEnrolledMFA(t *testing.T) {
 	app.Handler().ServeHTTP(anonymous, httptest.NewRequest(http.MethodPost, "/api/v1/auth/mfa/step-up", strings.NewReader(`{"code":"123456"}`)))
 	if anonymous.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous step-up status = %d, want 401", anonymous.Code)
+	}
+}
+
+// withRecentMFATest attaches a fresh recent-MFA proof to an authenticated
+// request, so an operation test keeps testing its original handler contract
+// now that the sensitive routes require the proof.
+func withRecentMFATest(t *testing.T, app *App, req *http.Request) *http.Request {
+	t.Helper()
+	token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if token != "" {
+		req.Header.Set("X-MCM-MFA", recentMFATestProof(t, app, token))
+	}
+	return req
+}
+
+func TestRecentMFARequiredForApply(t *testing.T) {
+	app, store := newAppWithBroker(t, &fakeBrokerConfigService{depRes: storage.Deployment{ID: 42}}, nil, "")
+	t.Cleanup(func() { _ = store.Close() })
+	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+	token := loginAs(t, app, "admin", "secret")
+	clock := app.now().Add(time.Second)
+	app.now = func() time.Time { return clock }
+	secondToken := loginAs(t, app, "admin", "secret")
+	apply := func(proof string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := authedRequest("POST", "/api/v1/broker/config/apply", `{"revision_id":"rev-1"}`, token)
+		req.Header.Set("X-MCM-MFA", proof)
+		app.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	denied := apply("")
+	if denied.Code != 403 || denied.Body.String() != "{\"error\":\"recent MFA verification required\",\"code\":\"mfa_required\"}\n" {
+		t.Fatalf("unverified apply: %d %s", denied.Code, denied.Body.String())
+	}
+	proof := recentMFATestProof(t, app, token)
+	accepted := apply(proof)
+	if accepted.Code != 200 {
+		t.Fatalf("verified apply: %d %s", accepted.Code, accepted.Body.String())
+	}
+	// A proof cannot be used as a bearer access token.
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest("GET", "/api/v1/auth/me", "", proof))
+	if rec.Code != 401 {
+		t.Fatalf("proof accepted as session: %d", rec.Code)
+	}
+	// It is bound to the exact session, even for the same account.
+	original := token
+	token = secondToken
+	if r := apply(proof); r.Code != 403 {
+		t.Fatalf("MFA proof copied to a different valid session: %d", r.Code)
+	}
+	token = original
+	if r := apply(proof + "x"); r.Code != 403 {
+		t.Fatalf("tampered proof accepted: %d", r.Code)
+	}
+	now := app.now().Add(5 * time.Minute)
+	app.now = func() time.Time { return now }
+	if r := apply(proof); r.Code != 403 {
+		t.Fatalf("expired MFA accepted: %d %s", r.Code, r.Body.String())
+	}
+	// A still-unexpired proof is also revoked when enrollment is removed.
+	clock = now.Add(-4 * time.Minute)
+	app.now = func() time.Time { return clock }
+	disabled := httptest.NewRecorder()
+	app.Handler().ServeHTTP(disabled, authedRequest("DELETE", "/api/v1/auth/mfa", `{"password":"secret"}`, token))
+	if disabled.Code != 204 {
+		t.Fatalf("disable MFA: %d %s", disabled.Code, disabled.Body.String())
+	}
+	if r := apply(proof); r.Code != 403 {
+		t.Fatalf("revoked enrollment accepted: %d", r.Code)
 	}
 }

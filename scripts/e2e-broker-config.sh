@@ -136,6 +136,18 @@ if [ "$login_code" != "200" ] || [ -z "$TOKEN" ]; then
 fi
 echo "login OK"
 
+# --- Recent MFA -----------------------------------------------------------
+# Sensitive operations require a recent, session-bound MFA proof. The
+# helper enrolls TOTP for the authenticated account (fresh stacks only),
+# confirms it, and exchanges an unused time step for the proof.
+MFA_PROOF="$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$HOST_URL" "$TOKEN")"
+if [ -z "$MFA_PROOF" ]; then
+    echo "could not obtain a recent MFA proof" >&2
+    exit 1
+fi
+echo "recent MFA proof acquired"
+
+
 auth_curl() {
     local method="$1" path="$2" body="${3:-}"
     if [ -n "$body" ]; then
@@ -147,6 +159,17 @@ auth_curl() {
         curl -sS -X "$method" "${HOST_URL}${path}" \
             -H "Authorization: Bearer ${TOKEN}"
     fi
+}
+
+# apply_curl performs an apply with the recent-MFA proof that sensitive
+# operations require.
+apply_curl() {
+    local path="$1" body="$2"
+    curl -sS -X POST "${HOST_URL}${path}" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "X-MCM-MFA: ${MFA_PROOF}" \
+        -H 'Content-Type: application/json' \
+        -d "$body"
 }
 
 echo "--- invariant 2: GET /broker/config ---"
@@ -189,8 +212,9 @@ echo "--- invariant 5+6: POST /broker/config/apply, verify on-disk hash ---"
 # persistence_location / user / listener triggers ErrRequiresRestart.
 # `force=true` lets the apply proceed; on-disk hash is the real contract
 # (the file IS rewritten regardless of whether Mosquitto picks up
-# restart-required directives from SIGHUP alone).
-apply_resp="$(auth_curl POST /api/v1/broker/config/apply \
+# restart-required directives from SIGHUP alone). The apply carries the
+# recent-MFA proof the sensitive operations require.
+apply_resp="$(apply_curl /api/v1/broker/config/apply \
     "{\"revision_id\":\"${revision_id}\",\"force\":true,\"adopt\":true}")"
 apply_status="$(jq -r '.status // empty' <<<"$apply_resp")"
 apply_message="$(jq -r '.message // empty' <<<"$apply_resp")"
@@ -233,7 +257,7 @@ echo "drift detected: new base hash ${drift_base:0:12}"
 
 echo "--- invariant 8: apply the drift revision (adopt=true) ---"
 # Same restart-required rationale as invariant 5; see the comment there.
-drift_apply="$(auth_curl POST /api/v1/broker/config/apply \
+drift_apply="$(apply_curl /api/v1/broker/config/apply \
     "{\"revision_id\":\"${drift_revision}\",\"force\":true,\"adopt\":true}")"
 drift_status="$(jq -r '.status // empty' <<<"$drift_apply")"
 case "$drift_status" in

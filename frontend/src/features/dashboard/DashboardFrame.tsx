@@ -4,6 +4,7 @@ import type { BrokerConnectionStatus, BrokerStreamState } from '../broker/useBro
 
 export type NavItem = {
   id: string
+  group?: string
   label: string
   eyebrow: string
   title: string
@@ -62,7 +63,12 @@ export function DashboardFrame({
           </div>
 
           <nav className="mt-8 space-y-2" aria-label="Primary navigation">
-            {navItems.map((item, index) => {
+            {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration'].map((group) => {
+              const items = navItems.filter((item) => (item.group ?? 'Diagnostics') === group)
+              if (!items.length) return null
+              return <section key={group} className="space-y-2">
+                <h2 className="pt-4 text-xs font-semibold uppercase tracking-widest text-cyan-200">{group}</h2>
+                {items.map((item, index) => {
               const isActive = item.id === activeId
               return (
                 <a
@@ -86,6 +92,8 @@ export function DashboardFrame({
                   <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
                 </a>
               )
+                })}
+              </section>
             })}
           </nav>
 

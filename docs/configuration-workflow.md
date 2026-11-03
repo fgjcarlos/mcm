@@ -2,6 +2,14 @@
 
 MCM manages the configured `mosquitto.conf` through immutable previews. Importing, editing, recovering a revision, or importing a configuration copy prepares a candidate; none of those operations changes broker files. Only an explicit apply can do that.
 
+## Quick path
+
+1. Open **Configuration** and import the existing root configuration. Review the on-disk body and catalog warnings before editing.
+2. Edit the draft and validate it. Review the exact revision, diff, affected file, and reload/restart impact. Reload disk state to check for external edits; a changed base requires a new preview.
+3. As an administrator, enable MFA under **Administration → Account**. Confirm a fresh TOTP code before apply or recovery. An enrollment/login code already used in the same 30-second window cannot be reused.
+4. Apply the reviewed revision. Read its result in **Changes**; saved files and a successful reload signal are not, by themselves, proof of MQTT activation.
+5. To recover, select an earlier revision and prepare a new preview. Review it against today's configuration, then explicitly apply it.
+
 ## The workflow
 
 1. **Import.** `POST /api/v1/broker/config/import` with an empty body previews the root file as it is on disk. Include files stay separate: the root file is never rewritten with their bodies appended, and unknown directives are preserved.
@@ -11,6 +19,14 @@ MCM manages the configured `mosquitto.conf` through immutable previews. Importin
 5. **Recover.** `GET /api/v1/broker/config/revisions` lists the latest 100 revisions. `POST /api/v1/broker/config/revisions/{id}/recover` never reuses a consumed revision: it revalidates the selected bytes against today's files and returns a **new** preview against the current base, which then goes through review and an explicit apply like any other candidate.
 
 ## Authorization and recent MFA
+
+| Operation | Minimum role | Recent MFA |
+| --- | --- | --- |
+| Inspect configuration, catalog and revision metadata | Auditor | No |
+| Import current configuration or validate an edited draft | Operator | No |
+| Adopt and apply configuration | Admin | Apply requires it |
+| Prepare recovery, import or export a configuration copy | Admin | Yes |
+| Apply MQTT users/ACL changes | Admin | Yes |
 
 Sensitive operations ask the operator to confirm a second factor first. `POST /api/v1/auth/mfa/step-up` exchanges an unused TOTP code for a short-lived proof.
 

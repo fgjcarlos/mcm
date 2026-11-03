@@ -100,7 +100,9 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
     const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
     const key = `${method.toUpperCase()} ${requestUrl}`
-    const handler = routes[key]
+    const handler = routes[key] ?? (key === 'POST /api/v1/auth/mfa/step-up'
+      ? () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() })
+      : undefined)
 
     if (!handler) {
       throw new Error(`Unhandled fetch: ${key}`)
@@ -981,6 +983,9 @@ describe('App', () => {
     expect(screen.getByText('factory/retired/#')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
 
     await screen.findByText('Configuration verified successfully.')
@@ -1049,6 +1054,9 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
     await screen.findByRole('button', { name: 'Apply' })
     await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
 
     expect(await screen.findByText('apply failed')).toBeInTheDocument()
@@ -1102,6 +1110,9 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
     await screen.findByRole('button', { name: 'Apply' })
     await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
     await screen.findByText('active_verified')
     expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
@@ -1162,6 +1173,9 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
     await screen.findByRole('button', { name: 'Apply' })
     await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
     await waitFor(() => expect(applyRequest).toHaveBeenCalled())
 
@@ -1339,4 +1353,16 @@ describe('App', () => {
       expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
     })
   })
+  it('organizes existing routes into five operator areas', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'navigation-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('navigation-token')))
+    render(<App />)
+    for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
+      expect(await screen.findByRole('heading', { name })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('link', { name: /MQTT user directory|Users/ })).toHaveAttribute('href', '/users')
+    expect(screen.getByRole('link', { name: /ACLs/ })).toHaveAttribute('href', '/acls')
+    expect(screen.getByRole('link', { name: /Configuration revisions/ })).toHaveAttribute('href', '/changes')
+  })
+
 })
