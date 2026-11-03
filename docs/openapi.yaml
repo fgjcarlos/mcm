@@ -246,6 +246,40 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MFASetupResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/mfa/step-up:
+    post:
+      tags: [Auth]
+      summary: Confirm recent MFA for sensitive operations
+      description: |
+        Requires an authenticated, MFA-enrolled account and an unused TOTP code.
+        Returns a five-minute proof bound to this exact bearer session and current
+        MFA enrollment. Send it in X-MCM-MFA, never as the bearer token. Replayed
+        codes fail; failed attempts share the configured login lockout budget.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: Short-lived MFA proof. Keep in browser memory only.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proof, expires_at]
+                properties:
+                  proof: { type: string }
+                  expires_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429":
+          description: Too many failed verification attempts.
   /api/v1/auth/mfa/verify:
     post:
       tags: [Auth]
@@ -1846,6 +1880,11 @@ components:
       required: true
       schema: { type: integer, minimum: 1 }
   responses:
+    BadRequest:
+      description: The request body or parameters are malformed or missing a required field.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: Missing or invalid Bearer token. The response is intentionally generic.
       content:

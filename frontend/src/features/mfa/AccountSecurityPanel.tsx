@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import type { AdminUser } from '../auth/useAuthSession'
 import { setupMFA, verifyMFA, disableMFA, isUnauthorizedResponseError } from './api'
+import RecentMFAConfirmation from './RecentMFAConfirmation'
+import { useRecentMFA } from './useRecentMFA'
 
 type Props = {
   token: string
@@ -39,6 +41,9 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
   const [disableSubmitting, setDisableSubmitting] = useState(false)
   const [disableError, setDisableError] = useState('')
   const [disableSuccess, setDisableSuccess] = useState(false)
+
+  // Recent-MFA proof for the sensitive operations that will require it.
+  const recentMFA = useRecentMFA(token, onLogout)
 
   if (!currentUser) {
     return (
@@ -337,6 +342,8 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
           <p className="mt-2 text-sm text-slate-300">Two-factor authentication has been removed from your account.</p>
         </div>
       ) : null}
+
+      <RecentMFAConfirmation state={recentMFA} />
 
       {!showDisableForm ? (
         <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
