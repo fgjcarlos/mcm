@@ -422,6 +422,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login/mfa", a.handleLoginMFA)
 	mux.Handle("GET /api/v1/auth/me", a.requireAuth(http.HandlerFunc(a.handleCurrentUser)))
 	mux.Handle("POST /api/v1/auth/mfa/setup", a.requireAuth(http.HandlerFunc(a.handleMFASetup)))
+	mux.Handle("POST /api/v1/auth/mfa/step-up", a.requireAuth(http.HandlerFunc(a.handleMFAStepUp)))
 	mux.Handle("POST /api/v1/auth/mfa/verify", a.requireAuth(http.HandlerFunc(a.handleMFAVerify)))
 	mux.Handle("DELETE /api/v1/auth/mfa", a.requireAuth(http.HandlerFunc(a.handleMFADisable)))
 	mux.Handle("GET /api/v1/admin-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAdminUsers)))

@@ -310,6 +310,36 @@ describe('AccountSecurityPanel — MFA enabled user', () => {
     expect(screen.getByRole('button', { name: /disable mfa/i })).toBeInTheDocument()
   })
 
+  it('offers the recent MFA confirmation and exchanges an unused code for a proof', async () => {
+    const fetchMock = installFetchMock({
+      'POST /api/v1/auth/mfa/step-up': () =>
+        jsonResponse({ proof: 'signed-proof', expires_at: '2099-01-01T00:00:00Z' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = userEvent.setup()
+    render(
+      <AccountSecurityPanel
+        token={token}
+        currentUser={mfaEnabledUser}
+        onLogout={onLogout}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /verify mfa/i })).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/mfa code/i), '123456')
+    await user.click(screen.getByRole('button', { name: /verify mfa/i }))
+
+    await waitFor(() => expect(screen.getByText(/confirmed for this session/i)).toBeInTheDocument())
+    const stepUp = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        (init as RequestInit | undefined)?.method === 'POST' &&
+        String(input).endsWith('/api/v1/auth/mfa/step-up'),
+    )
+    expect(stepUp).toBeDefined()
+    expect(JSON.parse(String((stepUp?.[1] as RequestInit).body)).code).toBe('123456')
+  })
+
   it('disable flow requires password — clicking Disable shows password form', async () => {
     vi.stubGlobal('fetch', vi.fn())
 
