@@ -385,6 +385,14 @@ if [ -z "$current_hash" ]; then
     echo "could not read the current on-disk hash" >&2
     exit 1
 fi
+# The hash of the file as it is right now: the drift probe and the drift
+# apply changed it, so the comparison below must start from this state
+# and not from the hash of the first apply.
+disk_hash_before_recovery="$($COMPOSE exec -T mosquitto sha256sum /mosquitto/config/mosquitto.conf | awk '{print $1}')"
+if [ "$disk_hash_before_recovery" != "$current_hash" ]; then
+    echo "the on-disk hash and the reported hash disagree: ${disk_hash_before_recovery} != ${current_hash}" >&2
+    exit 1
+fi
 recovered="$(mfa_curl POST "/api/v1/broker/config/revisions/${drift_revision}/recover" "{\"base_hash\":\"${current_hash}\"}")"
 recovered_revision="$(jq -r '.revision_id // empty' <<<"$recovered")"
 if [ -z "$recovered_revision" ]; then
@@ -397,8 +405,8 @@ if [ "$recovered_revision" = "$drift_revision" ]; then
 fi
 # Recovery prepares a candidate; it does not touch the broker by itself.
 disk_hash_after="$($COMPOSE exec -T mosquitto sha256sum /mosquitto/config/mosquitto.conf | awk '{print $1}')"
-if [ "$disk_hash_after" != "$disk_hash" ]; then
-    echo "recovery changed the broker file without an apply: ${disk_hash} -> ${disk_hash_after}" >&2
+if [ "$disk_hash_after" != "$disk_hash_before_recovery" ]; then
+    echo "recovery changed the broker file without an apply: ${disk_hash_before_recovery} -> ${disk_hash_after}" >&2
     exit 1
 fi
 echo "recovery OK revision=${recovered_revision:0:8} (broker file untouched)"
