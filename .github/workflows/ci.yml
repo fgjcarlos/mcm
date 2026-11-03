@@ -621,3 +621,42 @@ jobs:
         run: |
           docker compose -f docker-compose.yml \
             -f /tmp/docker-compose.e2e.yml down -v
+
+  e2e-configuration-ui:
+    name: Configuration journey in a real browser
+    needs: image
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: npm ci (frontend)
+        run: npm --prefix frontend ci
+
+      - name: install Chromium for Playwright
+        # The journey drives the real UI, so the browser and its system
+        # libraries are needed. The path must match the one the runner
+        # script exports.
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/frontend/node_modules/.cache/ms-playwright
+        run: npm --prefix frontend exec -- playwright install --with-deps chromium
+
+      - name: scripts/e2e-configuration-ui.sh
+        # Issue #305 acceptance criteria: prove the complete journey —
+        # import, edit, validate, review, apply, export/import a copy and
+        # recover — in a real browser against a real Mosquitto, without
+        # hand-editing any broker file. The fixture owns one disposable
+        # broker container and never touches the shared Compose stack.
+        run: bash scripts/e2e-configuration-ui.sh

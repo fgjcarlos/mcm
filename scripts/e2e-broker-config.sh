@@ -172,6 +172,24 @@ apply_curl() {
         -d "$body"
 }
 
+# mfa_curl performs any method with the recent-MFA proof that the sensitive
+# operations require. The proof is bound to the session that requested it,
+# so the request runs as the operator the helper created.
+mfa_curl() {
+    local method="$1" path="$2" body="${3:-}"
+    if [ -n "$body" ]; then
+        curl -sS -X "$method" "${HOST_URL}${path}" \
+            -H "Authorization: Bearer ${MFA_TOKEN}" \
+            -H "X-MCM-MFA: ${MFA_PROOF}" \
+            -H 'Content-Type: application/json' \
+            -d "$body"
+    else
+        curl -sS -X "$method" "${HOST_URL}${path}" \
+            -H "Authorization: Bearer ${MFA_TOKEN}" \
+            -H "X-MCM-MFA: ${MFA_PROOF}"
+    fi
+}
+
 echo "--- invariant 2: GET /broker/config ---"
 config_resp="$(auth_curl GET /api/v1/broker/config)"
 config_path="$(jq -r '.path // empty' <<<"$config_resp")"
@@ -268,5 +286,129 @@ case "$drift_status" in
         ;;
 esac
 echo "drift apply OK"
+
+echo "--- invariant 9: revision history ---"
+revisions="$(auth_curl GET /api/v1/broker/config/revisions)"
+revision_count="$(jq -r '.revisions | length // 0' <<<"$revisions")"
+if [ "$revision_count" -lt 1 ]; then
+    echo "revision history is empty: $revisions" >&2
+    exit 1
+fi
+echo "revisions OK count=$revision_count"
+
+echo "--- invariant 10: recovery and copies require a recent MFA proof ---"
+# The proof is what distinguishes an authorized operator from anyone else
+# holding the session, so the refusal must be explicit.
+for target in "GET /api/v1/broker/config/copy" "POST /api/v1/broker/config/revisions/${drift_revision}/recover"; do
+    method="${target%% *}"
+    path="${target#* }"
+    body_file="$(mktemp)"
+    status="$(curl -sS -o "$body_file" -w '%{http_code}' \
+        -X "$method" "${HOST_URL}${path}" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d '{}' || echo "000")"
+    if [ "$status" != "403" ]; then
+        echo "${method} ${path} without a proof returned ${status}: $(cat "$body_file")" >&2
+        exit 1
+    fi
+    if ! grep -q 'mfa_required' "$body_file"; then
+        echo "${method} ${path} without a proof did not report mfa_required: $(cat "$body_file")" >&2
+        exit 1
+    fi
+    rm -f "$body_file"
+done
+echo "recovery and copies are refused without a proof"
+
+echo "--- invariant 11: export and re-import a configuration copy ---"
+copy_body="$(mktemp)"
+copy_status="$(curl -sS -o "$copy_body" -w '%{http_code}' \
+    -X GET "${HOST_URL}/api/v1/broker/config/copy" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
+    -H "X-MCM-MFA: ${MFA_PROOF}" || echo "000")"
+if [ "$copy_status" != "200" ]; then
+    echo "copy export returned ${copy_status}: $(cat "$copy_body")" >&2
+    exit 1
+fi
+copy_format="$(jq -r '.format // empty' <"$copy_body")"
+copy_hash="$(jq -r '.hash // empty' <"$copy_body")"
+copy_text="$(jq -r '.body // empty' <"$copy_body")"
+if [ "$copy_format" != "mcm-broker-config/v1" ] || [ -z "$copy_hash" ] || [ -z "$copy_text" ]; then
+    echo "copy export is malformed: $(cat "$copy_body")" >&2
+    exit 1
+fi
+# The copy carries the root configuration file and nothing else. A
+# complete backup is tracked separately (#295), so the copy must not
+# embed the contents of the files the root file references: the
+# password file, the ACL file and the include files. The root file
+# itself names them, so the assertion is that the copy equals the file
+# on disk and that none of their contents travelled with it.
+root_text="$($COMPOSE exec -T mosquitto cat /mosquitto/config/mosquitto.conf)"
+if [ "$copy_text" != "$root_text" ]; then
+    echo "the copy is not the root configuration file" >&2
+    exit 1
+fi
+for leak in 'mcm/healthcheck' '$7$' '$2b$'; do
+    if printf '%s' "$copy_text" | grep -qF "$leak"; then
+        echo "the configuration copy embedded a dependency: ${leak}" >&2
+        exit 1
+    fi
+done
+# A copy whose hash does not match its body is refused.
+invalid_copy="$(jq -c '.hash = "0000000000000000000000000000000000000000000000000000000000000000"' <"$copy_body")"
+invalid_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    -X POST "${HOST_URL}/api/v1/broker/config/copy" \
+    -H "Authorization: Bearer ${MFA_TOKEN}" \
+    -H "X-MCM-MFA: ${MFA_PROOF}" \
+    -H 'Content-Type: application/json' \
+    -d "$invalid_copy" || echo "000")"
+if [ "$invalid_status" != "422" ]; then
+    echo "a corrupted copy returned ${invalid_status}, want 422" >&2
+    exit 1
+fi
+reimport="$(mfa_curl POST /api/v1/broker/config/copy "$(cat "$copy_body")")"
+reimport_revision="$(jq -r '.revision_id // empty' <<<"$reimport")"
+if [ -z "$reimport_revision" ]; then
+    echo "re-importing the copy did not return a revision: $reimport" >&2
+    exit 1
+fi
+if [ "$reimport_revision" = "$drift_revision" ]; then
+    echo "re-importing the copy reused the revision ${drift_revision}" >&2
+    exit 1
+fi
+rm -f "$copy_body"
+echo "copy export and re-import OK"
+
+echo "--- invariant 12: recover a revision into a new preview ---"
+current_hash="$(jq -r '.hash // empty' <<<"$(auth_curl GET /api/v1/broker/config)")"
+if [ -z "$current_hash" ]; then
+    echo "could not read the current on-disk hash" >&2
+    exit 1
+fi
+# The hash of the file as it is right now: the drift probe and the drift
+# apply changed it, so the comparison below must start from this state
+# and not from the hash of the first apply.
+disk_hash_before_recovery="$($COMPOSE exec -T mosquitto sha256sum /mosquitto/config/mosquitto.conf | awk '{print $1}')"
+if [ "$disk_hash_before_recovery" != "$current_hash" ]; then
+    echo "the on-disk hash and the reported hash disagree: ${disk_hash_before_recovery} != ${current_hash}" >&2
+    exit 1
+fi
+recovered="$(mfa_curl POST "/api/v1/broker/config/revisions/${drift_revision}/recover" "{\"base_hash\":\"${current_hash}\"}")"
+recovered_revision="$(jq -r '.revision_id // empty' <<<"$recovered")"
+if [ -z "$recovered_revision" ]; then
+    echo "recovery did not return a revision: $recovered" >&2
+    exit 1
+fi
+if [ "$recovered_revision" = "$drift_revision" ]; then
+    echo "recovery reused the consumed revision ${drift_revision}" >&2
+    exit 1
+fi
+# Recovery prepares a candidate; it does not touch the broker by itself.
+disk_hash_after="$($COMPOSE exec -T mosquitto sha256sum /mosquitto/config/mosquitto.conf | awk '{print $1}')"
+if [ "$disk_hash_after" != "$disk_hash_before_recovery" ]; then
+    echo "recovery changed the broker file without an apply: ${disk_hash_before_recovery} -> ${disk_hash_after}" >&2
+    exit 1
+fi
+echo "recovery OK revision=${recovered_revision:0:8} (broker file untouched)"
 
 echo "--- e2e-broker-config: all invariants passed ---"
