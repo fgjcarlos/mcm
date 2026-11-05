@@ -102,6 +102,8 @@ services:
       # /var/lib/mosquitto-config) because the mcm Dockerfile already
       # creates /var/lib/mcm and we keep the broker paths canonical.
       - mosquitto_config:/var/lib/mosquitto-config
+      # Broker logs are readable by MCM for bounded diagnostics ingestion.
+      - mosquitto_logs:/mosquitto/log:ro
       # DEV-ONLY: mount the host's Docker socket so MCM's deploy service
       # (DockerApplier) can run `docker exec mcm-mosquitto kill -HUP 1`
       # to signal the broker. The Docker CLI is installed in the mcm
@@ -113,6 +115,16 @@ services:
       # mcm on the same host so the `pid_path` file mode works
       # directly.
       - /var/run/docker.sock:/var/run/docker.sock
+    # The host's Docker socket group. The image already joins the
+    # conventional socket GID 999, but that GID is baked at BUILD time:
+    # a CI runner that built the image and a runner that runs it have
+    # different socket GIDs, and the deploy service then cannot talk to
+    # the daemon at all. Adding the host's socket GID as a supplementary
+    # group at RUN time makes the access correct on every host. Export
+    # DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock) before
+    # `docker compose up` when the host does not use GID 999.
+    group_add:
+      - "${DOCKER_HOST_GID:-999}"
     # Dev defaults: MCM_AUTH_JWT_SECRET and MCM_BOOTSTRAP_ADMIN_PASSWORD
     # are left unset so the Go runtime auto-generates them on first boot.
     # The JWT secret is persisted to <db dir>/.bootstrap.json (mode 0600)
@@ -142,6 +154,7 @@ services:
     environment:
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_MOSQUITTO_PORT: "1883"
+      MCM_MOSQUITTO_LOG_PATH: /mosquitto/log/mosquitto.log
       # The dev admin credentials are hardcoded for clean-clone
       # convenience. They MUST match what the mosquitto bootstrap
       # script seeds into /mosquitto/config/passwd.

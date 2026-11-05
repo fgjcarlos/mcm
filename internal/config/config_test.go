@@ -1007,6 +1007,7 @@ var envVarNames = []string{
 	"MCM_MOSQUITTO_PORT",
 	"MCM_MOSQUITTO_USERNAME",
 	"MCM_MOSQUITTO_PASSWORD",
+	"MCM_MOSQUITTO_LOG_PATH",
 	"MCM_MOSQUITTO_DEPLOY_MODE",
 	"MCM_MOSQUITTO_DEPLOY_ACL_PATH",
 	"MCM_MOSQUITTO_DEPLOY_PASSWD_PATH",
@@ -1125,6 +1126,11 @@ func TestEnvEveryVarIsWired(t *testing.T) {
 		}, func(t *testing.T, c Config) {
 			if c.Mosquitto.Password != "broker-pass" {
 				t.Fatalf("Mosquitto.Password = %q, want broker-pass", c.Mosquitto.Password)
+			}
+		}},
+		{"MCM_MOSQUITTO_LOG_PATH", "/mosquitto/log/mosquitto.log", nil, func(t *testing.T, c Config) {
+			if c.Mosquitto.LogPath != "/mosquitto/log/mosquitto.log" {
+				t.Fatalf("Mosquitto.LogPath = %q, want /mosquitto/log/mosquitto.log", c.Mosquitto.LogPath)
 			}
 		}},
 		{"MCM_MOSQUITTO_DEPLOY_MODE", "docker", func(t *testing.T) {

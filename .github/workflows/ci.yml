@@ -161,7 +161,12 @@ jobs:
 
       # --- Go ---
       - name: go test
-        run: go test ./... -race -count=1
+        # The internal/server package needs about ten minutes under the
+        # race detector on a hosted runner, which is where the default
+        # ten-minute timeout bites. The budget is explicit so a slow
+        # runner cannot fail the build on a timeout that says nothing
+        # about the code.
+        run: go test ./... -race -count=1 -timeout 25m
 
       - name: go vet
         run: go vet ./...
@@ -454,6 +459,10 @@ jobs:
           # up the new ports on restart.
           MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
           # wait for mcm and extract bootstrap password
@@ -508,6 +517,10 @@ jobs:
           # the named volume the broker reads.
           MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm up --no-build -d
           for i in $(seq 1 30); do
             sleep 1
@@ -535,6 +548,38 @@ jobs:
         # writes the file, the settings read the value back and saving
         # the unchanged settings leaves the file alone.
         run: bash scripts/e2e-broker-settings.sh
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.yml -p mcm down -v
+
+  e2e-broker-observability:
+    needs: image
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 6
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+      - name: Start mcm + mosquitto
+        env:
+          MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+        run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
+          docker compose -f docker-compose.yml -p mcm up --no-build -d
+      - name: Run broker observability e2e script
+        # Exercise live TCP/MQTT, explicit $SYS metrics, broker-owned log
+        # ingestion and the readiness/diagnostics contract against Mosquitto.
+        run: bash scripts/e2e-broker-observability.sh
       - name: Cleanup
         if: always()
         run: docker compose -f docker-compose.yml -p mcm down -v
@@ -587,6 +632,10 @@ jobs:
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
           for i in $(seq 1 30); do

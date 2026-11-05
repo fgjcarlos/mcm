@@ -247,6 +247,100 @@ describe('App', () => {
     expect(MockWebSocket.instances).toHaveLength(0)
   })
 
+  it('renders separate broker diagnostic sources and applies the query filters', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'diagnostic-token')
+    const diagnostics = {
+      sources: {
+        observed_traffic: { message_count: 7, window_seconds: 300, message_rate_per_minute: 1.4, top_topics: [{ name: 'plant/line-1/state', count: 5, percentage: 71 }], top_clients_note: 'Client IDs are not included in observed messages.', rate_points: [], top_clients: [], top_clients_available: false, persistence: 'memory' },
+        mcm_events: { status_events: 2, topic_messages: 9, event_subscribers: 3, last_message_at: '2026-01-01T00:00:00Z', note: 'Produced by MCM' },
+        broker_logs: { available: false, reason: 'log file permission denied', entries: [{ observed_at: '2026-01-01T00:00:00Z', severity: 'warning', kind: 'client-connected', client_id: 'broker-client-7', message: 'Connected' }], severity_counts: { error: 0, warning: 1, info: 0, debug: 0 }, limits: { max_entries: 200, max_entries_per_read: 50, max_message_bytes: 1024, max_age_seconds: 900 }, note: 'Broker-owned logs.' },
+        internal_metrics: { endpoint: '/metrics', format: 'prometheus', counters: { mcm_broker_status: 1 }, note: 'Produced by MCM' },
+      },
+      broker_sys: { available: true, reason: '', metrics: { 'broker/clients/connected': { value: '3', observed_at: '2026-01-01T00:00:00Z' } }, note: 'Broker $SYS feed.' },
+      diagnostics: {
+        tcp: { status: 'reachable', address: 'broker:1883', latency_ms: 2.5, error: '' },
+        tls: { status: 'disabled', version: '', cipher: '', error: '' },
+        mqtt: { status: 'connected', client_id: 'monitor-1', subscriptions: ['#', '$SYS/#'], error: '' },
+      },
+    }
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('diagnostic-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 8, username: 'auditor', disabled: false, role: 'auditor', created_at: '', updated_at: '' }),
+      'GET /api/v1/broker/diagnostics': () => jsonResponse(diagnostics),
+      'GET /api/v1/broker/diagnostics?severity=warning&limit=17': () => jsonResponse(diagnostics),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /broker diagnostics/i }))
+    expect(await screen.findByText('Observed traffic')).toBeInTheDocument()
+    expect(screen.getByText('MCM events')).toBeInTheDocument()
+    expect(screen.getByText('Broker logs')).toBeInTheDocument()
+    expect(screen.getByText('Internal metrics')).toBeInTheDocument()
+    expect(screen.getByText('Unavailable')).toBeInTheDocument()
+    expect(screen.getByText('log file permission denied')).toBeInTheDocument()
+    expect(screen.queryByText('No broker log entries in this window.')).not.toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('plant/line-1/state')).toBeInTheDocument()
+    expect(screen.getByText('Client IDs are not included in observed messages.')).toBeInTheDocument()
+    expect(screen.getByText('broker/clients/connected')).toBeInTheDocument()
+    expect(screen.getAllByText('3')).toHaveLength(2)
+    expect(screen.getByText(/tcp/i).closest('div')).toHaveTextContent('reachable')
+    expect(screen.getByText('2.5 ms')).toBeInTheDocument()
+    expect(screen.getByText('monitor-1')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Minimum severity'), 'warning')
+    await user.clear(screen.getByLabelText('Entry limit'))
+    await user.type(screen.getByLabelText('Entry limit'), '17')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/v1/broker/diagnostics?severity=warning&limit=17', expect.anything()))
+  })
+
+  it('renders broker log entry client IDs only when the broker entry carries one', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'structured-logs-token')
+    const diagnostics = {
+      sources: {
+        observed_traffic: { message_count: 0, window_seconds: 300, message_rate_per_minute: 0, top_topics: [], top_clients: [], top_clients_available: false, top_clients_note: 'No client identity in observed traffic.', rate_points: [], persistence: '' },
+        mcm_events: { status_events: 0, topic_messages: 0, event_subscribers: 0, last_message_at: null, note: 'MCM events.' },
+        broker_logs: { available: true, reason: '', entries: [
+          { observed_at: '2026-01-01T00:00:00Z', severity: 'info', kind: 'connected', client_id: 'named-client', topic: 'broker/topic', message: 'Named client entry' },
+          { observed_at: '2026-01-01T00:00:01Z', severity: 'debug', kind: 'notice', message: 'Entry without client id' },
+        ], severity_counts: { error: 0, warning: 0, info: 1, debug: 1 }, limits: { max_entries: 200, max_entries_per_read: 50, max_message_bytes: 1024, max_age_seconds: 900 }, note: 'Broker-owned logs.' },
+        internal_metrics: { endpoint: '/metrics', format: 'prometheus', counters: {}, note: 'MCM metrics.' },
+      },
+      broker_sys: { available: true, reason: '', metrics: {}, note: '' },
+      diagnostics: { tcp: { status: 'reachable', address: 'broker:1883', latency_ms: 1, error: '' }, tls: { status: 'disabled', version: '', cipher: '', error: '' }, mqtt: { status: 'connected', client_id: '', subscriptions: [], error: '' } },
+    }
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('structured-logs-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 8, username: 'auditor', disabled: false, role: 'auditor', created_at: '', updated_at: '' }),
+      'GET /api/v1/broker/diagnostics': () => jsonResponse(diagnostics),
+    }))
+    render(<App />)
+    await screen.findByText('Signed in')
+    await userEvent.setup().click(screen.getByRole('link', { name: /broker diagnostics/i }))
+    expect(await screen.findByText('Named client entry')).toBeInTheDocument()
+    expect(screen.getByText('named-client')).toBeInTheDocument()
+    expect(screen.getByText('broker/topic')).toBeInTheDocument()
+    const untaggedEntry = screen.getByText('Entry without client id').closest('article')
+    expect(untaggedEntry).not.toHaveTextContent('Client ID')
+    expect(untaggedEntry).not.toHaveTextContent('named-client')
+  })
+
+  it('groups MCM events separately from Mosquitto broker-log entries', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'logs-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('logs-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /LogsOperations/i }))
+    MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'broker_log', source: 'mcm', severity: 'info', message: 'MCM line', observed_at: '2026-01-01T00:00:00Z' }) }))
+    MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'broker_log_entry', source: 'mosquitto_log', severity: 'warning', message: 'Broker line', observed_at: '2026-01-01T00:00:01Z' }) }))
+    expect(await screen.findByText('MCM line')).toBeInTheDocument()
+    expect(screen.getByText('Broker line')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'MCM events and logs' })).toContainElement(screen.getByText('MCM line'))
+    expect(screen.getByRole('region', { name: 'Broker logs (Mosquitto)' })).toContainElement(screen.getByText('Broker line'))
+  })
+
   it('renders populated dashboard traffic widgets and latest broker activity', async () => {
     window.localStorage.setItem('mcm_admin_token', 'dashboard-token')
 
@@ -299,6 +393,7 @@ describe('App', () => {
       new MessageEvent('message', {
         data: JSON.stringify({
           type: 'topic_message',
+          source: 'observed',
           topic: 'factory/line-1/temperature',
           payload_preview: '{"temperature":21.5}',
           payload_format: 'json',
@@ -425,6 +520,7 @@ describe('App', () => {
       new MessageEvent('message', {
         data: JSON.stringify({
           type: 'topic_message',
+          source: 'observed',
           topic: 'factory/line-1/temperature',
           payload_preview: '{"temperature":21.5}',
           payload_format: 'json',

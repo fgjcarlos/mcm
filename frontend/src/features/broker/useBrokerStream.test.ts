@@ -197,6 +197,7 @@ function baseTrafficMetrics(): BrokerTrafficMetrics {
 function topicMessage(topic: string, observedAt: string): TopicMessage {
   return {
     type: 'topic_message',
+    source: 'observed',
     topic,
     payload_preview: '{}',
     payload_format: 'json',

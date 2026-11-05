@@ -155,6 +155,8 @@ type MosquittoConfig struct {
 	ComposePath string `yaml:"compose_path"`
 	// ComposeService is the service name in ComposePath that runs Mosquitto.
 	ComposeService string `yaml:"compose_service"`
+	// LogPath is the broker-owned log file consumed by diagnostics. Empty disables ingestion.
+	LogPath string `yaml:"log_path"`
 }
 
 // DeployConfig controls how MCM writes Mosquitto ACL and password files and

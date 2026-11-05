@@ -40,6 +40,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID at build time, but the
+# socket of this host (and of a CI runner) can live under another GID.
+# shellcheck source=lib-docker-host-gid.sh
+source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
+export_docker_host_gid
+
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
 HOST_URL="http://localhost:${PORT}"
@@ -108,6 +116,10 @@ echo "--- e2e-deploy: up (no env vars, image already loaded) ---"
 # running this script outside CI), the operator is expected to have
 # built mcm:dev first (e.g. `task build` or `docker buildx build
 # --load -t mcm:dev .`).
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID 999 at build time, but the
+# group of the socket on THIS host can differ, so the compose file is
+# told the real one here.
 $COMPOSE up -d --no-build
 
 echo "--- e2e-deploy: waiting for /livez (${WAIT_SECONDS}s budget) ---"

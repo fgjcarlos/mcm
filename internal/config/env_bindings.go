@@ -550,6 +550,15 @@ var envBindings = []envBinding{
 			return nil
 		},
 	},
+	{
+		Name: "MCM_MOSQUITTO_LOG_PATH",
+		Path: "mosquitto.log_path",
+		Doc:  "Path to Mosquitto's broker log file. Empty (default) disables broker log ingestion.",
+		Apply: func(cfg *Config, raw string) error {
+			cfg.Mosquitto.LogPath = raw
+			return nil
+		},
+	},
 
 	// ── Mosquitto Sparkplug tuning ────────────────────────────────────
 	{

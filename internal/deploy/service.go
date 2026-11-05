@@ -915,8 +915,9 @@ const serviceHealthcheckTopic = "mcm/healthcheck"
 // serviceUserACL returns the set of ACL rules MCM always emits for the
 // broker service user (MCM_MOSQUITTO_USERNAME). The list is the minimum
 // the runtime needs to keep working after every apply:
-//   - read # — MCM subscribes to every topic for the broker events feed
-//     (the WebSocket clients consume that subscription).
+//   - read # — MCM subscribes to application topics for the broker events feed.
+//   - read $SYS/# — system topics do not match #, so the monitor needs this
+//     explicit grant before it can subscribe to broker metrics.
 //   - readwrite mcm/healthcheck — the deploy healthcheck publishes here
 //     and (depending on the test) verifies the round-trip.
 //
@@ -930,6 +931,11 @@ func serviceUserACL(username string) []acl.Rule {
 		{
 			Principal:   username,
 			TopicFilter: "#",
+			Permission:  acl.PermissionRead,
+		},
+		{
+			Principal:   username,
+			TopicFilter: "$SYS/#",
 			Permission:  acl.PermissionRead,
 		},
 		{
