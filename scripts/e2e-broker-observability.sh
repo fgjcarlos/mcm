@@ -80,17 +80,21 @@ fi
 echo "authenticated as bootstrap operator"
 
 request() {
-    local endpoint="$1" output="$2" token="${3:-$TOKEN}"
-    if [ -n "$token" ]; then
-        curl -sS -o "$output" -w '%{http_code}' "${HOST_URL}${endpoint}" \
-            -H "Authorization: Bearer ${token}"
-    else
-        curl -sS -o "$output" -w '%{http_code}' "${HOST_URL}${endpoint}"
-    fi
+    local endpoint="$1" output="$2"
+    curl -sS -o "$output" -w '%{http_code}' "${HOST_URL}${endpoint}" \
+        -H "Authorization: Bearer ${TOKEN}"
+}
+
+# A request WITHOUT an Authorization header. It must not reuse the token
+# helper above: an empty token argument would fall back to the operator
+# token and would silently test the authenticated path.
+request_unauthenticated() {
+    local endpoint="$1" output="$2"
+    curl -sS -o "$output" -w '%{http_code}' "${HOST_URL}${endpoint}"
 }
 
 response_file="$(mktemp)"
-unauth_code="$(request "$DIAGNOSTICS_PATH" "$response_file" '')"
+unauth_code="$(request_unauthenticated "$DIAGNOSTICS_PATH" "$response_file")"
 if [ "$unauth_code" != '401' ]; then
     echo "unauthenticated diagnostics returned HTTP ${unauth_code}, want 401: $(<"$response_file")" >&2
     exit 1
@@ -106,8 +110,24 @@ if ! jq -e '.diagnostics.tcp.status == "reachable" and .diagnostics.mqtt.status 
     echo "TCP/MQTT diagnostics do not report a live connection: $(<"$response_file")" >&2
     exit 1
 fi
-if ! jq -e '.broker_sys.available == true and (.broker_sys.metrics["broker/clients/connected"].value | tonumber >= 1)' "$response_file" >/dev/null; then
-    echo "explicit $SYS subscription did not expose the connected-client metric: $(<"$response_file")" >&2
+# The broker publishes the $SYS tree every sys_interval seconds, so the
+# client count of a publication made before this monitor connected still
+# reads zero. Wait for a publication that reports the connected client.
+deadline=$((SECONDS + 45))
+sys_seen=false
+while (( SECONDS < deadline )); do
+    code="$(request "$DIAGNOSTICS_PATH" "$response_file")"
+    if [ "$code" = '200' ] && jq -e '
+        .broker_sys.available == true
+        and (.broker_sys.metrics["broker/clients/connected"].value | tonumber >= 1)
+    ' "$response_file" >/dev/null; then
+        sys_seen=true
+        break
+    fi
+    sleep 2
+done
+if [ "$sys_seen" != true ]; then
+    echo "explicit \$SYS subscription did not expose the connected-client metric: $(<"$response_file")" >&2
     exit 1
 fi
 echo "TCP/MQTT and broker-published client metric are observable"
