@@ -611,15 +611,15 @@ func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
 	drainInitialStatus(t, first)
 	drainInitialStatus(t, second)
 
-	hub.Publish(BrokerLogEvent("broker", "info", "Broker connected"))
+	hub.Publish(BrokerLogEvent("info", "Broker connected"))
 
 	for name, ch := range map[string]<-chan BrokerEvent{"first": first, "second": second} {
 		event := readBrokerEvent(t, ch)
 		if event.Type != "broker_log" {
 			t.Fatalf("%s subscriber event type = %q, want broker_log", name, event.Type)
 		}
-		if event.Source != "broker" || event.Severity != "info" || event.Message != "Broker connected" {
-			t.Fatalf("%s subscriber log event = %+v, want broker/info/Broker connected", name, event)
+		if event.Source != "mcm" || event.Severity != "info" || event.Message != "Broker connected" {
+			t.Fatalf("%s subscriber log event = %+v, want mcm/info/Broker connected", name, event)
 		}
 	}
 }
@@ -627,7 +627,7 @@ func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
 func TestBrokerEventHubReplaysBoundedLogBuffer(t *testing.T) {
 	hub := NewBrokerEventHub()
 	for i := 0; i < maxBrokerLogBuffer+5; i++ {
-		hub.Publish(BrokerLogEvent("broker", "debug", fmt.Sprintf("log-%03d", i)))
+		hub.Publish(BrokerLogEvent("debug", fmt.Sprintf("log-%03d", i)))
 	}
 
 	events, unsubscribe := hub.Subscribe(0)

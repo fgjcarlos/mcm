@@ -36,6 +36,8 @@ const (
 	brokerEventSubscriberCapacity = maxBrokerLogBuffer + maxBrokerInitialTopicEvents + 16
 	brokerTrafficWindow           = 5 * time.Minute
 	maxBrokerTrafficEvents        = 5000
+	maxBrokerSysTopics            = 100
+	maxBrokerIngestedEntries      = 200
 )
 
 // BrokerEvent is the JSON contract streamed to the frontend broker WebSocket.
@@ -53,6 +55,8 @@ type BrokerEvent struct {
 	SparkplugMetrics *sparkplug.DecodedPayload `json:"sparkplug_metrics,omitempty"`
 	Source           string                    `json:"source,omitempty"`
 	Severity         string                    `json:"severity,omitempty"`
+	Kind             string                    `json:"kind,omitempty"`
+	ClientID         string                    `json:"client_id,omitempty"`
 	Message          string                    `json:"message,omitempty"`
 	ObservedAt       time.Time                 `json:"observed_at"`
 }
@@ -95,6 +99,14 @@ type BrokerEventHub struct {
 	subscribers   map[*brokerSubscriber]struct{}
 	status        BrokerEvent
 	logs          []BrokerEvent
+	sysMetrics    map[string]brokerSysMetric
+	sysAvailable  bool
+	sysReason     string
+	clientID      string
+	sessionError  string
+	subscriptions []string
+	connectedAt   *time.Time
+	reconnects    uint64
 	trafficEvents []BrokerEvent
 	statusEvents  uint64
 	topicMessages uint64
@@ -144,8 +156,10 @@ type BrokerRatePoint struct {
 func NewBrokerEventHub() *BrokerEventHub {
 	return &BrokerEventHub{
 		subscribers: make(map[*brokerSubscriber]struct{}),
+		sysReason:   "monitor has not connected",
 		status: BrokerEvent{
 			Type:       "broker_status",
+			Source:     "mcm",
 			Status:     "disconnected",
 			ObservedAt: time.Now().UTC(),
 		},
@@ -239,6 +253,21 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 		if len(h.logs) > maxBrokerLogBuffer {
 			h.logs = append([]BrokerEvent(nil), h.logs[len(h.logs)-maxBrokerLogBuffer:]...)
 		}
+	case "broker_sys_metric":
+		if h.sysMetrics == nil {
+			h.sysMetrics = make(map[string]brokerSysMetric)
+		}
+		if _, exists := h.sysMetrics[event.Topic]; !exists && len(h.sysMetrics) >= maxBrokerSysTopics {
+			var oldestTopic string
+			var oldest time.Time
+			for topic, metric := range h.sysMetrics {
+				if oldest.IsZero() || metric.ObservedAt.Before(oldest) {
+					oldestTopic, oldest = topic, metric.ObservedAt
+				}
+			}
+			delete(h.sysMetrics, oldestTopic)
+		}
+		h.sysMetrics[event.Topic] = brokerSysMetric{Value: event.PayloadPreview, ObservedAt: event.ObservedAt}
 	case "topic_message":
 		h.topicMessages++
 		observedAt := event.ObservedAt
@@ -423,13 +452,17 @@ func topTrafficItems(counts map[string]int, total int, limit int) []BrokerTraffi
 }
 
 func BrokerStatusEvent(status string) BrokerEvent {
-	return BrokerEvent{Type: "broker_status", Status: status, ObservedAt: time.Now().UTC()}
+	return BrokerEvent{Type: "broker_status", Source: "mcm", Status: status, ObservedAt: time.Now().UTC()}
 }
 
-func BrokerLogEvent(source string, severity string, message string) BrokerEvent {
+// BrokerLogEvent builds an MCM-produced log line. The source is fixed to
+// "mcm": the broker's own log lines arrive with the "mosquitto_log" source
+// (see the broker log ingestion), so the origin of a line is never inferred
+// from its text.
+func BrokerLogEvent(severity string, message string) BrokerEvent {
 	return BrokerEvent{
 		Type:       "broker_log",
-		Source:     strings.TrimSpace(source),
+		Source:     "mcm",
 		Severity:   strings.TrimSpace(severity),
 		Message:    strings.TrimSpace(message),
 		ObservedAt: time.Now().UTC(),
@@ -441,7 +474,7 @@ func (a *App) publishBrokerStatus(status string, logSeverity string, logMessage 
 	event := BrokerStatusEvent(status)
 	a.brokerEvents.Publish(event)
 	if strings.TrimSpace(logMessage) != "" {
-		a.brokerEvents.Publish(BrokerLogEvent("broker", logSeverity, logMessage))
+		a.brokerEvents.Publish(BrokerLogEvent(logSeverity, logMessage))
 	}
 	if previousStatus == status {
 		return
@@ -486,6 +519,7 @@ func TopicEvent(topic string, payload []byte, limit int) BrokerEvent {
 
 	return BrokerEvent{
 		Type:           "topic_message",
+		Source:         "observed",
 		Topic:          topic,
 		PayloadPreview: preview,
 		PayloadFormat:  format,
@@ -808,9 +842,10 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.C
 		scheme = "ssl"
 	}
 
+	clientID := fmt.Sprintf("mcm-ui-%d", time.Now().UnixNano())
 	opts := mqtt.NewClientOptions().
 		AddBroker(fmt.Sprintf("%s://%s", scheme, address)).
-		SetClientID(fmt.Sprintf("mcm-ui-%d", time.Now().UnixNano())).
+		SetClientID(clientID).
 		SetCleanSession(true).
 		SetKeepAlive(30 * time.Second).
 		SetPingTimeout(10 * time.Second).
@@ -833,6 +868,10 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.C
 	}
 
 	opts.SetDefaultPublishHandler(func(_ mqtt.Client, msg mqtt.Message) {
+		if strings.HasPrefix(msg.Topic(), "$SYS/") {
+			a.brokerEvents.Publish(BrokerEvent{Type: "broker_sys_metric", Source: "mosquitto_sys", Topic: msg.Topic(), PayloadPreview: boundedPayload(msg.Payload(), maxPayloadPreviewBytes), ObservedAt: time.Now().UTC()})
+			return
+		}
 		a.brokerEvents.Publish(a.TopicEvent(msg.Topic(), msg.Payload(), maxPayloadPreviewBytes))
 	})
 
@@ -842,13 +881,29 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.C
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
 		attempts := reconnectBackoff.Attempt()
 		reconnectBackoff.Reset()
-		if token := client.Subscribe("#", 0, nil); token.WaitTimeout(5*time.Second) && token.Error() != nil {
-			a.logger.Warn("broker_subscribe_failed",
-				slog.String("broker_address", address),
-				slog.String("error", token.Error().Error()),
-			)
-			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", token.Error()))
+		a.setMonitorSession(clientID, []string{"#"}, true, "")
+		a.setSysSubscription(false, "$SYS subscription has not completed")
+		if token := client.Subscribe("#", 0, nil); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+			err := token.Error()
+			if err == nil {
+				err = context.DeadlineExceeded
+			}
+			a.logger.Warn("broker_subscribe_failed", slog.String("broker_address", address), slog.String("subscription", "#"), slog.String("error", err.Error()))
+			a.setMonitorSession(clientID, nil, false, err.Error())
+			a.setSysSubscription(false, fmt.Sprintf("monitor # subscription failed: %v", err))
+			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", err))
 			return
+		}
+		if token := client.Subscribe("$SYS/#", 0, nil); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+			err := token.Error()
+			if err == nil {
+				err = context.DeadlineExceeded
+			}
+			a.setSysSubscription(false, err.Error())
+			a.logger.Warn("broker_sys_subscribe_failed", slog.String("broker_address", address), slog.String("subscription", "$SYS/#"), slog.String("error", err.Error()))
+		} else {
+			a.setMonitorSession(clientID, []string{"#", "$SYS/#"}, true, "")
+			a.setSysSubscription(true, "")
 		}
 		if attempts > reconnectLogThreshold {
 			a.logger.Info("broker_reconnected",
@@ -862,6 +917,12 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.C
 	})
 
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		reason := "monitor connection is disconnected"
+		if err != nil {
+			reason = err.Error()
+		}
+		a.setMonitorSession(clientID, nil, false, reason)
+		a.setSysSubscription(false, "monitor connection is disconnected")
 		attempt := reconnectBackoff.Attempt()
 		nextDelay := reconnectBackoff.Next()
 		message := "Broker disconnected"
