@@ -90,6 +90,9 @@ func TestRender_IncludesNativeRules(t *testing.T) {
 	if !strings.Contains(aclBody, "topic read #") {
 		t.Errorf("rendered ACL is missing the service grant:\n%s", aclBody)
 	}
+	if !strings.Contains(aclBody, "topic read $SYS/#") {
+		t.Errorf("rendered ACL is missing the explicit $SYS service grant:\n%s", aclBody)
+	}
 
 	anonymousIdx := strings.Index(aclBody, "topic read public/#")
 	userIdx := strings.Index(aclBody, "user alice")

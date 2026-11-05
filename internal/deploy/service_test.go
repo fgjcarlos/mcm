@@ -725,9 +725,8 @@ func TestPreview_ServiceUserACLAlwaysPresent(t *testing.T) {
 		t.Fatalf("Preview returned error: %v", err)
 	}
 
-	// The ACL body must contain the service user block with read # and
-	// readwrite mcm/healthcheck. Without those, the deploy healthcheck
-	// silently fails on an ACL-enabled Mosquitto (issue #275 review).
+	// The ACL body must contain the baseline service grants. The explicit
+	// $SYS rule is necessary because MQTT # does not match system topics.
 	if !strings.Contains(result.ACLBody, "user svc-admin") {
 		t.Errorf("ACLBody missing service user block.\nGot:\n%s", result.ACLBody)
 	}
@@ -736,6 +735,9 @@ func TestPreview_ServiceUserACLAlwaysPresent(t *testing.T) {
 	}
 	if !strings.Contains(result.ACLBody, "topic readwrite mcm/healthcheck") {
 		t.Errorf("ACLBody missing service user 'topic readwrite mcm/healthcheck' rule.\nGot:\n%s", result.ACLBody)
+	}
+	if !strings.Contains(result.ACLBody, "topic read $SYS/#") {
+		t.Errorf("ACLBody missing service user 'topic read $SYS/#' rule.\nGot:\n%s", result.ACLBody)
 	}
 }
 

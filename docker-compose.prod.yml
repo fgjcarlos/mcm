@@ -26,6 +26,7 @@ services:
     restart: unless-stopped
     volumes:
       - mosquitto_config:/mosquitto/config
+      - mosquitto_logs:/mosquitto/log
       - ./deploy/mosquitto/config:/mosquitto-init:ro
     # Run the dev bootstrap (chmods are dev-only side effects — they are
     # no-ops here because we share the host PID namespace and the
@@ -64,6 +65,8 @@ services:
         condition: service_healthy
     volumes:
       - mosquitto_config:/var/lib/mosquitto-config
+      # Broker logs are readable by MCM for bounded diagnostics ingestion.
+      - mosquitto_logs:/mosquitto/log:ro
       # Reload helper script — production analogue of `systemctl reload`.
       - ./deploy/mosquitto/prod/reload-mosquitto.sh:/usr/local/bin/reload-mosquitto.sh:ro
     environment:
@@ -75,6 +78,7 @@ services:
       MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND: /usr/local/bin/reload-mosquitto.sh
       MCM_MOSQUITTO_USERNAME: admin
       MCM_MOSQUITTO_PASSWORD: mcm-dev-broker-password
+      MCM_MOSQUITTO_LOG_PATH: /mosquitto/log/mosquitto.log
     # Note: NO /var/run/docker.sock mount. The reload command signals
       # the broker via SIGHUP using the shared host PID namespace.
 
@@ -94,3 +98,4 @@ services:
 
 volumes:
   mosquitto_config:
+  mosquitto_logs:

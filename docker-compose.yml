@@ -102,6 +102,8 @@ services:
       # /var/lib/mosquitto-config) because the mcm Dockerfile already
       # creates /var/lib/mcm and we keep the broker paths canonical.
       - mosquitto_config:/var/lib/mosquitto-config
+      # Broker logs are readable by MCM for bounded diagnostics ingestion.
+      - mosquitto_logs:/mosquitto/log:ro
       # DEV-ONLY: mount the host's Docker socket so MCM's deploy service
       # (DockerApplier) can run `docker exec mcm-mosquitto kill -HUP 1`
       # to signal the broker. The Docker CLI is installed in the mcm
@@ -142,6 +144,7 @@ services:
     environment:
       MCM_MOSQUITTO_HOST: mosquitto
       MCM_MOSQUITTO_PORT: "1883"
+      MCM_MOSQUITTO_LOG_PATH: /mosquitto/log/mosquitto.log
       # The dev admin credentials are hardcoded for clean-clone
       # convenience. They MUST match what the mosquitto bootstrap
       # script seeds into /mosquitto/config/passwd.
