@@ -19,3 +19,6 @@ coverage.out
 .codegraph/
 # Local task notes of the working session.
 odd/
+
+# Local Pi runtime state (project-scoped subagents and their model profiles).
+.pi/
