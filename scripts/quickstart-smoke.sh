@@ -30,6 +30,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID at build time, but the
+# socket of this host (and of a CI runner) can live under another GID.
+# shellcheck source=lib-docker-host-gid.sh
+source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
+export_docker_host_gid
+
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
 HEALTH_URL="http://localhost:${PORT}/healthz"
@@ -63,7 +71,6 @@ docker buildx build --load -t mcm:dev . >/dev/null
 # The MCM container reaches the Docker daemon through the host's socket
 # group; the image bakes the conventional GID 999 at build time, but the
 # socket of this host can live under another GID.
-export DOCKER_HOST_GID="${DOCKER_HOST_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)}"
 $COMPOSE up -d
 
 echo "--- quickstart-smoke: waiting for /livez (${WAIT_SECONDS}s budget) ---"

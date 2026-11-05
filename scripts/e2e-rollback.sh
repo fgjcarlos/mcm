@@ -42,6 +42,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID at build time, but the
+# socket of this host (and of a CI runner) can live under another GID.
+# shellcheck source=lib-docker-host-gid.sh
+source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
+export_docker_host_gid
+
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
 HOST_URL="http://localhost:${PORT}"
