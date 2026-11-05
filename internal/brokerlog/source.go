@@ -169,7 +169,7 @@ func (s *FileSource) Read(ctx context.Context, filter Filter) (ReadResult, error
 	if err != nil {
 		return ReadResult{}, fmt.Errorf("open broker log %q: %w", s.path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return ReadResult{}, fmt.Errorf("stat broker log %q: %w", s.path, err)

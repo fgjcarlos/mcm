@@ -213,7 +213,8 @@ func (a *App) retainBrokerLog(entry brokerlog.Entry) bool {
 		copy(kept, kept[1:])
 		kept = kept[:len(kept)-1]
 	}
-	a.brokerLogEntries = append(kept, entry)
+	kept = append(kept, entry)
+	a.brokerLogEntries = kept
 	return true
 }
 
@@ -355,7 +356,7 @@ func (a *App) probeTLS(address string) diagnosticsTLS {
 	if err != nil {
 		return diagnosticsTLS{Status: "failed", Error: err.Error()}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(brokerProbeTimeout)); err != nil {
 		return diagnosticsTLS{Status: "failed", Error: err.Error()}
 	}
