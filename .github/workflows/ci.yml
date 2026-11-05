@@ -539,6 +539,33 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.yml -p mcm down -v
 
+  e2e-broker-observability:
+    needs: image
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 6
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+      - name: download mcm:dev image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcm-dev-image
+          path: /tmp/mcm-dev
+      - name: docker load (mcm:dev)
+        run: docker load -i /tmp/mcm-dev/mcm-dev.tar
+      - name: Start mcm + mosquitto
+        env:
+          MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+        run: docker compose -f docker-compose.yml -p mcm up --no-build -d
+      - name: Run broker observability e2e script
+        # Exercise live TCP/MQTT, explicit $SYS metrics, broker-owned log
+        # ingestion and the readiness/diagnostics contract against Mosquitto.
+        run: bash scripts/e2e-broker-observability.sh
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker-compose.yml -p mcm down -v
+
   e2e-broker-tls:
     needs: image
     if: github.event_name == 'pull_request'
