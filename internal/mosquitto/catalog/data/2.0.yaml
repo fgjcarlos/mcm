@@ -366,6 +366,23 @@ section: logging
 default: "false"
 description: Log a message for every client connect / disconnect.
 ---
+name: sys_interval
+type: integer
+scope: global
+multiplicity: once
+reload_kind: restart
+since_version: "1.6"
+unit: seconds
+min: 0
+max: 2147483647
+default: "10"
+description: |
+  How often the broker publishes its $SYS system metrics, in seconds.
+  0 disables the publication. The publication timer is created when the
+  broker starts, so a new value needs a broker restart. The monitor
+  subscribes to $SYS/# explicitly: the # wildcard never matches the
+  $-prefixed system topics.
+---
 name: log_facility
 type: integer
 scope: global

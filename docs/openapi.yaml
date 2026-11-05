@@ -100,12 +100,10 @@ paths:
       tags: [Health]
       summary: Readiness probe
       description: |
-        Checks required serving dependencies — SQLite is reachable AND the
-        configured Mosquitto broker is connected. Use this for load-balancer
-        or orchestrator readiness gates; use `/api/v1/status` for the broker
-        snapshot shown to operators instead.
-        Returns 200 when both are healthy and 503 when either dependency is
-        unavailable (response body carries the failing dependency name).
+        Checks that SQLite answers a ping AND the monitor's last known broker
+        connection state is `connected`. It does NOT perform a TCP, TLS or MQTT
+        diagnostic; use `/api/v1/broker/diagnostics` for those probes.
+        Returns 200 when both checks pass and 503 when either check fails.
       security: []
       responses:
         "200":
@@ -1197,6 +1195,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/broker/diagnostics:
+    get:
+      tags: [Broker]
+      summary: Broker source and connection diagnostics
+      description: Requires auditor or higher. TCP and TLS checks are bounded; MQTT reports only the monitor's current session and never opens a new MQTT connection.
+      parameters:
+        - in: query
+          name: severity
+          required: false
+          schema: { type: string, enum: [debug, info, warning, error], default: info }
+          description: Minimum severity of returned broker log entries.
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+          description: Maximum number of broker log entries returned.
+      responses:
+        "200":
+          description: Current broker diagnostics and separately classified metric sources.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerDiagnosticsResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/broker/events:
@@ -2388,6 +2411,137 @@ components:
               required: [event_subscribers, status_events, topic_messages, traffic]
           required: [status, observed_at, target, metrics]
       required: [broker]
+    BrokerDiagnosticsResponse:
+      type: object
+      properties:
+        generated_at: { type: string, format: date-time }
+        broker:
+          type: object
+          properties:
+            status: { type: string, enum: [connected, disconnected] }
+            target:
+              type: object
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                address: { type: string }
+                tls_enabled: { type: boolean }
+              required: [host, port, address, tls_enabled]
+            monitor:
+              type: object
+              properties:
+                client_id: { type: string }
+                subscriptions: { type: array, items: { type: string } }
+                connected_at: { type: [string, "null"], format: date-time }
+                reconnects: { type: integer, format: int64 }
+              required: [client_id, subscriptions, reconnects]
+          required: [status, target, monitor]
+        sources:
+          type: object
+          properties:
+            observed_traffic: { $ref: "#/components/schemas/BrokerTrafficMetrics" }
+            mcm_events:
+              type: object
+              properties:
+                status_events: { type: integer, format: int64 }
+                topic_messages: { type: integer, format: int64 }
+                event_subscribers: { type: integer }
+                last_message_at: { type: [string, "null"], format: date-time }
+                note: { type: string }
+              required: [status_events, topic_messages, event_subscribers, last_message_at, note]
+            broker_logs:
+              type: object
+              properties:
+                available: { type: boolean }
+                source: { type: string, const: mosquitto_log }
+                path: { type: string }
+                reason: { type: string }
+                entries: { type: array, items: { $ref: "#/components/schemas/BrokerLogEntry" } }
+                severity_counts:
+                  type: object
+                  properties:
+                    error: { type: integer }
+                    warning: { type: integer }
+                    info: { type: integer }
+                    debug: { type: integer }
+                  required: [error, warning, info, debug]
+                limits: { $ref: "#/components/schemas/BrokerLogLimits" }
+                note: { type: string }
+              required: [available, source, path, reason, entries, severity_counts, limits, note]
+            internal_metrics:
+              type: object
+              properties:
+                endpoint: { type: string, const: /metrics }
+                format: { type: string, const: prometheus }
+                note: { type: string }
+                counters:
+                  type: object
+                  additionalProperties: { type: number }
+              required: [endpoint, format, note, counters]
+          required: [observed_traffic, mcm_events, broker_logs, internal_metrics]
+        broker_sys:
+          type: object
+          properties:
+            available: { type: boolean }
+            reason: { type: string }
+            subscriptions: { type: array, items: { type: string } }
+            metrics:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  value: { type: string }
+                  observed_at: { type: string, format: date-time }
+                required: [value, observed_at]
+            note: { type: string }
+          required: [available, reason, subscriptions, metrics, note]
+        diagnostics:
+          type: object
+          properties:
+            tcp:
+              type: object
+              properties:
+                status: { type: string, enum: [reachable, unreachable] }
+                address: { type: string }
+                latency_ms: { type: number }
+                error: { type: string }
+              required: [status, address, latency_ms, error]
+            tls:
+              type: object
+              properties:
+                status: { type: string, enum: [disabled, connected, failed] }
+                version: { type: string }
+                cipher: { type: string }
+                error: { type: string }
+              required: [status, version, cipher, error]
+            mqtt:
+              type: object
+              properties:
+                status: { type: string, enum: [connected, disconnected] }
+                client_id: { type: string }
+                subscriptions: { type: array, items: { type: string } }
+                error: { type: string }
+              required: [status, client_id, subscriptions, error]
+          required: [tcp, tls, mqtt]
+      required: [generated_at, broker, sources, broker_sys, diagnostics]
+    BrokerLogEntry:
+      type: object
+      properties:
+        observed_at: { type: string, format: date-time }
+        severity: { type: string, enum: [debug, info, warning, error] }
+        kind: { type: string }
+        message: { type: string }
+        client_id: { type: string }
+        topic: { type: string }
+      required: [observed_at, severity, kind, message]
+    BrokerLogLimits:
+      type: object
+      properties:
+        max_entries: { type: integer }
+        max_entries_per_read: { type: integer }
+        max_message_bytes: { type: integer }
+        max_age_seconds: { type: integer }
+      required: [max_entries, max_entries_per_read, max_message_bytes, max_age_seconds]
     BrokerTrafficMetrics:
       type: object
       properties:
@@ -2423,16 +2577,12 @@ components:
     BrokerEvent:
       type: object
       description: |
-        Single frame emitted on the broker events WebSocket. The exact field set
-        depends on `type`:
-
-        - `broker_status` → carries `status` (`connected` / `disconnected`) and `observed_at`.
-        - `topic_message` → carries `topic`, `payload_preview`, `payload_format`,
-          `payload_bytes`, `truncated`, optional `payload_inspection`, optional
-          `schema_validation`, optional `sparkplug`, and `observed_at`.
-        - `broker_log` → carries `source`, `severity`, `message`, `observed_at`.
+        Single frame emitted on the broker events WebSocket. `topic_message`
+        uses source `observed`; MCM lifecycle and log events use source `mcm`;
+        broker `$SYS` values use `mosquitto_sys`; broker file log entries use
+        `mosquitto_log`.
       properties:
-        type: { type: string, enum: [broker_status, topic_message, broker_log] }
+        type: { type: string, enum: [broker_status, topic_message, broker_log, broker_sys_metric, broker_log_entry] }
         status: { type: string, enum: [connected, disconnected] }
         topic: { type: string }
         payload_preview: { type: string }
@@ -2442,8 +2592,10 @@ components:
         payload_inspection: { $ref: "#/components/schemas/PayloadInspection" }
         schema_validation: { $ref: "#/components/schemas/SchemaValidationResult" }
         sparkplug: { $ref: "#/components/schemas/SparkplugMetadata" }
-        source: { type: string }
+        source: { type: string, enum: [observed, mcm, mosquitto_sys, mosquitto_log] }
         severity: { type: string, enum: [debug, info, warning, error] }
+        kind: { type: string }
+        client_id: { type: string }
         message: { type: string }
         observed_at: { type: string, format: date-time }
       required: [type, observed_at]
