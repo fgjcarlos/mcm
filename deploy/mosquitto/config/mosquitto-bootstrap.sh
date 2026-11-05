@@ -168,6 +168,20 @@ fi
 chmod 644 "$CONFIG_DIR/passwd" 2>/dev/null || true
 chmod 644 "$CONFIG_DIR/acl" 2>/dev/null || true
 
+# 2d. Make the broker log file readable by the MCM service. Mosquitto
+# creates its log file with mode 0600 owned by the user it runs as, and
+# the MCM service reads that file for the diagnostics ingestion from a
+# different UID. Pre-creating the file with a readable mode lets both
+# containers share it: the broker keeps appending to it and MCM can read
+# it. The mode is applied on every start, so a broker that recreated the
+# file with its own mode does not lock MCM out again.
+LOG_DIR="/mosquitto/log"
+LOG_FILE="$LOG_DIR/mosquitto.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+chmod 755 "$LOG_DIR" 2>/dev/null || true
+touch "$LOG_FILE" 2>/dev/null || true
+chmod 644 "$LOG_FILE" 2>/dev/null || true
+
 # 3. Hand off to the broker. Bypass /docker-entrypoint.sh — see the file
 #    header for the rationale.
 exec /usr/sbin/mosquitto -c "$CONFIG_DIR/mosquitto.conf"
