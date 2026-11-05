@@ -184,7 +184,7 @@ var envBindings = []envBinding{
 	{
 		Name: "MCM_DATABASE_BACKEND",
 		Path: "database.backend",
-		Doc:  `Storage backend. "sqlite" (default; uses database.path) or "postgres" (uses database.dsn).`,
+		Doc:  `SQLite is the only implemented storage backend (default; uses database.path). Config validation accepts "postgres" (uses database.dsn) for forward-compatibility, but it is not implemented and configuring it aborts startup with an error directing the operator to use "sqlite".`,
 		Apply: func(cfg *Config, raw string) error {
 			switch raw {
 			case "sqlite", "postgres":
@@ -207,7 +207,7 @@ var envBindings = []envBinding{
 	{
 		Name: "MCM_DATABASE_DSN",
 		Path: "database.dsn",
-		Doc:  `Postgres connection string. Required when database.backend is "postgres".`,
+		Doc:  `Postgres connection string. Required when database.backend is "postgres"; postgres is accepted by validation for forward-compatibility but is not implemented and aborts startup with an error directing the operator to use "sqlite".`,
 		Apply: func(cfg *Config, raw string) error {
 			cfg.Database.DSN = raw
 			return nil
