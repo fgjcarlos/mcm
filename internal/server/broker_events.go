@@ -425,7 +425,7 @@ func computeBrokerTrafficMetrics(events []BrokerEvent, now time.Time, window tim
 		RatePoints:           points,
 		TopTopics:            topTrafficItems(topicCounts, messageCount, limit),
 		TopClientsAvailable:  false,
-		TopClientsNote:       "Client identity is not included in MQTT application messages observed via wildcard subscriptions. Enable broker-side client metrics or log ingestion to populate this widget in a future release.",
+		TopClientsNote:       "Client identity is not included in MQTT application messages observed via wildcard subscriptions. Broker-sourced client metrics and broker log entries are reported separately by the broker diagnostics route.",
 	}
 	return metrics
 }
