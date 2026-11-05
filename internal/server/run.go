@@ -295,6 +295,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 		app.StartBrokerMonitor(gctx, cfg.Mosquitto)
 		return nil
 	})
+	g.Go(func() error {
+		app.StartBrokerLogPoller(gctx)
+		return nil
+	})
 
 	handler := withRequestLogging(app.Handler(), logger, app.metrics, app.trustedProxies)
 	tlsConfig, err := buildHTTPTLSConfig(cfg.HTTP.TLS)

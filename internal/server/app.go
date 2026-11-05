@@ -21,6 +21,7 @@ import (
 	"github.com/fgjcarlos/mcm/internal/acl"
 	"github.com/fgjcarlos/mcm/internal/alerting"
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/brokerlog"
 	"github.com/fgjcarlos/mcm/internal/certificate"
 	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/deploy"
@@ -66,6 +67,11 @@ type App struct {
 	logger                *slog.Logger
 	now                   func() time.Time
 	lookupMQTTUser        func(context.Context, int64) (storage.MQTTUser, error)
+	brokerLogLimits       brokerlog.Limits
+	brokerLogStateMu      sync.RWMutex
+	brokerLogAvailable    bool
+	brokerLogReason       string
+	brokerLogEntries      []brokerlog.Entry
 
 	// userPasswords holds cleartext MQTT passwords in memory keyed by
 	// username. Populated by handleCreateMQTTUser when a new user is
@@ -129,6 +135,8 @@ func New(cfg config.Config, store *storage.Store, logger *slog.Logger) (*App, er
 		aclStore:              store.ACLStore(),
 		tokens:                auth.NewTokenManager(cfg.Auth.JWTSecret, ttl),
 		brokerEvents:          brokerEvents,
+		brokerLogLimits:       brokerlog.DefaultLimits(),
+		brokerLogReason:       initialBrokerLogReason(cfg.Mosquitto.LogPath),
 		schemaCache:           &jsonSchemaCache{},
 		alerts:                alerting.NewWebhookAlerter(cfg.Alerting, logger),
 		metrics:               mcmMetrics,
@@ -437,6 +445,7 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("GET /api/v1/audit-events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListAuditEvents)))
 	mux.Handle("GET /api/v1/security/events", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleSecurityEvents)))
 	mux.HandleFunc("GET /api/v1/status", a.handleStatus)
+	mux.Handle("GET /api/v1/broker/diagnostics", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleBrokerDiagnostics)))
 	mux.HandleFunc("GET /api/v1/broker/events", a.handleBrokerEvents)
 	mux.Handle("GET /api/v1/mqtt-users", a.requireRole(auth.RoleAuditor, http.HandlerFunc(a.handleListMQTTUsers)))
 	mux.Handle("POST /api/v1/mqtt-users", a.requireRole(auth.RoleOperator, http.HandlerFunc(a.handleCreateMQTTUser)))
