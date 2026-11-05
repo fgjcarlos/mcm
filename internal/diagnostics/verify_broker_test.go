@@ -48,6 +48,15 @@ type verifyUserACL struct {
 	denied  []string
 }
 
+// verifySysTopicInterval is how often the in-process broker publishes its
+// $SYS topics. mochi-mqtt v2.7.9 retains those topics in an index it
+// does not synchronize with the scan that delivers retained messages to a
+// subscribing client, so a client that subscribes while the broker
+// publishes them trips the race detector. v2.7.9 is the latest release:
+// the test broker publishes $SYS rarely enough that the two never
+// overlap.
+const verifySysTopicInterval = 3600
+
 // startVerifyBroker launches an in-process MQTT broker configured with
 // the given ACL ledger. Returns the closer and the broker address
 // (host:port).
@@ -61,7 +70,7 @@ func startVerifyBroker(t *testing.T, acl verifyBrokerACL) (*mochiCloser, string)
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	server := mqttserver.New(&mqttserver.Options{InlineClient: true})
+	server := mqttserver.New(&mqttserver.Options{InlineClient: true, SysTopicResendInterval: verifySysTopicInterval})
 
 	// Build the auth ledger from the test ACL.
 	users := mqttauth.Users{}
@@ -127,7 +136,7 @@ func startNoACLBroker(t *testing.T) (*mochiCloser, string) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	server := mqttserver.New(&mqttserver.Options{InlineClient: true})
+	server := mqttserver.New(&mqttserver.Options{InlineClient: true, SysTopicResendInterval: verifySysTopicInterval})
 	// Intentionally NO auth hook — this simulates a broker that does not
 	// enforce the rendered passwd file.
 	if err := server.AddListener(listeners.NewTCP(listeners.Config{ID: "no-acl-tcp-" + addr, Address: addr})); err != nil {

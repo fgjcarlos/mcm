@@ -41,6 +41,19 @@ func startMochiBroker(t *testing.T) (*mochiCloser, string) {
 	return closer, addr
 }
 
+// mochiSysTopicInterval is how often the in-process broker publishes its
+// $SYS topics.
+//
+// mochi-mqtt v2.7.9 retains those topics in an index it does not
+// synchronize with the scan that delivers retained messages to a
+// subscribing client. The monitor subscribes to $SYS/# explicitly (the
+// # wildcard never matches the $-prefixed system topics), so the test
+// broker reaches exactly that scan, and the race detector flags the
+// pair. v2.7.9 is the latest release, so there is no upstream fix to
+// bump to: the test broker publishes $SYS rarely enough that the write
+// and the scan never overlap.
+const mochiSysTopicInterval = 3600
+
 func startMochiBrokerAt(t *testing.T, addr string) (*mqttserver.Server, string) {
 	t.Helper()
 
@@ -53,7 +66,7 @@ func startMochiBrokerAt(t *testing.T, addr string) (*mqttserver.Server, string) 
 		_ = ln.Close()
 	}
 
-	server := mqttserver.New(&mqttserver.Options{InlineClient: true})
+	server := mqttserver.New(&mqttserver.Options{InlineClient: true, SysTopicResendInterval: mochiSysTopicInterval})
 	if err := server.AddHook(new(mqttauth.AllowHook), nil); err != nil {
 		t.Fatalf("AddHook: %v", err)
 	}
@@ -64,6 +77,11 @@ func startMochiBrokerAt(t *testing.T, addr string) (*mqttserver.Server, string) 
 		_ = server.Serve()
 	}()
 	waitForTCPReady(t, addr)
+	// The broker publishes its $SYS topics once when it starts. Let that
+	// publication finish before a client subscribes to them, so the
+	// retained delivery never overlaps the write (see
+	// mochiSysTopicInterval).
+	time.Sleep(50 * time.Millisecond)
 	return server, addr
 }
 

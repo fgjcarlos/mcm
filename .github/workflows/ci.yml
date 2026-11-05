@@ -161,7 +161,12 @@ jobs:
 
       # --- Go ---
       - name: go test
-        run: go test ./... -race -count=1
+        # The internal/server package needs about ten minutes under the
+        # race detector on a hosted runner, which is where the default
+        # ten-minute timeout bites. The budget is explicit so a slow
+        # runner cannot fail the build on a timeout that says nothing
+        # about the code.
+        run: go test ./... -race -count=1 -timeout 25m
 
       - name: go vet
         run: go vet ./...
