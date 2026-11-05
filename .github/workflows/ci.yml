@@ -454,6 +454,10 @@ jobs:
           # up the new ports on restart.
           MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
           # wait for mcm and extract bootstrap password
@@ -508,6 +512,10 @@ jobs:
           # the named volume the broker reads.
           MCM_MOSQUITTO_CONFIG_DIR: /var/lib/mosquitto-config
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm up --no-build -d
           for i in $(seq 1 30); do
             sleep 1
@@ -557,7 +565,12 @@ jobs:
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
-        run: docker compose -f docker-compose.yml -p mcm up --no-build -d
+        run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
+          docker compose -f docker-compose.yml -p mcm up --no-build -d
       - name: Run broker observability e2e script
         # Exercise live TCP/MQTT, explicit $SYS metrics, broker-owned log
         # ingestion and the readiness/diagnostics contract against Mosquitto.
@@ -614,6 +627,10 @@ jobs:
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
         run: |
+          # The MCM container reaches the Docker daemon through the host's
+          # socket group. The image bakes the conventional GID 999 at build
+          # time, but this runner's socket can live under another GID.
+          export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
           for i in $(seq 1 30); do

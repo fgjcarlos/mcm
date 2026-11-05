@@ -108,6 +108,11 @@ echo "--- e2e-deploy: up (no env vars, image already loaded) ---"
 # running this script outside CI), the operator is expected to have
 # built mcm:dev first (e.g. `task build` or `docker buildx build
 # --load -t mcm:dev .`).
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID 999 at build time, but the
+# group of the socket on THIS host can differ, so the compose file is
+# told the real one here.
+export DOCKER_HOST_GID="${DOCKER_HOST_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)}"
 $COMPOSE up -d --no-build
 
 echo "--- e2e-deploy: waiting for /livez (${WAIT_SECONDS}s budget) ---"

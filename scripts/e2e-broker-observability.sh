@@ -35,6 +35,10 @@ for tool in curl jq docker; do
 done
 
 echo "--- e2e-broker-observability: compose up ---"
+# The MCM container reaches the Docker daemon through the host's socket
+# group. The image bakes the conventional GID 999 at build time, but the
+# socket of this host can live under another GID.
+export DOCKER_HOST_GID="${DOCKER_HOST_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)}"
 compose up -d --no-build
 
 echo "--- waiting for MCM (up to ${WAIT_SECONDS}s) ---"

@@ -60,6 +60,10 @@ fi
 
 echo "--- quickstart-smoke: build + up (no env vars) ---"
 docker buildx build --load -t mcm:dev . >/dev/null
+# The MCM container reaches the Docker daemon through the host's socket
+# group; the image bakes the conventional GID 999 at build time, but the
+# socket of this host can live under another GID.
+export DOCKER_HOST_GID="${DOCKER_HOST_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)}"
 $COMPOSE up -d
 
 echo "--- quickstart-smoke: waiting for /livez (${WAIT_SECONDS}s budget) ---"
