@@ -547,6 +547,92 @@ func TestBrokerEventHubPersistsBrokerMetrics(t *testing.T) {
 	}
 }
 
+// The persisted broker metric events feed the observed-traffic window, and
+// that window is read back with a bounded query. The broker-sourced events
+// ($SYS metrics and broker log lines) are not observed traffic: persisting
+// them would spend the budget of the window on events the traffic never
+// counts, and the observed traffic would silently lose application
+// messages.
+func TestBrokerEventHubDoesNotPersistBrokerSourcedEvents(t *testing.T) {
+	app, store := newTestApp(t)
+	defer store.Close()
+
+	app.brokerEvents.Publish(BrokerEvent{Type: "broker_sys_metric", Source: "mosquitto_sys", Topic: "$SYS/broker/clients/connected", ObservedAt: time.Now().UTC()})
+	app.brokerEvents.Publish(BrokerEvent{Type: "broker_log_entry", Source: "mosquitto_log", Message: "New client connected", ObservedAt: time.Now().UTC()})
+	app.brokerEvents.Publish(TopicEvent("factory/line1", []byte("hello"), 256))
+
+	events, err := store.ListBrokerMetricEvents(context.Background(), storage.BrokerMetricQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListBrokerMetricEvents returned error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d persisted broker metric events, want 1 (the observed traffic only)", len(events))
+	}
+	if events[0].Type != "topic_message" || events[0].Topic != "factory/line1" {
+		t.Fatalf("unexpected persisted broker metric event: %#v", events[0])
+	}
+}
+
+// The broker log entries carry the client identifiers and topics the broker
+// itself wrote. The diagnostics route that serves them requires the auditor
+// role, so the event stream must not hand them to a lower role.
+func TestBrokerEventHubKeepsBrokerLogEntriesFromLowerRoles(t *testing.T) {
+	hub := NewBrokerEventHub()
+
+	viewer, unsubscribeViewer := hub.Subscribe(1, auth.RoleViewer)
+	defer unsubscribeViewer()
+	auditor, unsubscribeAuditor := hub.Subscribe(2, auth.RoleAuditor)
+	defer unsubscribeAuditor()
+
+	// A new subscriber receives the status backlog first; drain it so the
+	// assertions below look at the broker log entry and nothing else.
+	drain := func(ch <-chan BrokerEvent) {
+		for {
+			select {
+			case <-ch:
+				continue
+			default:
+			}
+			return
+		}
+	}
+	drain(viewer)
+	drain(auditor)
+
+	hub.Publish(BrokerEvent{Type: "broker_log_entry", Source: "mosquitto_log", Message: "New client connected as probe", ObservedAt: time.Now().UTC()})
+
+	select {
+	case event := <-viewer:
+		t.Fatalf("viewer subscriber received a broker log entry: %#v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	select {
+	case event := <-auditor:
+		if event.Type != "broker_log_entry" {
+			t.Fatalf("auditor subscriber event type = %q, want broker_log_entry", event.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("auditor subscriber did not receive the broker log entry")
+	}
+}
+
+// A broker refusal of a subscription (the 0x80 SUBACK code Mosquitto
+// answers when the account may not read the filter) reaches Paho only in the
+// result map of the token. Treating it as a success would report the $SYS
+// subscription as available while the broker dropped it.
+func TestSubscriptionRefusalReportsTheRefusedFilter(t *testing.T) {
+	if err := subscriptionRefusal(map[string]byte{"$SYS/#": 0x80}, "$SYS/#"); err == nil {
+		t.Fatal("subscriptionRefusal accepted a refused subscription")
+	}
+	if err := subscriptionRefusal(map[string]byte{"#": 0x00, "$SYS/#": 0x01}, "$SYS/#"); err != nil {
+		t.Fatalf("subscriptionRefusal rejected a granted subscription: %v", err)
+	}
+	if err := subscriptionRefusal(map[string]byte{"#": 0x00}, "$SYS/#"); err != nil {
+		t.Fatalf("subscriptionRefusal rejected an unreported filter: %v", err)
+	}
+}
+
 func TestComputeBrokerTrafficMetricsAggregatesRecentTopicHotspots(t *testing.T) {
 	now := time.Date(2026, 5, 21, 14, 5, 30, 0, time.UTC)
 	events := []BrokerEvent{
@@ -603,9 +689,9 @@ func TestBrokerEventHubSnapshotIncludesPersistedTrafficMetrics(t *testing.T) {
 
 func TestBrokerEventHubFansOutLogEvents(t *testing.T) {
 	hub := NewBrokerEventHub()
-	first, unsubscribeFirst := hub.Subscribe(0)
+	first, unsubscribeFirst := hub.Subscribe(0, auth.RoleAuditor)
 	defer unsubscribeFirst()
-	second, unsubscribeSecond := hub.Subscribe(0)
+	second, unsubscribeSecond := hub.Subscribe(0, auth.RoleAuditor)
 	defer unsubscribeSecond()
 
 	drainInitialStatus(t, first)
@@ -630,7 +716,7 @@ func TestBrokerEventHubReplaysBoundedLogBuffer(t *testing.T) {
 		hub.Publish(BrokerLogEvent("debug", fmt.Sprintf("log-%03d", i)))
 	}
 
-	events, unsubscribe := hub.Subscribe(0)
+	events, unsubscribe := hub.Subscribe(0, auth.RoleAuditor)
 	defer unsubscribe()
 	drainInitialStatus(t, events)
 

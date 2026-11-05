@@ -14,6 +14,7 @@ import (
 	mqttauth "github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 
+	"github.com/fgjcarlos/mcm/internal/auth"
 	"github.com/fgjcarlos/mcm/internal/config"
 )
 
@@ -121,7 +122,7 @@ func TestBrokerMonitorConnectsToRealMQTTBrokerAndAnnouncesStatus(t *testing.T) {
 
 	wsUser := seedAdminUser(t, store, "broker-mqtt-status", "broker-mqtt-status-password", false)
 
-	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID, auth.RoleAuditor)
 	t.Cleanup(unsubscribe)
 	// Drain the buffered initial disconnected status published when the hub was created.
 	drainInitialStatus(t, events)
@@ -154,7 +155,7 @@ func TestBrokerMonitorBridgesIncomingTopicMessages(t *testing.T) {
 
 	wsUser := seedAdminUser(t, store, "broker-mqtt-bridge", "broker-mqtt-bridge-password", false)
 
-	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID, auth.RoleAuditor)
 	t.Cleanup(unsubscribe)
 	drainInitialStatus(t, events)
 
@@ -204,7 +205,7 @@ func TestBrokerMonitorReconnectsAfterBrokerRestart(t *testing.T) {
 
 	wsUser := seedAdminUser(t, store, "broker-mqtt-reconnect", "broker-mqtt-reconnect-password", false)
 
-	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID)
+	events, unsubscribe := app.brokerEvents.Subscribe(wsUser.ID, auth.RoleAuditor)
 	t.Cleanup(unsubscribe)
 	drainInitialStatus(t, events)
 

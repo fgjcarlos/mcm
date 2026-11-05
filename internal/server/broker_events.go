@@ -92,6 +92,11 @@ type PayloadInspection struct {
 type brokerSubscriber struct {
 	ch     chan BrokerEvent
 	userID int64
+	// role is the role of the account that opened the stream. The broker
+	// log entries carry the client identifiers and topics the broker
+	// itself wrote, so they are only delivered to the roles that may
+	// read the diagnostics route.
+	role auth.Role
 }
 
 type BrokerEventHub struct {
@@ -181,10 +186,11 @@ func (h *BrokerEventHub) SetMetrics(reg *metrics.Registry) {
 	h.mu.Unlock()
 }
 
-func (h *BrokerEventHub) Subscribe(userID int64) (<-chan BrokerEvent, func()) {
+func (h *BrokerEventHub) Subscribe(userID int64, role auth.Role) (<-chan BrokerEvent, func()) {
 	sub := &brokerSubscriber{
 		ch:     make(chan BrokerEvent, brokerEventSubscriberCapacity),
 		userID: userID,
+		role:   role,
 	}
 
 	h.mu.Lock()
@@ -279,6 +285,13 @@ func (h *BrokerEventHub) Publish(event BrokerEvent) {
 	retention := h.retention
 	reg := h.metrics
 	for sub := range h.subscribers {
+		// The broker log entries carry the client identifiers and topics
+		// the broker itself wrote. They are served by the diagnostics
+		// route behind the auditor role, so the event stream must not
+		// hand them to a role that may not read that route.
+		if event.Type == "broker_log_entry" && !sub.role.AtLeast(auth.RoleAuditor) {
+			continue
+		}
 		select {
 		case sub.ch <- event:
 		default:
@@ -493,6 +506,14 @@ func (a *App) publishBrokerStatus(status string, logSeverity string, logMessage 
 
 func persistBrokerEvent(store *storage.Store, retention time.Duration, event BrokerEvent) {
 	if store == nil {
+		return
+	}
+	// The persisted broker metric events feed the observed-traffic window.
+	// The broker-sourced events ($SYS metrics and broker log lines) are
+	// not observed traffic: storing them would spend the query budget of
+	// the window on events the traffic never counts.
+	switch event.Type {
+	case "broker_sys_metric", "broker_log_entry":
 		return
 	}
 	ctx := context.Background()
@@ -742,7 +763,7 @@ func (a *App) handleBrokerEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow() //nolint:errcheck
 
-	events, unsubscribe := a.brokerEvents.Subscribe(user.ID)
+	events, unsubscribe := a.brokerEvents.Subscribe(user.ID, claims.Role)
 	defer unsubscribe()
 
 	ctx := conn.CloseRead(r.Context())
@@ -836,6 +857,40 @@ func (a *App) StartBrokerMonitor(ctx context.Context, cfg config.MosquittoConfig
 	client.Disconnect(250)
 }
 
+// subscribeTopic subscribes to one filter and reports WHY the subscription
+// failed. Paho surfaces a broker-side refusal (SUBACK with the 0x80 code,
+// the answer Mosquitto gives when the account may not read the filter) only
+// in the token's result map, never in its Error: a refusal would otherwise
+// look like a successful subscription.
+func subscribeTopic(client mqtt.Client, filter string) error {
+	token := client.Subscribe(filter, 0, nil)
+	if !token.WaitTimeout(5 * time.Second) {
+		return fmt.Errorf("subscription to %q timed out", filter)
+	}
+	if err := token.Error(); err != nil {
+		return fmt.Errorf("subscription to %q failed: %w", filter, err)
+	}
+	sub, ok := token.(*mqtt.SubscribeToken)
+	if !ok {
+		return nil
+	}
+	return subscriptionRefusal(sub.Result(), filter)
+}
+
+// subscriptionRefusal reads the SUBACK return code of one filter. Mosquitto
+// answers a filter the account may not read with the 0x80 code, which Paho
+// reports only in the result map.
+func subscriptionRefusal(result map[string]byte, filter string) error {
+	code, reported := result[filter]
+	if !reported {
+		return nil
+	}
+	if code == 0x80 {
+		return fmt.Errorf("the broker refused the subscription to %q: the account may not read it", filter)
+	}
+	return nil
+}
+
 func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.Client, error) {
 	scheme := "tcp"
 	if cfg.TLS.Enabled {
@@ -883,22 +938,14 @@ func buildMQTTClient(cfg config.MosquittoConfig, address string, a *App) (mqtt.C
 		reconnectBackoff.Reset()
 		a.setMonitorSession(clientID, []string{"#"}, true, "")
 		a.setSysSubscription(false, "$SYS subscription has not completed")
-		if token := client.Subscribe("#", 0, nil); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
-			err := token.Error()
-			if err == nil {
-				err = context.DeadlineExceeded
-			}
+		if err := subscribeTopic(client, "#"); err != nil {
 			a.logger.Warn("broker_subscribe_failed", slog.String("broker_address", address), slog.String("subscription", "#"), slog.String("error", err.Error()))
 			a.setMonitorSession(clientID, nil, false, err.Error())
 			a.setSysSubscription(false, fmt.Sprintf("monitor # subscription failed: %v", err))
 			a.publishBrokerStatus("disconnected", "warning", fmt.Sprintf("Broker subscribe failed: %v", err))
 			return
 		}
-		if token := client.Subscribe("$SYS/#", 0, nil); !token.WaitTimeout(5*time.Second) || token.Error() != nil {
-			err := token.Error()
-			if err == nil {
-				err = context.DeadlineExceeded
-			}
+		if err := subscribeTopic(client, "$SYS/#"); err != nil {
 			a.setSysSubscription(false, err.Error())
 			a.logger.Warn("broker_sys_subscribe_failed", slog.String("broker_address", address), slog.String("subscription", "$SYS/#"), slog.String("error", err.Error()))
 		} else {
