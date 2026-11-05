@@ -152,6 +152,7 @@ if [ ! -f "$CONFIG_DIR/acl" ]; then
 # apply; do not edit it manually if you want MCM to manage the broker.
 user $DEV_USER
 topic read #
+topic read \$SYS/#
 topic readwrite mcm/healthcheck
 EOF
     echo "mosquitto-bootstrap: seeded $CONFIG_DIR/acl with service-user grants"
