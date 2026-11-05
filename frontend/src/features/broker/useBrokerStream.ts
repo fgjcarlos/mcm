@@ -44,7 +44,7 @@ export type SchemaValidation = {
 }
 
 export type BrokerEvent = {
-  type: 'broker_status' | 'topic_message' | 'broker_log'
+  type: 'broker_status' | 'topic_message' | 'broker_log' | 'broker_log_entry' | 'broker_sys_metric'
   status?: 'connected' | 'disconnected'
   topic?: string
   payload_preview?: string
@@ -62,7 +62,7 @@ export type BrokerEvent = {
 }
 
 export type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
-export type BrokerLog = BrokerEvent & { type: 'broker_log'; source: string; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
+export type BrokerLog = BrokerEvent & { type: 'broker_log' | 'broker_log_entry'; source: 'mcm' | 'mosquitto_log'; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
 export type BrokerConnectionStatus = 'connected' | 'disconnected'
 export type BrokerStreamState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
@@ -100,7 +100,7 @@ type StatusResponse = {
 }
 
 export const trafficWindowSeconds = 300
-export const defaultClientNote = 'Client identity is not included in MQTT application messages observed via wildcard subscriptions. Enable broker-side client metrics or log ingestion to populate this widget in a future release.'
+export const defaultClientNote = 'Client identity is not included in MQTT application messages observed via wildcard subscriptions. Broker-sourced client metrics and broker log entries are reported separately by the broker diagnostics route.'
 
 export const emptyTrafficMetrics: BrokerTrafficMetrics = {
   window_seconds: trafficWindowSeconds,
@@ -230,13 +230,13 @@ export function useBrokerStream(token: string, onLogout: () => void) {
           if (event.type === 'broker_status' && event.status) {
             setBrokerStatus(event.status)
           }
-          if (event.type === 'topic_message' && event.topic) {
+          if (event.type === 'topic_message' && event.topic && event.source === 'observed') {
             const topicEvent = event as TopicMessage
             liveTrafficEvents.current = pruneTrafficEvents([topicEvent, ...liveTrafficEvents.current])
             setTopics((current) => [topicEvent, ...current].slice(0, 20))
             setLiveTrafficMetrics((current) => addTopicEventToTrafficMetrics(current, topicEvent))
           }
-          if (event.type === 'broker_log' && event.source && event.severity && event.message) {
+          if ((event.type === 'broker_log' || event.type === 'broker_log_entry') && event.source && event.severity && event.message) {
             setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
           }
         } catch {

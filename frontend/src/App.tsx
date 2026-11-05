@@ -245,6 +245,16 @@ const navItems: NavItem[] = [
     description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
   },
   {
+    id: 'broker-diagnostics',
+    group: 'Diagnostics',
+    label: 'Broker diagnostics',
+    path: '/broker-diagnostics',
+    eyebrow: 'Diagnostics',
+    title: 'Broker diagnostics workspace',
+    description: 'Separate MCM observations, broker logs, internal metrics and broker-published system metrics.',
+    minRole: 'auditor',
+  },
+  {
     id: 'logs',
     group: 'Diagnostics',
     label: 'Logs',
@@ -446,6 +456,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : null}
       {activeId === 'broker-config' || activeId === 'changes' ? null : activeId === 'logs' ? (
         <LogsPanel logs={logs} streamState={streamState} />
+      ) : activeId === 'broker-diagnostics' ? (
+        <BrokerDiagnosticsPanel token={token} onLogout={onLogout} />
       ) : activeId === 'security' ? (
         <SecurityPanel events={securityEvents} error={securityError} />
       ) : activeId === 'audit' ? (
@@ -920,40 +932,123 @@ function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) 
 }
 
 function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: BrokerStreamState }) {
-  return (
-    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Log feed</p>
-          <p className="mt-2 text-sm text-slate-300">WebSocket state: <span className="capitalize text-white">{streamState}</span></p>
-        </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${streamState === 'connected' ? 'bg-emerald-400/10 text-emerald-200' : streamState === 'reconnecting' ? 'bg-amber-400/10 text-amber-200' : 'bg-rose-400/10 text-rose-200'}`}>
-          {streamState === 'connected' ? 'Live' : streamState}
-        </span>
-      </div>
+  const groups = [
+    ['MCM events and logs', logs.filter((log) => log.source === 'mcm')],
+    ['Broker logs (Mosquitto)', logs.filter((log) => log.source === 'mosquitto_log')],
+  ] as const
+  return <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Log feed · {streamState}</p>
+    <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      {groups.map(([title, entries]) => <section key={title} aria-label={title}>
+        <h3 className="text-sm font-semibold text-cyan-100">{title}</h3>
+        <div className="mt-3 space-y-3">{entries.length === 0 ? <p className="text-sm text-slate-300">No events received yet.</p> : entries.map((log, index) => <article key={`${log.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="flex justify-between gap-3"><div><SeverityBadge severity={log.severity} /> <span className="font-mono text-xs text-cyan-100">{log.source}</span></div><time className="text-xs text-slate-400">{new Date(log.observed_at).toLocaleString()}</time></div>
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-100">{log.message}</p>
+        </article>)}</div>
+      </section>)}
+    </div>
+  </section>
+}
 
-      <div className="mt-5 space-y-3">
-        {logs.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
-            {streamState === 'connected' ? 'No broker log events received yet.' : 'Connect to the event stream to receive broker logs.'}
+type DiagnosticsTraffic = BrokerTrafficMetrics
+type DiagnosticsLogEntry = { observed_at: string; severity: BrokerLog['severity']; kind: string; client_id?: string; topic?: string; message: string }
+type DiagnosticsPayload = {
+  sources?: {
+    observed_traffic?: DiagnosticsTraffic
+    mcm_events?: { status_events: number; topic_messages: number; event_subscribers: number; last_message_at: string | null; note: string }
+    broker_logs?: { available: boolean; reason: string; entries: DiagnosticsLogEntry[]; severity_counts: Record<string, number>; limits: { max_entries: number; max_entries_per_read: number; max_message_bytes: number; max_age_seconds: number }; note: string }
+    internal_metrics?: { endpoint: string; format: string; counters: Record<string, number>; note: string }
+  }
+  broker_sys?: { available: boolean; reason: string; metrics: Record<string, { value: string; observed_at: string }>; note: string }
+  diagnostics?: {
+    tcp?: { status: string; address: string; latency_ms: number; error: string }
+    tls?: { status: string; version: string; cipher: string; error: string }
+    mqtt?: { status: string; client_id: string; subscriptions: string[]; error: string }
+  }
+}
+
+function BrokerDiagnosticsPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
+  const [severity, setSeverity] = useState('')
+  const [limit, setLimit] = useState('')
+  const [data, setData] = useState<DiagnosticsPayload | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const query = new URLSearchParams()
+    if (severity) query.set('severity', severity)
+    if (limit) query.set('limit', limit)
+    let cancelled = false
+    authenticatedFetch(`/api/v1/broker/diagnostics${query.size ? `?${query}` : ''}`, { token, onUnauthorized: onLogout })
+      .then(async (response) => { if (!response.ok) throw new Error('Failed to load broker diagnostics.'); return response.json() as Promise<DiagnosticsPayload> })
+      .then((body) => { if (!cancelled) { setData(body); setError('') } })
+      .catch((cause: Error) => { if (!cancelled && !isUnauthorizedResponseError(cause)) setError(cause.message) })
+    return () => { cancelled = true }
+  }, [token, onLogout, severity, limit])
+
+  const sources = data?.sources
+  const traffic = sources?.observed_traffic
+  const mcm = sources?.mcm_events
+  const logs = sources?.broker_logs
+  const internal = sources?.internal_metrics
+  const sys = data?.broker_sys
+  return <section className="mt-8 space-y-5">
+    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
+      <h2 className="text-lg font-semibold text-white">Broker diagnostics</h2>
+      <div className="mt-4 flex flex-wrap gap-4"><label className="text-sm text-slate-300">Minimum severity <select aria-label="Minimum severity" value={severity} onChange={(e) => setSeverity(e.target.value)} className="ml-2 rounded-lg bg-slate-900 p-2"><option value="">Server default</option>{['debug','info','warning','error'].map((v) => <option key={v}>{v}</option>)}</select></label>
+      <label className="text-sm text-slate-300">Entry limit <input aria-label="Entry limit" type="number" min="1" max="200" value={limit} onChange={(e) => setLimit(e.target.value === '' ? '' : String(Math.min(200, Math.max(1, Number(e.target.value)))))} className="ml-2 w-24 rounded-lg bg-slate-900 p-2" placeholder="Default" /></label></div>
+    </article>
+    {error ? <p role="alert" className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-amber-100">{error}</p> : null}
+    <div className="grid gap-4 lg:grid-cols-2">
+      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Observed traffic</h3>
+        {traffic ? <>
+          <p className="mt-2 text-xs text-slate-400">Observed sample, not a complete broker inventory.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3"><WidgetFact label="Messages in window" value={String(traffic.message_count)} /><WidgetFact label="Window" value={`${traffic.window_seconds} seconds`} /><WidgetFact label="Rate" value={`${traffic.message_rate_per_minute.toFixed(1)} msg/min`} /></div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2"><HotspotCard title="Top topics" empty="No topic activity in the observed window." items={traffic.top_topics} />
+            <div className="rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50"><p className="font-semibold">Client identity is not part of observed traffic</p><p className="mt-1 text-amber-50/80">{traffic.top_clients_note || defaultClientNote}</p></div>
           </div>
-        ) : (
-          logs.map((log, index) => (
-            <article key={`${log.observed_at}-${log.source}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <SeverityBadge severity={log.severity} />
-                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{log.source}</span>
-                </div>
-                <time className="text-xs text-slate-400" dateTime={log.observed_at}>{new Date(log.observed_at).toLocaleString()}</time>
-              </div>
-              <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-100">{log.message}</p>
-            </article>
-          ))
-        )}
-      </div>
-    </section>
-  )
+        </> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
+      </article>
+      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">MCM events</h3>
+        {mcm ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Status events" value={String(mcm.status_events)} /><WidgetFact label="Topic messages" value={String(mcm.topic_messages)} /><WidgetFact label="Event subscribers" value={String(mcm.event_subscribers)} /><WidgetFact label="Last message at" value={mcm.last_message_at ? new Date(mcm.last_message_at).toLocaleString() : 'None yet'} /></dl><p className="mt-3 text-xs text-slate-400">{mcm.note}</p></> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
+      </article>
+      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Broker logs</h3>
+        {logs ? <>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Availability" value={logs.available ? 'Available' : 'Unavailable'} />{logs.available ? null : <WidgetFact label="Reason" value={logs.reason || 'No reason provided.'} />}{Object.entries(logs.severity_counts).map(([name, count]) => <WidgetFact key={name} label={`${name} entries`} value={String(count)} />)}</dl>
+          <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">Effective limits</p>
+          <dl className="mt-2 grid gap-3 sm:grid-cols-2"><WidgetFact label="Max entries" value={String(logs.limits.max_entries)} /><WidgetFact label="Max entries per read" value={String(logs.limits.max_entries_per_read)} /><WidgetFact label="Max message bytes" value={String(logs.limits.max_message_bytes)} /><WidgetFact label="Max age" value={`${logs.limits.max_age_seconds} seconds`} /></dl>
+          <p className="mt-3 text-xs text-slate-400">{logs.note}</p>
+          {logs.available ? <div className="mt-4 space-y-3">{logs.entries.length ? logs.entries.map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="flex flex-wrap items-center gap-2"><time dateTime={entry.observed_at} className="text-xs text-slate-400">{new Date(entry.observed_at).toLocaleString()}</time><SeverityBadge severity={entry.severity} /><span className="font-mono text-xs text-cyan-100">{entry.kind}</span></div>
+            {entry.client_id ? <p className="mt-2 text-xs text-slate-300">Client ID (broker-sourced): <span className="font-mono text-cyan-100">{entry.client_id}</span></p> : null}
+            {entry.topic ? <p className="mt-1 break-all text-xs text-slate-300">Topic: <span className="font-mono text-cyan-100">{entry.topic}</span></p> : null}
+            <p className="mt-3 whitespace-pre-wrap break-words text-sm text-slate-100">{entry.message}</p>
+          </article>) : <p className="text-sm text-slate-300">No broker log entries in this window.</p>}</div> : null}
+        </> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
+      </article>
+      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Internal metrics</h3>
+        {internal ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Endpoint" value={internal.endpoint} /><WidgetFact label="Format" value={internal.format} /></dl><p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">Counters</p><ul className="mt-2 space-y-2">{Object.entries(internal.counters).map(([name, value]) => <li key={name} className="flex justify-between gap-3 rounded-xl bg-white/[0.04] px-3 py-2 text-sm"><span className="break-all font-mono text-cyan-100">{name}</span><span className="font-mono text-white">{value}</span></li>)}</ul>{Object.keys(internal.counters).length === 0 ? <p className="mt-2 text-sm text-slate-300">No counters reported.</p> : null}<p className="mt-3 text-xs text-slate-400">{internal.note}</p></> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
+      </article>
+    </div>
+    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5"><h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Broker-published $SYS metrics</h3>
+      {sys ? sys.available ? <><p className="mt-2 text-xs text-slate-400">{sys.note}</p><div className="mt-3 space-y-2">{Object.entries(sys.metrics).map(([topic, metric]) => <div key={topic} className="grid gap-2 rounded-xl bg-white/[0.04] p-3 sm:grid-cols-3"><span className="break-all font-mono text-cyan-100">{topic}</span><span className="font-mono text-white">{metric.value}</span><time dateTime={metric.observed_at} className="text-xs text-slate-400">{new Date(metric.observed_at).toLocaleString()}</time></div>)}</div>{Object.keys(sys.metrics).length === 0 ? <p className="mt-3 text-sm text-slate-300">No $SYS metrics observed yet.</p> : null}</> : <p className="mt-3 text-sm text-amber-100">Unavailable: {sys.reason || 'No reason provided.'}</p> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
+    </article>
+    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5"><h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Diagnostic checks</h3><div className="mt-3 grid gap-3 sm:grid-cols-3">{(['tcp','tls','mqtt'] as const).map((name) => { const check = data?.diagnostics?.[name]; return <div key={name} className="rounded-xl border border-white/10 bg-white/[0.04] p-3"><div className="flex items-center justify-between gap-2"><strong className="uppercase text-cyan-100">{name}</strong><SeverityStatusBadge status={check?.status ?? 'not run'} /></div>
+      {check ? <DiagnosticCheckDetail name={name} check={check} /> : <p className="mt-2 text-xs text-slate-300">Check not run.</p>}
+    </div> })}</div></article>
+  </section>
+}
+
+type DiagnosticCheck = NonNullable<NonNullable<DiagnosticsPayload['diagnostics']>[keyof NonNullable<DiagnosticsPayload['diagnostics']>]>
+function SeverityStatusBadge({ status }: { status: string }) {
+  const style = status === 'connected' || status === 'reachable' ? 'bg-emerald-400/10 text-emerald-200' : status === 'disabled' ? 'bg-slate-400/10 text-slate-200' : 'bg-amber-400/10 text-amber-200'
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${style}`}>{status}</span>
+}
+function DiagnosticCheckDetail({ name, check }: { name: 'tcp' | 'tls' | 'mqtt'; check: DiagnosticCheck }) {
+  const facts = name === 'tcp' && 'latency_ms' in check ? [['Latency', `${check.latency_ms} ms`], ['Address', check.address]] : name === 'tls' && 'version' in check ? [['TLS version', check.version || 'n/a'], ['Cipher', check.cipher || 'n/a']] : name === 'mqtt' && 'client_id' in check ? [['Client ID', check.client_id || 'n/a'], ['Subscriptions', check.subscriptions.join(', ') || 'None']] : []
+  return <><dl className="mt-2 space-y-2 text-xs">{facts.map(([label, value]) => <div key={label}><dt className="text-slate-400">{label}</dt><dd className="break-all font-mono text-slate-200">{value}</dd></div>)}</dl><p className="mt-2 text-xs text-slate-300">{check.error || 'No error reported.'}</p></>
 }
 
 function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
