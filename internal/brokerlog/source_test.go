@@ -181,6 +181,25 @@ func TestFileSourceMissingIsUnavailable(t *testing.T) {
 	}
 }
 
+// The log path comes from the operator's configuration, so it may name
+// anything the container can see. Opening a FIFO would block the poll loop
+// (and with it the shutdown) until a writer appears, so the adapter ingests
+// regular files only.
+func TestFileSourceRefusesANonRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	source, err := NewFileSource(dir, DefaultLimits())
+	if err != nil {
+		t.Fatalf("NewFileSource: %v", err)
+	}
+	result, err := source.Read(context.Background(), Filter{})
+	if err == nil {
+		t.Fatalf("Read accepted a non-regular file: %+v", result)
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("Read error = %v, want a not-a-regular-file reason", err)
+	}
+}
+
 func TestNewFileSourceRejectsUnboundedLimits(t *testing.T) {
 	limits := DefaultLimits()
 	limits.MaxBytesPerRead = maxAllowedPollBytes + 1

@@ -151,10 +151,21 @@ func (s *FileSource) Read(ctx context.Context, filter Filter) (ReadResult, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	f, err := os.Open(s.path)
+	// The path comes from the operator's configuration, so it may point at
+	// anything the container can see. A FIFO or a device would block the
+	// open (and with it the poll loop and the shutdown) until a writer
+	// appears, so only a regular file is ingested.
+	pathInfo, err := os.Stat(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return ReadResult{Available: false, Entries: []Entry{}}, nil
 	}
+	if err != nil {
+		return ReadResult{}, fmt.Errorf("stat broker log %q: %w", s.path, err)
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return ReadResult{}, fmt.Errorf("broker log %q is not a regular file", s.path)
+	}
+	f, err := os.Open(s.path)
 	if err != nil {
 		return ReadResult{}, fmt.Errorf("open broker log %q: %w", s.path, err)
 	}
@@ -162,6 +173,9 @@ func (s *FileSource) Read(ctx context.Context, filter Filter) (ReadResult, error
 	info, err := f.Stat()
 	if err != nil {
 		return ReadResult{}, fmt.Errorf("stat broker log %q: %w", s.path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return ReadResult{}, fmt.Errorf("broker log %q is not a regular file", s.path)
 	}
 	if s.identity == nil || !os.SameFile(s.identity, info) || info.Size() < s.offset {
 		s.offset, s.partial, s.discard = 0, s.partial[:0], false
