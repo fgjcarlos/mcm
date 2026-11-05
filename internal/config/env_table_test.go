@@ -72,6 +72,19 @@ func TestEnvMosquittoComposeService(t *testing.T) {
 	}
 }
 
+func TestEnvMosquittoLogPath(t *testing.T) {
+	minimalLoadEnv(t)
+	t.Setenv("MCM_MOSQUITTO_LOG_PATH", "/mosquitto/log/mosquitto.log")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Mosquitto.LogPath, "/mosquitto/log/mosquitto.log"; got != want {
+		t.Errorf("Mosquitto.LogPath = %q, want %q", got, want)
+	}
+}
+
 func TestEnvTableIsConsistent(t *testing.T) {
 	seen := make(map[string]string, len(envBindings))
 	for i, b := range envBindings {
