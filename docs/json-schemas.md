@@ -2,6 +2,8 @@
 
 MCM supports a bounded JSON Schema MVP for validating observed MQTT JSON payloads against operator-defined topic filters.
 
+> **Diagnostic only:** Validation applies only to messages MCM observes. It never filters, blocks, rejects, or rewrites broker publications; Mosquitto delivers every publication regardless of the validation result. A schema failure is diagnostic information, not a gate.
+
 ## Scope
 
 - Schema definitions are stored in SQLite and tied to MQTT topic filters (`+` and terminal `#` wildcards).
