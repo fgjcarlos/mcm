@@ -576,25 +576,73 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 			t.Fatalf("seed passwd: %v", err)
 		}
 
-		// Replace the passwd file with a NON-EMPTY directory so that
-		// BOTH the initial apply's passwd rename AND the rollback's
-		// passwd rename fail (os.Rename cannot replace a non-empty dir).
-		// The ACL rename still succeeds (so rollback IS triggered), but
-		// the rollback cannot write the snapshot passwd back.
-		if err := os.Remove(passwdPath); err != nil {
-			t.Fatalf("remove passwd: %v", err)
+		// Provide a PIDPath so the apply progresses past the
+		// ErrReloadNotSignaled guard (issue #293). The path doesn't
+		// need to point at a real process — we want the passwd rename to
+		// fail, not the SIGHUP.
+		pidPath := filepath.Join(dir, "mosquitto.pid")
+		if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
+			t.Fatalf("seed pid: %v", err)
 		}
+
+		// After the ACL rename succeeds (afterReplace index 0), turn the
+		// passwd target into a NON-EMPTY directory: the apply's passwd
+		// rename AND the rollback's passwd restore both fail (os.Rename
+		// cannot replace a non-empty dir, regardless of uid). This keeps
+		// the subtest's original intent — ACL renamed, passwd rename
+		// fails, rollback also fails — under the durable-journal staging
+		// (issue #292): staging happens before the first rename, so the
+		// fault must be injected after it.
+		fa := FileApplier{ACLPath: aclPath, PasswdPath: passwdPath, PIDPath: pidPath, afterReplace: func(index int) {
+			if index != 0 {
+				return
+			}
+			if err := os.Remove(passwdPath); err != nil {
+				t.Errorf("remove passwd: %v", err)
+				return
+			}
+			if err := os.MkdirAll(passwdPath, 0o700); err != nil {
+				t.Errorf("mkdir passwd: %v", err)
+				return
+			}
+			if err := os.WriteFile(filepath.Join(passwdPath, "marker"), []byte("x"), 0o600); err != nil {
+				t.Errorf("marker: %v", err)
+			}
+		}}
+
+		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
+		if err == nil {
+			t.Fatal("Apply returned nil error, want error")
+		}
+		if !errors.Is(err, ErrRollbackFailed) {
+			t.Errorf("error = %v, want wrap of ErrRollbackFailed", err)
+		}
+		// Durable-journal contract (S19): a failed rollback keeps the
+		// journal so the next startup restores from the backups.
+		journalPath := filepath.Join(recoveryDir(aclPath, passwdPath), "journal.json")
+		if _, statErr := os.Stat(journalPath); statErr != nil {
+			t.Errorf("recovery journal must survive a failed rollback: %v", statErr)
+		}
+	})
+
+	t.Run("unrepresentable passwd target fails staging before any replacement", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		aclPath := filepath.Join(dir, "acl")
+		passwdPath := filepath.Join(dir, "passwd")
+
+		if err := os.WriteFile(aclPath, []byte("old acl"), 0o600); err != nil {
+			t.Fatalf("seed acl: %v", err)
+		}
+		// A non-empty directory where the passwd file should be cannot be
+		// snapshotted, so the apply must fail at staging — BEFORE the ACL
+		// target is replaced (S16) — and leave no journal behind.
 		if err := os.MkdirAll(passwdPath, 0o700); err != nil {
 			t.Fatalf("mkdir passwd: %v", err)
 		}
 		if err := os.WriteFile(filepath.Join(passwdPath, "marker"), []byte("x"), 0o600); err != nil {
 			t.Fatalf("marker: %v", err)
 		}
-
-		// Provide a PIDPath so the apply progresses past the
-		// ErrReloadNotSignaled guard (issue #293). The path doesn't
-		// need to point at a real file — we want the rename of the
-		// passwd to fail, not the SIGHUP.
 		pidPath := filepath.Join(dir, "mosquitto.pid")
 		if err := os.WriteFile(pidPath, []byte("12345\n"), 0o600); err != nil {
 			t.Fatalf("seed pid: %v", err)
@@ -603,10 +651,20 @@ func TestFileApplierApply_Transactional(t *testing.T) {
 
 		err := fa.Apply(context.Background(), ApplyRequest{ACLBody: "new acl", ACLSnapshot: "old acl", PasswdBody: "new passwd", PasswdSnapshot: "old passwd"})
 		if err == nil {
-			t.Fatal("Apply returned nil error, want error")
+			t.Fatal("Apply returned nil error, want staging error")
 		}
-		if !errors.Is(err, ErrRollbackFailed) {
-			t.Errorf("error = %v, want wrap of ErrRollbackFailed", err)
+		if errors.Is(err, ErrApplyRestored) || errors.Is(err, ErrRollbackFailed) {
+			t.Errorf("staging failure must not report a restore outcome: %v", err)
+		}
+		got, readErr := os.ReadFile(aclPath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(got) != "old acl" {
+			t.Errorf("acl = %q, want %q (staging failure must not replace targets)", got, "old acl")
+		}
+		if _, statErr := os.Stat(filepath.Join(recoveryDir(aclPath, passwdPath), "journal.json")); !os.IsNotExist(statErr) {
+			t.Errorf("journal left behind by failed staging: %v", statErr)
 		}
 	})
 
