@@ -88,9 +88,11 @@ type HTTPTLSConfig struct {
 	RequireClientCert bool   `yaml:"require_client_cert"`
 }
 
-// DatabaseConfig controls persistence. Backend selects "sqlite" (default) or
-// "postgres". When backend is "sqlite", Path is required. When backend is
-// "postgres", DSN is required.
+// DatabaseConfig controls persistence. SQLite is the only implemented storage
+// backend. Config validation accepts the "postgres" backend shape (which
+// requires DSN) for forward-compatibility, but configuring it aborts startup
+// with an error directing the operator to use "sqlite". When backend is
+// "sqlite" (the default), Path is required.
 type DatabaseConfig struct {
 	Backend string `yaml:"backend"`
 	Path    string `yaml:"path"`
@@ -345,10 +347,15 @@ http:
     client_ca_file: ""
     require_client_cert: false
 
-# Database configuration. Backend: "sqlite" (default) or "postgres".
+# SQLite is the only implemented storage backend. Config validation accepts
+# "postgres" for forward-compatibility, but configuring it aborts startup with
+# an error directing the operator to use "sqlite".
 database:
   backend: "sqlite"
   path: %q
+  # postgres DSN example (accepted by validation for forward-compatibility only;
+  # PostgreSQL is not implemented, and configuring it aborts startup with an
+  # error directing the operator to use "sqlite"):
   # dsn: "postgres://user:pass@host:5432/mcm?sslmode=require"
 
 # API authentication settings.

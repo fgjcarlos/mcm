@@ -2,6 +2,8 @@
 
 MCM includes a topic-level Sparkplug B awareness layer for operators monitoring MQTT traffic. This is **topic metadata classification only** — MCM does not decode Sparkplug protobuf payloads in the current phase.
 
+> **Diagnostic only:** Classification and any decoding apply only to messages MCM observes. They never filter, block, reject, or rewrite broker publications; Mosquitto delivers every publication regardless of the diagnostic result. A diagnostic failure is information for the operator, not a gate.
+
 ## What works today
 
 MCM classifies inbound MQTT messages as Sparkplug B when the topic matches one of these namespace shapes:

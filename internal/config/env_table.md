@@ -15,9 +15,9 @@ Regenerate with `go run ./scripts/gen-env-table`.
 | `MCM_HTTP_TLS_CLIENT_CA_FILE` | `http.tls.client_ca_file` | Path to PEM-encoded CA bundle for mTLS client cert verification. Required when require_client_cert is true. |
 | `MCM_HTTP_TLS_REQUIRE_CLIENT_CERT` | `http.tls.require_client_cert` | Enforce mTLS: every request must present a client certificate signed by client_ca_file. |
 | `MCM_HTTP_CORS_ALLOWED_ORIGINS` | `http.cors.allowed_origins` | Comma-separated list of exact origins (scheme://host[:port]) permitted to make cross-origin requests. Empty (default) = same-origin only. |
-| `MCM_DATABASE_BACKEND` | `database.backend` | Storage backend. "sqlite" (default; uses database.path) or "postgres" (uses database.dsn). |
+| `MCM_DATABASE_BACKEND` | `database.backend` | SQLite is the only implemented storage backend (default; uses database.path). Config validation accepts "postgres" (uses database.dsn) for forward-compatibility, but it is not implemented and configuring it aborts startup with an error directing the operator to use "sqlite". |
 | `MCM_DATABASE_PATH` | `database.path` | SQLite file path. Parent dir must be writable so the JWT-secret bootstrap can persist. |
-| `MCM_DATABASE_DSN` | `database.dsn` | Postgres connection string. Required when database.backend is "postgres". |
+| `MCM_DATABASE_DSN` | `database.dsn` | Postgres connection string. Required when database.backend is "postgres"; postgres is accepted by validation for forward-compatibility but is not implemented and aborts startup with an error directing the operator to use "sqlite". |
 | `MCM_AUTH_JWT_SECRET` | `auth.jwt_secret` | HMAC secret for signing JWTs. >=32 chars. If unset, a random one is generated and persisted to <db dir>/.bootstrap.json (mode 0600). |
 | `MCM_AUTH_TOKEN_TTL` | `auth.token_ttl` | JWT lifetime. Go duration (e.g. "24h"). |
 | `MCM_BOOTSTRAP_ADMIN_USERNAME` | `auth.bootstrap_admin.username` | First-boot admin username. Leave empty (with _PASSWORD) to auto-generate admin/<random 24-char pw>. |
