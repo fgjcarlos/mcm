@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { AdminUser } from '../auth/useAuthSession'
 import type { BrokerConnectionStatus, BrokerStreamState } from '../broker/useBrokerStream'
 
@@ -41,6 +41,8 @@ export function DashboardFrame({
   onLogout,
   children,
 }: DashboardFrameProps) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['Configuration']))
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-8">
@@ -66,34 +68,67 @@ export function DashboardFrame({
             {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration'].map((group) => {
               const items = navItems.filter((item) => (item.group ?? 'Diagnostics') === group)
               if (!items.length) return null
-              return <section key={group} className="space-y-2">
-                <h2 className="pt-4 text-xs font-semibold uppercase tracking-widest text-cyan-200">{group}</h2>
-                {items.map((item, index) => {
-              const isActive = item.id === activeId
+              const groupId = `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+              const hasActiveItem = items.some((item) => item.id === activeId)
+              const expanded = hasActiveItem || expandedGroups.has(group)
+              const observationGroup = group === 'Diagnostics'
               return (
-                <a
-                  key={item.id}
-                  href={item.path}
-                  aria-current={isActive ? 'page' : undefined}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    onSelectNav(item)
-                  }}
-                  className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
-                    isActive
-                      ? 'border-cyan-300/40 bg-cyan-300/12 text-white shadow-lg shadow-cyan-950/30'
-                      : 'border-white/5 bg-white/[0.03] text-slate-300 hover:border-white/15 hover:bg-white/[0.06] hover:text-white'
-                  }`}
-                >
-                  <span>
-                    <span className="block text-sm font-semibold">{item.label}</span>
-                    <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
-                  </span>
-                  <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
-                </a>
+                <section key={group} className={`space-y-2 rounded-2xl border p-2 ${observationGroup ? 'border-emerald-300/25 bg-emerald-400/[0.06]' : 'border-transparent'}`}>
+                  <div className="flex items-center justify-between gap-2 pt-2">
+                    <h2 id={`${groupId}-heading`} className={`text-xs font-semibold uppercase tracking-widest ${observationGroup ? 'text-emerald-200' : 'text-cyan-200'}`}>{group}</h2>
+                    {observationGroup ? <span className="rounded-full border border-emerald-300/25 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-100">Observation · read-only</span> : null}
+                    <button
+                      type="button"
+                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group}`}
+                      aria-expanded={expanded}
+                      aria-controls={groupId}
+                      disabled={hasActiveItem}
+                      onClick={() => setExpandedGroups((current) => {
+                        const next = new Set(current)
+                        if (expanded) next.delete(group)
+                        else next.add(group)
+                        return next
+                      })}
+                      className="rounded-lg border border-white/10 px-2 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span aria-hidden="true">{expanded ? '−' : '+'}</span>
+                    </button>
+                  </div>
+                  <div
+                    id={groupId}
+                    role="region"
+                    aria-labelledby={`${groupId}-heading`}
+                    inert={!expanded}
+                    className={`space-y-2 overflow-hidden transition-[max-height,opacity] duration-200 ${expanded ? 'max-h-[40rem] opacity-100' : 'max-h-0 opacity-0'}`}
+                  >
+                    {items.map((item, index) => {
+                      const isActive = item.id === activeId
+                      return (
+                        <a
+                          key={item.id}
+                          href={item.path}
+                          aria-current={isActive ? 'page' : undefined}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            onSelectNav(item)
+                          }}
+                          className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
+                            isActive
+                              ? 'border-cyan-300/40 bg-cyan-300/12 text-white shadow-lg shadow-cyan-950/30'
+                              : 'border-white/5 bg-white/[0.03] text-slate-300 hover:border-white/15 hover:bg-white/[0.06] hover:text-white'
+                          }`}
+                        >
+                          <span>
+                            <span className="block text-sm font-semibold">{item.label}</span>
+                            <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
+                          </span>
+                          <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
+                        </a>
+                      )
+                    })}
+                  </div>
+                </section>
               )
-                })}
-              </section>
             })}
           </nav>
 
