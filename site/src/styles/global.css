@@ -33,5 +33,5 @@ html {
 
 ::selection {
   background: var(--color-mcm-cyan);
-  color: var(--color-mcm-deep);
+  color: var(--color-console-deep);
 }
