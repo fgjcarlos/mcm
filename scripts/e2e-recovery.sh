@@ -10,7 +10,10 @@
 #   4. Wipe EVERYTHING: docker compose down -v.
 #   5. Re-up fresh. MCM bootstraps a NEW admin (in-memory), but the
 #      volume is now empty.
-#   6. Run scripts/restore.sh --confirm — overwrites the volume with
+#   6. Run scripts/restore.sh --confirm --overwrite — replaces the
+#      freshly-bootstrapped (empty) volume with the captured archive
+#      contents; --overwrite is required because the destination
+#      already contains the just-bootstrapped mcm.db.
 #      the captured archive contents.
 #   7. Restart mcm so the restored DB is loaded.
 #   8. Verify the OLD admin password (from the original bootstrap)
@@ -93,6 +96,11 @@ fi
 # --- 1. Initial setup -----------------------------------------------------------
 
 echo "--- e2e-recovery: phase 1 (initial setup) ---"
+# Start from a CLEAN stack: the test needs a FRESH bootstrap (it reads
+# the "bootstrap admin created" log line), and phase 4 wipes everything
+# anyway — cleaning up front only makes the run deterministic against
+# a dev environment that was left running.
+$COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
 $COMPOSE up -d --no-build
 
 echo "--- e2e-recovery: waiting for /livez (${WAIT_SECONDS}s budget) ---"
@@ -229,7 +237,12 @@ if [ ! -f "$ARCHIVE_PATH" ]; then
     echo "Backup archive was not produced at $ARCHIVE_PATH" >&2
     exit 1
 fi
-echo "backup: $(ls -lh "$ARCHIVE_PATH" | awk '{print $5}') $(file "$ARCHIVE_PATH" | cut -d: -f2)"
+echo "backup: $(stat -c '%s bytes' "$ARCHIVE_PATH") ($(file "$ARCHIVE_PATH" | cut -d: -f2))"
+ARCHIVE_MODE="$(stat -c '%a' "$ARCHIVE_PATH")"
+if [ "$ARCHIVE_MODE" != 600 ]; then
+    echo "FAIL: backup archive mode is $ARCHIVE_MODE, want 600 (contains secrets)" >&2
+    exit 1
+fi
 
 # --- 3. Wipe -------------------------------------------------------------------
 
@@ -275,7 +288,21 @@ echo "fresh DB is empty (new admin generated)"
 
 echo
 echo "--- e2e-recovery: phase 5 (restore) ---"
-bash scripts/restore.sh --confirm "$ARCHIVE_PATH"
+# Safety check 1: restore refuses to replace a live SQLite database even
+# when --overwrite was given; a running process could append a fresh WAL.
+if bash scripts/restore.sh --confirm --overwrite "$ARCHIVE_PATH" >/dev/null 2>&1; then
+    echo "FAIL: restore accepted a live MCM process" >&2
+    exit 1
+fi
+# Never replace a live SQLite database: stop MCM first so it cannot
+# append to a fresh WAL while the snapshot is being restored.
+$COMPOSE stop mcm
+# Safety check 2: --confirm alone must not replace existing data.
+if bash scripts/restore.sh --confirm "$ARCHIVE_PATH" >/dev/null 2>&1; then
+    echo "FAIL: restore accepted existing destination data without --overwrite" >&2
+    exit 1
+fi
+bash scripts/restore.sh --confirm --overwrite "$ARCHIVE_PATH"
 
 # Restart mcm so it picks up the restored DB and JWT secret. The
 # broker still has its pre-restore in-memory state at this point
