@@ -7,6 +7,36 @@ import (
 	"github.com/fgjcarlos/mcm/internal/acl"
 )
 
+func TestRenderACLFileKeepsNFCAndNFDPrincipalsDistinct(t *testing.T) {
+	t.Parallel()
+	rules := []acl.Rule{
+		{Principal: "é", TopicFilter: "a/#", Permission: acl.PermissionRead},
+		{Principal: "e\u0301", TopicFilter: "b/#", Permission: acl.PermissionRead},
+	}
+	body := renderACLForTest(t, rules)
+	parsed := ParseACLFile(body)
+	if len(parsed) != 2 || parsed[0].Principal == parsed[1].Principal {
+		t.Fatalf("rendered ACL failed to preserve byte-distinct Unicode identities; rule count=%d", len(parsed))
+	}
+}
+
+func TestRenderACLFileRejectsUnrepresentableRule(t *testing.T) {
+	t.Parallel()
+	_, err := RenderACLFile([]acl.Rule{{Principal: "alice\nuser admin", TopicFilter: "sensors/#", Permission: acl.PermissionRead}})
+	if err == nil || !strings.Contains(err.Error(), "principal") {
+		t.Fatalf("RenderACLFile() error = %v, want principal field error", err)
+	}
+}
+
+func renderACLForTest(t *testing.T, rules []acl.Rule) string {
+	t.Helper()
+	body, err := RenderACLFile(rules)
+	if err != nil {
+		t.Fatalf("RenderACLFile(): %v", err)
+	}
+	return body
+}
+
 func TestRenderACLFile(t *testing.T) {
 	t.Parallel()
 
@@ -57,7 +87,7 @@ func TestRenderACLFile(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := RenderACLFile(tc.rules)
+			got := renderACLForTest(t, tc.rules)
 			if got != tc.want {
 				t.Fatalf("RenderACLFile() =\n%q\nwant:\n%q", got, tc.want)
 			}
@@ -76,7 +106,7 @@ func TestRenderACLFileRendersDenyPermission(t *testing.T) {
 
 	want := "user alice\ntopic deny sensors/#"
 
-	if got := RenderACLFile(rules); got != want {
+	if got := renderACLForTest(t, rules); got != want {
 		t.Fatalf("RenderACLFile() =\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -134,7 +164,7 @@ func TestRenderParseACLFileRoundTripsDeny(t *testing.T) {
 		{Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionReadWrite},
 	}
 
-	parsed := ParseACLFile(RenderACLFile(rules))
+	parsed := ParseACLFile(renderACLForTest(t, rules))
 
 	if len(parsed) != len(rules) {
 		t.Fatalf("round-trip returned %d rules, want %d: %#v", len(parsed), len(rules), parsed)
@@ -167,7 +197,7 @@ func TestRenderACLFileRendersNativeSelectors(t *testing.T) {
 		"topic read sensors/#",
 	}, "\n")
 
-	if got := RenderACLFile(rules); got != want {
+	if got := renderACLForTest(t, rules); got != want {
 		t.Fatalf("RenderACLFile() =\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -184,7 +214,7 @@ func TestRenderACLFileKeepsLegacyOutputUnchanged(t *testing.T) {
 
 	want := "user alice\ntopic write a/#\n\nuser zebra\ntopic read z/#"
 
-	if got := RenderACLFile(rules); got != want {
+	if got := renderACLForTest(t, rules); got != want {
 		t.Fatalf("RenderACLFile() =\n%q\nwant:\n%q", got, want)
 	}
 }
@@ -237,7 +267,7 @@ func TestRenderParseACLFileRoundTrip(t *testing.T) {
 		{Selector: acl.SelectorUser, Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
 	}
 
-	parsed := ParseACLFile(RenderACLFile(rules))
+	parsed := ParseACLFile(renderACLForTest(t, rules))
 
 	if len(parsed) != len(rules) {
 		t.Fatalf("round-trip returned %d rules, want %d: %#v", len(parsed), len(rules), parsed)

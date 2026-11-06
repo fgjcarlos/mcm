@@ -1,6 +1,7 @@
 package mosquitto
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,10 +72,26 @@ func BrokerACLPath(path, globalACLFile, listenerID string) (string, bool) {
 //   - The user sections come last, grouped by principal (lexicographic
 //     sort) with a "user <principal>" header per group.
 //
-// Empty input returns "".
-func RenderACLFile(rules []acl.Rule) string {
+// Empty input returns an empty body. Invalid or oversized rules return a
+// field-level error rather than emitting a line Mosquitto could misparse.
+const maxMosquittoFileBytes = 16 << 20
+
+func RenderACLFile(rules []acl.Rule) (string, error) {
+	if len(rules) > 100000 {
+		return "", fmt.Errorf("rules must contain at most 100000 entries")
+	}
+	sizeEstimate := 0
+	for i, rule := range rules {
+		if err := acl.ValidateRule(rule); err != nil {
+			return "", fmt.Errorf("rule[%d]: %w", i, err)
+		}
+		sizeEstimate += len(rule.Principal) + len(rule.TopicFilter) + len(rule.Permission) + 32
+		if sizeEstimate > maxMosquittoFileBytes {
+			return "", fmt.Errorf("rendered acl file exceeds %d bytes", maxMosquittoFileBytes)
+		}
+	}
 	if len(rules) == 0 {
-		return ""
+		return "", nil
 	}
 
 	var (
@@ -123,7 +140,7 @@ func RenderACLFile(rules []acl.Rule) string {
 		sections = append(sections, strings.TrimSuffix(b.String(), "\n"))
 	}
 
-	return strings.Join(sections, "\n\n")
+	return strings.Join(sections, "\n\n"), nil
 }
 
 // renderACLSection renders the body of one ACL section. Every line is

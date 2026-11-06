@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
 )
@@ -25,16 +24,7 @@ func (e *MQTTUserValidationError) Error() string {
 // Mosquitto passwd files are line-oriented, so control characters cannot be
 // accepted even though ordinary MQTT client-id/username syntax remains valid.
 func ValidateMQTTUsername(username string) error {
-	var problems []string
-	if strings.TrimSpace(username) == "" {
-		problems = append(problems, "username is required")
-	}
-	for _, r := range username {
-		if unicode.IsControl(r) {
-			problems = append(problems, "username must not contain control characters")
-			break
-		}
-	}
+	problems := acl.ValidateUsernameField(username, "username")
 	if len(problems) > 0 {
 		return &MQTTUserValidationError{Problems: problems}
 	}
@@ -46,7 +36,7 @@ func (s *Store) CreateMQTTUser(ctx context.Context, params CreateMQTTUserParams)
 	if err := ValidateMQTTUsername(params.Username); err != nil {
 		return MQTTUser{}, err
 	}
-	username := strings.TrimSpace(params.Username)
+	username := params.Username
 	if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && username == reserved {
 		return MQTTUser{}, ErrMQTTUserServiceReserved
 	}
@@ -180,7 +170,7 @@ func (s *Store) updateMQTTUser(ctx context.Context, id int64, params UpdateMQTTU
 
 	username := oldUsername
 	if params.Username != nil {
-		newName := strings.TrimSpace(*params.Username)
+		newName := *params.Username
 		if reserved := strings.TrimSpace(params.ServiceReserved); reserved != "" && newName == reserved {
 			return MQTTUser{}, ErrMQTTUserServiceReserved
 		}

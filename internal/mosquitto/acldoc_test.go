@@ -9,6 +9,27 @@ import (
 
 // TestParseACLDocumentRoundTrip pins that the document model is lossless:
 // parsing a body and rendering it again reproduces the original bytes.
+func TestParseACLDocumentClassifiesUnrepresentablePrincipalAndPreservesRawLine(t *testing.T) {
+	t.Parallel()
+	body := "user alice:admin\n"
+	doc := ParseACLDocument(body)
+	if got := doc.Render(); got != body {
+		t.Fatal("invalid foreign source line was not preserved byte-for-byte")
+	}
+	unknown := doc.UnknownEntries()
+	if len(unknown) != 1 || !strings.Contains(unknown[0].Issue, "principal must not contain ':'") {
+		t.Fatalf("unknown entry issue = %v, want field-level principal classification", unknown)
+	}
+}
+
+func TestParseACLDocumentDoesNotReclassifyFollowingTopicAsAnonymous(t *testing.T) {
+	t.Parallel()
+	doc := ParseACLDocument("user alice:admin\ntopic read sensors/#\n")
+	if len(doc.TypedRules()) != 0 || len(doc.UnknownEntries()) != 1 || !strings.Contains(doc.Entries[1].Issue, "principal must not contain control characters") {
+		t.Fatalf("invalid user section was misclassified: typed=%d unknown=%d", len(doc.TypedRules()), len(doc.UnknownEntries()))
+	}
+}
+
 func TestParseACLDocumentRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -186,11 +207,28 @@ func TestACLDocumentSemanticKeys(t *testing.T) {
 
 // TestComposeACLDocumentJoinsExistingUserSection pins that a managed rule for
 // a principal the source already declares joins that section.
+func composeACLForTest(t *testing.T, doc ACLDocument, managed []acl.Rule) (ACLDocument, []string) {
+	t.Helper()
+	composed, warnings, err := ComposeACLDocument(doc, managed)
+	if err != nil {
+		t.Fatalf("ComposeACLDocument(): %v", err)
+	}
+	return composed, warnings
+}
+
+func TestComposeACLDocumentRejectsUnrepresentableManagedRule(t *testing.T) {
+	t.Parallel()
+	_, _, err := ComposeACLDocument(ParseACLDocument("# source\\n"), []acl.Rule{{Principal: "alice admin", TopicFilter: "a/#", Permission: acl.PermissionRead}})
+	if err == nil || !strings.Contains(err.Error(), "principal must not contain whitespace") {
+		t.Fatalf("ComposeACLDocument() error = %v, want principal field error", err)
+	}
+}
+
 func TestComposeACLDocumentJoinsExistingUserSection(t *testing.T) {
 	t.Parallel()
 
 	doc := ParseACLDocument("user alice\ntopic read sensors/#\n")
-	composed, warnings := ComposeACLDocument(doc, []acl.Rule{
+	composed, warnings := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorUser, Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionReadWrite},
 	})
 	want := "user alice\ntopic read sensors/#\ntopic readwrite sensors/#\n"
@@ -211,7 +249,7 @@ func TestComposeACLDocumentOpensNewUserSection(t *testing.T) {
 	t.Parallel()
 
 	doc := ParseACLDocument("# source\nuser alice\ntopic read sensors/#\n")
-	composed, warnings := ComposeACLDocument(doc, []acl.Rule{
+	composed, warnings := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorUser, Principal: "bob", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
 	})
 	want := "# source\nuser alice\ntopic read sensors/#\nuser bob\ntopic read sensors/#\n"
@@ -229,7 +267,7 @@ func TestComposeACLDocumentAnonymousBeforeFirstUser(t *testing.T) {
 	t.Parallel()
 
 	doc := ParseACLDocument("user alice\ntopic read sensors/#\n")
-	composed, _ := ComposeACLDocument(doc, []acl.Rule{
+	composed, _ := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorAnonymous, TopicFilter: "public/#", Permission: acl.PermissionRead},
 	})
 	rendered := composed.Render()
@@ -246,7 +284,7 @@ func TestComposeACLDocumentPatternBeforeFirstUser(t *testing.T) {
 	t.Parallel()
 
 	doc := ParseACLDocument("user alice\ntopic read sensors/#\n")
-	composed, _ := ComposeACLDocument(doc, []acl.Rule{
+	composed, _ := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorPattern, TopicFilter: "logs/%u", Permission: acl.PermissionWrite},
 	})
 	rendered := composed.Render()
@@ -263,7 +301,7 @@ func TestComposeACLDocumentSkipsDuplicateManagedRule(t *testing.T) {
 	t.Parallel()
 
 	doc := ParseACLDocument("user alice\ntopic read sensors/#\n")
-	composed, warnings := ComposeACLDocument(doc, []acl.Rule{
+	composed, warnings := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorUser, Principal: "alice", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
 	})
 	want := "user alice\ntopic read sensors/#\n"
@@ -285,7 +323,7 @@ func TestComposeACLDocumentPreservesUnknownAndComments(t *testing.T) {
 
 	source := "# header\nacl_file /etc/other.acl\n\nuser alice\ntopic read sensors/#\n"
 	doc := ParseACLDocument(source)
-	composed, _ := ComposeACLDocument(doc, []acl.Rule{
+	composed, _ := composeACLForTest(t, doc, []acl.Rule{
 		{Selector: acl.SelectorUser, Principal: "bob", TopicFilter: "sensors/#", Permission: acl.PermissionRead},
 	})
 	rendered := composed.Render()

@@ -29,6 +29,55 @@ func seedMQTTUser(t *testing.T, store *storage.Store, username string) storage.M
 	return user
 }
 
+func TestCreateMQTTUserRejectsWhitespaceWithoutEchoingSecrets(t *testing.T) {
+	t.Parallel()
+	app, store := newTestApp(t)
+	token := loginAsSeededUser(t, app, store, "admin", "admin-password")
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPost, "/api/v1/mqtt-users", `{"username":" alice"}`, token)
+	app.Handler().ServeHTTP(rec, req)
+	wantBody := "{\"error\":\"mqtt user validation failed\",\"details\":[\"username must not contain whitespace\"]}\n"
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != wantBody {
+		t.Fatalf("response status = %d with unexpected body; want field-level validation response", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "$7$") || strings.Contains(rec.Body.String(), "password_hash") {
+		t.Fatal("validation response exposed password material")
+	}
+	users, err := store.ListMQTTUsers(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range users {
+		if user.Username == " alice" || user.Username == "alice" {
+			t.Fatal("rejected username was persisted")
+		}
+	}
+}
+
+func TestUpdateMQTTUserRejectsUnrepresentableUsernameAtAPI(t *testing.T) {
+	t.Parallel()
+	app, store := newTestApp(t)
+	user := seedMQTTUser(t, store, "stable")
+	token := loginAsSeededUser(t, app, store, "admin", "admin-password")
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPut, "/api/v1/mqtt-users/"+strconv.FormatInt(user.ID, 10), `{"username":" changed"}`, token)
+	app.Handler().ServeHTTP(rec, req)
+	wantBody := "{\"error\":\"mqtt user validation failed\",\"details\":[\"username must not contain whitespace\"]}\n"
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != wantBody {
+		t.Fatalf("response status = %d with unexpected body; want field-level validation response", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "$7$") {
+		t.Fatal("validation response exposed password hash material")
+	}
+	stored, err := store.GetMQTTUser(t.Context(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Username != "stable" {
+		t.Fatalf("username after rejected update = %q, want stable", stored.Username)
+	}
+}
+
 // TestHandleCreateMQTTUser covers the POST /api/v1/mqtt-users endpoint.
 func TestHandleCreateMQTTUser(t *testing.T) {
 	t.Run("success returns 201 with password and no password_hash", func(t *testing.T) {
