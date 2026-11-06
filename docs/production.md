@@ -262,6 +262,28 @@ the only deploy mode that still benefits from the legacy `pid_path` +
 `MCM_MOSQUITTO_DEPLOY_MODE=file` and `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND`
 exclusively.
 
+##### Restarting the broker (issue #294)
+
+A RELOAD is not a RESTART. Mosquitto reads a bridge, a plugin or the
+dynamic security plugin only at start-up, so a change to those surfaces
+needs a broker restart to become active. `MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND`
+(default unset) is the controlled restart mechanism, separate from the
+reload command on purpose:
+
+- When it is set (e.g. `"systemctl restart mosquitto.service"`, or an
+  SSH hop / sidecar that bounces the broker), a change that needs a
+  restart is applied and the broker is restarted through that command.
+- When it is unset, MCM cannot restart the broker: a change that needs
+  a restart is refused before anything is written (or lands in
+  `pending_activation` where the surface cannot be verified), instead of
+  being reported active after a mere reload.
+
+The example production stack in `docker-compose.prod.yml` does NOT set
+a restart command — restarting a Compose service from inside a sibling
+container would need the Docker socket, which this deployment model
+forbids. Set the restart command when the broker runs under systemd,
+Kubernetes or another supervisor that can bounce it out-of-band.
+
 ##### Production path alignment (issue #294)
 
 Both `mosquitto.conf` and `mosquitto.prod.conf` reference the same
