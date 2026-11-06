@@ -61,6 +61,9 @@ func TestVerifyActive(t *testing.T) {
 		if !strings.Contains(result.NegativeMessage, "rejected") {
 			t.Errorf("NegativeMessage missing 'rejected': %s", result.NegativeMessage)
 		}
+		if !strings.Contains(result.DeniedTopicMessage, "refused") {
+			t.Errorf("DeniedTopicMessage missing 'refused': %s", result.DeniedTopicMessage)
+		}
 	})
 
 	t.Run("positive fails when broker still serves old config", func(t *testing.T) {
@@ -143,12 +146,12 @@ func TestVerifyActive(t *testing.T) {
 		}
 	})
 
-	t.Run("negative stage checks authentication, not the denied topic", func(t *testing.T) {
+	t.Run("negative permission stage fails when the broker grants the denied topic", func(t *testing.T) {
 		t.Parallel()
 		// The broker denies nothing for alice, so the denied topic is in
-		// fact allowed. The negative stage must still pass: it
-		// authenticates an unknown user and does not assert a topic
-		// denial.
+		// fact allowed. The verification must fail: the rendered denial
+		// is not in effect, so the broker is not serving the policy MCM
+		// wrote.
 		_, addr := startVerifyBroker(t, verifyBrokerACL{
 			users: map[string]verifyUserACL{
 				"alice": {
@@ -169,12 +172,47 @@ func TestVerifyActive(t *testing.T) {
 			SubTimeout:       2 * time.Second,
 		}
 		result := VerifyActive(context.Background(), opts)
+		if result.OK {
+			t.Fatalf("VerifyActive OK=true, want false (the broker granted the denied topic); result: %+v", result)
+		}
+		if result.Stage != "negative_permission" {
+			t.Errorf("Stage = %q, want %q", result.Stage, "negative_permission")
+		}
+		if !strings.Contains(result.DeniedTopicMessage, "granted") {
+			t.Errorf("DeniedTopicMessage missing 'granted': %s", result.DeniedTopicMessage)
+		}
+	})
+
+	t.Run("negative permission stage is skipped when the policy denies nothing", func(t *testing.T) {
+		t.Parallel()
+		// The rendered policy denies nothing for alice, so there is no
+		// expected denial to prove: the stage reports a skip and the
+		// verification stays successful.
+		_, addr := startVerifyBroker(t, verifyBrokerACL{
+			users: map[string]verifyUserACL{
+				"alice": {
+					allowed: []string{"sensors/temperature"},
+				},
+			},
+		})
+		host, port := splitHostPort(t, addr)
+
+		opts := VerifyActiveOptions{
+			Config:           cfgWithCreds(host, port, "", ""),
+			Username:         "alice",
+			Password:         "test-pass-alice",
+			AllowedTopic:     "sensors/temperature",
+			DialTimeout:      2 * time.Second,
+			RoundTripTimeout: 2 * time.Second,
+			SubTimeout:       2 * time.Second,
+		}
+		result := VerifyActive(context.Background(), opts)
 		if !result.OK {
-			t.Fatalf("VerifyActive OK=false, want true (the denied topic is not asserted); stage=%s message=%s",
+			t.Fatalf("VerifyActive OK=false, want true (the denial stage is skipped); stage=%s message=%s",
 				result.Stage, result.Message)
 		}
-		if !strings.Contains(result.NegativeMessage, "rejected") {
-			t.Errorf("NegativeMessage missing 'rejected': %s", result.NegativeMessage)
+		if !strings.Contains(result.DeniedTopicMessage, "skipped") {
+			t.Errorf("DeniedTopicMessage missing 'skipped': %s", result.DeniedTopicMessage)
 		}
 	})
 }

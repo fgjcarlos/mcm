@@ -442,12 +442,40 @@ func (s *Service) ApplyDynSec(ctx context.Context, actor, planID string, desired
 			"commands": dynsec.MarshalCommands(plan.Commands()),
 		}))
 	}
+	// The control channel confirmed the applied state, so the deployment
+	// that wrote the plugin configuration may declare a verified
+	// activation (issue #293, S21).
+	deployment, err = s.confirmDynSecActivation(ctx, actor, deployment)
+	if err != nil {
+		return DynSecApplyResult{}, err
+	}
 	return DynSecApplyResult{
 		PlanID:     planID,
 		Document:   actual.Redacted(),
 		Guard:      guard,
 		Deployment: deployment,
 	}, nil
+}
+
+// confirmDynSecActivation marks the deployment of the dynamic-security
+// configuration as active_verified once the control channel confirmed the
+// applied state.
+//
+// Before the confirmation the deployment stays in pending_activation: the
+// plugin configuration was written and the broker was signalled, but
+// nothing proved the plugin is loaded and the state is in effect. A
+// deployment without an id carries no configuration change (the plan did
+// not need one), so there is nothing to confirm.
+func (s *Service) confirmDynSecActivation(ctx context.Context, actor string, dep storage.Deployment) (storage.Deployment, error) {
+	if dep.ID == 0 {
+		return dep, nil
+	}
+	message := "the dynamic security state was applied and read back through the plugin control channel"
+	if err := s.updateDeploymentStatus(dep.ID, "active_verified", message); err != nil {
+		return storage.Deployment{}, fmt.Errorf("%w: persist active_verified status of the dynamic security deployment: %w", ErrDeploymentPersistence, err)
+	}
+	s.emitAudit(ctx, actor, "deployment.active_verified", dep.ID, "success")
+	return s.getDeployment(dep.ID)
 }
 
 // maskDynSecPlan replaces the passwords of the commands of a plan.
