@@ -38,6 +38,25 @@ Reorganize the public landing (`site/`) applying the Impeccable critique baselin
   feedback from noninteractive cards; fix the `read` + link spacing; "Image
   CI" no longer styled as a status badge; unify `@theme` tokens with the
   operative palette per `DESIGN.md`'s drift note.
+- S8 (re-critique P2 "product evidence is present but not sufficiently
+  inspectable"): the deploy panel capture `site/src/assets/hmi-deploy.webp`
+  (real screenshot of the deploy panel: configuration preview controls plus
+  the deployment history including an `active_verified` entry) becomes the
+  prominent, full-width evidence, because it shows the workflow that
+  differentiates MCM (review -> apply -> verified activation). The overview
+  and user-directory captures stay as supporting evidence at a readable size,
+  and every capture links to its full-size file so a visitor can inspect it.
+  No fabricated UI, no synthetic data.
+- S9 (re-critique P2 "the new availability layer creates a duplicated reading
+  pass"): the availability map answers "what is ready" and the task section
+  demonstrates the workflow instead of repeating the same inventory twice.
+  Trim the repeated capability prose; keep the three availability headings
+  (available controls / remaining MVP work / known limitations) intact.
+- S10 (re-critique question "what should first success mean"): the quick
+  start checkpoint states the observable success of the local run — the
+  dashboard reachable at `localhost:8080` with the broker shown as
+  connected — because the deploy capture proves that state is real. Keep the
+  existing failure branches and the stop command.
 
 ## Tasks
 
@@ -48,12 +67,16 @@ Reorganize the public landing (`site/`) applying the Impeccable critique baselin
 | T3 | S3, S6 | gpt-luna-6 (site/src/**, assets) | 26ec8e7 |
 | T4 | S7 | gpt-luna-6 (site/src/**) | 26ec8e7 |
 | T5 | verify: build, detector, screenshots, re-critique | parent | 26ec8e7, 43989af (verified 20/32 -> 25/32) |
-| T6 | issue + branch + PR | parent (user decides) | pending |
+| T6 | R1: fix the two defects the reorganization introduced | parent | 94d555d |
+| T7 | S8, S9, S10 | gpt-luna-6 (site/src/**) | bf9f64f |
+| T8 | capture framing fix | parent | 1acf746 |
+| T9 | issue + branch + PR | parent (user decides) | #344, PR pending |
 
-Delivery slice boundary: three reviewable units landed on
-`feat/site-landing-reorganization` (299, 358 and 74 authored lines; the
-cumulative counter exceeds the ~400 advisory because the units are separate
-review surfaces: behavior, design context, repository hygiene).
+Delivery slice boundary: six reviewable units landed on
+`feat/site-landing-reorganization` (299, 358, 74, 4, 50 and 2 authored lines;
+the cumulative counter exceeds the ~400 advisory because the units are
+separate review surfaces: behavior, design context, repository hygiene, two
+defect fixes, evidence-led second round and an image framing fix).
 
 ## Log
 
@@ -75,3 +98,25 @@ review surfaces: behavior, design context, repository hygiene).
   `--color-console-deep`), and the success checkpoint hardcoded `admin` while
   the troubleshooting branch documents a configurable bootstrap username
   (`admin` is the default when `MCM_BOOTSTRAP_ADMIN_USERNAME` is unset).
+- L6: The re-critique's remaining P2s became S8-S10. The third capture
+  (`hmi-deploy.webp`) is a real screenshot of the deploy panel taken from the
+  running stack: it shows the configuration preview controls and the real
+  deployment history (including deployment #3 `active_verified`, whose
+  activation probe passed through the user grant). The capture was taken
+  without generating a preview revision, so no pending state was consumed.
+- L7: A visual inspection of the three captures found framing defects: the
+  overview cut the following panels in half, the user directory carried a
+  large empty area, and the deploy crop lacked the preview controls its
+  caption describes. All three were re-framed from the running stack with
+  panel-boundary clipping (900x785, 900x484, 900x972) and re-inspected: the
+  overview was trimmed once more (1acf746) so its bottom edge ends on the
+  TOP CLIENTS border with no sliver. No credential, token, hostname or IP
+  address appears in any capture.
+- L8: Closing evidence. `npm --prefix site ci && npm --prefix site run build`
+  exit 0; `impeccable detect --json site/src` exit 0 with no findings; no
+  horizontal overflow at 390px; Manrope Variable and JetBrains Mono Variable
+  load; no Astro dev toolbar in the production build; every command and
+  environment variable named on the page verified against `Taskfile.yml` and
+  `internal/config/config.go`. Heuristic review: 20/32 before, 25/32 after,
+  same rubric, both P1 findings fixed, no P0/P1 regression. Issue #344 opened
+  with the measured before/after.
