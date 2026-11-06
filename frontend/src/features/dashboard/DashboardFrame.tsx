@@ -76,7 +76,6 @@ export function DashboardFrame({
                 <section key={group} className={`space-y-2 rounded-2xl border p-2 ${observationGroup ? 'border-emerald-300/25 bg-emerald-400/[0.06]' : 'border-transparent'}`}>
                   <div className="flex items-center justify-between gap-2 pt-2">
                     <h2 id={`${groupId}-heading`} className={`text-xs font-semibold uppercase tracking-widest ${observationGroup ? 'text-emerald-200' : 'text-cyan-200'}`}>{group}</h2>
-                    {observationGroup ? <span className="rounded-full border border-emerald-300/25 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-100">Observation · read-only</span> : null}
                     <button
                       type="button"
                       aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group}`}
@@ -89,11 +88,14 @@ export function DashboardFrame({
                         else next.add(group)
                         return next
                       })}
-                      className="rounded-lg border border-white/10 px-2 py-1 text-xs text-slate-300 transition hover:border-white/25 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/[0.04] text-base leading-none text-slate-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:border-white/10 disabled:opacity-50"
                     >
                       <span aria-hidden="true">{expanded ? '−' : '+'}</span>
                     </button>
                   </div>
+                  {observationGroup ? (
+                    <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/90">Observation · read-only</p>
+                  ) : null}
                   <div
                     id={groupId}
                     role="region"

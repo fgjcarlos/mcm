@@ -60,7 +60,11 @@ from every group being expanded at once.
   `/admin-users`) keeps resolving to the same view, and no entry is removed
   from the navigation.
 - S3: The **Configuration** group is expanded by default; the other four
-  groups (MQTT Access, Changes, Diagnostics, Administration) start collapsed.
+  groups (MQTT Access, Changes, Diagnostics, Administration) start collapsed,
+  except for the rule in S4: the group holding the active entry is expanded,
+  so the default route (`/dashboard`, whose active entry is Dashboard) shows
+  Diagnostics expanded as well. The stated default and the default route are
+  reconciled by S4, which wins.
 - S4: The group that contains the active item is always expanded, including
   on a direct load of a URL inside a collapsed group (for example `/logs`
   expands Diagnostics and shows Logs active).
@@ -91,12 +95,12 @@ from every group being expanded at once.
 
 | ID | Specs | Route | Commit |
 |----|-------|-------|--------|
-| T1 | S1, S3, S5, S6 | gpt-luna-6 (frontend/src/**) | — |
-| T2 | S4, S10 | gpt-luna-6 (frontend/src/**) | — |
-| T3 | S7, S8 | gpt-luna-6 (frontend/src/**) | — |
-| T4 | S9 | gpt-luna-6 (frontend/src/**, frontend/e2e/**) | — |
-| T5 | verify: unit tests, lint, e2e, rebuild image, visual check | parent | — |
-| T6 | update #342 with the evidence + PR | parent (user decides) | — |
+| T1 | S1, S3, S5, S6 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T2 | S4, S10 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T3 | S7, S8 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T4 | S9 | gpt-luna-6 (frontend/src/**, frontend/e2e/**) | e60a64e |
+| T5 | verify: unit tests, lint, e2e, rebuild image, visual check | parent | e60a64e (vitest 290/290, eslint, build, e2e 62.9s, image rebuilt, DOM and screenshots reviewed) |
+| T6 | update #342 with the evidence + PR | parent (user decides) | pending |
 
 ## Log
 
@@ -111,3 +115,19 @@ from every group being expanded at once.
   vs Configuration revisions) is already a single panel with a `view` prop.
   The audit therefore targets the expanded-by-default presentation, not the
   entry list.
+- L4: S6 was written ambiguously ("the group's entries must not be hidden from
+  assistive technology when the group is collapsed but empty of an active
+  item") and the implementation followed it literally, leaving collapsed links
+  visible to assistive technology and in the tab order while they were
+  visually hidden. The requirement was corrected: a collapsed region is
+  `inert`, so its entries leave the accessibility tree and the tab order and
+  the disclosure button is the only way in. A unit test pins the contract.
+- L5: A visual review of the rebuilt image confirmed the collapsed state reads
+  as intentional, that the plus/minus glyphs distinguish the state without
+  relying on color, and that the read-only observation group reads as a calm
+  semantic distinction rather than a competing accent. It also found the
+  disclosure buttons too discreet and the observation badge cramped in the
+  heading row, so the button grew to a 32x32 control with a stronger border
+  and the badge moved to its own line. The reviewer also noted that the
+  displayed default does not match a literal reading of S3, which is why S3
+  now states the S4 exception explicitly.
