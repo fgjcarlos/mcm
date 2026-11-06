@@ -1,17 +1,39 @@
 @import "tailwindcss";
 
 @theme {
-  --color-mcm-cyan: #22d3ee;
-  --color-mcm-cyan-bright: #67e8f9;
-  --color-mcm-cyan-pale: #cffafe;
-  --color-mcm-amber: #fcd34d;
-  --color-console-black: #020617;
-  --color-console-deep: #0f172a;
-  --color-console-horizon: #1d4e89;
-  --color-text-primary: #f1f5f9;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #94a3b8;
-  --color-surface-line: rgba(255, 255, 255, 0.1);
+  /* Signal and caution, kept in Tailwind's own colour space so the console
+     renders exactly as it did before the tokens became the source of truth. */
+  --color-signal: oklch(78.9% 0.154 211.53);
+  --color-signal-bright: oklch(86.5% 0.127 207.078);
+  --color-signal-outline: oklch(91.7% 0.08 205.041);
+  --color-signal-pale: oklch(95.6% 0.045 203.388);
+  --color-caution: oklch(87.9% 0.169 91.605);
+  --color-caution-soft: oklch(92.4% 0.12 95.746);
+  --color-caution-bright: oklch(96.2% 0.059 95.617);
+  --color-caution-panel: oklch(82.8% 0.189 84.429);
+  /* Console field. The gradient stops keep the exact values the page has
+     always rendered; the palette tokens stay in Tailwind's colour space so
+     the utilities reproduce what they reproduced before. */
+  --color-floor: #020617;
+  --color-field: #0f172a;
+  --color-horizon: #1d4e89;
+  /* Ink. */
+  --color-ink: oklch(96.8% 0.007 247.896);
+  --color-ink-strong: oklch(92.9% 0.013 255.508);
+  --color-ink-soft: oklch(86.9% 0.022 252.894);
+  --color-ink-muted: oklch(70.4% 0.04 256.788);
+  --color-ink-bright: #ffffff;
+  /* Surfaces and lines. */
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-surface-strong: rgba(255, 255, 255, 0.07);
+  --color-surface-faint: rgba(255, 255, 255, 0.03);
+  --color-surface-panel: rgba(2, 6, 23, 0.55);
+  --color-surface-code: rgba(2, 6, 23, 0.7);
+  --color-surface-chip: rgba(2, 6, 23, 0.4);
+  --color-hairline: rgba(255, 255, 255, 0.10);
+  --color-hairline-strong: rgba(255, 255, 255, 0.15);
+  --color-hairline-bright: rgba(255, 255, 255, 0.40);
+  --color-hairline-soft: rgba(255, 255, 255, 0.30);
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
     Monaco, Consolas, monospace;
@@ -20,9 +42,9 @@
 .site-backdrop {
   background: radial-gradient(
     circle at top,
-    var(--color-console-horizon) 0%,
-    var(--color-console-deep) 38%,
-    var(--color-console-black) 100%
+    var(--color-horizon) 0%,
+    var(--color-field) 38%,
+    var(--color-floor) 100%
   );
 }
 
@@ -32,6 +54,6 @@ html {
 }
 
 ::selection {
-  background: var(--color-mcm-cyan);
-  color: var(--color-console-deep);
+  background: var(--color-signal);
+  color: var(--color-field);
 }

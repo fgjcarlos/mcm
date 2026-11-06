@@ -92,3 +92,32 @@ claim.
   (exit 0, no findings) and the built output measures 306 KB, with the
   fonts, images, metadata and every link resolving, but none of that covers
   rendered contrast or focus behaviour.
+- L5: The audit ran the playbook against the rendered page and reported three
+  P1 findings. Two were not defects and one was real but worse than
+  reported, so each was re-measured on the current source before anything
+  was changed:
+  - "The requested route returns HTTP 500" was a transient state while the
+    implementation was being edited: the dev server log shows
+    `FeatureSection is not defined` at the moment the component import was
+    removed before its last use, and the server recovered on its own. The
+    auditor's preview also served stale output. Not a defect.
+  - "The primary CTA focus outline measures 1.79:1" was measured without
+    focus applied and against that stale preview. Measured with
+    `:focus-visible` active on the current source, the outline resolves to
+    cyan-200, 2px solid, 4px offset. Not a defect.
+  - "The header link measures 4.04:1" was real and worse: sampling the
+    rendered pixel behind the text gives 3.56:1 at 1440px and 3.34:1 at
+    390px, below the 4.5:1 that normal text needs. Fixed by moving the link
+    to the ink-soft token, which measures 6.30:1 and 5.91:1.
+- L6: The palette drift was real: the `@theme` tokens declared a colour
+  system that no component used while every component hardcoded Tailwind
+  utilities. The page now uses token utilities only, the orphaned
+  `FeatureSection` component is gone, and the token values are expressed in
+  Tailwind's own colour space so the utilities reproduce exactly what they
+  reproduced before. A pixel-diff of the full page before and after the
+  migration shows zero change in the accent, the field, the panels and the
+  fills; the residual is the CTA label and the gradient interpolation at
+  one unit per channel, which the token values in Tailwind's colour space
+  explain. The visual record was corrected with the values the browser
+  actually renders, which are not the Tailwind v3 hex values the record
+  previously claimed.

@@ -2,17 +2,32 @@
 name: Mosquitto Control Manager (MCM)
 description: Dark telemetry console for administering one Mosquitto broker — cyan signal, mono technicals, verified states.
 colors:
-  signal-cyan: "#22d3ee"
-  signal-cyan-bright: "#67e8f9"
-  signal-cyan-pale: "#cffafe"
-  caution-amber: "#fcd34d"
-  console-black: "#020617"
-  console-deep: "#0f172a"
-  console-horizon: "#1d4e89"
-  text-primary: "#f1f5f9"
-  text-secondary: "#cbd5e1"
-  text-muted: "#94a3b8"
-  surface-line: "rgba(255,255,255,0.10)"
+  signal: "#00d3f3"
+  signal-bright: "#53eafd"
+  signal-outline: "#a2f4fd"
+  signal-pale: "#cefafe"
+  caution: "#ffd230"
+  caution-soft: "#fee685"
+  caution-bright: "#fef3c6"
+  caution-panel: "#ffb900"
+  floor: "#020617"
+  field: "#0f172a"
+  horizon: "#1d4e89"
+  ink: "#f1f5f9"
+  ink-strong: "#e2e8f0"
+  ink-soft: "#cad5e2"
+  ink-muted: "#90a1b9"
+  ink-bright: "#ffffff"
+  surface: "rgba(255,255,255,0.04)"
+  surface-strong: "rgba(255,255,255,0.07)"
+  surface-faint: "rgba(255,255,255,0.03)"
+  surface-panel: "rgba(2,6,23,0.55)"
+  surface-code: "rgba(2,6,23,0.7)"
+  surface-chip: "rgba(2,6,23,0.4)"
+  hairline: "rgba(255,255,255,0.10)"
+  hairline-strong: "rgba(255,255,255,0.15)"
+  hairline-bright: "rgba(255,255,255,0.40)"
+  hairline-soft: "rgba(255,255,255,0.30)"
 typography:
   display:
     fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
@@ -55,31 +70,31 @@ spacing:
   grid-gap: "1rem"
 components:
   button-primary:
-    backgroundColor: "{colors.signal-cyan}"
-    textColor: "{colors.console-black}"
+    backgroundColor: "{colors.signal}"
+    textColor: "{colors.floor}"
     rounded: "{rounded.pill}"
     padding: "12px 20px"
   button-ghost:
-    backgroundColor: "rgba(255,255,255,0.04)"
-    textColor: "{colors.text-primary}"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.pill}"
     padding: "12px 20px"
   card-feature:
-    backgroundColor: "rgba(255,255,255,0.04)"
-    textColor: "{colors.text-secondary}"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink-soft}"
     rounded: "{rounded.card}"
     padding: "24px"
   panel-console:
-    backgroundColor: "rgba(2,6,23,0.55)"
+    backgroundColor: "{colors.surface-panel}"
     rounded: "{rounded.card}"
     padding: "32px"
   panel-caution:
-    backgroundColor: "rgba(251,191,36,0.10)"
+    backgroundColor: "{colors.caution-panel} at 10% opacity"
     rounded: "{rounded.card}"
     padding: "24px 32px"
   chip-stack:
-    backgroundColor: "rgba(2,6,23,0.40)"
-    textColor: "{colors.signal-cyan-pale}"
+    backgroundColor: "{colors.surface-chip}"
+    textColor: "{colors.signal-pale}"
     rounded: "{rounded.pill}"
     padding: "4px 12px"
 ---
@@ -94,11 +109,11 @@ MCM's site is a dark telemetry console: a calm operations room where the state o
 
 The console never sells: it reports. Status labels (Alpha, Apache 2.0, CI), section eyebrows in wide uppercase tracking, and the amber caution panel all speak the operator's language of states and evidence. Motion is limited to quiet border and background shifts on hover; nothing blinks, nothing parades.
 
-**Implementation alignment:** `site/src/styles/global.css` defines the palette as named `@theme` color tokens (hex and rgba values above), and `.site-backdrop` applies the radial field using the horizon, deep, and black tokens. Landing-page components use Tailwind cyan and slate utility classes alongside these semantic tokens.
+**Implementation alignment:** `site/src/styles/global.css` defines the page palette as named `@theme` color tokens. The landing page uses the corresponding token utilities throughout, and `.site-backdrop` applies the radial field through `horizon`, `field`, and `floor`.
 
 **Key Characteristics:**
 
-- Dark tonal console: translucent surfaces (`bg-white/[0.04]`, `bg-slate-950/55`) with `backdrop-blur` over a radial deep-blue field; zero box-shadows.
+- Dark tonal console: translucent surfaces (`bg-surface`, `bg-surface-panel`) with `backdrop-blur` over a radial deep-blue field; zero box-shadows.
 - Cyan as the single signal accent; amber strictly for caution (production-readiness warnings).
 - Uppercase wide-tracked eyebrows (`text-xs`, `tracking-[0.3em]`) label every section like a console readout.
 - Pill geometry for everything interactive or meta (buttons, badges, chips); `rounded-3xl` for content containers.
@@ -106,23 +121,42 @@ The console never sells: it reports. Status labels (Alpha, Apache 2.0, CI), sect
 
 ## Colors
 
-One signal accent (cyan) over a deep blue-black field, with amber reserved for caution; neutrals are Tailwind slate.
+The named `@theme` tokens in `site/src/styles/global.css` are the single source of truth for the page palette. Cyan is the signal accent over a deep blue-black field, with amber reserved for caution.
 
 ### Primary
 
-- **Signal Cyan** (#22d3ee, `cyan-400`): the primary action and the strongest live signal — primary button background, stack-panel tint. Used sparingly; its rarity is its voice.
-- **Signal Cyan Bright** (#67e8f9, `cyan-300`): section eyebrows, hover state of the primary button.
-- **Signal Cyan Pale** (#cffafe, `cyan-100`): text sitting on cyan-tinted surfaces (stack chips, alpha badge, code text).
+- **Signal** (#00d3f3, `text-signal` / `bg-signal`): the primary action and strongest live signal — primary button background. Used sparingly; its rarity is its voice.
+- **Signal Bright** (#53eafd, `text-signal-bright` / `bg-signal-bright`): section eyebrows, hover state of the primary button.
+- **Signal Outline** (#a2f4fd, `outline-signal-outline`): keyboard focus outlines.
+- **Signal Pale** (#cefafe, `text-signal-pale`): text sitting on signal-tinted surfaces (stack chips, alpha badge, code text).
+- **Caution** (#ffd230, `border-caution`): caution-panel border.
+- **Caution Soft** (#fee685, `text-caution-soft`): caution label.
+- **Caution Bright** (#fef3c6, `text-caution-bright`): caution heading.
+- **Caution Panel** (#ffb900, `bg-caution-panel/10`): amber caution-panel tint.
 
 ### Neutral
 
-- **Console Black** (#020617, `slate-950`): page floor and inner panels.
-- **Console Deep** (#0f172a, `slate-900`): mid field of the radial gradient, dark panels (`bg-slate-950/55`).
-- **Console Horizon** (#1d4e89, `--color-console-horizon`): the glow at the top of `.site-backdrop`'s radial field.
-- **Text Primary** (#f1f5f9, `slate-100`): headlines and default text.
-- **Text Secondary** (#cbd5e1, `slate-300`): body copy.
-- **Text Muted** (#94a3b8, `slate-400`): captions and footer.
-- **Surface Line** (rgba(255,255,255,0.10), `border-white/10`): hairline borders that define surfaces without shadows.
+- **Floor** (#020617, `bg-floor` / `text-floor`): page floor.
+- **Field** (#0f172a): middle of the radial backdrop and selection text.
+- **Horizon** (#1d4e89): glow at the top of `.site-backdrop`'s radial field.
+- **Ink** (#f1f5f9, `text-ink`): default text.
+- **Ink Strong** (#e2e8f0, `text-ink-strong`): disclosure summary.
+- **Ink Soft** (#cad5e2, `text-ink-soft`): body copy.
+- **Ink Muted** (#90a1b9, `text-ink-muted`): captions and footer.
+- **Ink Bright** (#ffffff, `text-ink-bright`): headlines and hover text.
+
+### Surfaces and lines
+
+- **Surface** (rgba(255,255,255,0.04), `bg-surface`): quiet translucent surface.
+- **Surface Strong** (rgba(255,255,255,0.07), `bg-surface-strong`): hover surface.
+- **Surface Faint** (rgba(255,255,255,0.03), `bg-surface-faint`): disclosure surface.
+- **Surface Panel** (rgba(2,6,23,0.55), `bg-surface-panel`): console and evidence panels.
+- **Surface Code** (rgba(2,6,23,0.7), `bg-surface-code`): command blocks.
+- **Surface Chip** (rgba(2,6,23,0.4), `bg-surface-chip`): stack chips.
+- **Hairline** (rgba(255,255,255,0.10), `border-hairline`): surface separators.
+- **Hairline Strong** (rgba(255,255,255,0.15), `border-hairline-strong`): ghost button border.
+- **Hairline Bright** (rgba(255,255,255,0.40), `border-hairline-bright`): hover border.
+- **Hairline Soft** (rgba(255,255,255,0.30), `decoration-hairline-soft`): link decoration.
 
 ### Named Rules
 
@@ -141,8 +175,8 @@ One signal accent (cyan) over a deep blue-black field, with amber reserved for c
 - **Display** (600, `text-4xl` → `sm:text-6xl`, tight): the hero claim — one per page.
 - **Headline** (600, `text-3xl`, tight): section titles under an eyebrow.
 - **Title** (600, `text-lg`): card titles.
-- **Body** (400, `text-sm`–`text-lg`, `leading-relaxed`): explanatory copy; secondary slate-300 on dark surfaces.
-- **Label / eyebrow** (600, `text-xs`, uppercase, `tracking-[0.3em]`–`[0.4em]`, cyan-300): console-style section markers.
+- **Body** (400, `text-sm`–`text-lg`, `leading-relaxed`): explanatory copy; secondary ink-soft on dark surfaces.
+- **Label / eyebrow** (600, `text-xs`, uppercase, `tracking-[0.3em]`–`[0.4em]`, signal-bright): console-style section markers.
 - **Mono** (400, `text-xs`–`text-sm`): stack chips, command blocks, step numerals.
 
 ### Named Rules
@@ -155,7 +189,7 @@ Single-page vertical flow inside `max-w-6xl` with `px-6`; sections separated by 
 
 ## Elevation & Depth
 
-Flat. No box-shadows anywhere; depth is conveyed by tonal layering: translucent white tints (`bg-white/[0.04]`), dark panels (`bg-slate-950/55` + `backdrop-blur`), cyan-tinted panels for signal areas, and hairline borders (`border-white/10`, `border-cyan-300/20`). The only ambient effect is `.site-backdrop`'s radial gradient, using `--color-console-horizon` at the top and fading through `--color-console-deep` to `--color-console-black`.
+Flat. No box-shadows anywhere; depth is conveyed by tonal layering: translucent white tints (`bg-surface`), dark panels (`bg-surface-panel` + `backdrop-blur`), cyan-tinted panels for signal areas, and hairline borders (`border-hairline`, `border-signal-bright/20`). The only ambient effect is `.site-backdrop`'s radial gradient, using `--color-horizon` at the top and fading through `--color-field` to `--color-floor`.
 
 ## Shapes
 
@@ -166,20 +200,20 @@ Pills (`rounded-full`) for all interactive and meta elements: buttons, badges, s
 ### Buttons
 
 - **Shape:** pill (`rounded-full`), `px-5 py-3`, `text-sm font-semibold uppercase tracking-[0.18em]`.
-- **Primary:** solid Signal Cyan (#22d3ee) on Console Black text; hover brightens to #67e8f9. One per view.
-- **Ghost:** `border-white/15 bg-white/[0.04]` text slate-100; hover border-white/40 + white text.
+- **Primary:** solid Signal (#00d3f3) on Floor text; hover brightens to Signal Bright (#53eafd). One per view.
+- **Ghost:** `border-hairline-strong bg-surface text-ink`; hover `border-hairline-bright text-ink-bright`.
 - **Hover/Focus:** color/border transitions only; no transforms.
 
 ### Chips
 
-- **Stack chip:** pill, `border-white/10 bg-slate-950/40`, mono `text-xs` Signal Cyan Pale.
+- **Stack chip:** pill, `border-hairline bg-surface-chip`, mono `text-xs` Signal Cyan Pale.
 
 ### Cards / Containers
 
-- **Feature card:** `rounded-3xl border-white/10 bg-white/[0.04] p-6`; hover shifts border to `cyan-300/30` and bg to `white/[0.07]`.
-- **Console panel:** `rounded-3xl border-white/10 bg-slate-950/55 p-8 backdrop-blur` (Quick start).
-- **Signal panel:** `border-cyan-300/20 bg-cyan-400/10` (success checkpoint).
-- **Caution panel:** `border-amber-300/25 bg-amber-400/10`, amber-100 title (production warning).
+- **Feature card:** `rounded-3xl border-hairline bg-surface p-6`; hover shifts border to `border-signal-bright/30` and bg to `bg-surface-strong`.
+- **Console panel:** `rounded-3xl border-hairline bg-surface-panel p-8 backdrop-blur` (Quick start).
+- **Signal panel:** `border-signal-bright/20 bg-signal/10` (success checkpoint).
+- **Caution panel:** `border-caution/25 bg-caution-panel/10`, `text-caution-bright` title (production warning).
 
 ### Inputs / Fields
 
