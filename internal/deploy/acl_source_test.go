@@ -151,7 +151,10 @@ func TestRender_WithoutAdoptedSourceMatchesManagedRenderer(t *testing.T) {
 	managed := make([]acl.Rule, 0, len(rules)+2)
 	managed = append(managed, rules...)
 	managed = append(managed, serviceUserACL(serviceFixtureUser)...)
-	want := mosquitto.RenderACLFile(managed)
+	want, err := mosquitto.RenderACLFile(managed)
+	if err != nil {
+		t.Fatalf("render expected acl: %v", err)
+	}
 	if aclBody != want {
 		t.Fatalf("rendered ACL = %q, want %q", aclBody, want)
 	}

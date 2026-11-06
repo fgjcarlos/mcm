@@ -408,7 +408,11 @@ func TestBrokerAppliesTheNativeACLSemantics(t *testing.T) {
 		{Selector: acl.SelectorAnonymous, TopicFilter: "public/#", Permission: acl.PermissionReadWrite},
 	}
 	globalRules = append(globalRules, serviceRules("mcm")...)
-	if err := os.WriteFile(filepath.Join(dir, "acl"), []byte(mosquitto.RenderACLFile(globalRules)), 0o600); err != nil {
+	globalACL, err := mosquitto.RenderACLFile(globalRules)
+	if err != nil {
+		t.Fatalf("render global acl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "acl"), []byte(globalACL), 0o600); err != nil {
 		t.Fatalf("write the acl file: %v", err)
 	}
 
@@ -418,7 +422,11 @@ func TestBrokerAppliesTheNativeACLSemantics(t *testing.T) {
 		{Selector: acl.SelectorUser, Principal: "bob", TopicFilter: "listener/#", Permission: acl.PermissionReadWrite},
 	}
 	scopedRules = append(scopedRules, serviceRules("mcm")...)
-	if err := os.WriteFile(filepath.Join(dir, "acl.scoped"), []byte(mosquitto.RenderACLFile(scopedRules)), 0o600); err != nil {
+	scopedACL, err := mosquitto.RenderACLFile(scopedRules)
+	if err != nil {
+		t.Fatalf("render scoped acl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "acl.scoped"), []byte(scopedACL), 0o600); err != nil {
 		t.Fatalf("write the scoped acl file: %v", err)
 	}
 

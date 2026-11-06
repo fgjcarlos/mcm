@@ -27,6 +27,28 @@ func newScopedTestApp(t *testing.T) (*App, *storage.Store, string) {
 	return app, store, aclPath
 }
 
+func TestCreateRuleRejectsUnrepresentableFieldsAtAPI(t *testing.T) {
+	t.Parallel()
+	app, store, _ := newScopedTestApp(t)
+	token := loginAsSeededUser(t, app, store, "admin", "admin-password")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/acls", strings.NewReader(`{"principal":"two words","topic_filter":"sensors/#","permission":"read"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, req)
+	wantBody := "{\"error\":\"acl validation failed\",\"details\":[\"principal must not contain whitespace\"]}\n"
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != wantBody {
+		t.Fatalf("response = %d %s, want principal field validation", rec.Code, rec.Body.String())
+	}
+	rules, err := store.ACLStore().ListRules(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("rejected ACL rule persisted: count=%d", len(rules))
+	}
+}
+
 // TestCreateRuleRejectsUnknownFields pins that the rule request refuses an
 // unknown field, so a client cannot silently set a scope MCM ignores.
 func TestCreateRuleRejectsUnknownFields(t *testing.T) {

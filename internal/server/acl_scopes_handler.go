@@ -228,6 +228,10 @@ func (a *aclScopeAPI) handleGetSource(w http.ResponseWriter, r *http.Request) {
 }
 
 // aclSourceAdoptRequest is the body of POST /api/v1/acls/source/adopt.
+const maxACLSourceBytes = 16 << 20
+
+var errACLSourceTooLarge = errors.New("acl source exceeds 16777216 bytes")
+
 type aclSourceAdoptRequest struct {
 	// Path is the ACL file MCM takes over. It defaults to the
 	// broker-wide ACL file.
@@ -235,6 +239,22 @@ type aclSourceAdoptRequest struct {
 	// Body is the verbatim content of the ACL file. It is optional when
 	// the file exists on disk: MCM then reads it from there.
 	Body string `json:"body,omitempty"`
+}
+
+func readACLSourceFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close() //nolint:errcheck
+	content, err := io.ReadAll(io.LimitReader(file, maxACLSourceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > maxACLSourceBytes {
+		return nil, errACLSourceTooLarge
+	}
+	return content, nil
 }
 
 // handleAdoptACLSource serves POST /api/v1/acls/source/adopt.
@@ -270,7 +290,11 @@ func (a *aclScopeAPI) handleAdoptSource(w http.ResponseWriter, r *http.Request) 
 
 	body := input.Body
 	if body == "" {
-		content, err := os.ReadFile(path)
+		content, err := readACLSourceFile(path)
+		if errors.Is(err, errACLSourceTooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, aclErrorResponse{Error: errACLSourceTooLarge.Error()})
+			return
+		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, aclErrorResponse{
 				Error:   "failed to read the acl file",
@@ -279,6 +303,10 @@ func (a *aclScopeAPI) handleAdoptSource(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		body = string(content)
+	}
+	if len(body) > maxACLSourceBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, aclErrorResponse{Error: errACLSourceTooLarge.Error()})
+		return
 	}
 
 	row, err := a.sources.SaveACLSource(r.Context(), path, body)

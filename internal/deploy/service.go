@@ -597,7 +597,10 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	if err != nil {
 		return renderedConfig{}, fmt.Errorf("read current passwd file: %w", err)
 	}
-	existingEntries := mosquitto.ParsePasswdFile(existingPasswd)
+	existingEntries, err := mosquitto.ParsePasswdFile(existingPasswd)
+	if err != nil {
+		return renderedConfig{}, fmt.Errorf("validate current passwd file: %w", err)
+	}
 	existingHashByUser := make(map[string]string, len(existingEntries))
 	for _, e := range existingEntries {
 		existingHashByUser[e.Username] = e.Hash
@@ -635,8 +638,12 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	if s.mosquittoCfg.Username != "" {
 		allRules = append(allRules, serviceUserACL(s.mosquittoCfg.Username)...)
 	}
+	aclBody, err := mosquitto.RenderACLFile(allRules)
+	if err != nil {
+		return renderedConfig{}, fmt.Errorf("render acl file: %w", err)
+	}
 	rendered := renderedConfig{
-		ACLBody:     mosquitto.RenderACLFile(allRules),
+		ACLBody:     aclBody,
 		OrphanRules: orphanRules,
 	}
 
@@ -648,7 +655,10 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	}
 	if source != nil {
 		document := mosquitto.ParseACLDocument(source.Body)
-		composed, warnings := mosquitto.ComposeACLDocument(document, allRules)
+		composed, warnings, err := mosquitto.ComposeACLDocument(document, allRules)
+		if err != nil {
+			return renderedConfig{}, fmt.Errorf("compose acl source: %w", err)
+		}
 		rendered.ACLBody = composed.Render()
 		rendered.CompositionWarnings = warnings
 		rendered.AdoptedSource = source
@@ -674,14 +684,20 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 			scoped = append(scoped, serviceUserACL(s.mosquittoCfg.Username)...)
 		}
 		path := mosquitto.ListenerACLPath(s.deployCfg.ACLPath, listenerID)
-		body := mosquitto.RenderACLFile(scoped)
+		body, err := mosquitto.RenderACLFile(scoped)
+		if err != nil {
+			return renderedConfig{}, fmt.Errorf("render acl file for listener %q: %w", listenerID, err)
+		}
 		scopedSource, err := s.adoptedACLSourceForPath(ctx, path)
 		if err != nil {
 			return renderedConfig{}, err
 		}
 		if scopedSource != nil {
 			document := mosquitto.ParseACLDocument(scopedSource.Body)
-			composed, warnings := mosquitto.ComposeACLDocument(document, scoped)
+			composed, warnings, err := mosquitto.ComposeACLDocument(document, scoped)
+			if err != nil {
+				return renderedConfig{}, fmt.Errorf("compose acl source for listener %q: %w", listenerID, err)
+			}
 			body = composed.Render()
 			rendered.CompositionWarnings = append(rendered.CompositionWarnings, warnings...)
 		}
@@ -730,7 +746,10 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 			Hash:     hash,
 		})
 	}
-	rendered.PasswdBody = mosquitto.RenderPasswdFile(entries)
+	rendered.PasswdBody, err = mosquitto.RenderPasswdFile(entries)
+	if err != nil {
+		return renderedConfig{}, fmt.Errorf("render passwd file: %w", err)
+	}
 
 	return rendered, nil
 }
@@ -1709,7 +1728,10 @@ type verificationProbe struct {
 // replaced by a fixed probe segment and a %c placeholder is skipped
 // (the verifier does not control the MQTT client id).
 func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody string) (verificationProbe, bool) {
-	entries := mosquitto.ParsePasswdFile(passwdBody)
+	entries, err := mosquitto.ParsePasswdFile(passwdBody)
+	if err != nil {
+		return verificationProbe{}, false
+	}
 	rules := mosquitto.ParseACLFile(aclBody)
 	if len(entries) == 0 {
 		return verificationProbe{}, false

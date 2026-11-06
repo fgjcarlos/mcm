@@ -9,7 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/fgjcarlos/mcm/internal/acl"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -89,12 +92,34 @@ func VerifyPassword(hash, password string) (bool, error) {
 }
 
 // RenderPasswdFile produces a Mosquitto-compatible password file body.
-// Entries sorted by Username, one "username:hash" per line, trailing newline.
-// Hash field contains "$7$..." portion. RenderPasswdFile composes "username:hash".
-// Empty input returns "".
-func RenderPasswdFile(entries []PasswdEntry) string {
+// Entries are sorted by Username, one "username:hash" per line, with a trailing
+// newline. It rejects entries that cannot be represented and exact username
+// duplicates. NFC and NFD spellings are kept byte-distinct, not normalized.
+// Empty input returns an empty body.
+func RenderPasswdFile(entries []PasswdEntry) (string, error) {
+	if len(entries) > 100000 {
+		return "", fmt.Errorf("entries must contain at most 100000 records")
+	}
+	seen := make(map[string]struct{}, len(entries))
+	sizeEstimate := 0
+	for i, entry := range entries {
+		if problems := acl.ValidateUsernameField(entry.Username, "username"); len(problems) > 0 {
+			return "", fmt.Errorf("entry[%d]: %s", i, strings.Join(problems, "; "))
+		}
+		if _, duplicate := seen[entry.Username]; duplicate {
+			return "", fmt.Errorf("entry[%d]: username duplicates another passwd entry", i)
+		}
+		seen[entry.Username] = struct{}{}
+		if err := validatePasswdHash(entry.Hash); err != nil {
+			return "", fmt.Errorf("entry[%d]: hash %w", i, err)
+		}
+		sizeEstimate += len(entry.Username) + len(entry.Hash) + 2
+		if sizeEstimate > maxMosquittoFileBytes {
+			return "", fmt.Errorf("rendered passwd file exceeds %d bytes", maxMosquittoFileBytes)
+		}
+	}
 	if len(entries) == 0 {
-		return ""
+		return "", nil
 	}
 
 	// Copy slice to avoid mutating input.
@@ -111,32 +136,66 @@ func RenderPasswdFile(entries []PasswdEntry) string {
 		b.WriteString(e.Hash)
 		b.WriteByte('\n')
 	}
-	return b.String()
+	return b.String(), nil
 }
 
-// ParsePasswdFile is the inverse of RenderPasswdFile: it reads a
-// Mosquitto password file and returns the entries keyed by username.
-// Empty input and comments return an empty slice. Malformed lines are
-// skipped silently — the file is operator-managed and the renderer is
-// responsible for re-emitting a clean copy on apply.
-func ParsePasswdFile(body string) []PasswdEntry {
+// ParsePasswdFile reads a Mosquitto password file and returns its entries in
+// source order. Empty input and comments return an empty slice. A malformed
+// record or duplicate username rejects the whole file so a later write cannot
+// silently discard or collide with an imported entry.
+func ParsePasswdFile(body string) ([]PasswdEntry, error) {
+	if len(body) > maxMosquittoFileBytes {
+		return nil, fmt.Errorf("passwd file exceeds %d bytes", maxMosquittoFileBytes)
+	}
 	if body == "" {
-		return nil
+		return nil, nil
+	}
+	if strings.Count(body, "\n") > 100000 {
+		return nil, fmt.Errorf("passwd file exceeds 100000 lines")
 	}
 	var entries []PasswdEntry
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+	seen := make(map[string]struct{})
+	for lineNumber, line := range strings.Split(body, "\n") {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
 		idx := strings.IndexByte(line, ':')
 		if idx <= 0 || idx == len(line)-1 {
-			continue
+			return nil, fmt.Errorf("line %d: expected username:hash fields", lineNumber+1)
 		}
-		entries = append(entries, PasswdEntry{
-			Username: strings.TrimSpace(line[:idx]),
-			Hash:     strings.TrimSpace(line[idx+1:]),
-		})
+		username, hash := line[:idx], line[idx+1:]
+		if problems := acl.ValidateUsernameField(username, "username"); len(problems) > 0 {
+			return nil, fmt.Errorf("line %d: %s", lineNumber+1, strings.Join(problems, "; "))
+		}
+		if err := validatePasswdHash(hash); err != nil {
+			return nil, fmt.Errorf("line %d: hash %w", lineNumber+1, err)
+		}
+		if _, duplicate := seen[username]; duplicate {
+			return nil, fmt.Errorf("line %d: username duplicates another passwd entry", lineNumber+1)
+		}
+		seen[username] = struct{}{}
+		entries = append(entries, PasswdEntry{Username: username, Hash: hash})
+		if len(entries) > 100000 {
+			return nil, fmt.Errorf("passwd file exceeds 100000 entries")
+		}
 	}
-	return entries
+	return entries, nil
+}
+
+func validatePasswdHash(hash string) error {
+	if !utf8.ValidString(hash) {
+		return fmt.Errorf("must be valid UTF-8")
+	}
+	if hash == "" {
+		return fmt.Errorf("is required")
+	}
+	if len(hash) > acl.MaxFieldBytes {
+		return fmt.Errorf("must be at most %d bytes", acl.MaxFieldBytes)
+	}
+	for _, r := range hash {
+		if r == ':' || unicode.IsControl(r) || unicode.IsSpace(r) {
+			return fmt.Errorf("must not contain separators, whitespace, or control characters")
+		}
+	}
+	return nil
 }
