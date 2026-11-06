@@ -82,13 +82,14 @@ export function DashboardFrame({
                       aria-expanded={expanded}
                       aria-controls={groupId}
                       disabled={hasActiveItem}
+                      title={hasActiveItem ? `The ${group} group holds the current view and stays open` : undefined}
                       onClick={() => setExpandedGroups((current) => {
                         const next = new Set(current)
                         if (expanded) next.delete(group)
                         else next.add(group)
                         return next
                       })}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/[0.04] text-base leading-none text-slate-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:border-white/10 disabled:opacity-50"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/[0.04] text-base leading-none text-slate-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:border-white/20 disabled:hover:bg-white/[0.04]"
                     >
                       <span aria-hidden="true">{expanded ? '−' : '+'}</span>
                     </button>
