@@ -1,4 +1,6 @@
 ---
+import "@fontsource-variable/manrope";
+import "@fontsource-variable/jetbrains-mono";
 import "../styles/global.css";
 
 interface Props {
@@ -29,7 +31,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://fgjcarlos.g
     <meta name="twitter:title" content={ogTitle} />
     <meta name="twitter:description" content={ogDescription} />
   </head>
-  <body class="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] antialiased">
+  <body class="site-backdrop min-h-screen antialiased">
     <slot />
   </body>
 </html>

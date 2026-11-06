@@ -1,11 +1,29 @@
 @import "tailwindcss";
 
 @theme {
-  --color-mcm-cyan: oklch(0.85 0.13 200);
-  --color-mcm-deep: oklch(0.18 0.04 250);
+  --color-mcm-cyan: #22d3ee;
+  --color-mcm-cyan-bright: #67e8f9;
+  --color-mcm-cyan-pale: #cffafe;
+  --color-mcm-amber: #fcd34d;
+  --color-console-black: #020617;
+  --color-console-deep: #0f172a;
+  --color-console-horizon: #1d4e89;
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+  --color-surface-line: rgba(255, 255, 255, 0.1);
   --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
     Monaco, Consolas, monospace;
+}
+
+.site-backdrop {
+  background: radial-gradient(
+    circle at top,
+    var(--color-console-horizon) 0%,
+    var(--color-console-deep) 38%,
+    var(--color-console-black) 100%
+  );
 }
 
 html {
