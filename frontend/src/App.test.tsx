@@ -1449,16 +1449,70 @@ describe('App', () => {
       expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
     })
   })
-  it('organizes existing routes into five operator areas', async () => {
+  it('organizes existing routes into five collapsible operator areas with the requested defaults', async () => {
     window.localStorage.setItem('mcm_admin_token', 'navigation-token')
     vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('navigation-token')))
     render(<App />)
     for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
-      expect(await screen.findByRole('heading', { name })).toBeInTheDocument()
+      expect(await screen.findByRole('heading', { name, level: 2 })).toBeInTheDocument()
     }
+    for (const group of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
+      const expanded = group === 'Configuration' || group === 'Diagnostics'
+      const control = screen.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${group}` })
+      expect(control).toHaveAttribute('aria-controls', `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
+      expect(control).toHaveAttribute('aria-expanded', expanded ? 'true' : 'false')
+    }
+    expect(screen.getByRole('region', { name: 'Configuration' })).toBeInTheDocument()
+    expect(screen.getByText('Observation · read-only')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /MQTT user directory|Users/ })).toHaveAttribute('href', '/users')
     expect(screen.getByRole('link', { name: /ACLs/ })).toHaveAttribute('href', '/acls')
     expect(screen.getByRole('link', { name: /Configuration revisions/ })).toHaveAttribute('href', '/changes')
+  })
+
+  it('toggles a collapsed group with a button and hides its entries from assistive technology and the tab order', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'toggle-navigation-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('toggle-navigation-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    const control = screen.getByRole('button', { name: 'Expand MQTT Access' })
+    const region = screen.getByRole('region', { name: 'MQTT Access' })
+    expect(region).toHaveClass('max-h-0')
+    // A collapsed disclosure keeps its entries out of the accessibility tree
+    // and out of the tab order: the toggle button is the only way in.
+    expect(region).toHaveAttribute('inert')
+    await user.click(control)
+    expect(screen.getByRole('button', { name: 'Collapse MQTT Access' })).toHaveAttribute('aria-expanded', 'true')
+    expect(region).toHaveClass('max-h-[40rem]')
+    expect(region).not.toHaveAttribute('inert')
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'Expand MQTT Access' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('auto-expands the active group on a direct URL load and keeps the active link current', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'direct-navigation-token')
+    window.history.replaceState(null, '', '/logs')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('direct-navigation-token')))
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Realtime broker and MCM events' })
+    expect(screen.getByRole('button', { name: 'Collapse Diagnostics' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('link', { name: /Logs/ })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('preserves role filtering and omits groups with no visible entries', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'viewer-navigation-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('viewer-navigation-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'viewer', disabled: false, role: 'viewer', created_at: '', updated_at: '' }),
+    }))
+    render(<App />)
+    await screen.findByText('Signed in')
+    expect(screen.getByRole('link', { name: /Users/ })).toHaveAttribute('href', '/users')
+    expect(screen.getByRole('link', { name: /Dashboard/ })).toHaveAttribute('href', '/dashboard')
+    expect(screen.queryByRole('heading', { name: 'Configuration', level: 2 })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Changes', level: 2 })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Configuration revisions/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Certificates/ })).not.toBeInTheDocument()
   })
 
 })

@@ -1,0 +1,151 @@
+# Issue #342 — collapsible sidebar groups in the HMI
+
+Reduce the density of the HMI left sidebar without hiding capabilities and
+without breaking any URL or test. Driven by the operator feedback that the
+menu shows "muchas opciones" (see the issue), and by the audited inventory in
+this document.
+
+## Audit (facts, not opinions)
+
+Inventory taken from `frontend/src/App.tsx:118-304` (19 entries, 5 groups) and
+the sidebar renderer `frontend/src/features/dashboard/DashboardFrame.tsx:47-95`.
+
+| Group | Entries | Visible to viewer | Visible to auditor/operator | Visible to admin |
+|---|---|---|---|---|
+| Configuration | Configuration, Broker settings, Bridges, Plugins | 0 | 4 | 4 |
+| MQTT Access | Users, ACLs, Listeners, Certificates, Dynamic security | 2 | 5 | 5 |
+| Changes | Deploy, Configuration revisions | 1 | 2 | 2 |
+| Diagnostics | Dashboard, Topics, Broker diagnostics, Logs | 3 | 4 | 4 |
+| Administration | Security, Audit, Account, Operators | 4 | 4 | 4 |
+| **Total** | **19** | **10** | **19** | **19** |
+
+Role filtering is `minRole` + `ROLE_RANK` (`frontend/src/App.tsx:340-346`,
+`frontend/src/features/auth/permissions.ts:4-11`).
+
+Classification of every entry (required by the issue):
+
+- **Core operation (changes broker or MCM state):** Configuration, Broker
+  settings, Bridges, Plugins, Users, ACLs, Listeners, Certificates, Dynamic
+  security, Deploy, Configuration revisions, Account, Operators.
+- **Observation (read-only, never enforces):** Dashboard, Topics, Broker
+  diagnostics, Logs.
+- **Optional message diagnostics inside Topics** (inspection only, never
+  filters or rejects broker traffic — issue #307): Sparkplug B and JSON Schema
+  results.
+- **Deferred, and therefore absent from the navigation:** multi-broker
+  administration, fleets, SSO, high availability, PostgreSQL, complete
+  backup/restore (#295), an explicit broker version support matrix. No entry
+  may imply any of them.
+
+Consolidation candidates assessed and rejected on evidence: Topics is not
+reachable from Broker diagnostics (payload, schema and Sparkplug inspection is
+absent there); Logs keeps the live MCM event feed that Broker diagnostics does
+not render (it shows counters and broker-log entries only); Dashboard shows
+recent activity that diagnostics does not. Configuration and Configuration
+revisions already share one panel through the `view` prop
+(`frontend/src/features/broker-config/BrokerConfigPanel.tsx:10-18`), so the
+existing panel boundary is not the source of the density. The density comes
+from every group being expanded at once.
+
+## Specs
+
+- S1 (user decision, verbatim): "Solo colapsar grupos: 19 entradas" — the
+  navigation keeps all 19 entries and all 5 groups; only the presentation
+  changes.
+- S2 (user decision, verbatim): "Preservar rutas heredadas" — every current
+  URL (`/broker-config`, `/broker-settings`, `/broker-bridges`,
+  `/broker-plugins`, `/users`, `/acls`, `/listeners`, `/certificates`,
+  `/broker-dynsec`, `/deploy`, `/changes`, `/dashboard`, `/topics`,
+  `/broker-diagnostics`, `/logs`, `/security`, `/audit`, `/account`,
+  `/admin-users`) keeps resolving to the same view, and no entry is removed
+  from the navigation.
+- S3: The **Configuration** group is expanded by default; the other four
+  groups (MQTT Access, Changes, Diagnostics, Administration) start collapsed,
+  except for the rule in S4: the group holding the active entry is expanded,
+  so the default route (`/dashboard`, whose active entry is Dashboard) shows
+  Diagnostics expanded as well. The stated default and the default route are
+  reconciled by S4, which wins.
+- S4: The group that contains the active item is always expanded, including
+  on a direct load of a URL inside a collapsed group (for example `/logs`
+  expands Diagnostics and shows Logs active).
+- S5: Collapsing a group hides its entries, not its heading: the group
+  headings stay visible and remain the navigation landmarks, so the
+  information architecture is still readable at a glance.
+- S6: The collapse control is a real button with `aria-expanded` and
+  `aria-controls`, the group is a labelled region, and the toggle is
+  keyboard operable. Collapsed groups do not hide the active item from
+  assistive technology.
+- S7: The observation group is visually distinguished from the core operation
+  group, and the optional message diagnostics inside Topics keep the framing
+  of issue #307 (inspection, never enforcement). The distinction must be
+  visible in the sidebar, not only in a panel.
+- S8: No navigation entry may announce a deferred or unimplemented capability
+  as available. Every entry's label, eyebrow, title and description are
+  audited against what the API and the panel actually do; any overclaim is
+  corrected with cited evidence, and no capability is removed.
+- S9: The existing unit tests and the e2e journey keep passing. Tests that
+  depend on the sidebar are updated only where the presentation genuinely
+  changed, and new tests cover the collapse behavior, the active-group rule
+  and the accessibility contract.
+- S10: Role filtering is unchanged: a viewer still sees exactly the entries
+  the `minRole` rules allow, and a group with no visible entries still
+  disappears.
+
+## Tasks
+
+| ID | Specs | Route | Commit |
+|----|-------|-------|--------|
+| T1 | S1, S3, S5, S6 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T2 | S4, S10 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T3 | S7, S8 | gpt-luna-6 (frontend/src/**) | e60a64e |
+| T4 | S9 | gpt-luna-6 (frontend/src/**, frontend/e2e/**) | e60a64e |
+| T5 | verify: unit tests, lint, e2e, rebuild image, visual check | parent | e60a64e (vitest 290/290, eslint, build, e2e 62.9s, image rebuilt, DOM and screenshots reviewed) |
+| T6 | update #342 with the evidence + PR | parent (user decides) | pending |
+
+## Log
+
+- L1: "Mergea todas las PRs y vamos a por la #342" (verbatim).
+- L2: Decisions taken in the interview: consolidation level = "Solo colapsar
+  grupos: 19 entradas"; legacy URLs = "Preservar rutas heredadas". The
+  workspaces and aggressive options were offered and declined in favour of
+  the conservative one, which keeps every capability one click away.
+- L3: The audit corrected two assumptions carried by the original issue: the
+  optional diagnostics (Sparkplug, JSON Schema) are not navigation entries but
+  part of the Topics panel, and the real redundancy candidate (Configuration
+  vs Configuration revisions) is already a single panel with a `view` prop.
+  The audit therefore targets the expanded-by-default presentation, not the
+  entry list.
+- L4: S6 was written ambiguously ("the group's entries must not be hidden from
+  assistive technology when the group is collapsed but empty of an active
+  item") and the implementation followed it literally, leaving collapsed links
+  visible to assistive technology and in the tab order while they were
+  visually hidden. The requirement was corrected: a collapsed region is
+  `inert`, so its entries leave the accessibility tree and the tab order and
+  the disclosure button is the only way in. A unit test pins the contract.
+- L5: A visual review of the rebuilt image confirmed the collapsed state reads
+  as intentional, that the plus/minus glyphs distinguish the state without
+  relying on color, and that the read-only observation group reads as a calm
+  semantic distinction rather than a competing accent. It also found the
+  disclosure buttons too discreet and the observation badge cramped in the
+  heading row, so the button grew to a 32x32 control with a stronger border
+  and the badge moved to its own line. The reviewer also noted that the
+  displayed default does not match a literal reading of S3, which is why S3
+  now states the S4 exception explicitly.
+- L6: A second visual pass found the disclosure control of the active group
+  fainter than the others, because a disabled control was rendered with a
+  weaker border and half opacity and therefore read as a visual
+  inconsistency. The border now keeps the same strength as the others, only
+  the glyph is muted, and a title explains that the group holds the current
+  view and stays open. The final pass found the sidebar calm, legible and
+  consistent, with no layout regression.
+
+Closing evidence. `npm --prefix frontend run test:run`: 21 files, 290 tests,
+exit 0. `npm --prefix frontend run lint`: exit 0. `npm --prefix frontend run
+build`: exit 0. `MCM_E2E_UI=1 go test ./internal/server -run
+TestBrokerConfigurationBrowserJourney -count=1`: exit 0 in 62.9s, against a
+real Mosquitto through the browser journey, which now opens a collapsed
+section before clicking its entries. The rebuilt `mcm:dev` image on the local
+stack shows Configuration and Diagnostics expanded on the default route, the
+remaining groups collapsed and `inert`, and expanding MQTT Access revealing
+its five entries and clearing the `inert` state. All 19 entries and all 19
+routes are unchanged.

@@ -35,6 +35,11 @@ async function confirmMFA() {
   await check(page.getByText(/MFA confirmed for this session/).last()).toBeVisible()
 }
 
+async function openNavigationGroup(group) {
+  const control = page.getByRole('button', { name: `Expand ${group}`, exact: true })
+  if (await control.isVisible()) await control.click()
+}
+
 async function applyReviewedRevision() {
   await page.getByLabel(/I adopt this reviewed configuration/).check()
   const applied = page.waitForResponse((response) => response.url().endsWith('/broker/config/apply') && response.request().method() === 'POST')
@@ -56,6 +61,7 @@ try {
   for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
     await check(page.getByRole('navigation').getByRole('heading', { name, exact: true })).toBeVisible()
   }
+  await openNavigationGroup('MQTT Access')
   await page.locator('nav a[href="/users"]').click()
   await page.getByRole('button', { name: 'Add User', exact: true }).click()
   await page.getByPlaceholder('device-sensor-01').fill('probe')
@@ -72,6 +78,7 @@ try {
   await page.getByRole('button', { name: 'Create rule', exact: true }).click()
   await check(page.getByRole('cell', { name: 'probe/allowed', exact: true })).toBeVisible()
 
+  await openNavigationGroup('Administration')
   await page.locator('nav a[href="/account"]').click()
   const enrollment = page.waitForResponse((response) => response.url().endsWith('/auth/mfa/setup'))
   await page.getByRole('button', { name: 'Enable MFA', exact: true }).click()
@@ -83,6 +90,7 @@ try {
   await check(page.getByRole('button', { name: 'Disable MFA', exact: true })).toBeVisible()
   console.log('[UI] MQTT test identity, ACL grant and MFA enrollment completed through the browser')
 
+  await openNavigationGroup('Changes')
   await page.locator('nav a[href="/deploy"]').click()
   await confirmMFA()
   await page.getByRole('button', { name: 'Preview Changes', exact: true }).click()
@@ -93,6 +101,7 @@ try {
   console.log('[UI] ACL/password deployment verified against real Mosquitto')
 
   const current = page.waitForResponse((response) => response.url().endsWith('/broker/config'))
+  // Configuration is expanded by default, including after navigating away.
   await page.locator('nav a[href="/broker-config"]').click()
   const original = (await (await current).json()).body
   const imported = page.waitForResponse((response) => response.url().endsWith('/broker/config/import'))

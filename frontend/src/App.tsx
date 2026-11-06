@@ -240,9 +240,9 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Topics',
     path: '/topics',
-    eyebrow: 'Traffic',
+    eyebrow: 'Observation',
     title: 'Topic explorer',
-    description: 'Inspect incoming topic names and safe payload previews as messages arrive.',
+    description: 'Inspect incoming topic names and safe payload previews as messages arrive; optional Sparkplug B and JSON Schema diagnostics inspect messages only and never enforce broker traffic.',
   },
   {
     id: 'broker-diagnostics',
@@ -260,8 +260,8 @@ const navItems: NavItem[] = [
     label: 'Logs',
     path: '/logs',
     eyebrow: 'Operations',
-    title: 'Realtime broker logs',
-    description: 'Monitor connection transitions and MCM broker operational events as they are ingested.',
+    title: 'Realtime broker and MCM events',
+    description: 'Monitor broker-log entries, connection transitions and MCM operational events as they are ingested.',
   },
   // Administration
   {
