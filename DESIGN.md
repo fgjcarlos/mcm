@@ -94,7 +94,7 @@ MCM's site is a dark telemetry console: a calm operations room where the state o
 
 The console never sells: it reports. Status labels (Alpha, Apache 2.0, CI), section eyebrows in wide uppercase tracking, and the amber caution panel all speak the operator's language of states and evidence. Motion is limited to quiet border and background shifts on hover; nothing blinks, nothing parades.
 
-**Known drift to resolve in refinement:** `site/src/styles/global.css` declares `--color-mcm-cyan: oklch(0.85 0.13 200)` and `--color-mcm-deep: oklch(0.18 0.04 250)` in `@theme`, but components hardcode Tailwind `cyan-*`/`slate-*` utilities and the body radial gradient uses literal `#1d4e89`. The tokens above document the operative values; unifying them with the `@theme` declarations is pending work.
+**Implementation alignment:** `site/src/styles/global.css` defines the palette as named `@theme` color tokens (hex and rgba values above), and `.site-backdrop` applies the radial field using the horizon, deep, and black tokens. Landing-page components use Tailwind cyan and slate utility classes alongside these semantic tokens.
 
 **Key Characteristics:**
 
@@ -118,7 +118,7 @@ One signal accent (cyan) over a deep blue-black field, with amber reserved for c
 
 - **Console Black** (#020617, `slate-950`): page floor and inner panels.
 - **Console Deep** (#0f172a, `slate-900`): mid field of the radial gradient, dark panels (`bg-slate-950/55`).
-- **Console Horizon** (#1d4e89, literal hex in `Layout.astro`): the glow at the top of the radial field — the only non-token color.
+- **Console Horizon** (#1d4e89, `--color-console-horizon`): the glow at the top of `.site-backdrop`'s radial field.
 - **Text Primary** (#f1f5f9, `slate-100`): headlines and default text.
 - **Text Secondary** (#cbd5e1, `slate-300`): body copy.
 - **Text Muted** (#94a3b8, `slate-400`): captions and footer.
@@ -151,11 +151,11 @@ One signal accent (cyan) over a deep blue-black field, with amber reserved for c
 
 ## Layout
 
-Single-page vertical flow inside `max-w-6xl` with `px-6`; sections separated by `mt-20` (5rem). Hero: stacked badges → eyebrow → display claim → lede → status line → action row (pill buttons wrap). Two-column split (`lg:grid-cols-[1.1fr_0.9fr]`) only for the "What MCM is" + Stack panels; feature grids are `sm:grid-cols-2 lg:grid-cols-3` with `gap-4`. Quick start is a numbered vertical list (36px circle numeral + label + command block). Footer: top hairline, two-row flex. Density is low: generous padding (`p-6`–`p-8`), no more than three cards per row.
+Single-page vertical flow inside `max-w-6xl` with `px-6`; sections separated by `mt-20` (5rem). Hero: stacked badges → eyebrow → display claim → explanatory lede → alpha status → action row (pill buttons wrap). Availability uses three clearly labeled categories in a three-column card grid at desktop; evidence pairs the full-width deploy capture with two supporting captures in a two-column grid. The production caution panel precedes quick start. Quick start is a numbered vertical command list with a success checkpoint and recovery branches. Technical stack stays in a collapsed disclosure; footer has a top hairline and two-row flex. Density is low: generous padding (`p-6`–`p-8`), no more than three cards per row.
 
 ## Elevation & Depth
 
-Flat. No box-shadows anywhere; depth is conveyed by tonal layering: translucent white tints (`bg-white/[0.04]`), dark glass panels (`bg-slate-950/55` + `backdrop-blur`), cyan-tinted panels for signal areas, and hairline borders (`border-white/10`, `border-cyan-300/20`). The only ambient effect is the fixed radial gradient behind everything (`#1d4e89` glow at top fading into `#020617`).
+Flat. No box-shadows anywhere; depth is conveyed by tonal layering: translucent white tints (`bg-white/[0.04]`), dark panels (`bg-slate-950/55` + `backdrop-blur`), cyan-tinted panels for signal areas, and hairline borders (`border-white/10`, `border-cyan-300/20`). The only ambient effect is `.site-backdrop`'s radial gradient, using `--color-console-horizon` at the top and fading through `--color-console-deep` to `--color-console-black`.
 
 ## Shapes
 
@@ -177,8 +177,8 @@ Pills (`rounded-full`) for all interactive and meta elements: buttons, badges, s
 ### Cards / Containers
 
 - **Feature card:** `rounded-3xl border-white/10 bg-white/[0.04] p-6`; hover shifts border to `cyan-300/30` and bg to `white/[0.07]`.
-- **Console panel:** `rounded-3xl border-white/10 bg-slate-950/55 p-8 backdrop-blur` (What MCM is, Quick start).
-- **Signal panel:** `border-cyan-300/20 bg-cyan-400/10` (Stack).
+- **Console panel:** `rounded-3xl border-white/10 bg-slate-950/55 p-8 backdrop-blur` (Quick start).
+- **Signal panel:** `border-cyan-300/20 bg-cyan-400/10` (success checkpoint).
 - **Caution panel:** `border-amber-300/25 bg-amber-400/10`, amber-100 title (production warning).
 
 ### Inputs / Fields

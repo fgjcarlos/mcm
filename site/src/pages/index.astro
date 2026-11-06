@@ -1,22 +1,15 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import FeatureSection from "../components/FeatureSection.astro";
 import brokerOverview from "../assets/hmi-overview.webp";
 import mqttUsers from "../assets/hmi-users.webp";
 import deployPanel from "../assets/hmi-deploy.webp";
 
 const repoURL = "https://github.com/fgjcarlos/mcm";
 
-const workflowFeatures = [
-  { title: "Review before applying", body: "Preview a configuration change, then apply it. Recent MFA is required; the deployment history records activation verification." },
-  { title: "Check broker activity", body: "Use the dashboard to inspect connection status and messages MCM sees arrive. That view is not a complete client inventory." },
-];
-
 const quickStart = [
   { label: "Clone and build", code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build" },
   { label: "Start the development stack", code: "task up" },
-  { label: "Find the bootstrap credentials", code: "task logs    # first-boot admin credentials are printed here when generated" },
-  { label: "Open MCM", code: "http://localhost:8080" },
+  { label: "Find the initial administrator sign-in", code: "task logs    # first-boot credentials are printed here when generated" },
 ];
 
 const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + WebSocket API"];
@@ -36,11 +29,11 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
 
       <div class="max-w-3xl space-y-5">
         <p class="text-sm font-semibold uppercase tracking-[0.4em] text-cyan-300">Mosquitto Control Manager</p>
-        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">Administer an existing Mosquitto broker from the web.</h1>
+        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">Manage a Mosquitto broker from the web.</h1>
         <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
-          MCM is a self-hosted administration interface for an existing Mosquitto broker. Mosquitto remains responsible for MQTT; MCM provides the browser UI and API for managing one broker.
+          Mosquitto is the server that routes MQTT messages between devices. MCM adds a browser interface and API to manage one Mosquitto broker; Mosquitto continues to handle the messages.
         </p>
-        <p class="text-base leading-relaxed text-cyan-100/90">Alpha: useful configuration controls are available today, while the graphical configuration MVP is still being completed.</p>
+        <p class="text-base leading-relaxed text-cyan-100/90">Alpha: useful configuration controls are available today, while the graphical configuration interface is still incomplete.</p>
       </div>
 
       <div class="flex flex-wrap gap-3">
@@ -60,15 +53,22 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       <div class="grid gap-6 lg:grid-cols-3">
         <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
           <h3 class="text-lg font-semibold text-white">Available controls</h3>
-          <p class="mt-3 text-sm leading-relaxed text-slate-300">MQTT users and basic ACLs (rules that control which topics each user can access); listeners and broker TLS material; general broker settings; bridges; plugins, including Dynamic Security; and the advanced root <code class="font-mono text-cyan-100">mosquitto.conf</code> editor. Applying changes requires recent MFA.</p>
+          <ul class="mt-3 space-y-2 text-sm leading-relaxed text-slate-300">
+            <li>MQTT users and basic access control lists (ACLs): rules for which message topics each user can access.</li>
+            <li>Listeners: network ports where the broker accepts device connections; broker TLS certificates and keys to secure those connections.</li>
+            <li>General broker settings and bridges: connections that pass messages between brokers.</li>
+            <li>Plugins, including Dynamic Security: Mosquitto's plugin for managing users and access rules.</li>
+            <li>Advanced editing of the main <code class="font-mono text-cyan-100">mosquitto.conf</code> configuration file.</li>
+          </ul>
+          <p class="mt-3 text-sm leading-relaxed text-slate-300">Applying changes requires a fresh multi-factor authentication (MFA) check: enter a new code from your authenticator app.</p>
         </article>
         <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
-          <h3 class="text-lg font-semibold text-white">Remaining MVP work</h3>
+          <h3 class="text-lg font-semibold text-white">Remaining work</h3>
           <p class="mt-3 text-sm leading-relaxed text-slate-300">Broader native ACL coverage, complete backup and restore (<a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={`${repoURL}/issues/295`}>#295</a>), and an explicit Mosquitto version support matrix remain unfinished. Some configuration directives and included files are not editable through guided controls.</p>
         </article>
         <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
           <h3 class="text-lg font-semibold text-white">Known limitations</h3>
-          <p class="mt-3 text-sm leading-relaxed text-slate-300">SQLite is the only implemented management database. Observed traffic is not a full client inventory; diagnostics inspect but do not enforce. Fleets, multi-broker, SSO, high availability, and PostgreSQL are deferred.</p>
+          <p class="mt-3 text-sm leading-relaxed text-slate-300">SQLite is the only implemented management database. Observed traffic is not a full client inventory. Sparkplug B and JSON Schema diagnostics inspect messages for issues but never block or reject them. Fleets, multi-broker management, single sign-on (SSO), high availability, and PostgreSQL are deferred. The dashboard's Broker diagnostics workspace reports the broker's own view of connections, logs and metrics.</p>
         </article>
       </div>
     </section>
@@ -81,33 +81,27 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </div>
       <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
         <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={deployPanel.src} aria-label="Open full-size MCM deploy panel capture">
-          <img class="block h-auto w-full" src={deployPanel.src} width={deployPanel.width} height={deployPanel.height} alt="MCM deploy panel showing configuration preview controls and deployment history with an active_verified entry." loading="lazy" />
+          <img class="block h-auto w-full" src={deployPanel.src} width={deployPanel.width} height={deployPanel.height} alt="MCM deploy panel showing configuration preview controls and deployment history with a verified activation entry." loading="lazy" />
         </a>
-        <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Deploy panel: preview controls and deployment history, including an active_verified entry. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={deployPanel.src}>Open full-size capture</a>.</figcaption>
+        <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">
+          <p>Deploy panel: preview configuration changes before applying them. Sensitive changes require a fresh authenticator code. The history verifies activation when a probe succeeds; here, entry 3 was verified by a user-grant probe.</p>
+          <p class="mt-2">Entry 2 rolled back because no activation probe was available: the configured managed service account lacked a user read/write grant. Entry 1 failed during apply and restored the saved snapshot. These records show both recovery paths, not only successful deployment. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={deployPanel.src}>Open full-size capture</a>.</p>
+        </figcaption>
       </figure>
       <div class="grid gap-6 sm:grid-cols-2">
         <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
           <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={brokerOverview.src} aria-label="Open full-size broker overview capture">
             <img class="block h-auto w-full" src={brokerOverview.src} width={brokerOverview.width} height={brokerOverview.height} alt="MCM broker overview showing connection status, observed message rate and top topics." loading="lazy" />
           </a>
-          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Broker overview: connection status, observed message rate, and top topics. Observed messages are not a complete client inventory. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={brokerOverview.src}>Full-size</a>.</figcaption>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Broker overview: check the broker connection status, observed message rate, and top topics. Observed messages are not a complete client inventory. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={brokerOverview.src}>Full-size</a>.</figcaption>
         </figure>
         <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
           <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={mqttUsers.src} aria-label="Open full-size MQTT user directory capture">
             <img class="block h-auto w-full" src={mqttUsers.src} width={mqttUsers.width} height={mqttUsers.height} alt="MCM MQTT user directory showing user status and controls to disable an account or reset its password." loading="lazy" />
           </a>
-          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">MQTT user directory: user status and controls to disable an account or reset its password. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={mqttUsers.src}>Full-size</a>.</figcaption>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">MQTT user directory: check account status and available controls to disable a user or reset their password. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={mqttUsers.src}>Full-size</a>.</figcaption>
         </figure>
       </div>
-    </section>
-
-    <section class="mt-20 space-y-10" aria-labelledby="controls-title">
-      <div class="max-w-3xl space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Workflow</p>
-        <h2 id="controls-title" class="text-3xl font-semibold tracking-tight text-white">From preview to observed state.</h2>
-        <p class="leading-relaxed text-slate-300">The captures above show the product in use; these are the two checks they illustrate.</p>
-      </div>
-      <FeatureSection label="Operator checks" items={workflowFeatures} />
     </section>
 
     <section class="mt-20 rounded-3xl border border-amber-300/25 bg-amber-400/10 p-6 sm:p-8" aria-labelledby="production-title">
@@ -115,16 +109,24 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       <h2 id="production-title" class="mt-3 text-2xl font-semibold text-amber-100">Alpha software; review production limits before applying changes.</h2>
       <p class="mt-3 leading-relaxed text-slate-300">Activation verification and recovery have known gaps, and backup/restore is incomplete. Review deployment requirements before enabling writes on an existing broker.</p>
       <div class="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-cyan-100">
-        <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Configuration MVP tracker</a>
+        <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Configuration tracker</a>
         <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/product-scope.md`}>Scope and acceptance criteria</a>
         <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md#current-limitations`}>Production limitations</a>
       </div>
     </section>
 
+    <details class="mt-12 rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+      <summary class="cursor-pointer font-semibold text-slate-200">Technical stack</summary>
+      <ul class="mt-4 flex flex-wrap gap-2">
+        {stack.map((item) => <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-cyan-100">{item}</li>)}
+      </ul>
+      <p class="mt-4 text-sm leading-relaxed text-slate-400">MCM's application includes the dashboard and management API; Mosquitto runs separately. SQLite is the only implemented management database.</p>
+    </details>
+
     <section id="quick-start" class="mt-20 scroll-mt-8 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur" aria-labelledby="quick-start-title">
       <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Quick start</p>
       <h2 id="quick-start-title" class="mt-3 text-3xl font-semibold tracking-tight text-white">Run the alpha locally.</h2>
-      <p class="mt-4 text-sm leading-relaxed text-slate-300">Requires Git, Docker with Compose, and Task. These commands start the development stack, not a production deployment.</p>
+      <p class="mt-4 text-sm leading-relaxed text-slate-300">For this local development setup, install <a class="underline underline-offset-4" href="https://git-scm.com/downloads">Git</a> to clone the source, <a class="underline underline-offset-4" href="https://docs.docker.com/compose/install/">Docker Compose</a> to run the containers, and <a class="underline underline-offset-4" href="https://taskfile.dev/installation/">Task</a> to run the project commands. These steps start a development stack, not a production deployment.</p>
       <ol class="mt-8 space-y-4">
         {quickStart.map((step, idx) => (
           <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
@@ -138,7 +140,11 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </ol>
       <div class="mt-8 rounded-2xl border border-cyan-300/20 bg-cyan-400/5 p-5">
         <h3 class="font-semibold text-white">Success checkpoint</h3>
-        <p class="mt-2 text-sm leading-relaxed text-slate-300">You should now be able to reach the dashboard at <code class="font-mono text-cyan-100">localhost:8080</code>, with the broker shown as connected. To sign in, use the bootstrap username <code class="font-mono text-cyan-100">admin</code> unless <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> was set, and the bootstrap password from the first-start logs.</p>
+        <ol class="mt-3 list-inside list-decimal space-y-2 text-sm leading-relaxed text-slate-300">
+          <li>Open <a class="font-mono text-cyan-100 underline underline-offset-4" href="http://localhost:8080">http://localhost:8080</a>.</li>
+          <li>Sign in with the initial administrator credentials printed in the first-start logs. The username is <code class="font-mono text-cyan-100">admin</code> unless <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> was set; use the generated bootstrap password.</li>
+          <li>Confirm the dashboard shows the broker as connected.</li>
+        </ol>
       </div>
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
         <div>
@@ -146,20 +152,16 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
           <p class="mt-2 text-sm leading-relaxed text-slate-300">There is no default password. If no generated credentials appear, check whether <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> and <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_PASSWORD</code> were set before first start, then use those values. Do not guess or reuse a broker password.</p>
         </div>
         <div>
+          <h3 class="font-semibold text-white">Signed in, but the broker shows disconnected?</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-300">In the dashboard you just opened, go to Diagnostics → Broker diagnostics to inspect connection status, broker logs, and diagnostic observations.</p>
+        </div>
+        <div>
           <h3 class="font-semibold text-white">Dashboard unreachable?</h3>
           <p class="mt-2 text-sm leading-relaxed text-slate-300">Run <code class="font-mono text-cyan-100">task ps</code> to check the services, then <code class="font-mono text-cyan-100">task logs</code> for startup errors. Confirm port 8080 is available and run <code class="font-mono text-cyan-100">task ready</code> to check readiness.</p>
         </div>
       </div>
-      <p class="mt-6 text-sm leading-relaxed text-slate-400">Stop the stack with <code class="font-mono text-cyan-100">task down</code>. For deployment requirements, broker TLS, and recovery limits, read <a class="underline-offset-4 hover:underline" href={`${repoURL}/blob/main/docs/production.md`}>docs/production.md</a>.</p>
+      <p class="mt-6 text-sm leading-relaxed text-slate-400">Stop the stack with <code class="font-mono text-cyan-100">task down</code>. Read the <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md`}>Production deployment guide</a> for deployment requirements, broker TLS, and recovery limits.</p>
     </section>
-
-    <details class="mt-12 rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-      <summary class="cursor-pointer font-semibold text-slate-200">Technical stack</summary>
-      <ul class="mt-4 flex flex-wrap gap-2">
-        {stack.map((item) => <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-cyan-100">{item}</li>)}
-      </ul>
-      <p class="mt-4 text-sm leading-relaxed text-slate-400">MCM's application includes the dashboard and management API; Mosquitto runs separately. SQLite is the only implemented management database.</p>
-    </details>
 
     <footer class="mt-20 flex flex-col items-start justify-between gap-4 border-t border-white/10 pt-8 text-sm text-slate-400 sm:flex-row sm:items-center">
       <p>© {new Date().getFullYear()} MCM contributors · Apache 2.0</p>
