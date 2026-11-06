@@ -131,3 +131,21 @@ from every group being expanded at once.
   and the badge moved to its own line. The reviewer also noted that the
   displayed default does not match a literal reading of S3, which is why S3
   now states the S4 exception explicitly.
+- L6: A second visual pass found the disclosure control of the active group
+  fainter than the others, because a disabled control was rendered with a
+  weaker border and half opacity and therefore read as a visual
+  inconsistency. The border now keeps the same strength as the others, only
+  the glyph is muted, and a title explains that the group holds the current
+  view and stays open. The final pass found the sidebar calm, legible and
+  consistent, with no layout regression.
+
+Closing evidence. `npm --prefix frontend run test:run`: 21 files, 290 tests,
+exit 0. `npm --prefix frontend run lint`: exit 0. `npm --prefix frontend run
+build`: exit 0. `MCM_E2E_UI=1 go test ./internal/server -run
+TestBrokerConfigurationBrowserJourney -count=1`: exit 0 in 62.9s, against a
+real Mosquitto through the browser journey, which now opens a collapsed
+section before clicking its entries. The rebuilt `mcm:dev` image on the local
+stack shows Configuration and Diagnostics expanded on the default route, the
+remaining groups collapsed and `inert`, and expanding MQTT Access revealing
+its five entries and clearing the `inert` state. All 19 entries and all 19
+routes are unchanged.
