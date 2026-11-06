@@ -479,6 +479,23 @@ var envBindings = []envBinding{
 		},
 	},
 	{
+		Name: "MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND",
+		Path: "mosquitto.deploy.restart_command",
+		Doc:  `Whitespace-separated command + argv that MCM invokes when a change needs a broker RESTART (a bridge, a plugin, the dynamic security plugin — Mosquitto reads them only at start-up). Separate from the reload command on purpose: a reload does not restart the broker. Example: "systemctl restart mosquitto.service". Unset means the deployment cannot restart the broker and a change that needs one is refused or stays pending_activation instead of being reported active (issue #294).`,
+		Apply: func(cfg *Config, raw string) error {
+			if raw == "" {
+				cfg.Mosquitto.Deploy.RestartCommand = nil
+				return nil
+			}
+			parts := strings.Fields(raw)
+			if len(parts) == 0 {
+				return fmt.Errorf("restart_command is empty whitespace; provide at least the command name")
+			}
+			cfg.Mosquitto.Deploy.RestartCommand = parts
+			return nil
+		},
+	},
+	{
 		Name: "MCM_MOSQUITTO_DEPLOY_HEALTHCHECK_TIMEOUT",
 		Path: "mosquitto.deploy.healthcheck_timeout",
 		Doc:  "Max time the deploy service waits for the broker to come back healthy after a reload. Go duration. Default 5s.",
