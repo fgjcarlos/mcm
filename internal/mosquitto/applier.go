@@ -32,6 +32,14 @@ var ErrApplyRestored = errors.New("apply failed; restored from snapshot")
 // intervention to reconcile.
 var ErrRollbackFailed = errors.New("rollback failed")
 
+// ErrResignalFailed is wrapped when Apply restored the previous files after
+// a failure but the follow-up reload signal failed too: the broker may keep
+// serving content that no longer matches disk until it reloads again
+// (issue #292, S17). The restoration itself succeeded; only the live
+// reload is outstanding, so callers treat this as a restored apply with a
+// pending reload, not as a lost rollback.
+var ErrResignalFailed = errors.New("restored from snapshot but broker re-signal failed")
+
 // ErrReloadNotSignaled is returned by FileApplier.Apply when PIDPath is
 // empty. The applier refuses to silently skip SIGHUP (issue #293,
 // acceptance criterion 2): a deploy cannot be marked active without a
@@ -171,6 +179,11 @@ type FileApplier struct {
 	SignalFunc    func(int) error // if nil, uses platform default (SIGHUP)
 	ReloadCommand []string        // production: command + argv to invoke after a successful write
 	ReloadRunner  CommandRunner   // if nil, defaults to ExecRunner{}
+
+	// afterReplace is a test-only seam invoked after each target rename so
+	// tests can inject cancellation or filesystem faults at a precise point
+	// of the apply transaction. It is nil in production.
+	afterReplace func(index int)
 }
 
 // DockerApplier writes files to paths that are volume-mounted into a Docker
@@ -292,12 +305,16 @@ func rollbackFromSnapshot(ctx context.Context, aclFiles []ACLFile, removedACLFil
 	return nil
 }
 
-// Apply atomically writes the ACL and password files, then sends SIGHUP to
-// the broker process if PIDPath is non-empty. The two writes happen
-// against staged temp files before either rename, so a failure in the
-// second stage does not leave the first file half-applied. A failure in
-// the rename or SIGHUP step triggers an internal rollback from the
-// provided snapshot using a fresh bounded context.
+// Apply atomically writes the ACL and password files, then signals
+// SIGHUP to the broker process if PIDPath is non-empty. The apply is a
+// durable transaction (issue #292, S16–S19): every temp file is staged
+// and the recovery journal with fsynced backups is written BEFORE the
+// first rename; the journal phase advances to "applying" before the
+// first rename and to "committed" (and is removed) after a successful
+// reload. Any failure — including request cancellation between renames —
+// triggers an internal rollback from the journal backups using a fresh
+// bounded context; a failed rollback keeps the journal so the next
+// process startup restores from it (RecoverInterruptedApply).
 func (f FileApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -311,42 +328,56 @@ func (f FileApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if f.PIDPath == "" && len(f.ReloadCommand) == 0 {
 		return ErrReloadNotSignaled
 	}
-	files := append([]ACLFile{{Path: f.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
 
-	// Stage 1: write every temp file. No rename has happened yet, so a
-	// failure here leaves the broker on the previous configuration.
-	aclTmps := make([]string, 0, len(files))
-	for _, file := range files {
-		tmp, err := writeStage(file.Path, file.Body, 0o600)
-		if err != nil {
-			for _, staged := range aclTmps {
-				cleanupTempFile(nil, staged)
-			}
-			return err
-		}
-		aclTmps = append(aclTmps, tmp)
-	}
-	passwdTmp, err := writeStage(f.PasswdPath, req.PasswdBody, 0o600)
+	// Stage 1: write every temp file and durably prepare the recovery
+	// journal (backups fsynced on disk) before any target is renamed
+	// (S16: prepare all files before replacing any). A failure here
+	// leaves the broker untouched and no journal behind.
+	staged, entries, journalPath, err := stageTransaction(ctx, f.ACLPath, f.PasswdPath, req)
 	if err != nil {
-		for _, staged := range aclTmps {
-			cleanupTempFile(nil, staged)
-		}
 		return err
 	}
-
-	// Stage 2: rename every temp file into place. A failure here leaves
-	// the broker half-applied, so we trigger an internal rollback.
-	for idx, file := range files {
-		if err := commitStage(aclTmps[idx], file.Path); err != nil {
-			cleanupTempFile(nil, passwdTmp)
-			for _, staged := range aclTmps[idx+1:] {
-				cleanupTempFile(nil, staged)
-			}
-			return f.rollbackAfterPartialApply("rename acl", err, files, req)
+	files := append([]ACLFile{{Path: f.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
+	cleanupStaged := func() {
+		for _, name := range staged {
+			cleanupTempFile(nil, name)
 		}
 	}
-	if err := commitStage(passwdTmp, f.PasswdPath); err != nil {
-		return f.rollbackAfterPartialApply("rename passwd", err, files, req)
+	rollback := func(stage string, cause error) error {
+		cleanupStaged()
+		return f.rollbackAfterPartialApply(stage, cause, files, req, journalPath, entries)
+	}
+
+	// Stage 2: the journal becomes durable in the "applying" phase
+	// before the first rename, so a crash at any later point restores.
+	if err := persistJournal(journalPath, recoveryJournal{Phase: "applying", Entries: entries}); err != nil {
+		cleanupStaged()
+		cleanupRecovery(entries)
+		_ = os.Remove(journalPath)
+		return fmt.Errorf("persist applying journal: %w", err)
+	}
+
+	// Renames. A failure — or a request cancelled after a rename —
+	// triggers the internal rollback (S17/S18).
+	for idx, file := range files {
+		if err := commitStage(staged[idx], file.Path); err != nil {
+			return rollback("rename acl", err)
+		}
+		if f.afterReplace != nil {
+			f.afterReplace(idx)
+		}
+		if err := ctx.Err(); err != nil {
+			return rollback("cancelled between renames", err)
+		}
+	}
+	if err := commitStage(staged[len(files)], f.PasswdPath); err != nil {
+		return rollback("rename passwd", err)
+	}
+	if f.afterReplace != nil {
+		f.afterReplace(len(files))
+	}
+	if err := ctx.Err(); err != nil {
+		return rollback("cancelled between renames", err)
 	}
 
 	// Stage 3: remove the ACL files the deploy retired. A listener whose
@@ -355,34 +386,57 @@ func (f FileApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	// again once the listener no longer declares its own.
 	for _, file := range req.RemovedACLFiles {
 		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return f.rollbackAfterPartialApply("remove acl", err, files, req)
+			return rollback("remove acl", err)
 		}
 	}
 
 	// Stage 4: signal the broker. If the reload fails after the files were
-	// already renamed, the broker is now serving the new configuration
-	// without having reloaded it — rollback from snapshot.
+	// already renamed, the broker may now be serving the new configuration
+	// — rollback from the journal backups and re-signal once (S17).
 	if err := f.reloadBroker(); err != nil {
-		return f.rollbackAfterPartialApply("signal reload", err, files, req)
+		return rollback("signal reload", err)
 	}
 
+	// Stage 5: commit. The journal reaches "committed" durably before the
+	// apply is reported successful, then is removed together with the
+	// backups. A crash between the reload and here must NOT make the next
+	// startup restore a successful apply. A cleanup failure after a
+	// successful reload is logged and left for the next startup recovery
+	// (which only cleans a committed journal).
+	if err := completeJournal(journalPath, entries); err != nil {
+		slog.Warn("mosquitto: recovery journal cleanup after successful apply failed; next startup will clean it", "error", err)
+	}
 	return nil
 }
 
-// rollbackAfterPartialApply restores both files from the provided snapshot
-// using a fresh bounded context derived from context.Background(). This
-// guarantees that a cancelled request context cannot abort the rollback
-// (issue #292, acceptance criterion 3).
+// rollbackAfterPartialApply restores both files from the journal backups
+// (same content as the provided snapshots) using a fresh bounded context
+// derived from context.Background(). This guarantees that a cancelled
+// request context cannot abort the rollback (issue #292, acceptance
+// criterion 3).
 //
-// Returns an error wrapping ErrApplyRestored when the restore succeeded,
-// or ErrRollbackFailed when the restore also failed. In both cases the
+// On a successful restore the journal is dropped: the backups describe the
+// restored content, and keeping them would only cause a redundant startup
+// restore. The broker is then re-signaled ONCE, bounded, because the reload
+// that failed may have taken effect on the live broker (S17); a failed
+// re-signal is reported via ErrResignalFailed but does not undo the
+// restoration. When the restore itself fails the journal is KEPT so the
+// next process startup restores from the durably prepared backups (S19).
+//
+// Returns an error wrapping ErrApplyRestored when the restore succeeded
+// (plus ErrResignalFailed when the follow-up reload failed), or
+// ErrRollbackFailed when the restore also failed. In both cases the
 // underlying cause is also wrapped so callers can inspect it via errors.Is.
-func (f FileApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest) error {
+func (f FileApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest, journalPath string, entries []recoveryEntry) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), internalRollbackTimeout)
 	defer cancel()
 
 	if err := rollbackFromSnapshot(rollbackCtx, files, req.RemovedACLFiles, f.PasswdPath, req.PasswdSnapshot); err != nil {
 		return fmt.Errorf("%s: %w", stage, errors.Join(ErrRollbackFailed, cause, err))
+	}
+	cleanupJournal(journalPath, entries)
+	if resignalErr := f.reloadBroker(); resignalErr != nil {
+		return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause, ErrResignalFailed, resignalErr))
 	}
 	return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause))
 }
@@ -477,9 +531,10 @@ func (f FileApplier) CanRestart() bool {
 
 // Apply atomically writes the ACL and password files, then reloads the
 // broker by sending SIGHUP to PID 1 inside the named Docker container.
-// Uses the same two-stage transactional behavior as FileApplier: both
-// files are staged before either rename, and a failure in docker exec
-// triggers an internal rollback from the provided snapshot.
+// Uses the same durable transaction as FileApplier (issue #292, S16–S19):
+// staged temp files plus an fsynced recovery journal prepared before the
+// first rename, phase transitions, rollback from backups with one bounded
+// re-signal, and startup recovery via RecoverInterruptedApply.
 func (d DockerApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if d.ContainerName == "" {
 		return fmt.Errorf("docker applier: container_name must not be empty")
@@ -487,64 +542,79 @@ func (d DockerApplier) Apply(ctx context.Context, req ApplyRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	files := append([]ACLFile{{Path: d.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
 
-	// Stage 1: write every temp file.
-	aclTmps := make([]string, 0, len(files))
-	for _, file := range files {
-		tmp, err := writeStage(file.Path, file.Body, 0o600)
-		if err != nil {
-			for _, staged := range aclTmps {
-				cleanupTempFile(nil, staged)
-			}
-			return err
-		}
-		aclTmps = append(aclTmps, tmp)
-	}
-	passwdTmp, err := writeStage(d.PasswdPath, req.PasswdBody, 0o600)
+	staged, entries, journalPath, err := stageTransaction(ctx, d.ACLPath, d.PasswdPath, req)
 	if err != nil {
-		for _, staged := range aclTmps {
-			cleanupTempFile(nil, staged)
-		}
 		return err
 	}
-
-	// Stage 2: rename every temp file into place.
-	for idx, file := range files {
-		if err := commitStage(aclTmps[idx], file.Path); err != nil {
-			cleanupTempFile(nil, passwdTmp)
-			for _, staged := range aclTmps[idx+1:] {
-				cleanupTempFile(nil, staged)
-			}
-			return d.rollbackAfterPartialApply("rename acl", err, files, req)
+	files := append([]ACLFile{{Path: d.ACLPath, Body: req.ACLBody, Snapshot: req.ACLSnapshot}}, req.ListenerACLFiles...)
+	cleanupStaged := func() {
+		for _, name := range staged {
+			cleanupTempFile(nil, name)
 		}
 	}
-	if err := commitStage(passwdTmp, d.PasswdPath); err != nil {
-		return d.rollbackAfterPartialApply("rename passwd", err, files, req)
+	rollback := func(stage string, cause error) error {
+		cleanupStaged()
+		return d.rollbackAfterPartialApply(stage, cause, files, req, journalPath, entries)
 	}
 
-	// Stage 3: remove the ACL files the deploy retired.
+	if err := persistJournal(journalPath, recoveryJournal{Phase: "applying", Entries: entries}); err != nil {
+		cleanupStaged()
+		cleanupRecovery(entries)
+		_ = os.Remove(journalPath)
+		return fmt.Errorf("persist applying journal: %w", err)
+	}
+
+	for idx, file := range files {
+		if err := commitStage(staged[idx], file.Path); err != nil {
+			return rollback("rename acl", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return rollback("cancelled between renames", err)
+		}
+	}
+	if err := commitStage(staged[len(files)], d.PasswdPath); err != nil {
+		return rollback("rename passwd", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return rollback("cancelled between renames", err)
+	}
+
 	for _, file := range req.RemovedACLFiles {
 		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return d.rollbackAfterPartialApply("remove acl", err, files, req)
+			return rollback("remove acl", err)
 		}
 	}
 
-	// Stage 4: docker exec kill -HUP 1.
 	if _, err := d.Runner.Run(ctx, "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); err != nil {
-		return d.rollbackAfterPartialApply("docker exec", err, files, req)
+		return rollback("docker exec", err)
+	}
+	if err := completeJournal(journalPath, entries); err != nil {
+		slog.Warn("mosquitto: recovery journal cleanup after successful docker apply failed; next startup will clean it", "error", err)
 	}
 	return nil
 }
 
 // rollbackAfterPartialApply is the DockerApplier counterpart of
-// FileApplier.rollbackAfterPartialApply; same semantics.
-func (d DockerApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest) error {
+// FileApplier.rollbackAfterPartialApply; same semantics, including the
+// journal cleanup on a successful restore, the single bounded re-signal
+// after restoring, and keeping the journal when the restore fails.
+func (d DockerApplier) rollbackAfterPartialApply(stage string, cause error, files []ACLFile, req ApplyRequest, journalPath string, entries []recoveryEntry) error {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), internalRollbackTimeout)
 	defer cancel()
 
 	if err := rollbackFromSnapshot(rollbackCtx, files, req.RemovedACLFiles, d.PasswdPath, req.PasswdSnapshot); err != nil {
 		return fmt.Errorf("%s: %w", stage, errors.Join(ErrRollbackFailed, cause, err))
+	}
+	cleanupJournal(journalPath, entries)
+	// One bounded re-signal so the live broker matches the restored disk
+	// state (S17); a docker-exec failure here is reported, not retried.
+	resignalRunner := d.Runner
+	if resignalRunner == nil {
+		resignalRunner = ExecRunner{}
+	}
+	if _, resignalErr := resignalRunner.Run(context.Background(), "docker", "exec", d.ContainerName, "kill", "-HUP", "1"); resignalErr != nil {
+		return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause, ErrResignalFailed, resignalErr))
 	}
 	return fmt.Errorf("%s: %w", stage, errors.Join(ErrApplyRestored, cause))
 }

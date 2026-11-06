@@ -250,6 +250,10 @@ func Run(ctx context.Context, cfg config.Config) error {
 		deployAuditFn,
 	)
 	app.deploySvc = deployService
+	// Issue #292 (S19): restore an apply interrupted by the death of a
+	// previous MCM process before serving any deploy request. Recovery
+	// always restores the pre-apply files, never resumes the apply.
+	deployService.RecoverInterruptedApply()
 
 	var brokerCatalog *catalog.Catalog
 	if cat, catErr := catalog.LoadVersion("2.0"); catErr == nil {
