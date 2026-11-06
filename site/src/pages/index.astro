@@ -3,19 +3,13 @@ import Layout from "../layouts/Layout.astro";
 import FeatureSection from "../components/FeatureSection.astro";
 import brokerOverview from "../assets/hmi-overview.webp";
 import mqttUsers from "../assets/hmi-users.webp";
+import deployPanel from "../assets/hmi-deploy.webp";
 
 const repoURL = "https://github.com/fgjcarlos/mcm";
 
-const configurationFeatures = [
-  { title: "Shape the broker", body: "Manage MQTT and WebSocket listeners, broker TLS certificates, general settings, bridges, and plugins—including Dynamic Security. The advanced root mosquitto.conf editor supports import, review, apply, and revision recovery." },
-  { title: "Manage access", body: "Create and manage MQTT users and basic topic permissions. Native ACL coverage is partial." },
-  { title: "Review and apply", body: "Review configuration changes before applying them. Applying changes requires recent MFA; recovery and verification still have known limits." },
-];
-
-const observeFeatures = [
-  { title: "See observed traffic", body: "Inspect messages MCM sees arrive and topic activity. This is not a complete client inventory." },
-  { title: "Inspect messages", body: "Optional Sparkplug B and JSON Schema diagnostics help inspect observed messages; they do not enforce payload rejection in Mosquitto." },
-  { title: "Administer MCM", body: "Manage operator accounts, roles, MFA, audit events, and connection events separately from MQTT users and broker permissions." },
+const workflowFeatures = [
+  { title: "Review before applying", body: "Preview a configuration change, then apply it. Recent MFA is required; the deployment history records activation verification." },
+  { title: "Check broker activity", body: "Use the dashboard to inspect connection status and messages MCM sees arrive. That view is not a complete client inventory." },
 ];
 
 const quickStart = [
@@ -82,30 +76,38 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
     <section class="mt-20 space-y-8" aria-labelledby="evidence-title">
       <div class="max-w-3xl space-y-3">
         <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Product evidence</p>
-        <h2 id="evidence-title" class="text-3xl font-semibold tracking-tight text-white">A view into the running product.</h2>
-        <p class="leading-relaxed text-slate-300">These captures show real MCM screens: observed broker activity and MQTT user administration.</p>
+        <h2 id="evidence-title" class="text-3xl font-semibold tracking-tight text-white">Review, apply, verify.</h2>
+        <p class="leading-relaxed text-slate-300">Real captures from a running MCM local stack. Select any image to inspect its full-size file.</p>
       </div>
-      <div class="grid gap-6 lg:grid-cols-2">
+      <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
+        <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={deployPanel.src} aria-label="Open full-size MCM deploy panel capture">
+          <img class="block h-auto w-full" src={deployPanel.src} width={deployPanel.width} height={deployPanel.height} alt="MCM deploy panel showing configuration preview controls and deployment history with an active_verified entry." loading="lazy" />
+        </a>
+        <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Deploy panel: preview controls and deployment history, including an active_verified entry. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={deployPanel.src}>Open full-size capture</a>.</figcaption>
+      </figure>
+      <div class="grid gap-6 sm:grid-cols-2">
         <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
-          <img class="block h-auto w-full" src={brokerOverview.src} width={brokerOverview.width} height={brokerOverview.height} alt="MCM broker overview showing connection status, observed message rate and top topics; client IDs are unavailable in this observed traffic view." loading="lazy" />
-          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Broker overview: connection status, observed message rate, and top topics. Client IDs are unavailable in this view; observed messages are not a complete client inventory.</figcaption>
+          <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={brokerOverview.src} aria-label="Open full-size broker overview capture">
+            <img class="block h-auto w-full" src={brokerOverview.src} width={brokerOverview.width} height={brokerOverview.height} alt="MCM broker overview showing connection status, observed message rate and top topics." loading="lazy" />
+          </a>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Broker overview: connection status, observed message rate, and top topics. Observed messages are not a complete client inventory. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={brokerOverview.src}>Full-size</a>.</figcaption>
         </figure>
         <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
-          <img class="block h-auto w-full" src={mqttUsers.src} width={mqttUsers.width} height={mqttUsers.height} alt="MCM MQTT user directory showing user status and controls to disable an account or reset its password." loading="lazy" />
-          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">MQTT user directory: view user status, disable an account, or reset its password.</figcaption>
+          <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={mqttUsers.src} aria-label="Open full-size MQTT user directory capture">
+            <img class="block h-auto w-full" src={mqttUsers.src} width={mqttUsers.width} height={mqttUsers.height} alt="MCM MQTT user directory showing user status and controls to disable an account or reset its password." loading="lazy" />
+          </a>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">MQTT user directory: user status and controls to disable an account or reset its password. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={mqttUsers.src}>Full-size</a>.</figcaption>
         </figure>
       </div>
     </section>
 
     <section class="mt-20 space-y-10" aria-labelledby="controls-title">
       <div class="max-w-3xl space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What MCM does</p>
-        <h2 id="controls-title" class="text-3xl font-semibold tracking-tight text-white">A broker workflow, organized around operator tasks.</h2>
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Workflow</p>
+        <h2 id="controls-title" class="text-3xl font-semibold tracking-tight text-white">From preview to observed state.</h2>
+        <p class="leading-relaxed text-slate-300">The captures above show the product in use; these are the two checks they illustrate.</p>
       </div>
-      <div class="space-y-8">
-        <FeatureSection label="Configure and apply" items={configurationFeatures} />
-        <FeatureSection label="Observe and administer" items={observeFeatures} />
-      </div>
+      <FeatureSection label="Operator checks" items={workflowFeatures} />
     </section>
 
     <section class="mt-20 rounded-3xl border border-amber-300/25 bg-amber-400/10 p-6 sm:p-8" aria-labelledby="production-title">
@@ -136,7 +138,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </ol>
       <div class="mt-8 rounded-2xl border border-cyan-300/20 bg-cyan-400/5 p-5">
         <h3 class="font-semibold text-white">Success checkpoint</h3>
-        <p class="mt-2 text-sm leading-relaxed text-slate-300">You should now see the MCM sign-in page at <code class="font-mono text-cyan-100">localhost:8080</code>. Sign in with the bootstrap username — <code class="font-mono text-cyan-100">admin</code> unless you set one — and the bootstrap password from the first-start logs.</p>
+        <p class="mt-2 text-sm leading-relaxed text-slate-300">You should now be able to reach the dashboard at <code class="font-mono text-cyan-100">localhost:8080</code>, with the broker shown as connected. To sign in, use the bootstrap username <code class="font-mono text-cyan-100">admin</code> unless <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> was set, and the bootstrap password from the first-start logs.</p>
       </div>
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
         <div>
