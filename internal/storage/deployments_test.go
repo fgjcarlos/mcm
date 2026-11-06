@@ -79,6 +79,39 @@ func TestInsertDeployment(t *testing.T) {
 	})
 }
 
+// TestDeploymentLifecycleStatesArePersisted covers issue #293 (S20): the
+// deployment record carries the explicit lifecycle states — saved,
+// applying, pending_activation, active_verified and failed — and every one
+// of them is a status the store accepts and persists.
+func TestDeploymentLifecycleStatesArePersisted(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	dep := &Deployment{Actor: "operator", Status: "saved"}
+	if err := store.InsertDeployment(ctx, dep); err != nil {
+		t.Fatalf("InsertDeployment: %v", err)
+	}
+
+	for _, status := range []string{"applying", "pending_activation", "active_verified", "failed"} {
+		if err := store.UpdateDeploymentStatus(ctx, dep.ID, status, "state "+status); err != nil {
+			t.Fatalf("UpdateDeploymentStatus(%q): %v", status, err)
+		}
+		got, err := store.GetDeployment(ctx, dep.ID)
+		if err != nil {
+			t.Fatalf("GetDeployment: %v", err)
+		}
+		if got.Status != status {
+			t.Errorf("Status = %q, want %q", got.Status, status)
+		}
+		if got.Message != "state "+status {
+			t.Errorf("Message = %q, want %q", got.Message, "state "+status)
+		}
+	}
+}
+
 func TestGetDeployment(t *testing.T) {
 	t.Parallel()
 

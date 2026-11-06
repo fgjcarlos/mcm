@@ -259,10 +259,15 @@ type VerifyActiveOptions struct {
 // VerifyActiveResult is the outcome of a single VerifyActive call.
 type VerifyActiveResult struct {
 	OK              bool
-	Stage           string // "connect", "positive_subscribe", "positive_roundtrip", "negative"
+	Stage           string // "connect", "positive_subscribe", "positive_roundtrip", "negative", "negative_permission"
 	Message         string
 	PositiveMessage string
 	NegativeMessage string
+	// DeniedTopicMessage reports the outcome of the negative permission
+	// stage: the broker must refuse a subscription to the topic the
+	// rendered policy denies for the probe identity. It reports a skipped
+	// stage when the rendered policy denies nothing for that identity.
+	DeniedTopicMessage string
 }
 
 // VerifierFunc is a function adapter that satisfies any interface
@@ -276,26 +281,31 @@ func (f VerifierFunc) VerifyActive(ctx context.Context, opts VerifyActiveOptions
 }
 
 // VerifyActive verifies that the broker is serving the freshly-applied
-// configuration by running two checks:
+// configuration by running three checks:
 //
 //  1. Positive — subscribe to a topic the new ACL grants, publish a
 //     message via a second connection as the same user, and assert the
 //     subscriber receives the message. This proves the broker is
 //     accepting the new passwd credentials AND honouring the new ACL
 //     grant.
-//  2. Negative — authenticate with a username that is absent from the
-//     rendered passwd and assert the broker rejects the connection.
-//     This proves the broker enforces the new authentication.
+//  2. Negative (authentication) — authenticate with a username that is
+//     absent from the rendered passwd and assert the broker rejects the
+//     connection. This proves the broker enforces the new authentication.
+//  3. Negative (permission) — subscribe to the topic the rendered policy
+//     denies for the probe identity and assert the broker refuses the
+//     subscription. This proves the rendered denial is in effect too, so
+//     the broker is not serving an older or wider policy.
 //
-// Both checks must pass for the result to be OK. The caller (deploy
+// All three checks must pass for the result to be OK. The caller (deploy
 // service) is expected to invoke VerifyActive with bounded retries and
 // backoff and to roll back from snapshot on persistent failure.
 //
-// Limit: the negative stage covers authentication only. It does not
-// assert that a topic is denied, so a broker that accepts every
-// subscription still passes. Checking the effective permission table
-// (deny lines, pattern lines, the anonymous section) needs a broker
-// runtime check and is out of scope for this verifier.
+// The permission stage is skipped (and reported as skipped) when the
+// rendered policy denies nothing for the probe identity: there is no
+// expected denial to prove, and the verifier must not invent one. The
+// stage proves the denial of one concrete topic; it does not evaluate the
+// whole effective permission table (every deny line, every pattern line,
+// the anonymous section).
 func VerifyActive(ctx context.Context, opts VerifyActiveOptions) VerifyActiveResult {
 	if opts.DialTimeout == 0 {
 		opts.DialTimeout = 2 * time.Second
@@ -320,15 +330,27 @@ func VerifyActive(ctx context.Context, opts VerifyActiveOptions) VerifyActiveRes
 		}
 	}
 
-	// --- Negative test -------------------------------------------------
+	// --- Negative test: the new authentication is enforced ---------------
 	negMsg, negOK := runNegativeTest(ctx, broker, opts)
 
+	// --- Negative test: the new denial is enforced ----------------------
+	deniedMsg, deniedOK := runDeniedTopicTest(ctx, broker, opts)
+
+	stage := "ok"
+	switch {
+	case !negOK:
+		stage = "negative"
+	case !deniedOK:
+		stage = "negative_permission"
+	}
+
 	return VerifyActiveResult{
-		OK:              negOK,
-		Stage:           ternary(negOK, "ok", "negative"),
-		Message:         summarizeActive(posMsg, negMsg, negOK),
-		PositiveMessage: posMsg,
-		NegativeMessage: negMsg,
+		OK:                 negOK && deniedOK,
+		Stage:              stage,
+		Message:            summarizeActive(posMsg, negMsg, deniedMsg),
+		PositiveMessage:    posMsg,
+		NegativeMessage:    negMsg,
+		DeniedTopicMessage: deniedMsg,
 	}
 }
 
@@ -387,12 +409,9 @@ func runPositiveTest(ctx context.Context, broker string, opts VerifyActiveOption
 // NOT exist in the rendered passwd and asserts the broker rejects the
 // connection.
 //
-// The check covers the authentication path, not the topic authorization
-// path: the in-process mochi broker used by the tests allows every topic
-// that is not explicitly denied, so a "subscribe to a denied topic"
-// assertion would not be reliable there. A positive test (subscribe plus
-// publish on a granted topic) covers the ACL path; together they show
-// that both halves of the rendered config are active.
+// The check covers the authentication path. The permission path is
+// covered by runDeniedTopicTest, which subscribes to the topic the
+// rendered policy denies.
 func runNegativeTest(ctx context.Context, broker string, opts VerifyActiveOptions) (string, bool) {
 	clientOpts := newPahoOptions(broker, "mcm-verify-neg-"+randSuffix(), "mcm-verify-nonexistent-user", "mcm-verify-dummy-pass", opts.TLS, opts.DialTimeout)
 	client := mqtt.NewClient(clientOpts)
@@ -404,6 +423,110 @@ func runNegativeTest(ctx context.Context, broker string, opts VerifyActiveOption
 	// accepted. The broker is using the OLD config (no auth check).
 	client.Disconnect(0)
 	return "negative: broker accepted unknown user (expected rejection; broker may be serving the OLD passwd)", false
+}
+
+// mqttSubscriptionRefused is the SUBACK return code a broker sends when it
+// refuses a subscription (MQTT 3.1.1 failure code 0x80).
+const mqttSubscriptionRefused = 0x80
+
+// deniedProbeSegment is the fixed topic level the verifier substitutes for a
+// wildcard level of a denied filter, so the probe always subscribes to one
+// concrete topic name.
+const deniedProbeSegment = "mcm-verify"
+
+// runDeniedTopicTest asserts that the broker refuses a subscription to the
+// topic the rendered policy denies for the probe identity.
+//
+// This is the negative permission half of the verification (issue #293,
+// S22): the positive stage proves the rendered grant is in effect, this
+// stage proves the rendered denial is in effect too. A broker that grants
+// the denied topic is serving a policy that is not the one MCM wrote.
+//
+// The stage is skipped — and reported as skipped — when the rendered policy
+// denies nothing for the probe identity: there is no expected denial to
+// prove and the verifier must not invent one.
+func runDeniedTopicTest(ctx context.Context, broker string, opts VerifyActiveOptions) (string, bool) {
+	filter := strings.TrimSpace(opts.DeniedTopic)
+	if filter == "" {
+		return "negative permission: skipped (the rendered policy denies nothing for this identity)", true
+	}
+	topic, ok := ConcreteDeniedTopic(filter)
+	if !ok {
+		return fmt.Sprintf("negative permission: skipped (%q is not a usable topic filter)", filter), true
+	}
+
+	clientOpts := newPahoOptions(broker, "mcm-verify-deny-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
+	client := mqtt.NewClient(clientOpts)
+	if token := client.Connect(); !token.WaitTimeout(opts.DialTimeout) || token.Error() != nil {
+		client.Disconnect(0)
+		return fmt.Sprintf("negative permission: could not authenticate as %q to evaluate the denied topic %q: %v", opts.Username, topic, token.Error()), false
+	}
+	defer client.Disconnect(100) //nolint:errcheck
+
+	subToken := client.Subscribe(topic, 1, func(mqtt.Client, mqtt.Message) {})
+	if !subToken.WaitTimeout(opts.SubTimeout) || subToken.Error() != nil {
+		return fmt.Sprintf("negative permission: could not evaluate the denied topic %q: %v", topic, subToken.Error()), false
+	}
+	granted, found := subscriptionResult(subToken, topic)
+	if !found {
+		return fmt.Sprintf("negative permission: the broker reported no subscription result for the denied topic %q", topic), false
+	}
+	if granted == mqttSubscriptionRefused {
+		return fmt.Sprintf("negative permission: the broker refused the subscription to the denied topic %q (0x%02x)", topic, granted), true
+	}
+	return fmt.Sprintf("negative permission: the broker granted the subscription to the denied topic %q (qos %d); the rendered denial is not in effect", topic, granted), false
+}
+
+// subscriptionResult returns the SUBACK return code the broker sent for the
+// given topic.
+func subscriptionResult(token mqtt.Token, topic string) (byte, bool) {
+	sub, ok := token.(*mqtt.SubscribeToken)
+	if !ok {
+		return 0, false
+	}
+	result := sub.Result()
+	granted, ok := result[topic]
+	return granted, ok
+}
+
+// ConcreteDeniedTopic turns a denied topic filter into one concrete topic
+// name a verifier can subscribe to.
+//
+// Wildcard levels are replaced by the fixed probe segment, so the probe
+// never subscribes to a filter. A filter the verifier cannot concretize
+// (a wildcard that is not the last level, or a level that mixes a
+// wildcard with other characters) yields no topic and the stage is
+// skipped.
+//
+// The deploy service uses the same function to decide whether a denial is
+// unambiguous, so the topic it checks and the topic the verifier probes
+// are always the same one.
+func ConcreteDeniedTopic(filter string) (string, bool) {
+	if filter == "" {
+		return "", false
+	}
+	levels := strings.Split(filter, "/")
+	out := make([]string, 0, len(levels))
+	for i, level := range levels {
+		switch {
+		case level == "#":
+			if i != len(levels)-1 {
+				return "", false
+			}
+			out = append(out, deniedProbeSegment)
+		case level == "+":
+			out = append(out, deniedProbeSegment)
+		case strings.ContainsAny(level, "+#"):
+			return "", false
+		default:
+			out = append(out, level)
+		}
+	}
+	topic := strings.Join(out, "/")
+	if topic == "" {
+		return "", false
+	}
+	return topic, true
 }
 
 // newPahoOptions builds a paho client options struct that targets the
@@ -438,17 +561,6 @@ func randSuffix() string {
 }
 
 // summarizeActive builds the top-level Message for the verifier result.
-func summarizeActive(posMsg, negMsg string, negOK bool) string {
-	if negOK {
-		return posMsg + "; " + negMsg
-	}
-	return posMsg + "; " + negMsg
-}
-
-// ternary is a tiny helper for readability.
-func ternary[T any](cond bool, a, b T) T {
-	if cond {
-		return a
-	}
-	return b
+func summarizeActive(posMsg, negMsg, deniedMsg string) string {
+	return posMsg + "; " + negMsg + "; " + deniedMsg
 }

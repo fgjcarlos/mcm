@@ -79,6 +79,35 @@ func TestPickVerificationProbe_SkipsDenyRules(t *testing.T) {
 	}
 }
 
+// TestPickVerificationProbe_AmbiguousDenialIsNotProbed pins that a denial
+// a grant of the same identity also covers is not probed: the effective
+// permission of that topic depends on the order the broker evaluates the
+// rules in, so the verifier must not assert a denial the rendered policy
+// does not express unambiguously.
+func TestPickVerificationProbe_AmbiguousDenialIsNotProbed(t *testing.T) {
+	t.Parallel()
+
+	deployCfg, _, _ := enabledDeployCfg(t)
+	svc, _ := denyProbeService(&fakeACLStore{}, &fakeMQTTUserLister{}, deployCfg, "", "",
+		diagnostics.VerifierFunc(okVerifier), map[string]string{"alice": "alice-pass"})
+
+	aclBody := strings.Join([]string{
+		"user alice",
+		"topic readwrite sensors/#",
+		"topic deny sensors/secret",
+		"",
+	}, "\n")
+	passwdBody := "alice:$2a$10$hash\n"
+
+	probe, ok := svc.pickVerificationProbe(context.Background(), aclBody, passwdBody)
+	if !ok {
+		t.Fatal("pickVerificationProbe found no probe for a user-scoped grant")
+	}
+	if probe.deniedTopic != "" {
+		t.Errorf("probe denied topic = %q, want none (the grant covers the denied topic)", probe.deniedTopic)
+	}
+}
+
 // TestPickVerificationProbe_DenyOnlyPolicyUsesServiceFallback pins that a
 // policy with only deny rules falls back to the managed service
 // healthcheck grant: the probe uses the configured service account and the

@@ -183,13 +183,20 @@ func (s *Service) activateBrokerConfig(ctx context.Context, actor string, dep *s
 	}
 
 	if kind != "broker_config" {
-		// The bridges, plugins and dynamic-security surfaces keep their own
-		// activation contract: a successful restart or reload is the
-		// activation. Issue #305 governs the root configuration.
-		if err := s.updateDeploymentStatus(dep.ID, "active_verified", ""); err != nil {
-			return storage.Deployment{}, fmt.Errorf("update broker-config deployment to active_verified: %w", err)
+		// The bridges, the plugins and the dynamic-security database are
+		// not observable through the MQTT probe: nothing MCM can query
+		// tells it that the bridge is connected or that the plugin is
+		// loaded. The change is written and the broker was signalled, but
+		// no verified reload or restart backs the claim, so the
+		// deployment must not say "active_verified" (issue #293, S21).
+		// The dynamic-security surface upgrades the deployment to
+		// "active_verified" when the control channel confirms the
+		// applied state.
+		message := "the change was written and the broker was signalled, but MCM cannot verify this surface, so the change is not declared active"
+		if err := s.updateDeploymentStatus(dep.ID, "pending_activation", message); err != nil {
+			return storage.Deployment{}, fmt.Errorf("update broker-config deployment to pending_activation: %w", err)
 		}
-		s.emitAudit(ctx, actor, "deployment.active_verified", dep.ID, "success")
+		s.emitAudit(ctx, actor, "deployment.pending_activation", dep.ID, "success")
 		return s.getDeployment(dep.ID)
 	}
 
