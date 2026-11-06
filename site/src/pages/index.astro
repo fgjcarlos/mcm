@@ -1,227 +1,174 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import FeatureSection from "../components/FeatureSection.astro";
+import brokerOverview from "../assets/hmi-overview.webp";
+import mqttUsers from "../assets/hmi-users.webp";
+import deployPanel from "../assets/hmi-deploy.webp";
 
 const repoURL = "https://github.com/fgjcarlos/mcm";
 
-const backendFeatures = [
-  { title: "MQTT users and basic ACLs", body: "Create, disable and rotate MQTT credentials. Edit user/topic permissions, then review and apply their password and ACL files." },
-  { title: "Deployment review and history", body: "Preview password/ACL differences and track apply attempts. Verified activation and recovery after partial failures are still being improved." },
-  { title: "Operator access and audit", body: "Separate dashboard accounts, role-based access, two-factor authentication, and administrative audit and security events." },
-];
-
-const frontendFeatures = [
-  { title: "Observed MQTT traffic", body: "Inspect topic names and bounded payload previews received by MCM. This is observed traffic, not a complete client inventory." },
-  { title: "Connection events", body: "Follow MCM connection transitions and operational events. Full Mosquitto log ingestion and broker metrics are planned." },
-  { title: "Optional message diagnostics", body: "Sparkplug B inspection and JSON Schema results help inspect messages. They do not configure the broker or enforce payload rejection." },
-];
-
-const opsFeatures = [
-  { title: "One managed broker", body: "A Go application image with its embedded React UI, SQLite management state, and a separate Mosquitto broker container." },
-  { title: "Administration API", body: "REST and authenticated WebSocket interfaces accompany the dashboard. Broker configuration editing is a planned extension." },
-  { title: "Development and verification", body: "Docker Compose and Taskfile support local development. Production activation and complete backup/restore remain tracked work." },
-];
-
-const plannedFeatures = [
-  { title: "Import and edit configuration", body: "A version-aware editor for mosquitto.conf and included files, preserving existing settings, comments and advanced directives." },
-  { title: "Listeners, TLS and bridges", body: "Guided configuration of MQTT and WebSocket listeners, broker certificates, authentication and connections between brokers." },
-  { title: "General settings and plugins", body: "Persistence, limits, sessions, logging and supported plugins, including Dynamic Security, with explicit version compatibility." },
-  { title: "Verified changes and recovery", body: "Review an immutable revision, see whether it needs reload or restart, verify activation and recover the previous configuration." },
+const workflowFeatures = [
+  { title: "Review before applying", body: "Preview a configuration change, then apply it. Recent MFA is required; the deployment history records activation verification." },
+  { title: "Check broker activity", body: "Use the dashboard to inspect connection status and messages MCM sees arrive. That view is not a complete client inventory." },
 ];
 
 const quickStart = [
-  {
-    label: "Clone and build",
-    code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build",
-  },
-  {
-    label: "Start the stack",
-    code: "task up",
-  },
-  {
-    label: "Capture the bootstrap admin",
-    code: "task logs    # look for 'bootstrap admin created' — username + password",
-  },
-  {
-    label: "Open the dashboard",
-    code: "http://localhost:8080",
-  },
+  { label: "Clone and build", code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build" },
+  { label: "Start the development stack", code: "task up" },
+  { label: "Find the bootstrap credentials", code: "task logs    # first-boot admin credentials are printed here when generated" },
+  { label: "Open MCM", code: "http://localhost:8080" },
 ];
 
-const stack = [
-  "Go 1.25",
-  "net/http + slog",
-  "SQLite (pure Go)",
-  "paho MQTT",
-  "Prometheus",
-  "OpenAPI 3.1",
-  "React 19 + Vite 8",
-  "Tailwind 4",
-];
+const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + WebSocket API"];
 ---
 
 <Layout
   title="MCM — Mosquitto Control Manager"
-  description="MCM is building a graphical configuration manager for Eclipse Mosquitto. Explore current user and ACL management, the configuration roadmap, and alpha limitations."
+  description="MCM is a self-hosted administration interface for an existing Mosquitto broker. See what is available in the alpha and try it locally."
 >
   <main class="mx-auto w-full max-w-6xl px-6 py-16 sm:py-24">
     <header class="flex flex-col gap-6">
       <div class="flex flex-wrap items-center gap-3">
         <span class="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100">Alpha</span>
         <span class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300">Apache 2.0</span>
-        <a
-          class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
-          href={`${repoURL}/actions/workflows/ci.yml`}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          Image CI
-        </a>
+        <a class="text-xs font-medium text-slate-400 underline-offset-4 transition hover:text-white hover:underline" href={`${repoURL}/actions/workflows/ci.yml`} rel="noopener noreferrer" target="_blank">Image CI workflow</a>
       </div>
 
       <div class="max-w-3xl space-y-5">
         <p class="text-sm font-semibold uppercase tracking-[0.4em] text-cyan-300">Mosquitto Control Manager</p>
-        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">
-          Mosquitto configuration, from your browser.
-        </h1>
+        <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-6xl">Administer an existing Mosquitto broker from the web.</h1>
         <p class="text-lg leading-relaxed text-slate-300 sm:text-xl">
-          MCM aims to let you import, edit, validate, apply and recover the configuration of a Mosquitto
-          broker from a web interface. Mosquitto remains your MQTT broker.
+          MCM is a self-hosted administration interface for an existing Mosquitto broker. Mosquitto remains responsible for MQTT; MCM provides the browser UI and API for managing one broker.
         </p>
-        <p class="text-base leading-relaxed text-cyan-100/90">
-          Alpha today: MQTT users, basic ACLs and observed traffic. Full broker configuration editing is still in development.
-        </p>
+        <p class="text-base leading-relaxed text-cyan-100/90">Alpha: useful configuration controls are available today, while the graphical configuration MVP is still being completed.</p>
       </div>
 
       <div class="flex flex-wrap gap-3">
-        <a
-          class="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-cyan-300"
-          href={repoURL}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          View on GitHub
-          <span aria-hidden="true">→</span>
+        <a class="inline-flex min-h-12 items-center gap-2 rounded-full bg-cyan-400 px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-950 transition hover:bg-cyan-300 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href="#quick-start">
+          Try locally <span aria-hidden="true">↓</span>
         </a>
-        <a
-          class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
-          href={`${repoURL}/blob/main/docs/openapi.yaml`}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          OpenAPI spec
-        </a>
-        <a
-          class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
-          href={`${repoURL}/blob/main/ROADMAP.md`}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          Roadmap
-        </a>
+        <a class="inline-flex min-h-12 items-center rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={repoURL} rel="noopener noreferrer" target="_blank">GitHub</a>
       </div>
     </header>
 
-    <section class="mt-20 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-      <article class="rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What MCM is</p>
-        <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">One broker. A clear administration workflow.</h2>
-        <p class="mt-5 leading-relaxed text-slate-300">
-          The goal is to configure one Mosquitto instance without hand-editing files during routine administration.
-          Guided forms and an advanced editor will cover explicitly supported broker versions, while preserving
-          existing configuration and showing the effect of every change.
-        </p>
-        <p class="mt-3 leading-relaxed text-slate-300">
-          Today, MCM manages MQTT users and basic ACLs through generated files. It also provides operator
-          access control, audit views and traffic inspection. Editing listeners, certificates, bridges and
-          general broker settings remains planned work.
-        </p>
-      </article>
-      <article class="rounded-3xl border border-cyan-300/20 bg-cyan-400/10 p-8 backdrop-blur">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100">Stack</p>
-        <ul class="mt-5 flex flex-wrap gap-2">
-          {stack.map((item) => (
-            <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-cyan-100">
-              {item}
-            </li>
-          ))}
-        </ul>
-        <p class="mt-6 text-sm leading-relaxed text-cyan-50/80">
-          MCM packages its backend and dashboard in one application image. Mosquitto runs separately in the
-          Compose stack. SQLite is the only implemented management database.
-        </p>
-      </article>
-    </section>
-
-    <section class="mt-20 space-y-10">
-      <div class="flex flex-col gap-3">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">What works today</p>
-        <h2 class="text-3xl font-semibold tracking-tight text-white">Available now, with a defined scope.</h2>
-        <p class="max-w-2xl text-slate-300">
-          The configuration-manager MVP is not complete. These capabilities exist today; the roadmap tracks
-          the remaining configuration coverage, activation checks and recovery work.
-        </p>
-      </div>
-
-      <div class="space-y-8">
-        <FeatureSection label="Administration" items={backendFeatures} />
-        <FeatureSection label="Diagnostics" items={frontendFeatures} />
-        <FeatureSection label="Operations" items={opsFeatures} />
-      </div>
-    </section>
-
-    <section class="mt-20 space-y-8" id="roadmap">
+    <section class="mt-20 space-y-8" aria-labelledby="availability-title">
       <div class="max-w-3xl space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Planned configuration workflow</p>
-        <h2 class="text-3xl font-semibold tracking-tight text-white">Import. Review. Apply. Recover.</h2>
-        <p class="leading-relaxed text-slate-300">These features are planned, not available controls in the current alpha. Compatibility will be defined and tested for specific Mosquitto versions.</p>
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Availability</p>
+        <h2 id="availability-title" class="text-3xl font-semibold tracking-tight text-white">What you can change today—and what remains.</h2>
+        <p class="leading-relaxed text-slate-300">The current alpha manages one Mosquitto broker. The available controls are real; coverage and production readiness are not complete.</p>
       </div>
-      <FeatureSection label="Next capabilities" items={plannedFeatures} />
-      <div class="rounded-3xl border border-amber-300/25 bg-amber-400/10 p-6 sm:p-8">
-        <h3 class="text-xl font-semibold text-amber-100">Before relying on production changes</h3>
-        <p class="mt-3 leading-relaxed text-slate-300">Activation verification, recovery after partial writes and production file permissions need work. The existing volume backup and restore recipes also have known limitations. Review the deployment guide before enabling writes on an existing broker.</p>
-        <div class="mt-5 flex flex-wrap gap-5 text-sm font-semibold text-cyan-100">
-          <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Implementation tracker</a>
-          <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/product-scope.md`}>Scope and acceptance criteria</a>
-          <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md#current-limitations`}>Production limitations</a>
-        </div>
+      <div class="grid gap-6 lg:grid-cols-3">
+        <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+          <h3 class="text-lg font-semibold text-white">Available controls</h3>
+          <p class="mt-3 text-sm leading-relaxed text-slate-300">MQTT users and basic ACLs (rules that control which topics each user can access); listeners and broker TLS material; general broker settings; bridges; plugins, including Dynamic Security; and the advanced root <code class="font-mono text-cyan-100">mosquitto.conf</code> editor. Applying changes requires recent MFA.</p>
+        </article>
+        <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+          <h3 class="text-lg font-semibold text-white">Remaining MVP work</h3>
+          <p class="mt-3 text-sm leading-relaxed text-slate-300">Broader native ACL coverage, complete backup and restore (<a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={`${repoURL}/issues/295`}>#295</a>), and an explicit Mosquitto version support matrix remain unfinished. Some configuration directives and included files are not editable through guided controls.</p>
+        </article>
+        <article class="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+          <h3 class="text-lg font-semibold text-white">Known limitations</h3>
+          <p class="mt-3 text-sm leading-relaxed text-slate-300">SQLite is the only implemented management database. Observed traffic is not a full client inventory; diagnostics inspect but do not enforce. Fleets, multi-broker, SSO, high availability, and PostgreSQL are deferred.</p>
+        </article>
       </div>
-      <p class="max-w-3xl text-sm leading-relaxed text-slate-400">Sparkplug and JSON Schema remain optional diagnostics. Multi-broker administration, fleets, SSO and high availability are deferred while the one-broker configuration workflow is completed.</p>
     </section>
 
-    <section class="mt-20 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur">
+    <section class="mt-20 space-y-8" aria-labelledby="evidence-title">
+      <div class="max-w-3xl space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Product evidence</p>
+        <h2 id="evidence-title" class="text-3xl font-semibold tracking-tight text-white">Review, apply, verify.</h2>
+        <p class="leading-relaxed text-slate-300">Real captures from a running MCM local stack. Select any image to inspect its full-size file.</p>
+      </div>
+      <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
+        <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={deployPanel.src} aria-label="Open full-size MCM deploy panel capture">
+          <img class="block h-auto w-full" src={deployPanel.src} width={deployPanel.width} height={deployPanel.height} alt="MCM deploy panel showing configuration preview controls and deployment history with an active_verified entry." loading="lazy" />
+        </a>
+        <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Deploy panel: preview controls and deployment history, including an active_verified entry. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={deployPanel.src}>Open full-size capture</a>.</figcaption>
+      </figure>
+      <div class="grid gap-6 sm:grid-cols-2">
+        <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
+          <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={brokerOverview.src} aria-label="Open full-size broker overview capture">
+            <img class="block h-auto w-full" src={brokerOverview.src} width={brokerOverview.width} height={brokerOverview.height} alt="MCM broker overview showing connection status, observed message rate and top topics." loading="lazy" />
+          </a>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">Broker overview: connection status, observed message rate, and top topics. Observed messages are not a complete client inventory. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={brokerOverview.src}>Full-size</a>.</figcaption>
+        </figure>
+        <figure class="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/55">
+          <a class="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200" href={mqttUsers.src} aria-label="Open full-size MQTT user directory capture">
+            <img class="block h-auto w-full" src={mqttUsers.src} width={mqttUsers.width} height={mqttUsers.height} alt="MCM MQTT user directory showing user status and controls to disable an account or reset its password." loading="lazy" />
+          </a>
+          <figcaption class="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-slate-300">MQTT user directory: user status and controls to disable an account or reset its password. <a class="underline decoration-white/30 underline-offset-4 hover:text-white" href={mqttUsers.src}>Full-size</a>.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="mt-20 space-y-10" aria-labelledby="controls-title">
+      <div class="max-w-3xl space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Workflow</p>
+        <h2 id="controls-title" class="text-3xl font-semibold tracking-tight text-white">From preview to observed state.</h2>
+        <p class="leading-relaxed text-slate-300">The captures above show the product in use; these are the two checks they illustrate.</p>
+      </div>
+      <FeatureSection label="Operator checks" items={workflowFeatures} />
+    </section>
+
+    <section class="mt-20 rounded-3xl border border-amber-300/25 bg-amber-400/10 p-6 sm:p-8" aria-labelledby="production-title">
+      <p class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-200">Caution</p>
+      <h2 id="production-title" class="mt-3 text-2xl font-semibold text-amber-100">Alpha software; review production limits before applying changes.</h2>
+      <p class="mt-3 leading-relaxed text-slate-300">Activation verification and recovery have known gaps, and backup/restore is incomplete. Review deployment requirements before enabling writes on an existing broker.</p>
+      <div class="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-cyan-100">
+        <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Configuration MVP tracker</a>
+        <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/product-scope.md`}>Scope and acceptance criteria</a>
+        <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md#current-limitations`}>Production limitations</a>
+      </div>
+    </section>
+
+    <section id="quick-start" class="mt-20 scroll-mt-8 rounded-3xl border border-white/10 bg-slate-950/55 p-8 backdrop-blur" aria-labelledby="quick-start-title">
       <p class="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">Quick start</p>
-      <h2 class="mt-3 text-3xl font-semibold tracking-tight text-white">Try the current alpha locally.</h2>
-      <p class="mt-4 text-sm leading-relaxed text-slate-300">Requires Git, Docker with Compose, and Task. This starts the development stack; it is not a production setup.</p>
+      <h2 id="quick-start-title" class="mt-3 text-3xl font-semibold tracking-tight text-white">Run the alpha locally.</h2>
+      <p class="mt-4 text-sm leading-relaxed text-slate-300">Requires Git, Docker with Compose, and Task. These commands start the development stack, not a production deployment.</p>
       <ol class="mt-8 space-y-4">
         {quickStart.map((step, idx) => (
           <li class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
-            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan-300/40 bg-cyan-400/10 font-mono text-sm font-semibold text-cyan-100">
-              {String(idx + 1).padStart(2, "0")}
-            </span>
-            <div class="flex w-full flex-col gap-1">
+            <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan-300/40 bg-cyan-400/10 font-mono text-sm font-semibold text-cyan-100">{String(idx + 1).padStart(2, "0")}</span>
+            <div class="flex w-full min-w-0 flex-col gap-1">
               <span class="text-sm uppercase tracking-[0.22em] text-slate-400">{step.label}</span>
-              <code class="block w-full overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-cyan-100">
-                {step.code}
-              </code>
+              <code class="block w-full overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-cyan-100">{step.code}</code>
             </div>
           </li>
         ))}
       </ol>
-      <p class="mt-6 text-sm text-slate-400">
-        For deployment requirements, TLS and known backup/recovery limitations, read
-        <a class="underline-offset-4 hover:underline" href={`${repoURL}/blob/main/docs/production.md`}>docs/production.md</a>.
-      </p>
+      <div class="mt-8 rounded-2xl border border-cyan-300/20 bg-cyan-400/5 p-5">
+        <h3 class="font-semibold text-white">Success checkpoint</h3>
+        <p class="mt-2 text-sm leading-relaxed text-slate-300">You should now be able to reach the dashboard at <code class="font-mono text-cyan-100">localhost:8080</code>, with the broker shown as connected. To sign in, use the bootstrap username <code class="font-mono text-cyan-100">admin</code> unless <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> was set, and the bootstrap password from the first-start logs.</p>
+      </div>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div>
+          <h3 class="font-semibold text-white">No bootstrap credentials in the logs?</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-300">There is no default password. If no generated credentials appear, check whether <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_USERNAME</code> and <code class="font-mono text-cyan-100">MCM_BOOTSTRAP_ADMIN_PASSWORD</code> were set before first start, then use those values. Do not guess or reuse a broker password.</p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-white">Dashboard unreachable?</h3>
+          <p class="mt-2 text-sm leading-relaxed text-slate-300">Run <code class="font-mono text-cyan-100">task ps</code> to check the services, then <code class="font-mono text-cyan-100">task logs</code> for startup errors. Confirm port 8080 is available and run <code class="font-mono text-cyan-100">task ready</code> to check readiness.</p>
+        </div>
+      </div>
+      <p class="mt-6 text-sm leading-relaxed text-slate-400">Stop the stack with <code class="font-mono text-cyan-100">task down</code>. For deployment requirements, broker TLS, and recovery limits, read <a class="underline-offset-4 hover:underline" href={`${repoURL}/blob/main/docs/production.md`}>docs/production.md</a>.</p>
     </section>
+
+    <details class="mt-12 rounded-3xl border border-white/10 bg-white/[0.03] p-6">
+      <summary class="cursor-pointer font-semibold text-slate-200">Technical stack</summary>
+      <ul class="mt-4 flex flex-wrap gap-2">
+        {stack.map((item) => <li class="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 font-mono text-xs text-cyan-100">{item}</li>)}
+      </ul>
+      <p class="mt-4 text-sm leading-relaxed text-slate-400">MCM's application includes the dashboard and management API; Mosquitto runs separately. SQLite is the only implemented management database.</p>
+    </details>
 
     <footer class="mt-20 flex flex-col items-start justify-between gap-4 border-t border-white/10 pt-8 text-sm text-slate-400 sm:flex-row sm:items-center">
       <p>© {new Date().getFullYear()} MCM contributors · Apache 2.0</p>
-      <div class="flex flex-wrap gap-4">
+      <nav aria-label="Project resources" class="flex flex-wrap gap-x-5 gap-y-3">
         <a class="hover:text-white" href={repoURL} rel="noopener noreferrer" target="_blank">GitHub</a>
         <a class="hover:text-white" href={`${repoURL}/issues`} rel="noopener noreferrer" target="_blank">Issues</a>
-        <a class="hover:text-white" href={`${repoURL}/blob/main/docs/openapi.yaml`} rel="noopener noreferrer" target="_blank">API spec</a>
+        <a class="hover:text-white" href={`${repoURL}/blob/main/docs/openapi.yaml`} rel="noopener noreferrer" target="_blank">OpenAPI spec</a>
         <a class="hover:text-white" href={`${repoURL}/blob/main/SECURITY.md`} rel="noopener noreferrer" target="_blank">Security</a>
-      </div>
+      </nav>
     </footer>
   </main>
 </Layout>

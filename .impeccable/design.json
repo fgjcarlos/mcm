@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-02-06T12:00:00Z",
+  "title": "Design System: Mosquitto Control Manager (MCM)",
+  "extensions": {
+    "colorMeta": {
+      "signal-cyan": { "role": "primary", "displayName": "Signal Cyan", "canonical": "#22d3ee", "tonalRamp": ["#cffafe", "#a5f3fc", "#67e8f9", "#22d3ee", "#0891b2", "#0e7490"] },
+      "signal-cyan-bright": { "role": "primary", "displayName": "Signal Cyan Bright", "canonical": "#67e8f9" },
+      "caution-amber": { "role": "tertiary", "displayName": "Caution Amber", "canonical": "#fcd34d", "tonalRamp": ["#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b"] },
+      "console-black": { "role": "neutral", "displayName": "Console Black", "canonical": "#020617" },
+      "console-deep": { "role": "neutral", "displayName": "Console Deep", "canonical": "#0f172a" },
+      "console-horizon": { "role": "neutral", "displayName": "Console Horizon", "canonical": "#1d4e89" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Hero claim, once per page." },
+      "headline": { "displayName": "Headline", "purpose": "Section titles under an eyebrow." },
+      "label": { "displayName": "Eyebrow", "purpose": "Uppercase wide-tracked section markers." },
+      "mono": { "displayName": "Mono", "purpose": "Commands, stack, numerals — the technical layer." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "hover-quiet", "value": "transition: color/border-color/background-color 150ms ease", "purpose": "Hover color and border shifts only; no transforms." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one solid action; pill, cyan, uppercase tracked.",
+      "html": "<a class=\"btn-primary\" href=\"#\">View on GitHub →</a>",
+      "css": ".btn-primary { display:inline-flex; align-items:center; gap:8px; border-radius:9999px; background:#22d3ee; color:#020617; padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:background-color 150ms ease; } .btn-primary:hover { background:#67e8f9; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary links styled as quiet pills.",
+      "html": "<a class=\"btn-ghost\" href=\"#\">OpenAPI spec</a>",
+      "css": ".btn-ghost { display:inline-flex; align-items:center; border-radius:9999px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:#f1f5f9; padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:border-color 150ms ease,color 150ms ease; } .btn-ghost:hover { border-color:rgba(255,255,255,0.4); color:#fff; }"
+    },
+    {
+      "name": "Feature Card",
+      "kind": "card",
+      "refersTo": "card-feature",
+      "description": "Tonal surface card for capability lists.",
+      "html": "<article class=\"card-feature\"><h3>MQTT users and basic ACLs</h3><p>Create, disable and rotate MQTT credentials.</p></article>",
+      "css": ".card-feature { border-radius:1.5rem; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); padding:24px; transition:border-color 150ms ease,background-color 150ms ease; } .card-feature:hover { border-color:rgba(103,232,249,0.3); background:rgba(255,255,255,0.07); }"
+    },
+    {
+      "name": "Stack Chip",
+      "kind": "chip",
+      "refersTo": "chip-stack",
+      "description": "Mono pill for stack/technical names.",
+      "html": "<ul><li class=\"chip-stack\">Go 1.25</li></ul>",
+      "css": ".chip-stack { border-radius:9999px; border:1px solid rgba(255,255,255,0.1); background:rgba(2,6,23,0.4); padding:4px 12px; font-family:'JetBrains Mono Variable',monospace; font-size:0.75rem; color:#cffafe; }"
+    },
+    {
+      "name": "Command Block",
+      "kind": "custom",
+      "refersTo": "code",
+      "description": "Quickstart command line inside a rounded dark block.",
+      "html": "<code class=\"cmd-block\">task up</code>",
+      "css": ".cmd-block { display:block; border-radius:1rem; border:1px solid rgba(255,255,255,0.1); background:rgba(2,6,23,0.7); padding:12px 16px; font-family:'JetBrains Mono Variable',monospace; font-size:0.875rem; color:#cffafe; overflow-x:auto; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Room",
+    "overview": "MCM's site is a dark telemetry console: a calm operations room where the state of one broker is read before anything is changed. Depth comes from tonal layers of translucent surfaces over a deep radial field — no shadows, no drama. Cyan is the signal color; JetBrains Mono carries everything technical; Manrope carries the human layer. The console never sells: it reports.",
+    "keyCharacteristics": [
+      "Dark tonal console with translucent surfaces and zero shadows",
+      "Cyan as the single signal accent; amber strictly for caution",
+      "Uppercase wide-tracked eyebrows label every section like a readout",
+      "Pill geometry for interactive and meta elements; rounded-3xl containers",
+      "Mono for stack, commands and numerals — the technical layer is typographically distinct"
+    ],
+    "rules": [
+      { "name": "The Signal Rule", "body": "Cyan marks signal and action; its largest legal field is a 10% tint. Amber appears only in the caution panel.", "section": "colors" },
+      { "name": "The Technical Layer Rule", "body": "Anything a terminal could say is JetBrains Mono; anything a person says in prose is Manrope.", "section": "typography" }
+    ],
+    "dos": [
+      "Keep every section under a cyan uppercase eyebrow",
+      "State status honestly where it is claimed",
+      "Separate surfaces with hairlines and tonal tints, never shadows"
+    ],
+    "donts": [
+      "Don't add a second accent color",
+      "Don't use gradients other than the fixed body radial field",
+      "Don't animate beyond hover color/border transitions",
+      "Don't nest translucent cards inside translucent cards"
+    ]
+  }
+}
