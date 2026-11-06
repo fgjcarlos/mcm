@@ -4,26 +4,187 @@
   "title": "Design System: Mosquitto Control Manager (MCM)",
   "extensions": {
     "colorMeta": {
-      "signal-cyan": { "role": "primary", "displayName": "Signal Cyan", "canonical": "#22d3ee", "tonalRamp": ["#cffafe", "#a5f3fc", "#67e8f9", "#22d3ee", "#0891b2", "#0e7490"] },
-      "signal-cyan-bright": { "role": "primary", "displayName": "Signal Cyan Bright", "canonical": "#67e8f9" },
-      "caution-amber": { "role": "tertiary", "displayName": "Caution Amber", "canonical": "#fcd34d", "tonalRamp": ["#fef3c7", "#fde68a", "#fcd34d", "#fbbf24", "#f59e0b"] },
-      "console-black": { "role": "neutral", "displayName": "Console Black", "canonical": "#020617" },
-      "console-deep": { "role": "neutral", "displayName": "Console Deep", "canonical": "#0f172a" },
-      "console-horizon": { "role": "neutral", "displayName": "Console Horizon", "canonical": "#1d4e89" }
+      "signal": {
+        "role": "primary",
+        "displayName": "Signal",
+        "canonical": "#00d3f3",
+        "tonalRamp": [
+          "#cefafe",
+          "#a2f4fd",
+          "#53eafd",
+          "#00d3f3",
+          "#06b6d4",
+          "#0e7490"
+        ]
+      },
+      "signal-bright": {
+        "role": "primary",
+        "displayName": "Signal Bright",
+        "canonical": "#53eafd"
+      },
+      "signal-outline": {
+        "role": "primary",
+        "displayName": "Signal Outline",
+        "canonical": "#a2f4fd"
+      },
+      "signal-pale": {
+        "role": "primary",
+        "displayName": "Signal Pale",
+        "canonical": "#cefafe"
+      },
+      "caution": {
+        "role": "tertiary",
+        "displayName": "Caution",
+        "canonical": "#ffd230",
+        "tonalRamp": [
+          "#fef3c6",
+          "#fee685",
+          "#ffd230",
+          "#ffb900",
+          "#f59e0b"
+        ]
+      },
+      "caution-soft": {
+        "role": "tertiary",
+        "displayName": "Caution Soft",
+        "canonical": "#fee685"
+      },
+      "caution-bright": {
+        "role": "tertiary",
+        "displayName": "Caution Bright",
+        "canonical": "#fef3c6"
+      },
+      "caution-panel": {
+        "role": "tertiary",
+        "displayName": "Caution Panel",
+        "canonical": "#ffb900"
+      },
+      "floor": {
+        "role": "neutral",
+        "displayName": "Floor",
+        "canonical": "#020617"
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field",
+        "canonical": "#0f172a"
+      },
+      "horizon": {
+        "role": "neutral",
+        "displayName": "Horizon",
+        "canonical": "#1d4e89"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#f1f5f9"
+      },
+      "ink-strong": {
+        "role": "neutral",
+        "displayName": "Ink Strong",
+        "canonical": "#e2e8f0"
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Ink Soft",
+        "canonical": "#cad5e2"
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "#90a1b9"
+      },
+      "ink-bright": {
+        "role": "neutral",
+        "displayName": "Ink Bright",
+        "canonical": "#ffffff"
+      },
+      "surface": {
+        "role": "surface",
+        "displayName": "Surface",
+        "canonical": "rgba(255,255,255,0.04)"
+      },
+      "surface-strong": {
+        "role": "surface",
+        "displayName": "Surface Strong",
+        "canonical": "rgba(255,255,255,0.07)"
+      },
+      "surface-faint": {
+        "role": "surface",
+        "displayName": "Surface Faint",
+        "canonical": "rgba(255,255,255,0.03)"
+      },
+      "surface-panel": {
+        "role": "surface",
+        "displayName": "Surface Panel",
+        "canonical": "rgba(2,6,23,0.55)"
+      },
+      "surface-code": {
+        "role": "surface",
+        "displayName": "Surface Code",
+        "canonical": "rgba(2,6,23,0.7)"
+      },
+      "surface-chip": {
+        "role": "surface",
+        "displayName": "Surface Chip",
+        "canonical": "rgba(2,6,23,0.4)"
+      },
+      "hairline": {
+        "role": "border",
+        "displayName": "Hairline",
+        "canonical": "rgba(255,255,255,0.10)"
+      },
+      "hairline-strong": {
+        "role": "border",
+        "displayName": "Hairline Strong",
+        "canonical": "rgba(255,255,255,0.15)"
+      },
+      "hairline-bright": {
+        "role": "border",
+        "displayName": "Hairline Bright",
+        "canonical": "rgba(255,255,255,0.40)"
+      },
+      "hairline-soft": {
+        "role": "border",
+        "displayName": "Hairline Soft",
+        "canonical": "rgba(255,255,255,0.30)"
+      }
     },
     "typographyMeta": {
-      "display": { "displayName": "Display", "purpose": "Hero claim, once per page." },
-      "headline": { "displayName": "Headline", "purpose": "Section titles under an eyebrow." },
-      "label": { "displayName": "Eyebrow", "purpose": "Uppercase wide-tracked section markers." },
-      "mono": { "displayName": "Mono", "purpose": "Commands, stack, numerals — the technical layer." }
+      "display": {
+        "displayName": "Display",
+        "purpose": "Hero claim, once per page."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section titles under an eyebrow."
+      },
+      "label": {
+        "displayName": "Eyebrow",
+        "purpose": "Uppercase wide-tracked section markers."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Commands, stack, numerals \u2014 the technical layer."
+      }
     },
     "shadows": [],
     "motion": [
-      { "name": "hover-quiet", "value": "transition: color/border-color/background-color 150ms ease", "purpose": "Hover color and border shifts only; no transforms." }
+      {
+        "name": "hover-quiet",
+        "value": "transition: color/border-color/background-color 150ms ease",
+        "purpose": "Hover color and border shifts only; no transforms."
+      }
     ],
     "breakpoints": [
-      { "name": "sm", "value": "640px" },
-      { "name": "lg", "value": "1024px" }
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
     ]
   },
   "components": [
@@ -32,8 +193,8 @@
       "kind": "button",
       "refersTo": "button-primary",
       "description": "The one solid action; pill, cyan, uppercase tracked.",
-      "html": "<a class=\"btn-primary\" href=\"#\">View on GitHub →</a>",
-      "css": ".btn-primary { display:inline-flex; align-items:center; gap:8px; border-radius:9999px; background:#22d3ee; color:#020617; padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:background-color 150ms ease; } .btn-primary:hover { background:#67e8f9; }"
+      "html": "<a class=\"btn-primary\" href=\"#\">View on GitHub \u2192</a>",
+      "css": ".btn-primary { display:inline-flex; align-items:center; gap:8px; border-radius:9999px; background:var(--color-signal); color:var(--color-floor); padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:background-color 150ms ease; } .btn-primary:hover { background:var(--color-signal-bright); }"
     },
     {
       "name": "Ghost Button",
@@ -41,7 +202,7 @@
       "refersTo": "button-ghost",
       "description": "Secondary links styled as quiet pills.",
       "html": "<a class=\"btn-ghost\" href=\"#\">OpenAPI spec</a>",
-      "css": ".btn-ghost { display:inline-flex; align-items:center; border-radius:9999px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04); color:#f1f5f9; padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:border-color 150ms ease,color 150ms ease; } .btn-ghost:hover { border-color:rgba(255,255,255,0.4); color:#fff; }"
+      "css": ".btn-ghost { display:inline-flex; align-items:center; border-radius:9999px; border:1px solid var(--color-hairline-strong); background:var(--color-surface); color:var(--color-ink); padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:border-color 150ms ease,color 150ms ease; } .btn-ghost:hover { border-color:var(--color-hairline-bright); color:var(--color-ink-bright); }"
     },
     {
       "name": "Feature Card",
@@ -49,7 +210,7 @@
       "refersTo": "card-feature",
       "description": "Tonal surface card for capability lists.",
       "html": "<article class=\"card-feature\"><h3>MQTT users and basic ACLs</h3><p>Create, disable and rotate MQTT credentials.</p></article>",
-      "css": ".card-feature { border-radius:1.5rem; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); padding:24px; transition:border-color 150ms ease,background-color 150ms ease; } .card-feature:hover { border-color:rgba(103,232,249,0.3); background:rgba(255,255,255,0.07); }"
+      "css": ".card-feature { border-radius:1.5rem; border:1px solid var(--color-hairline); background:var(--color-surface); padding:24px; transition:border-color 150ms ease,background-color 150ms ease; } .card-feature:hover { border-color:color-mix(in srgb,var(--color-signal-bright) 30%,transparent); background:var(--color-surface-strong); }"
     },
     {
       "name": "Stack Chip",
@@ -57,7 +218,7 @@
       "refersTo": "chip-stack",
       "description": "Mono pill for stack/technical names.",
       "html": "<ul><li class=\"chip-stack\">Go 1.25</li></ul>",
-      "css": ".chip-stack { border-radius:9999px; border:1px solid rgba(255,255,255,0.1); background:rgba(2,6,23,0.4); padding:4px 12px; font-family:'JetBrains Mono Variable',monospace; font-size:0.75rem; color:#cffafe; }"
+      "css": ".chip-stack { border-radius:9999px; border:1px solid var(--color-hairline); background:var(--color-surface-chip); padding:4px 12px; font-family:'JetBrains Mono Variable',monospace; font-size:0.75rem; color:var(--color-signal-pale); }"
     },
     {
       "name": "Command Block",
@@ -65,22 +226,30 @@
       "refersTo": "code",
       "description": "Quickstart command line inside a rounded dark block.",
       "html": "<code class=\"cmd-block\">task up</code>",
-      "css": ".cmd-block { display:block; border-radius:1rem; border:1px solid rgba(255,255,255,0.1); background:rgba(2,6,23,0.7); padding:12px 16px; font-family:'JetBrains Mono Variable',monospace; font-size:0.875rem; color:#cffafe; overflow-x:auto; }"
+      "css": ".cmd-block { display:block; border-radius:1rem; border:1px solid var(--color-hairline); background:var(--color-surface-code); padding:12px 16px; font-family:'JetBrains Mono Variable',monospace; font-size:0.875rem; color:var(--color-signal-pale); overflow-x:auto; }"
     }
   ],
   "narrative": {
     "northStar": "The Control Room",
-    "overview": "MCM's site is a dark telemetry console: a calm operations room where the state of one broker is read before anything is changed. Depth comes from tonal layers of translucent surfaces over a deep radial field — no shadows, no drama. Cyan is the signal color; JetBrains Mono carries everything technical; Manrope carries the human layer. The console never sells: it reports.",
+    "overview": "MCM's site is a dark telemetry console: a calm operations room where the state of one broker is read before anything is changed. Depth comes from tonal layers of translucent surfaces over a deep radial field \u2014 no shadows, no drama. Cyan is the signal color; JetBrains Mono carries everything technical; Manrope carries the human layer. The console never sells: it reports.",
     "keyCharacteristics": [
       "Dark tonal console with translucent surfaces and zero shadows",
       "Cyan as the single signal accent; amber strictly for caution",
       "Uppercase wide-tracked eyebrows label every section like a readout",
       "Pill geometry for interactive and meta elements; rounded-3xl containers",
-      "Mono for stack, commands and numerals — the technical layer is typographically distinct"
+      "Mono for stack, commands and numerals \u2014 the technical layer is typographically distinct"
     ],
     "rules": [
-      { "name": "The Signal Rule", "body": "Cyan marks signal and action; its largest legal field is a 10% tint. Amber appears only in the caution panel.", "section": "colors" },
-      { "name": "The Technical Layer Rule", "body": "Anything a terminal could say is JetBrains Mono; anything a person says in prose is Manrope.", "section": "typography" }
+      {
+        "name": "The Signal Rule",
+        "body": "Cyan marks signal and action; its largest legal field is a 10% tint. Amber appears only in the caution panel.",
+        "section": "colors"
+      },
+      {
+        "name": "The Technical Layer Rule",
+        "body": "Anything a terminal could say is JetBrains Mono; anything a person says in prose is Manrope.",
+        "section": "typography"
+      }
     ],
     "dos": [
       "Keep every section under a cyan uppercase eyebrow",
