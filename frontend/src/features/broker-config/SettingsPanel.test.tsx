@@ -88,6 +88,21 @@ const maxConnectionsField = {
   present: false,
 }
 
+const maxPacketSizeField = {
+  directive: 'max_packet_size',
+  section: 'queues',
+  type: 'integer',
+  unit: 'bytes',
+  min: 20,
+  max: 4294967295,
+  default: '0',
+  multiplicity: 'once',
+  reload_kind: 'reload',
+  scope: 'global',
+  description: 'Largest MQTT packet the broker accepts.',
+  present: false,
+}
+
 const settingsResponse = {
   path: '/mosquitto/config/mosquitto.conf',
   hash: 'abc123',
@@ -107,6 +122,11 @@ const settingsResponse = {
       title: 'Persistence and autosave',
       hint: 'Where the broker keeps its state.',
       fields: [persistenceField, autosaveField],
+    },
+    {
+      id: 'queues',
+      title: 'Queue and message limits',
+      fields: [maxPacketSizeField],
     },
     {
       id: 'sessions',
@@ -183,6 +203,42 @@ describe('SettingsPanel', () => {
     expect(autosave.max).toBe('2147483647')
   })
 
+  it('preserves an integer broker default that is already within bounds', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Connections and sessions')
+
+    await user.click(screen.getByLabelText('Set max_connections'))
+    const input = screen.getByLabelText('max_connections value') as HTMLInputElement
+    expect(input).toHaveValue(-1)
+    expect(input.min).toBe('-1')
+  })
+
+  it.each([
+    { name: 'default below min', defaultValue: '0', min: 20, max: 100, expected: 20 },
+    { name: 'default above max', defaultValue: '101', min: 20, max: 100, expected: 20 },
+    { name: 'default at min', defaultValue: '20', min: 20, max: 100, expected: 20 },
+    { name: 'default at max', defaultValue: '100', min: 20, max: 100, expected: 100 },
+    { name: 'zero default', defaultValue: '0', min: 0, max: 100, expected: 0 },
+    { name: 'missing default with max only', defaultValue: undefined, min: undefined, max: 100, expected: 100 },
+  ])('seeds a valid integer for $name', async ({ defaultValue, min, max, expected }) => {
+    const user = userEvent.setup()
+    renderPanel({
+      'GET /api/v1/broker/settings': () => jsonResponse({
+        ...settingsResponse,
+        sections: settingsResponse.sections.map((section) => section.id === 'queues'
+          ? { ...section, fields: [{ ...maxPacketSizeField, default: defaultValue, min, max } ] }
+          : section),
+      }),
+    })
+    await screen.findByText('Queue and message limits')
+
+    await user.click(screen.getByLabelText('Set max_packet_size'))
+    const input = screen.getByLabelText('max_packet_size value') as HTMLInputElement
+    expect(input).toHaveValue(expected)
+    expect(input.validity.valid).toBe(true)
+  })
+
   it('sends the edited document to the preview endpoint', async () => {
     const bodies: string[] = []
     const user = userEvent.setup()
@@ -254,6 +310,105 @@ describe('SettingsPanel', () => {
     expect(applyButton).toBeDisabled()
     await user.click(screen.getByLabelText('Confirm broker restart'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled())
+  })
+
+  it('adopts a reload-only settings revision when applying it', async () => {
+    const applyRequests: Array<Record<string, unknown>> = []
+    const user = userEvent.setup()
+    renderPanel({
+      'POST /api/v1/broker/config/apply': (init) => {
+        applyRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ status: 'active_verified' })
+      },
+    })
+    await screen.findByText('Persistence and autosave')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => expect(applyRequests).toHaveLength(1))
+    expect(applyRequests[0]).toEqual({ revision_id: 'revision-123', force: false, adopt: true })
+    expect(await screen.findByText('Settings applied. The broker was signalled to reload.')).toBeInTheDocument()
+  })
+
+  it('reports a restart after applying a restart-required settings revision', async () => {
+    const applyRequests: Array<Record<string, unknown>> = []
+    const user = userEvent.setup()
+    renderPanel({
+      'POST /api/v1/broker/settings/preview': () => jsonResponse({ ...preview, reload_kind: 'restart', requires_restart: true }),
+      'POST /api/v1/broker/config/apply': (init) => {
+        applyRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return jsonResponse({ status: 'active_verified' })
+      },
+    })
+    await screen.findByText('Connections and sessions')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+    await user.click(screen.getByLabelText('Confirm broker restart'))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    expect(await screen.findByText('Settings applied. The broker was restarted.')).toBeInTheDocument()
+    expect(applyRequests).toEqual([{ revision_id: 'revision-123', force: true, adopt: true }])
+  })
+
+  it.each([
+    {
+      status: 'rolled_back',
+      role: 'alert',
+      message: 'Settings did not activate; the previous configuration was restored.',
+    },
+    {
+      status: 'pending_activation',
+      role: 'status',
+      message: 'Settings were written, but broker activation is pending.',
+    },
+    {
+      status: undefined,
+      role: 'status',
+      message: 'Apply completed, but broker activation status is unknown.',
+    },
+  ] as const)('reports $status without claiming the broker restarted', async ({ status, role, message }) => {
+    const user = userEvent.setup()
+    renderPanel({
+      'POST /api/v1/broker/settings/preview': () => jsonResponse({ ...preview, reload_kind: 'restart', requires_restart: true }),
+      'POST /api/v1/broker/config/apply': () => jsonResponse({ status }),
+    })
+    await screen.findByText('Connections and sessions')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+    await user.click(screen.getByLabelText('Confirm broker restart'))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    expect(await screen.findByRole(role)).toHaveTextContent(message)
+    expect(screen.queryByText('Settings applied. The broker was restarted.')).not.toBeInTheDocument()
+  })
+
+  it('reports restart success before the settings refresh resolves', async () => {
+    let settingsGets = 0
+    let resolveRefresh: ((response: Response) => void) | undefined
+    const user = userEvent.setup()
+    renderPanel({
+      'GET /api/v1/broker/settings': () => {
+        settingsGets++
+        if (settingsGets === 1) return jsonResponse(settingsResponse)
+        return new Promise<Response>((resolve) => { resolveRefresh = resolve })
+      },
+      'POST /api/v1/broker/settings/preview': () => jsonResponse({ ...preview, reload_kind: 'restart', requires_restart: true }),
+      'POST /api/v1/broker/config/apply': () => jsonResponse({ status: 'active_verified' }),
+    })
+    await screen.findByText('Connections and sessions')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+    await user.click(screen.getByLabelText('Confirm broker restart'))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(settingsGets).toBe(2))
+
+    try {
+      expect(screen.getByRole('status')).toHaveTextContent('Settings applied. The broker was restarted.')
+      expect(screen.queryByText('Settings applied. The broker was signalled to reload.')).not.toBeInTheDocument()
+    } finally {
+      resolveRefresh?.(jsonResponse(settingsResponse))
+    }
   })
 
   it('surfaces the issues the server rejects the document with', async () => {

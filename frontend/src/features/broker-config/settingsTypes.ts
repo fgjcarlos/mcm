@@ -70,3 +70,7 @@ export type SettingsApplyRequest = {
   force?: boolean
   adopt?: boolean
 }
+
+export type SettingsApplyResult = {
+  status: string
+}
