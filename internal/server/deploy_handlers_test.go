@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -502,4 +505,54 @@ func (l *lockedDeployService) Apply(_ context.Context, _, _ string) (storage.Dep
 
 func (l *lockedDeployService) List(_ context.Context, _, _ int) ([]storage.Deployment, error) {
 	return nil, nil
+}
+
+// shadowedMQTTStore serves a stored MQTT user that shares the configured
+// broker service username.
+type shadowedMQTTStore struct {
+	users []storage.MQTTUser
+}
+
+func (f *shadowedMQTTStore) ListMQTTUsers(_ context.Context) ([]storage.MQTTUser, error) {
+	return f.users, nil
+}
+
+// TestHandleDeployPreviewNamesShadowedServiceAccount pins the issue #297
+// remedy: a preview blocked by a stored user shadowing the service account
+// must answer 409 naming that user and the one action the protection rules
+// allow — renaming it — instead of an opaque 500 duplicate-entry error.
+func TestHandleDeployPreviewNamesShadowedServiceAccount(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	dir := t.TempDir()
+	for _, name := range []string{"acl", "passwd"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := deploy.NewService(
+		&fakeDeployApplier{},
+		&fakeDeployACLStore{},
+		&shadowedMQTTStore{users: []storage.MQTTUser{{Username: "svc-mcm", PasswordHash: "$7$101$c2FsdA$a2V5"}}},
+		newFakeDeployStore(),
+		diagnostics.VerifierFunc(okDeployVerifier),
+		&fakeDeployPasswordLookup{},
+		config.MosquittoConfig{Host: "localhost", Port: 1883, Username: "svc-mcm", Password: "service-password"},
+		config.DeployConfig{Mode: "file", ACLPath: filepath.Join(dir, "acl"), PasswdPath: filepath.Join(dir, "passwd")},
+		func(_ context.Context, _, _, _, _, _ string, _ []byte) {},
+	)
+	app.deploySvc = svc
+	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+	token := loginAs(t, app, "admin", "secret")
+
+	rec := httptest.NewRecorder()
+	req := authedRequest(http.MethodPost, "/api/v1/deployments/preview", "", token)
+	app.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "svc-mcm") || !strings.Contains(body, "rename") {
+		t.Fatalf("body must name the shadowing user and the remedy: %s", body)
+	}
 }
