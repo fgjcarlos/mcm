@@ -75,15 +75,23 @@ func hasInlineCredentials(parsed *conf.File) bool {
 // checkBrokerConfigIncludes refuses a revision whose include tree no longer
 // matches the snapshot the preview was taken against.
 func (s *Service) checkBrokerConfigIncludes(parsed *conf.File, serialized string) error {
+	_, err := s.resolveBrokerConfigIncludes(parsed, serialized)
+	return err
+}
+
+// resolveBrokerConfigIncludes verifies the snapshot and returns the same
+// resolved tree for validation, so preview and apply judge directives in
+// included files consistently.
+func (s *Service) resolveBrokerConfigIncludes(parsed *conf.File, serialized string) (*conf.File, error) {
 	var expected conf.IncludeSnapshot
 	if err := json.Unmarshal([]byte(serialized), &expected); err != nil {
-		return ErrRevisionMismatch
+		return nil, ErrRevisionMismatch
 	}
-	_, actual, err := conf.NewIncludeResolver(filepath.Dir(s.confPath)).Resolve(parsed)
+	resolved, actual, err := conf.NewIncludeResolver(filepath.Dir(s.confPath)).Resolve(parsed)
 	if err != nil || !reflect.DeepEqual(expected, actual) {
-		return ErrRevisionMismatch
+		return nil, ErrRevisionMismatch
 	}
-	return nil
+	return resolved, nil
 }
 
 // verificationPrerequisites checks everything an activation probe needs

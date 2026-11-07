@@ -439,9 +439,10 @@ multiplicity: once
 reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
+deps: [keyfile]
 description: |
-  Path to the broker PEM certificate. Loaded at start-up — changing it
-  requires a broker restart.
+  Path to the broker PEM certificate. Requires keyfile. Loaded at
+  start-up — changing it requires a broker restart.
 ---
 name: keyfile
 type: path
@@ -450,9 +451,10 @@ multiplicity: once
 reload_kind: restart
 since_version: "1.0"
 listener_since_version: "2.0"
+deps: [certfile]
 description: |
-  Path to the broker PEM private key. Loaded at start-up — changing it
-  requires a broker restart.
+  Path to the broker PEM private key. Requires certfile. Loaded at
+  start-up — changing it requires a broker restart.
 ---
 name: require_certificate
 type: boolean

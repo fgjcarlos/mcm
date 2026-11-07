@@ -3,7 +3,6 @@ package conf
 import (
 	"bytes"
 	"fmt"
-	"strings"
 )
 
 // Render writes the file back to its byte form. The round-trip is
@@ -24,7 +23,7 @@ import (
 // losslessly and the catalog never rewrites inner items.
 func (f *File) Render() ([]byte, error) {
 	var buf bytes.Buffer
-	for _, it := range f.Items {
+	for i, it := range f.Items {
 		switch it.Kind {
 		case ItemComment:
 			if _, err := buf.WriteString(it.Text); err != nil {
@@ -42,8 +41,7 @@ func (f *File) Render() ([]byte, error) {
 
 		case ItemBlockOpen:
 			// Header line exactly as parsed.
-			buf.WriteString(strings.TrimRight(it.Text, "\n"))
-			buf.WriteByte('\n')
+			buf.WriteString(it.Text)
 
 		case ItemBlockClose:
 			// Close brace: indentation + "}" + "\n".
@@ -51,10 +49,25 @@ func (f *File) Render() ([]byte, error) {
 				for i := 0; i < it.Indent; i++ {
 					buf.WriteByte(' ')
 				}
-				buf.WriteString("}\n")
+				buf.WriteByte('}')
+				buf.WriteString(itemTerminator(it))
 			} else {
-				buf.WriteString(strings.TrimRight(it.Text, "\n"))
-				buf.WriteByte('\n')
+				buf.WriteString(it.Text)
+			}
+		}
+		// If another item follows a source line that had no terminator,
+		// separate the lines so appended directives remain distinct. The
+		// final source line still round-trips without a newline when it is
+		// the last item.
+		if i < len(f.Items)-1 && buf.Len() > 0 {
+			written := buf.Bytes()
+			last := written[len(written)-1]
+			if last != '\n' && last != '\r' {
+				terminator := it.Terminator
+				if terminator == "" {
+					terminator = "\n"
+				}
+				buf.WriteString(terminator)
 			}
 		}
 	}
@@ -67,7 +80,7 @@ func (f *File) Render() ([]byte, error) {
 // rebuild the line from Key + Values.
 func renderDirectiveLine(it Item) ([]byte, error) {
 	if it.Text != "" {
-		return []byte(strings.TrimRight(it.Text, "\n") + "\n"), nil
+		return []byte(it.Text), nil
 	}
 	if it.Key == "" {
 		return nil, fmt.Errorf("render: directive with empty key at line %d", it.Line)
@@ -81,6 +94,16 @@ func renderDirectiveLine(it Item) ([]byte, error) {
 		buf.WriteByte(' ')
 		buf.WriteString(v)
 	}
-	buf.WriteByte('\n')
+	buf.WriteString(itemTerminator(it))
 	return buf.Bytes(), nil
+}
+
+func itemTerminator(it Item) string {
+	if it.Terminator != "" {
+		return it.Terminator
+	}
+	if it.Line < 0 {
+		return "\n"
+	}
+	return ""
 }

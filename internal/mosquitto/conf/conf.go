@@ -45,12 +45,13 @@ const (
 // the block (e.g. "listener") and Indent is the indentation depth used to
 // match the closing brace. Values is empty.
 type Item struct {
-	Kind   ItemKind
-	Key    string
-	Values []string
-	Text   string
-	Line   int // 1-indexed source line; -1 when synthesised
-	Indent int // column at which the token begins (0 = no leading space)
+	Kind       ItemKind
+	Key        string
+	Values     []string
+	Text       string
+	Line       int    // 1-indexed source line; -1 when synthesised
+	Indent     int    // column at which the token begins (0 = no leading space)
+	Terminator string // original line ending; empty means the source line had no terminator
 }
 
 // File is an ordered list of Items plus the source path. The order is the
@@ -94,9 +95,9 @@ type Block struct {
 // validation — callers that want validation should run Validate(file, cat)
 // explicitly. The path argument is informational (stored on File.Path).
 func Parse(r io.Reader, path string) (*File, error) {
-	br := bufio.NewReader(r)
-	scanner := bufio.NewScanner(br)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Split(scanConfLines)
 	f := &File{Path: path}
 	var lineNo int
 	var blockDepth int
@@ -104,10 +105,15 @@ func Parse(r io.Reader, path string) (*File, error) {
 	for scanner.Scan() {
 		lineNo++
 		raw := scanner.Text()
-		// Drop the trailing \r that some Windows-broken-but-not-Windows
-		// mount layers add — the parser does not care about line
-		// endings, only about content.
-		raw = strings.TrimRight(raw, "\r")
+		terminator := ""
+		if strings.HasSuffix(raw, "\n") {
+			raw = strings.TrimSuffix(raw, "\n")
+			terminator = "\n"
+			if strings.HasSuffix(raw, "\r") {
+				raw = strings.TrimSuffix(raw, "\r")
+				terminator = "\r\n"
+			}
+		}
 
 		trimmed := strings.TrimSpace(raw)
 		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
@@ -116,24 +122,24 @@ func Parse(r io.Reader, path string) (*File, error) {
 		case trimmed == "":
 			// Preserve blank lines as comments so the round-trip is
 			// exact. They never carry semantic meaning.
-			f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + "\n", Line: lineNo, Indent: indent})
+			f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + terminator, Line: lineNo, Indent: indent, Terminator: terminator})
 
 		case strings.HasPrefix(trimmed, "#"):
 			// Comment line, preserved verbatim.
-			f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + "\n", Line: lineNo, Indent: indent})
+			f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + terminator, Line: lineNo, Indent: indent, Terminator: terminator})
 
 		case inBlock:
 			if isCloseBrace(trimmed) {
-				f.Items = append(f.Items, Item{Kind: ItemBlockClose, Text: raw + "\n", Line: lineNo, Indent: indent})
+				f.Items = append(f.Items, Item{Kind: ItemBlockClose, Text: raw + terminator, Line: lineNo, Indent: indent, Terminator: terminator})
 				inBlock = false
 				blockDepth--
 				continue
 			}
-			if it, ok := parseDirectiveLine(raw, lineNo, indent, true); ok {
+			if it, ok := parseDirectiveLine(raw, lineNo, indent, terminator, true); ok {
 				f.Items = append(f.Items, it)
 			} else {
 				// Unknown / unparseable inside block — treat as comment so we don't drop data.
-				f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + "\n", Line: lineNo, Indent: indent})
+				f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + terminator, Line: lineNo, Indent: indent, Terminator: terminator})
 			}
 
 		default:
@@ -146,17 +152,17 @@ func Parse(r io.Reader, path string) (*File, error) {
 				// Block header — record as ItemBlockOpen + an empty
 				// directive-style item holding the header args. The
 				// body items follow.
-				it, _ := parseDirectiveLine(raw, lineNo, indent, false)
+				it, _ := parseDirectiveLine(raw, lineNo, indent, terminator, false)
 				it.Kind = ItemBlockOpen
 				f.Items = append(f.Items, it)
 				inBlock = true
 				blockDepth++
 				continue
 			}
-			if it, ok := parseDirectiveLine(raw, lineNo, indent, false); ok {
+			if it, ok := parseDirectiveLine(raw, lineNo, indent, terminator, false); ok {
 				f.Items = append(f.Items, it)
 			} else {
-				f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + "\n", Line: lineNo, Indent: indent})
+				f.Items = append(f.Items, Item{Kind: ItemComment, Text: raw + terminator, Line: lineNo, Indent: indent, Terminator: terminator})
 			}
 		}
 	}
@@ -167,6 +173,21 @@ func Parse(r io.Reader, path string) (*File, error) {
 		return nil, fmt.Errorf("conf %q: unclosed block at end of file (depth=%d)", path, blockDepth)
 	}
 	return f, nil
+}
+
+// scanConfLines splits at LF while leaving the delimiter in the token. The
+// caller separates CRLF from content after scanning, preserving exact bytes
+// without relaxing Scanner's configured maximum line size.
+func scanConfLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	for i, b := range data {
+		if b == '\n' {
+			return i + 1, data[:i+1], nil
+		}
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 // ParseString is a convenience wrapper around Parse.
@@ -218,7 +239,7 @@ func isCloseBrace(trimmed string) bool {
 // parseDirectiveLine splits a directive line into tokens and decides whether
 // the line is a directive at all (returns ok=false for things like stray
 // continuation lines that the parser cannot classify).
-func parseDirectiveLine(raw string, lineNo, indent int, allowEmpty bool) (Item, bool) {
+func parseDirectiveLine(raw string, lineNo, indent int, terminator string, allowEmpty bool) (Item, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return Item{}, allowEmpty
@@ -236,12 +257,13 @@ func parseDirectiveLine(raw string, lineNo, indent int, allowEmpty bool) (Item, 
 	rest := make([]string, len(values)-1)
 	copy(rest, values[1:])
 	return Item{
-		Kind:   ItemDirective,
-		Key:    key,
-		Values: rest,
-		Text:   raw + "\n",
-		Line:   lineNo,
-		Indent: indent,
+		Kind:       ItemDirective,
+		Key:        key,
+		Values:     rest,
+		Text:       raw + terminator,
+		Line:       lineNo,
+		Indent:     indent,
+		Terminator: terminator,
 	}, true
 }
 
