@@ -17,6 +17,47 @@ const reloadKindTone: Record<string, string> = {
   both: 'bg-violet-400/10 text-violet-200',
 }
 
+function applyNotice(status: string | undefined) {
+  switch (status) {
+    case 'active_verified':
+      return {
+        role: 'status' as const,
+        className: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100',
+        message: 'Bridges applied. The broker confirmed the bridge configuration as active.',
+      }
+    case 'pending_activation':
+      return {
+        role: 'status' as const,
+        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
+        message: 'Bridge configuration was applied, but broker activation could not be verified.',
+      }
+    case 'rolled_back':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'The bridge change did not activate; the previous configuration was restored.',
+      }
+    case 'rollback_failed':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'Bridge activation and rollback failed; manual recovery is required.',
+      }
+    case 'failed':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'Bridge apply failed; check the broker before continuing.',
+      }
+    default:
+      return {
+        role: 'status' as const,
+        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
+        message: 'Apply completed, but broker activation status is unknown.',
+      }
+  }
+}
+
 // newBridge is the bridge an operator starts from: a named connection to a
 // remote broker with a single bidirectional topic rule.
 function newBridge(index: number): Bridge {
@@ -46,6 +87,7 @@ export default function BridgesPanel({
 }) {
   const { bridges, preview, previewError, applyError, issues, isLoading, isPreviewing, isApplying, applied, appliedStatus, requestPreview, apply } =
     useBridges({ token, onLogout })
+  const appliedNotice = applyNotice(appliedStatus)
   const [draft, setDraft] = useState<Bridge[] | undefined>()
   const [previewedBridges, setPreviewedBridges] = useState<Bridge[] | null>(null)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -179,15 +221,8 @@ export default function BridgesPanel({
           </div>
         ) : null}
         {applied ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100" role="status">
-            {appliedStatus === 'pending_activation' ? (
-              <p>
-                The bridge is written to the configuration, but the broker was only reloaded. Restart it to activate the
-                bridge: Mosquitto reads a bridge at start-up.
-              </p>
-            ) : (
-              <p>Bridges applied. The broker was restarted, so the bridge is active.</p>
-            )}
+          <div className={`mt-5 rounded-2xl border p-5 text-sm ${appliedNotice.className}`} role={appliedNotice.role}>
+            {appliedNotice.message}
           </div>
         ) : null}
         {blockingIssues.length > 0 ? (

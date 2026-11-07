@@ -160,6 +160,52 @@ describe('BridgesPanel', () => {
     expect(await screen.findByText(/Bridges applied/)).toBeInTheDocument()
   })
 
+  it.each([
+    {
+      status: 'pending_activation',
+      role: 'status',
+      message: 'Bridge configuration was applied, but broker activation could not be verified.',
+    },
+    {
+      status: 'rolled_back',
+      role: 'alert',
+      message: 'The bridge change did not activate; the previous configuration was restored.',
+    },
+    {
+      status: 'rollback_failed',
+      role: 'alert',
+      message: 'Bridge activation and rollback failed; manual recovery is required.',
+    },
+    {
+      status: undefined,
+      role: 'status',
+      message: 'Apply completed, but broker activation status is unknown.',
+    },
+  ] as const)('reports $status without claiming the bridge is active', async ({ status, role, message }) => {
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/bridges': () => jsonResponse({ bridges: [storedBridge] }),
+      'POST /api/v1/broker/bridges/preview': () =>
+        jsonResponse({
+          revision_id: 'revision-1',
+          kind: 'bridges',
+          reload_kind: 'restart',
+          requires_restart: true,
+          conf_diff: '+connection upstream',
+        }),
+      'POST /api/v1/broker/bridges/apply': () => jsonResponse({ id: 7, status, kind: 'bridges' }),
+    }) as unknown as typeof fetch
+
+    render(<BridgesPanel token="token" onLogout={() => {}} role="admin" />)
+    await waitFor(() => expect(screen.getByLabelText('Address upstream')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText(/revision revision-1/)
+    await userEvent.click(screen.getByLabelText('Confirm broker restart'))
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+    expect(await screen.findByRole(role)).toHaveTextContent(message)
+    expect(screen.queryByText(/Bridges applied/)).not.toBeInTheDocument()
+  })
+
   it('adds a bridge to the draft', async () => {
     globalThis.fetch = installFetchMock({
       'GET /api/v1/broker/bridges': () => jsonResponse({ bridges: [] }),
