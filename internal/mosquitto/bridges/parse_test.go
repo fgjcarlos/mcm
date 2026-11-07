@@ -316,6 +316,31 @@ func TestApplyRoundTripsThroughParse(t *testing.T) {
 	}
 }
 
+func TestApplyRoundTripsRemotePrefixWithoutLocalPrefix(t *testing.T) {
+	doc := Document{Bridges: []Bridge{{
+		Name:    "upstream",
+		Address: "broker.example.org:1883",
+		Topics: []TopicRule{{
+			Topic:        "both/#",
+			Direction:    DirectionOut,
+			QoS:          1,
+			RemotePrefix: "remote/",
+		}},
+	}}}
+	updated := Apply(parseConf(t, "listener 1883 0.0.0.0\n"), doc)
+	rendered, err := updated.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := Parse(parseConf(t, string(rendered)))
+	if len(got.Bridges) != 1 || len(got.Bridges[0].Topics) != 1 {
+		t.Fatalf("parsed bridge topics = %+v", got.Bridges)
+	}
+	if got.Bridges[0].Topics[0].RemotePrefix != "remote/" {
+		t.Fatalf("remote prefix = %q, want remote/; rendered config:\n%s", got.Bridges[0].Topics[0].RemotePrefix, rendered)
+	}
+}
+
 func TestRenderOmitsUnsetOptions(t *testing.T) {
 	doc := Document{Bridges: []Bridge{{
 		Name:    "upstream",
