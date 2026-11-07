@@ -82,6 +82,35 @@ func validateBridge(bridge Bridge) []Issue {
 		issues = append(issues, Issue{Kind: kind, Bridge: name, Field: field, Message: message})
 	}
 
+	// These values are rendered directly into mosquitto.conf directives. A
+	// carriage return or line feed would escape the directive and could add
+	// configuration the bridge model does not represent. Keep the message
+	// generic so validation never echoes credentials or other submitted data.
+	lineValues := []struct{ field, value string }{
+		{"name", bridge.Name},
+		{"address", bridge.Address},
+		{"remote_client_id", bridge.RemoteClientID},
+		{"local_client_id", bridge.LocalClientID},
+		{"username", bridge.Username},
+		{"password", bridge.Password},
+		{"local_username", bridge.LocalUsername},
+		{"local_password", bridge.LocalPassword},
+		{"restart_timeout", bridge.RestartTimeout},
+		{"notification_topic", bridge.NotificationTopic},
+		{"tls.ca_file", bridge.TLS.CAFile},
+		{"tls.ca_path", bridge.TLS.CAPath},
+		{"tls.cert_file", bridge.TLS.CertFile},
+		{"tls.key_file", bridge.TLS.KeyFile},
+		{"tls.alpn", bridge.TLS.ALPN},
+		{"tls.identity", bridge.TLS.Identity},
+		{"tls.psk", bridge.TLS.PSK},
+	}
+	for _, candidate := range lineValues {
+		if strings.ContainsAny(candidate.value, "\r\n") {
+			add(IssueKindValue, candidate.field, "the value must not contain carriage returns or line feeds")
+		}
+	}
+
 	// --- name ---
 	switch {
 	case strings.TrimSpace(name) == "":
@@ -214,6 +243,9 @@ func validateTopicRule(bridgeName string, rule TopicRule, seen map[string]struct
 		})
 	}
 
+	if strings.ContainsAny(rule.Topic, "\r\n") || strings.ContainsAny(rule.LocalPrefix, "\r\n") || strings.ContainsAny(rule.RemotePrefix, "\r\n") {
+		add(IssueKindValue, "topic and prefix values must not contain carriage returns or line feeds")
+	}
 	if strings.TrimSpace(rule.Topic) == "" {
 		add(IssueKindValue, "a topic rule needs a topic pattern")
 		return issues
