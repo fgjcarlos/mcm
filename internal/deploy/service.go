@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"regexp"
@@ -2103,6 +2104,47 @@ func (s *Service) emitAudit(ctx context.Context, actor, action string, deploymen
 	}
 	metadata := []byte(fmt.Sprintf(`{"deployment_id":%d}`, deploymentID))
 	s.auditFn(ctx, actor, action, "deployment", fmt.Sprintf("%d", deploymentID), result, metadata)
+}
+
+// RecoverInterruptedApply restores the broker's ACL/passwd files when the
+// previous MCM process died in the middle of an apply (issue #292, S19).
+// It runs once at startup, before the server accepts deploy requests:
+// recovery always RESTORES the pre-apply content and never resumes the
+// interrupted apply. The outcome is logged and audited. A restore whose
+// follow-up broker reload failed keeps a "failure" audit result so the
+// operator can reload the broker; a restore that itself failed keeps the
+// recovery journal for the next start and is reported loudly.
+func (s *Service) RecoverInterruptedApply() {
+	recoverer, ok := s.applier.(mosquitto.InterruptedApplyRecoverer)
+	if !ok {
+		return
+	}
+	recovered, err := recoverer.RecoverInterruptedApply()
+	if !recovered && err == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	metadata := []byte(`{"source":"startup_recovery"}`)
+	switch {
+	case err == nil:
+		slog.Warn("deploy: restored an apply interrupted by a previous process from the recovery journal")
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovered", "deployment", "", "success", metadata)
+		}
+	case recovered:
+		// Files restored, but the follow-up broker reload failed: the
+		// broker may still serve the pre-restore content.
+		slog.Error("deploy: interrupted apply restored but broker re-signal failed", "error", err)
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovered", "deployment", "", "failure", metadata)
+		}
+	default:
+		slog.Error("deploy: recovery of an interrupted apply failed; journal kept for the next start", "error", err)
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovery_failed", "deployment", "", "failure", metadata)
+		}
+	}
 }
 
 func (s *Service) updateDeploymentStatus(id int64, status, message string) error {
