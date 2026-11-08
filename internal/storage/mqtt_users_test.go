@@ -3,8 +3,11 @@ package storage
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/fgjcarlos/mcm/internal/acl"
 )
 
 func TestCreateMQTTUser(t *testing.T) {
@@ -58,6 +61,54 @@ func TestCreateMQTTUser(t *testing.T) {
 	})
 }
 
+func TestCreateMQTTUserRejectsUnrepresentableNamesWithoutPersisting(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	for _, username := range []string{" leading", "trailing ", "name:field", "two words", string([]byte{0xff})} {
+		_, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{Username: username, PasswordHash: "redacted"})
+		var validationErr *MQTTUserValidationError
+		if !errors.As(err, &validationErr) || len(validationErr.Problems) == 0 {
+			t.Errorf("CreateMQTTUser() error = %v, want field validation error", err)
+		}
+	}
+	users, err := store.ListMQTTUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("rejected usernames persisted: count=%d", len(users))
+	}
+}
+
+func TestCreateMQTTUserEnforcesUTF8ByteLimit(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	valid := strings.Repeat("a", acl.MaxFieldBytes)
+	if _, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{Username: valid, PasswordHash: "fixture-hash"}); err != nil {
+		t.Fatalf("username at byte limit rejected: %v", err)
+	}
+	invalid := valid + "a"
+	_, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{Username: invalid, PasswordHash: "fixture-hash"})
+	var validationErr *MQTTUserValidationError
+	if !errors.As(err, &validationErr) || len(validationErr.Problems) == 0 {
+		t.Fatalf("over-limit username error = %v, want field validation", err)
+	}
+}
+
+func TestCreateMQTTUserPreservesUnicodeNormalizationForms(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	for _, username := range []string{"é", "e\u0301", "用户"} {
+		created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{Username: username, PasswordHash: "redacted"})
+		if err != nil || created.Username != username {
+			t.Errorf("CreateMQTTUser() username = %q, err=%v, want exact input preserved", created.Username, err)
+		}
+	}
+}
+
 func TestCreateMQTTUserRejectsControlCharacters(t *testing.T) {
 	t.Parallel()
 
@@ -109,6 +160,29 @@ func TestUpdateMQTTUserRejectsControlCharacters(t *testing.T) {
 	}
 	if got.Username != "client-id_01" {
 		t.Fatalf("username after rejected update = %q, want client-id_01", got.Username)
+	}
+}
+
+func TestUpdateMQTTUserRejectsWhitespaceWithoutChangingStoredName(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	created, err := store.CreateMQTTUser(context.Background(), CreateMQTTUserParams{Username: "stable", PasswordHash: "fixture-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := " changed"
+	_, err = store.UpdateMQTTUser(context.Background(), created.ID, UpdateMQTTUserParams{Username: &invalid})
+	var validationErr *MQTTUserValidationError
+	if !errors.As(err, &validationErr) || len(validationErr.Problems) == 0 {
+		t.Fatalf("UpdateMQTTUser() error = %v, want username field error", err)
+	}
+	got, err := store.GetMQTTUser(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Username != "stable" {
+		t.Fatalf("username after rejected update = %q, want stable", got.Username)
 	}
 }
 

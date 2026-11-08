@@ -507,6 +507,21 @@ func TestPreview_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsMalformedImportedPasswdWithoutEchoingHash(t *testing.T) {
+	t.Parallel()
+	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
+	writeFile(t, aclPath, "")
+	writeFile(t, passwdPath, "not-a-passwd-line-with-secret-material")
+	svc := newTestService(&fakeApplier{}, &fakeACLStore{}, &fakeMQTTUserLister{}, newFakeDeploymentStore(), diagnostics.VerifierFunc(okVerifier), &fakePasswordLookup{}, deployCfg)
+	_, _, _, err := svc.render(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "expected username:hash fields") {
+		t.Fatalf("render() error = %v, want passwd field validation", err)
+	}
+	if strings.Contains(err.Error(), "secret-material") {
+		t.Fatal("render error leaked passwd content")
+	}
+}
+
 func TestPreview_SurfacesAndFiltersOrphanRules(t *testing.T) {
 	t.Parallel()
 
@@ -519,7 +534,7 @@ func TestPreview_SurfacesAndFiltersOrphanRules(t *testing.T) {
 		{ID: "2", Principal: "deleted-user", TopicFilter: "legacy/#", Permission: acl.PermissionWrite},
 	}}
 	mqttStore := &fakeMQTTUserLister{
-		users: []storage.MQTTUser{{Username: "active-user"}},
+		users: []storage.MQTTUser{{Username: "active-user", PasswordHash: "fixture-hash"}},
 		orphanRules: []storage.ACLRuleRow{{
 			ID:          "2",
 			Principal:   "deleted-user",
@@ -682,7 +697,10 @@ func TestPreview_ServiceUserPasswordChangeRehashes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Preview returned error: %v", err)
 	}
-	entries := mosquitto.ParsePasswdFile(result.PasswdBody)
+	entries, err := mosquitto.ParsePasswdFile(result.PasswdBody)
+	if err != nil {
+		t.Fatalf("parse rendered passwd: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("rendered passwd entries = %d, want 1", len(entries))
 	}
@@ -769,7 +787,7 @@ func TestApply_Success(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
@@ -811,7 +829,7 @@ func TestApplyConsumesRevisionBeforeExternalApply(t *testing.T) {
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
 	aclStore, mqttStore, pwLookup := withSeedUsers(t)
@@ -836,7 +854,7 @@ func TestApplyPostExternalPersistenceUsesDetachedContext(t *testing.T) {
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	applier := &cancelingApplier{}
 	store := &persistenceRecordingDeploymentStore{fakeDeploymentStore: newFakeDeploymentStore()}
 	aclStore, mqttStore, pwLookup := withSeedUsers(t)
@@ -866,7 +884,7 @@ func TestApplyReportsStatusPersistenceFailureAndRollsBack(t *testing.T) {
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	store := &persistenceRecordingDeploymentStore{
 		fakeDeploymentStore: newFakeDeploymentStore(),
 		failStatus:          "active_verified",
@@ -898,7 +916,7 @@ func TestApplyPendingActivationPersistenceFailureStillVerifiesAndRollsBack(t *te
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	store := &persistenceRecordingDeploymentStore{
 		fakeDeploymentStore: newFakeDeploymentStore(),
 		failStatus:          "pending_activation",
@@ -936,7 +954,7 @@ func TestApplyReportsDeploymentRetrievalFailure(t *testing.T) {
 	t.Parallel()
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	store := &persistenceRecordingDeploymentStore{
 		fakeDeploymentStore: newFakeDeploymentStore(),
 		failGet:             true,
@@ -965,7 +983,7 @@ func TestApply_ApplierError(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{failAll: true}
 	store := newFakeDeploymentStore()
@@ -1002,7 +1020,7 @@ func TestApply_LifecycleSavedApplyingPendingActivationActiveVerified(t *testing.
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{}
 	store := newRecordingDeploymentStore()
@@ -1039,7 +1057,7 @@ func TestApply_VerifierRetriesThenSucceeds(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1069,7 +1087,7 @@ func TestApply_VerifierExhaustsRetries(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1099,7 +1117,7 @@ func TestApply_HealthcheckFailure_Rollback(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl content")
-	writeFile(t, passwdPath, "old passwd content")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	// Applier succeeds both times (apply + rollback).
 	applier := &fakeApplier{}
@@ -1132,7 +1150,7 @@ func TestApply_RollbackFailure(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	// Applier succeeds on first call (apply), fails on second (rollback).
 	applier := &fakeApplier{}
@@ -1296,7 +1314,7 @@ func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl content")
-	writeFile(t, passwdPath, "old passwd content")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &fakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1320,8 +1338,8 @@ func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
 	if rollbackCall.aclBody != "old acl content" {
 		t.Errorf("rollback aclBody = %q, want %q", rollbackCall.aclBody, "old acl content")
 	}
-	if rollbackCall.passwdBody != "old passwd content" {
-		t.Errorf("rollback passwdBody = %q, want %q", rollbackCall.passwdBody, "old passwd content")
+	if rollbackCall.passwdBody != "olduser:legacy-hash\n" {
+		t.Errorf("rollback passwdBody = %q, want %q", rollbackCall.passwdBody, "olduser:legacy-hash\n")
 	}
 
 	// On-disk files must match the snapshot after rollback.
@@ -1336,8 +1354,8 @@ func TestApply_HealthcheckFailure_AuditAndFilesReverted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile passwd: %v", err)
 	}
-	if string(gotPasswd) != "old passwd content" {
-		t.Errorf("passwd on disk after rollback = %q, want %q", string(gotPasswd), "old passwd content")
+	if string(gotPasswd) != "olduser:legacy-hash\n" {
+		t.Errorf("passwd on disk after rollback = %q, want %q", string(gotPasswd), "olduser:legacy-hash\n")
 	}
 
 	// Audit events: must contain deployment.rolled_back:failure, must NOT
@@ -1367,7 +1385,7 @@ func TestApply_RollbackFailure_AuditEmitted(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &rollbackFailFakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1435,7 +1453,7 @@ func TestApply_RollbackUsesIndependentContext(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := &rollbackCtxRecordingApplier{}
 	store := newFakeDeploymentStore()
@@ -1494,7 +1512,7 @@ func TestApply_ApplierRolledBack_StatusFailed(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := errApplyRolledBackFakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1553,7 +1571,7 @@ func TestApply_ApplierRollbackFailed_StatusRollbackFailed(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	applier := errApplyRollbackFailedFakeApplier{}
 	store := newFakeDeploymentStore()
@@ -1642,7 +1660,7 @@ func TestApply_HoldsMutationLockThroughExternalApply(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	aclStore, mqttStore, pwLookup := withSeedUsers(t)
 	coordinatedStore := &coordinatedMQTTUserLister{fakeMQTTUserLister: mqttStore}
@@ -1689,7 +1707,7 @@ func TestPreview_HoldsMutationLockAcrossSnapshot(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl")
-	writeFile(t, passwdPath, "old passwd")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 	coordinatedStore := &coordinatedMQTTUserLister{
 		fakeMQTTUserLister: &fakeMQTTUserLister{},
 		listStarted:        make(chan struct{}),

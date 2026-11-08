@@ -108,8 +108,15 @@ func parseACLEntry(raw string, scope *string) ACLEntry {
 	switch strings.ToLower(fields[0]) {
 	case "user":
 		if len(fields) != 2 {
+			*scope = "\x00invalid"
 			entry.Kind = ACLEntryUnknown
 			entry.Issue = "user directive takes exactly one principal"
+			return entry
+		}
+		if problems := acl.ValidateUsernameField(fields[1], "principal"); len(problems) > 0 {
+			*scope = "\x00invalid"
+			entry.Kind = ACLEntryUnknown
+			entry.Issue = strings.Join(problems, "; ")
 			return entry
 		}
 		entry.Kind = ACLEntryUser
@@ -340,7 +347,29 @@ func managedRuleKey(rule acl.Rule) string {
 // A managed rule whose semantic key already exists in the document is not
 // inserted again. The returned warnings name every insertion and every
 // skipped duplicate.
-func ComposeACLDocument(doc ACLDocument, managed []acl.Rule) (ACLDocument, []string) {
+func ComposeACLDocument(doc ACLDocument, managed []acl.Rule) (ACLDocument, []string, error) {
+	if len(doc.Entries) > 100000 {
+		return ACLDocument{}, nil, fmt.Errorf("acl document exceeds 100000 entries")
+	}
+	sizeEstimate := 0
+	for _, entry := range doc.Entries {
+		sizeEstimate += len(entry.Raw) + 1
+		if sizeEstimate > maxMosquittoFileBytes {
+			return ACLDocument{}, nil, fmt.Errorf("acl document exceeds %d bytes", maxMosquittoFileBytes)
+		}
+	}
+	if len(managed) > 100000 {
+		return ACLDocument{}, nil, fmt.Errorf("managed rules must contain at most 100000 entries")
+	}
+	for i, rule := range managed {
+		if err := acl.ValidateRule(rule); err != nil {
+			return ACLDocument{}, nil, fmt.Errorf("rule[%d]: %w", i, err)
+		}
+		sizeEstimate += len(rule.Principal) + len(rule.TopicFilter) + len(rule.Permission) + 32
+		if sizeEstimate > maxMosquittoFileBytes {
+			return ACLDocument{}, nil, fmt.Errorf("composed acl document exceeds %d bytes", maxMosquittoFileBytes)
+		}
+	}
 	composed := ACLDocument{EndsWithNewline: doc.EndsWithNewline}
 	composed.Entries = append(composed.Entries, doc.Entries...)
 
@@ -401,7 +430,7 @@ func ComposeACLDocument(doc ACLDocument, managed []acl.Rule) (ACLDocument, []str
 		warnings = append(warnings, fmt.Sprintf("inserted managed rule into the ACL source: %s", key))
 	}
 
-	return composed, warnings
+	return composed, warnings, nil
 }
 
 // composeUserInsertIndex returns the index at which a user-scoped rule must

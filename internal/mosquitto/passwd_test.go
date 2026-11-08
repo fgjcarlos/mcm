@@ -49,13 +49,13 @@ func TestHashPassword(t *testing.T) {
 
 			// Must start with $7$
 			if !strings.HasPrefix(hash, "$7$") {
-				t.Fatalf("HashPassword() = %q, want prefix \"$7$\"", hash)
+				t.Fatal("HashPassword() returned a value without the expected format prefix")
 			}
 
 			// Split and verify structure: ["", "7", "<iter>", "<salt>", "<key>"]
 			parts := strings.Split(hash, "$")
 			if len(parts) != 5 {
-				t.Fatalf("HashPassword() has %d $-parts, want 5; hash=%q", len(parts), hash)
+				t.Fatalf("HashPassword() has %d parts, want 5", len(parts))
 			}
 			if parts[1] != "7" {
 				t.Fatalf("HashPassword() scheme = %q, want \"7\"", parts[1])
@@ -64,7 +64,7 @@ func TestHashPassword(t *testing.T) {
 			// Salt must decode to exactly 12 bytes.
 			saltBytes, err := base64.StdEncoding.DecodeString(parts[3])
 			if err != nil {
-				t.Fatalf("salt decode error: %v (salt=%q)", err, parts[3])
+				t.Fatalf("salt decode error: %v", err)
 			}
 			if len(saltBytes) != 12 {
 				t.Fatalf("salt length = %d, want 12", len(saltBytes))
@@ -73,7 +73,7 @@ func TestHashPassword(t *testing.T) {
 			// Key must decode to exactly 64 bytes.
 			keyBytes, err := base64.StdEncoding.DecodeString(parts[4])
 			if err != nil {
-				t.Fatalf("key decode error: %v (key=%q)", err, parts[4])
+				t.Fatalf("key decode error: %v", err)
 			}
 			if len(keyBytes) != 64 {
 				t.Fatalf("key length = %d, want 64", len(keyBytes))
@@ -183,6 +183,23 @@ func TestVerifyPassword(t *testing.T) {
 	})
 }
 
+func TestRenderPasswdFileRejectsUnrepresentableEntries(t *testing.T) {
+	t.Parallel()
+	_, err := RenderPasswdFile([]PasswdEntry{{Username: "alice:admin", Hash: "$7$redacted"}})
+	if err == nil || !strings.Contains(err.Error(), "username") {
+		t.Fatalf("RenderPasswdFile() error = %v, want username field error", err)
+	}
+}
+
+func renderPasswdForTest(t *testing.T, entries []PasswdEntry) string {
+	t.Helper()
+	body, err := RenderPasswdFile(entries)
+	if err != nil {
+		t.Fatalf("RenderPasswdFile(): %v", err)
+	}
+	return body
+}
+
 func TestRenderPasswdFile(t *testing.T) {
 	t.Parallel()
 
@@ -222,7 +239,7 @@ func TestRenderPasswdFile(t *testing.T) {
 				t.Helper()
 				want := "alice:" + hashAlice + "\n"
 				if got != want {
-					t.Fatalf("RenderPasswdFile() =\n%q\nwant:\n%q", got, want)
+					t.Fatal("RenderPasswdFile() output did not match the expected structure")
 				}
 			},
 		},
@@ -237,7 +254,7 @@ func TestRenderPasswdFile(t *testing.T) {
 				t.Helper()
 				want := "alice:" + hashAlice + "\nbob:" + hashBob + "\nzebra:" + hashZebra + "\n"
 				if got != want {
-					t.Fatalf("RenderPasswdFile() =\n%q\nwant:\n%q", got, want)
+					t.Fatal("RenderPasswdFile() output did not match the expected structure")
 				}
 			},
 		},
@@ -260,7 +277,7 @@ func TestRenderPasswdFile(t *testing.T) {
 					colonIdx := strings.Index(line, ":")
 					hash := line[colonIdx+1:]
 					if !strings.HasPrefix(hash, "$7$") {
-						t.Fatalf("hash part %q does not start with $7$", hash)
+						t.Fatal("hash field does not have the expected scheme")
 					}
 				}
 				// Verify trailing newline.
@@ -280,7 +297,7 @@ func TestRenderPasswdFile(t *testing.T) {
 				// The first entry in input should still be zebra after the call.
 				// We verify this via the output being sorted (alice before zebra).
 				if !strings.HasPrefix(got, "alice:") {
-					t.Fatalf("RenderPasswdFile() output should start with alice (sorted), got: %q", got)
+					t.Fatal("RenderPasswdFile() output was not sorted by username")
 				}
 			},
 		},
@@ -293,7 +310,7 @@ func TestRenderPasswdFile(t *testing.T) {
 			original := make([]PasswdEntry, len(tc.entries))
 			copy(original, tc.entries)
 
-			got := RenderPasswdFile(tc.entries)
+			got := renderPasswdForTest(t, tc.entries)
 			tc.check(t, got)
 
 			// Verify input slice was not mutated.
@@ -303,6 +320,39 @@ func TestRenderPasswdFile(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderPasswdFilePreservesUnicodeNormalizationForms(t *testing.T) {
+	t.Parallel()
+	entries := []PasswdEntry{{Username: "é", Hash: "hash-one"}, {Username: "e\u0301", Hash: "hash-two"}}
+	body := renderPasswdForTest(t, entries)
+	parsed, err := ParsePasswdFile(body)
+	if err != nil {
+		t.Fatalf("ParsePasswdFile(): %v", err)
+	}
+	if len(parsed) != 2 || parsed[0].Username == parsed[1].Username {
+		t.Fatalf("passwd render did not preserve byte-distinct Unicode usernames; entries=%d", len(parsed))
+	}
+}
+
+func TestRenderPasswdFileRejectsDuplicateUsernameWithoutLeakingHash(t *testing.T) {
+	t.Parallel()
+	_, err := RenderPasswdFile([]PasswdEntry{{Username: "alice", Hash: "hash-secret-one"}, {Username: "alice", Hash: "hash-secret-two"}})
+	if err == nil || !strings.Contains(err.Error(), "username duplicates") {
+		t.Fatalf("RenderPasswdFile() error = %v, want duplicate username field error", err)
+	}
+	if strings.Contains(err.Error(), "hash-secret") {
+		t.Fatal("renderer error leaked password hash material")
+	}
+}
+
+func TestParsePasswdFileRejectsDuplicateUsernamesAndSeparators(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{"no-colon\n", "alice:hash-one\nalice:hash-two\n", "alice:hash:extra\n", " alice:hash\n"} {
+		if _, err := ParsePasswdFile(body); err == nil {
+			t.Error("ParsePasswdFile() accepted a collision or unrepresentable field")
+		}
 	}
 }
 
@@ -319,9 +369,10 @@ func TestParsePasswdFile(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		body string
-		want []PasswdEntry
+		name    string
+		body    string
+		want    []PasswdEntry
+		wantErr bool
 	}{
 		{
 			name: "empty",
@@ -347,9 +398,9 @@ func TestParsePasswdFile(t *testing.T) {
 			},
 		},
 		{
-			name: "malformed lines skipped",
-			body: "no-colon\n:missing-user\nmissing-hash:\nvalid:" + hashAlice,
-			want: []PasswdEntry{{Username: "valid", Hash: hashAlice}},
+			name:    "malformed lines rejected",
+			body:    "no-colon\n:missing-user\nmissing-hash:\nvalid:" + hashAlice,
+			wantErr: true,
 		},
 		{
 			name: "preserves insertion order",
@@ -364,13 +415,22 @@ func TestParsePasswdFile(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := ParsePasswdFile(tc.body)
+			got, err := ParsePasswdFile(tc.body)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParsePasswdFile() error = nil, want rejection")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParsePasswdFile(): %v", err)
+			}
 			if len(got) != len(tc.want) {
-				t.Fatalf("ParsePasswdFile() len = %d, want %d (got=%+v)", len(got), len(tc.want), got)
+				t.Fatalf("ParsePasswdFile() entry count = %d, want %d", len(got), len(tc.want))
 			}
 			for i, e := range got {
 				if e.Username != tc.want[i].Username || e.Hash != tc.want[i].Hash {
-					t.Errorf("ParsePasswdFile()[%d] = %+v, want %+v", i, e, tc.want[i])
+					t.Errorf("ParsePasswdFile()[%d] did not preserve the expected fields", i)
 				}
 			}
 		})
@@ -396,8 +456,11 @@ func TestParseAndRenderPasswdFileRoundTrip(t *testing.T) {
 		{Username: "bob", Hash: hashBob},
 		{Username: "alice", Hash: hashAlice},
 	}
-	body := RenderPasswdFile(original)
-	parsed := ParsePasswdFile(body)
+	body := renderPasswdForTest(t, original)
+	parsed, err := ParsePasswdFile(body)
+	if err != nil {
+		t.Fatalf("ParsePasswdFile(): %v", err)
+	}
 	if len(parsed) != 2 {
 		t.Fatalf("round-trip len = %d, want 2", len(parsed))
 	}

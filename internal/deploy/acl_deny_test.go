@@ -297,7 +297,7 @@ func TestApply_DenyOnlyPolicyWithoutServiceAccountRollsBack(t *testing.T) {
 
 	deployCfg, aclPath, passwdPath := enabledDeployCfg(t)
 	writeFile(t, aclPath, "old acl content")
-	writeFile(t, passwdPath, "old passwd content")
+	writeFile(t, passwdPath, "olduser:legacy-hash\n")
 
 	hash, err := mosquitto.HashPassword("verify-pass", mosquitto.DefaultIterations)
 	if err != nil {

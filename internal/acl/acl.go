@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Selector identifies the native Mosquitto ACL scope a rule applies to.
@@ -57,6 +58,9 @@ const (
 type Permission string
 
 const (
+	// MaxFieldBytes is the MQTT UTF-8 string limit used by Mosquitto ACL and passwd fields.
+	MaxFieldBytes = 65535
+
 	PermissionRead      Permission = "read"
 	PermissionWrite     Permission = "write"
 	PermissionReadWrite Permission = "readwrite"
@@ -172,11 +176,7 @@ func ValidateRuleForMosquittoVersion(rule Rule, version string) error {
 
 	switch rule.EffectiveSelector() {
 	case SelectorUser:
-		if strings.TrimSpace(rule.Principal) == "" {
-			problems = append(problems, "principal is required")
-		} else if containsControlCharacter(rule.Principal) {
-			problems = append(problems, "principal must not contain control characters")
-		}
+		problems = append(problems, ValidateUsernameField(rule.Principal, "principal")...)
 	case SelectorAnonymous:
 		if rule.Principal != "" {
 			problems = append(problems, "principal must be empty for anonymous rules")
@@ -228,8 +228,45 @@ func ValidateRuleForMosquittoVersion(rule Rule, version string) error {
 	return nil
 }
 
+// ValidateUsernameField validates a Mosquitto identity field without normalizing
+// it. NFC and NFD spellings remain distinct byte-exact MQTT identities.
+func ValidateUsernameField(value string, field string) []string {
+	var problems []string
+	if !utf8.ValidString(value) {
+		return []string{field + " must be valid UTF-8"}
+	}
+	if strings.TrimSpace(value) == "" {
+		problems = append(problems, field+" is required")
+	}
+	if len(value) > MaxFieldBytes {
+		problems = append(problems, fmt.Sprintf("%s must be at most %d bytes", field, MaxFieldBytes))
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			problems = append(problems, field+" must not contain control characters")
+			break
+		}
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) {
+			problems = append(problems, field+" must not contain whitespace")
+			break
+		}
+	}
+	if strings.ContainsRune(value, ':') {
+		problems = append(problems, field+" must not contain ':'")
+	}
+	return problems
+}
+
 // ValidateTopicFilter validates an MQTT topic filter with MQTT wildcard rules.
 func ValidateTopicFilter(filter string) error {
+	if !utf8.ValidString(filter) {
+		return fmt.Errorf("topic_filter must be valid UTF-8")
+	}
+	if len(filter) > MaxFieldBytes {
+		return fmt.Errorf("topic_filter must be at most %d bytes", MaxFieldBytes)
+	}
 	if filter == "" {
 		return fmt.Errorf("topic_filter is required")
 	}
@@ -238,6 +275,11 @@ func ValidateTopicFilter(filter string) error {
 	}
 	if containsControlCharacter(filter) {
 		return fmt.Errorf("topic_filter must not contain control characters")
+	}
+	for _, r := range filter {
+		if unicode.IsSpace(r) {
+			return fmt.Errorf("topic_filter must not contain whitespace")
+		}
 	}
 
 	levels := strings.Split(filter, "/")

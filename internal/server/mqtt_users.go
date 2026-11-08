@@ -72,10 +72,6 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	if strings.TrimSpace(req.Username) == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "username is required"})
-		return
-	}
 	if err := storage.ValidateMQTTUsername(req.Username); err != nil {
 		writeMQTTUserError(w, err)
 		return
