@@ -676,7 +676,7 @@ jobs:
     needs: image
     if: github.event_name == 'pull_request'
     timeout-minutes: 15
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
