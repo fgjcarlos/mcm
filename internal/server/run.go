@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -53,18 +54,56 @@ func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
 			Runner:        mosquitto.ExecRunner{},
 		}
 	case "file":
-		return mosquitto.FileApplier{
+		file := mosquitto.FileApplier{
 			ACLPath:       cfg.ACLPath,
 			PasswdPath:    cfg.PasswdPath,
 			PIDPath:       cfg.PIDPath,
 			ReloadCommand: cfg.ReloadCommand,
 			ReloadRunner:  mosquitto.ExecRunner{},
 		}
+		// Issue #294: a restart is a different mechanism than a reload.
+		// The file applier used to report that it could restart the
+		// broker as soon as a reload command was configured, and it then
+		// ran that RELOAD command as the restart: a change Mosquitto
+		// reads only at start-up (a bridge, a plugin) stayed inactive
+		// while the deployment reported it as applied. The wrapper makes
+		// the restart explicit: without a restart command the deployment
+		// cannot restart the broker and a change that needs one is
+		// refused instead of being reloaded.
+		return deploy.NewRestartApplier(file, cfg.RestartCommand, mosquitto.ExecRunner{})
 	default:
 		// Deploy disabled or unknown — return a no-op applier.
 		// The service guards via ErrDeployDisabled before calling Apply.
 		return mosquitto.FileApplier{}
 	}
+}
+
+// brokerConfigDir returns the broker-side path of the shared configuration
+// directory. It falls back to the broker default when the operator did
+// not configure one.
+func brokerConfigDir(cfg config.MosquittoConfig) string {
+	dir := strings.TrimSpace(cfg.BrokerConfigDir)
+	if dir == "" {
+		return defaultBrokerConfigDir
+	}
+	return dir
+}
+
+// brokerConfigFile returns the path of the broker's mosquitto.conf as the
+// MCM process sees it, and whether MCM knows where the broker
+// configuration lives at all.
+//
+// The broker and MCM mount the same configuration volume under different
+// paths: the broker reads /mosquitto/config/mosquitto.conf while MCM sees
+// it under its own mount. The path is empty when the operator did not
+// configure a configuration directory — the startup check then cannot
+// compare the broker's effective files and says so.
+func brokerConfigFile(cfg config.MosquittoConfig) string {
+	dir := strings.TrimSpace(cfg.ConfigDir)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "mosquitto.conf")
 }
 
 // checkDeployCapabilities is the issue #294 startup gate that fails fast
@@ -74,19 +113,28 @@ func buildApplier(cfg config.DeployConfig) mosquitto.Applier {
 // apply path returns ErrReloadNotSignaled at runtime; we just log a
 // warning so operators see the misconfiguration before traffic arrives).
 //
-// The check covers four surfaces:
+// The check covers these surfaces:
 //
 //  1. ACLPath + PasswdPath parents writable by the MCM process — the
 //     atomic-rename applier writes to those directories on every
 //     successful deploy.
 //  2. PIDPath readable when the legacy SIGHUP reload is configured —
 //     the applier reads it on every apply.
+//     2b. The reload and restart commands exist and are executable.
+//     2c. The shared configuration directory is not world-writable (warning).
 //  3. Either PIDPath or ReloadCommand set when reload_strategy is
 //     "sighup" / unspecified — otherwise the apply will fail at
 //     runtime (#293) and operators should know before serving traffic.
 //  4. ContainerName non-empty in docker mode — docker exec needs a
 //     target.
-func checkDeployCapabilities(cfg config.DeployConfig, applier mosquitto.Applier, logger *slog.Logger) error {
+//  5. The broker's effective password_file / acl_file are the files MCM
+//     writes — a broker that reads other files keeps enforcing the
+//     previous policy while every deploy reports success.
+//
+// brokerConfigDir is the broker-side path of the shared configuration
+// directory (the broker's own mount point). It is used to translate the
+// paths the broker reads into the namespace MCM writes in.
+func checkDeployCapabilities(cfg config.DeployConfig, mosquittoCfg config.MosquittoConfig, applier mosquitto.Applier, logger *slog.Logger) error {
 	if cfg.Mode == "" {
 		// Deploy disabled — nothing to verify.
 		return nil
@@ -109,12 +157,50 @@ func checkDeployCapabilities(cfg config.DeployConfig, applier mosquitto.Applier,
 			}
 		}
 
+		// (2b) The reload and restart commands must exist and be
+		// executable. A command that cannot run fails at the first
+		// deploy apply, long after the operator configured it; the
+		// startup check turns that into an actionable boot error.
+		if err := requireExecutableCommand(cfg.ReloadCommand, "reload_command"); err != nil {
+			return err
+		}
+		if err := requireExecutableCommand(cfg.RestartCommand, "restart_command"); err != nil {
+			return err
+		}
+
+		// (2c) The shared configuration directory must not be
+		// world-writable: every process on the host could then replace
+		// the files the broker reads. It is a warning and not an error
+		// because the development stack bootstraps the shared volume
+		// with 0777 on purpose.
+		warnIfWorldWritable(filepath.Dir(cfg.ACLPath), "acl_path", logger)
+		warnIfWorldWritable(filepath.Dir(cfg.PasswdPath), "passwd_path", logger)
+
 		// (3) Reload trigger — log-only warning, no startup failure.
 		if cfg.PIDPath == "" && len(cfg.ReloadCommand) == 0 {
 			logger.Warn(
 				"deploy has no reload trigger (neither PIDPath nor ReloadCommand set); POST /api/v1/deployments/apply will fail with ErrReloadNotSignaled until you configure one",
 				"mode", cfg.Mode,
 			)
+		}
+
+		// (5) The broker must read exactly the files MCM writes. A
+		// broker that reads another password file (the legacy
+		// `passwords` path) or no ACL file keeps enforcing the previous
+		// policy while every deploy reports success.
+		brokerConfigPath := brokerConfigFile(mosquittoCfg)
+		if brokerConfigPath == "" {
+			logger.Warn(
+				"mosquitto.config_dir is not configured; the broker's effective password_file / acl_file cannot be compared with the deploy paths",
+				"mode", cfg.Mode,
+			)
+		} else if err := deploy.CheckBrokerEffectiveFiles(deploy.EffectiveFilesOptions{
+			BrokerConfigPath: brokerConfigPath,
+			BrokerConfigDir:  brokerConfigDir(mosquittoCfg),
+			ACLPath:          cfg.ACLPath,
+			PasswdPath:       cfg.PasswdPath,
+		}); err != nil {
+			return err
 		}
 		return nil
 
@@ -130,6 +216,52 @@ func checkDeployCapabilities(cfg config.DeployConfig, applier mosquitto.Applier,
 
 	default:
 		return fmt.Errorf("deploy mode %q is not supported; use \"file\" or \"docker\"", cfg.Mode)
+	}
+}
+
+// requireExecutableCommand ensures a configured command exists and can be
+// executed. An empty command is accepted: the caller decides whether its
+// absence is an error.
+func requireExecutableCommand(command []string, fieldName string) error {
+	if len(command) == 0 {
+		return nil
+	}
+	name := strings.TrimSpace(command[0])
+	if name == "" {
+		return fmt.Errorf("deploy %s is empty; provide the command name", fieldName)
+	}
+	info, err := os.Stat(name)
+	if err != nil {
+		return fmt.Errorf("deploy %s %q is not accessible: %w", fieldName, name, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("deploy %s %q is a directory, not a command", fieldName, name)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("deploy %s %q is not executable (mode %s); make it executable or point it at an executable program", fieldName, name, info.Mode().Perm())
+	}
+	return nil
+}
+
+// warnIfWorldWritable logs a warning when the directory MCM writes the
+// broker's files into is world-writable. Every process on the host could
+// then replace the files the broker reads. It is a warning because the
+// development stack bootstraps the shared volume with 0777 on purpose.
+func warnIfWorldWritable(dir, fieldName string, logger *slog.Logger) {
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return
+	}
+	if info.Mode().Perm()&0o002 != 0 {
+		logger.Warn(
+			"the shared broker configuration directory is world-writable; every local process can replace the files the broker reads",
+			"field", fieldName,
+			"dir", dir,
+			"mode", info.Mode().Perm().String(),
+		)
 	}
 }
 
@@ -226,7 +358,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	// broker: the ACL/passwd paths are writable by the MCM process,
 	// and (when reload_strategy=sighup is used) the PID file is
 	// readable.
-	if err := checkDeployCapabilities(deployCfg, applier, logger); err != nil {
+	if err := checkDeployCapabilities(deployCfg, cfg.Mosquitto, applier, logger); err != nil {
 		return fmt.Errorf("deploy capability check failed: %w", err)
 	}
 	// Issue #298: wire the broker-config surface. When ConfigDir is empty

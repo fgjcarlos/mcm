@@ -173,13 +173,27 @@ type MosquittoConfig struct {
 // supported for dev (and for legacy operators who already share a PID
 // namespace with the broker).
 type DeployConfig struct {
-	Mode               string        `yaml:"mode"`
-	ACLPath            string        `yaml:"acl_path"`
-	PasswdPath         string        `yaml:"passwd_path"`
-	PIDPath            string        `yaml:"pid_path"`
-	ContainerName      string        `yaml:"container_name"`
-	ReloadStrategy     string        `yaml:"reload_strategy"`
-	ReloadCommand      []string      `yaml:"reload_command"`
+	Mode           string   `yaml:"mode"`
+	ACLPath        string   `yaml:"acl_path"`
+	PasswdPath     string   `yaml:"passwd_path"`
+	PIDPath        string   `yaml:"pid_path"`
+	ContainerName  string   `yaml:"container_name"`
+	ReloadStrategy string   `yaml:"reload_strategy"`
+	ReloadCommand  []string `yaml:"reload_command"`
+	// RestartCommand is the command + argv MCM invokes when a change can
+	// only become active after a broker restart (a bridge, a plugin, the
+	// dynamic security plugin). It is separate from ReloadCommand on
+	// purpose: a reload does not restart the broker, and a restart
+	// command that only reloads would leave the broker serving the
+	// previous configuration while MCM reported the change as applied
+	// (issue #294).
+	//
+	// Empty means "this deployment cannot restart the broker"; a change
+	// that needs a restart is then refused before anything is written.
+	//
+	// Configured through the MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND
+	// environment binding or the YAML field mosquitto.deploy.restart_command.
+	RestartCommand     []string      `yaml:"restart_command"`
 	HealthcheckTimeout time.Duration `yaml:"healthcheck_timeout"`
 	// Workdir is the working directory the deploy service switches into
 	// before writing passwd/acl files. Empty leaves the deploy service
