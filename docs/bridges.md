@@ -215,9 +215,11 @@ The activation follows the deployment adapter:
 - When the adapter can restart the broker — the Docker adapter restarts the
   container, the file adapter runs the restart command the operator
   configured — the broker is restarted and the deployment ends in
-  `active_verified`.
+  `pending_activation`: MCM cannot verify a bridge connection from the
+  outside, so it reports an honest pending state after the restart instead
+  of claiming a verified activation.
 - When the adapter cannot restart the broker, the change is still written
-  and the deployment ends in `pending_activation`: the bridge is in the
+  and the deployment also ends in `pending_activation`: the bridge is in the
   file, but the broker still runs the previous connection set and needs a
   restart. The UI says so instead of claiming a verified activation.
 

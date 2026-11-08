@@ -162,10 +162,12 @@ const (
 
 // ActiveVerifier is the post-apply check that proves the broker is
 // serving the freshly-applied configuration (issue #293). Implementations
-// must run a positive test (subscribe + publish round-trip) and a
-// negative test (subscribe to a denied topic is rejected) and return
-// OK=true only when both pass. The deploy service invokes this with
-// bounded retries and backoff.
+// must run a positive test (subscribe + publish round-trip on a granted
+// topic), a negative authentication test (an unknown user is rejected) and
+// a negative permission test (a subscription to the topic the rendered
+// policy denies is refused), and return OK=true only when all of them
+// pass. The deploy service invokes this with bounded retries and
+// backoff.
 type ActiveVerifier interface {
 	VerifyActive(ctx context.Context, opts diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult
 }
@@ -1891,12 +1893,23 @@ func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rule
 }
 
 // deniedTopicFor returns the topic filter the rendered ACL explicitly
-// denies for the given identity, or "" when the ACL denies nothing for it.
+// denies for the given identity, or "" when the ACL denies nothing that
+// can be proven.
 //
-// The negative stage of the verifier authenticates an unknown user and does
-// not consume this topic. The value documents what the policy denies; it is
-// not a permission evaluation of the rendered ACL, so it keeps the filter
-// the operator wrote instead of a concretized probe topic.
+// The negative permission stage of the verifier authenticates as the probe
+// identity and subscribes to this topic: the broker must refuse the
+// subscription, which proves the rendered denial is in effect. A pattern
+// deny applies to every client, so it is used when the identity has no
+// deny rule of its own.
+//
+// A denial that a grant of the same identity also covers is skipped: the
+// effective permission of that topic depends on the order the broker
+// evaluates the rules in, so the verifier must not assert a denial the
+// rendered policy does not express unambiguously.
+//
+// The value documents what the policy denies; it is the filter the operator
+// wrote, not a concretized probe topic. The verifier derives the concrete
+// topic it subscribes to from this filter.
 func deniedTopicFor(rules []acl.Rule, identity string) string {
 	for _, r := range rules {
 		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
@@ -1905,9 +1918,55 @@ func deniedTopicFor(rules []acl.Rule, identity string) string {
 		if r.Permission != acl.PermissionDeny {
 			continue
 		}
+		if !unambiguousDenial(rules, identity, r.TopicFilter) {
+			continue
+		}
+		return r.TopicFilter
+	}
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorPattern {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
+			continue
+		}
+		if !unambiguousDenial(rules, identity, r.TopicFilter) {
+			continue
+		}
 		return r.TopicFilter
 	}
 	return ""
+}
+
+// unambiguousDenial reports whether the deny filter denies a topic that no
+// grant of the identity covers.
+//
+// The check uses the same concrete topic the verifier subscribes to, so
+// the deploy and the verifier always talk about the same topic.
+func unambiguousDenial(rules []acl.Rule, identity, denyFilter string) bool {
+	topic, ok := diagnostics.ConcreteDeniedTopic(denyFilter)
+	if !ok {
+		return false
+	}
+	for _, r := range rules {
+		switch r.EffectiveSelector() {
+		case acl.SelectorUser:
+			if r.Principal != identity {
+				continue
+			}
+		case acl.SelectorPattern:
+			// A pattern grant applies to every client.
+		default:
+			continue
+		}
+		if r.Permission == acl.PermissionDeny {
+			continue
+		}
+		if acl.TopicMatchesFilter(r.TopicFilter, topic) {
+			return false
+		}
+	}
+	return true
 }
 
 // probeTopicSegment is the concrete topic level MCM uses when a grant is
