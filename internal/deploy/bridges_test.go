@@ -232,7 +232,7 @@ func TestPreviewBridgesRejectsADuplicateName(t *testing.T) {
 	}
 }
 
-func TestApplyBridgesWritesTheFileAndVerifiesTheActivation(t *testing.T) {
+func TestApplyBridgesWritesTheFileAndReportsPendingActivation(t *testing.T) {
 	applier := &fakeApplier{}
 	svc, _, confPath := bridgeServiceWith(t, applier, bridgesConf)
 	doc := bridges.Document{Bridges: []bridges.Bridge{{
@@ -250,8 +250,15 @@ func TestApplyBridgesWritesTheFileAndVerifiesTheActivation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyBridges: %v", err)
 	}
-	if dep.Status != "active_verified" {
-		t.Errorf("status = %q, want active_verified", dep.Status)
+	// MCM cannot observe the bridge connection, so the deployment must
+	// not claim a verified activation (issue #293, S21): the change is
+	// written and the broker was restarted, but nothing proved the
+	// bridge is active.
+	if dep.Status != "pending_activation" {
+		t.Errorf("status = %q, want pending_activation", dep.Status)
+	}
+	if dep.Message == "" {
+		t.Error("the deployment does not say why the activation is pending")
 	}
 	if dep.Kind != "bridges" {
 		t.Errorf("kind = %q, want bridges", dep.Kind)

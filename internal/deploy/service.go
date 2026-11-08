@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"regexp"
@@ -161,10 +162,12 @@ const (
 
 // ActiveVerifier is the post-apply check that proves the broker is
 // serving the freshly-applied configuration (issue #293). Implementations
-// must run a positive test (subscribe + publish round-trip) and a
-// negative test (subscribe to a denied topic is rejected) and return
-// OK=true only when both pass. The deploy service invokes this with
-// bounded retries and backoff.
+// must run a positive test (subscribe + publish round-trip on a granted
+// topic), a negative authentication test (an unknown user is rejected) and
+// a negative permission test (a subscription to the topic the rendered
+// policy denies is refused), and return OK=true only when all of them
+// pass. The deploy service invokes this with bounded retries and
+// backoff.
 type ActiveVerifier interface {
 	VerifyActive(ctx context.Context, opts diagnostics.VerifyActiveOptions) diagnostics.VerifyActiveResult
 }
@@ -1890,12 +1893,23 @@ func (s *Service) serviceVerificationProbe(entries []mosquitto.PasswdEntry, rule
 }
 
 // deniedTopicFor returns the topic filter the rendered ACL explicitly
-// denies for the given identity, or "" when the ACL denies nothing for it.
+// denies for the given identity, or "" when the ACL denies nothing that
+// can be proven.
 //
-// The negative stage of the verifier authenticates an unknown user and does
-// not consume this topic. The value documents what the policy denies; it is
-// not a permission evaluation of the rendered ACL, so it keeps the filter
-// the operator wrote instead of a concretized probe topic.
+// The negative permission stage of the verifier authenticates as the probe
+// identity and subscribes to this topic: the broker must refuse the
+// subscription, which proves the rendered denial is in effect. A pattern
+// deny applies to every client, so it is used when the identity has no
+// deny rule of its own.
+//
+// A denial that a grant of the same identity also covers is skipped: the
+// effective permission of that topic depends on the order the broker
+// evaluates the rules in, so the verifier must not assert a denial the
+// rendered policy does not express unambiguously.
+//
+// The value documents what the policy denies; it is the filter the operator
+// wrote, not a concretized probe topic. The verifier derives the concrete
+// topic it subscribes to from this filter.
 func deniedTopicFor(rules []acl.Rule, identity string) string {
 	for _, r := range rules {
 		if r.EffectiveSelector() != acl.SelectorUser || r.Principal != identity {
@@ -1904,9 +1918,55 @@ func deniedTopicFor(rules []acl.Rule, identity string) string {
 		if r.Permission != acl.PermissionDeny {
 			continue
 		}
+		if !unambiguousDenial(rules, identity, r.TopicFilter) {
+			continue
+		}
+		return r.TopicFilter
+	}
+	for _, r := range rules {
+		if r.EffectiveSelector() != acl.SelectorPattern {
+			continue
+		}
+		if r.Permission != acl.PermissionDeny {
+			continue
+		}
+		if !unambiguousDenial(rules, identity, r.TopicFilter) {
+			continue
+		}
 		return r.TopicFilter
 	}
 	return ""
+}
+
+// unambiguousDenial reports whether the deny filter denies a topic that no
+// grant of the identity covers.
+//
+// The check uses the same concrete topic the verifier subscribes to, so
+// the deploy and the verifier always talk about the same topic.
+func unambiguousDenial(rules []acl.Rule, identity, denyFilter string) bool {
+	topic, ok := diagnostics.ConcreteDeniedTopic(denyFilter)
+	if !ok {
+		return false
+	}
+	for _, r := range rules {
+		switch r.EffectiveSelector() {
+		case acl.SelectorUser:
+			if r.Principal != identity {
+				continue
+			}
+		case acl.SelectorPattern:
+			// A pattern grant applies to every client.
+		default:
+			continue
+		}
+		if r.Permission == acl.PermissionDeny {
+			continue
+		}
+		if acl.TopicMatchesFilter(r.TopicFilter, topic) {
+			return false
+		}
+	}
+	return true
 }
 
 // probeTopicSegment is the concrete topic level MCM uses when a grant is
@@ -2103,6 +2163,47 @@ func (s *Service) emitAudit(ctx context.Context, actor, action string, deploymen
 	}
 	metadata := []byte(fmt.Sprintf(`{"deployment_id":%d}`, deploymentID))
 	s.auditFn(ctx, actor, action, "deployment", fmt.Sprintf("%d", deploymentID), result, metadata)
+}
+
+// RecoverInterruptedApply restores the broker's ACL/passwd files when the
+// previous MCM process died in the middle of an apply (issue #292, S19).
+// It runs once at startup, before the server accepts deploy requests:
+// recovery always RESTORES the pre-apply content and never resumes the
+// interrupted apply. The outcome is logged and audited. A restore whose
+// follow-up broker reload failed keeps a "failure" audit result so the
+// operator can reload the broker; a restore that itself failed keeps the
+// recovery journal for the next start and is reported loudly.
+func (s *Service) RecoverInterruptedApply() {
+	recoverer, ok := s.applier.(mosquitto.InterruptedApplyRecoverer)
+	if !ok {
+		return
+	}
+	recovered, err := recoverer.RecoverInterruptedApply()
+	if !recovered && err == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), persistenceTimeout)
+	defer cancel()
+	metadata := []byte(`{"source":"startup_recovery"}`)
+	switch {
+	case err == nil:
+		slog.Warn("deploy: restored an apply interrupted by a previous process from the recovery journal")
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovered", "deployment", "", "success", metadata)
+		}
+	case recovered:
+		// Files restored, but the follow-up broker reload failed: the
+		// broker may still serve the pre-restore content.
+		slog.Error("deploy: interrupted apply restored but broker re-signal failed", "error", err)
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovered", "deployment", "", "failure", metadata)
+		}
+	default:
+		slog.Error("deploy: recovery of an interrupted apply failed; journal kept for the next start", "error", err)
+		if s.auditFn != nil {
+			s.auditFn(ctx, "system", "deployment.recovery_failed", "deployment", "", "failure", metadata)
+		}
+	}
 }
 
 func (s *Service) updateDeploymentStatus(id int64, status, message string) error {

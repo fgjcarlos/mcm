@@ -128,11 +128,9 @@ normalize_archive_target_dir() {
 #     "files": { "<relpath>": { "size": N, "sha256": "..." }, ... }
 #   }
 #
-# Writes the manifest to <staging>/manifest.json. Captures the JSON
-# in the variable MANIFEST_JSON for callers that need to compute the
-# sha256 of the final manifest (when including the manifest itself as
-# one of the file entries). The function also prints the manifest path
-# to stdout for backward-compat with the test that expects a path.
+# Writes the manifest to <staging>/manifest.json. The function also
+# prints the manifest path to stdout for backward-compat with the test
+# that expects a path.
 write_manifest() {
     local staging="$1"
     shift
@@ -179,7 +177,6 @@ write_manifest() {
         printf '  "files": { %s }\n' "$entries_json"
         printf '}\n'
     } > "$manifest_path"
-    MANIFEST_JSON="$(cat "$manifest_path")"
     printf '%s\n' "$manifest_path"
 }
 

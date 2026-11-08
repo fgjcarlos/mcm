@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/config"
+	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/mosquitto"
 )
 
@@ -255,9 +256,16 @@ func TestBuildApplierCarriesTheDeployPaths(t *testing.T) {
 		ReloadStrategy: "sighup",
 	}
 
-	fileApplier, ok := buildApplier(cfg).(mosquitto.FileApplier)
+	// The file applier is wrapped so the deployment can distinguish a
+	// reload from a restart (issue #294); the wrapper carries the
+	// deploy paths unchanged.
+	restartApplier, ok := buildApplier(cfg).(deploy.RestartApplier)
 	if !ok {
-		t.Fatalf("buildApplier(file) = %T, want mosquitto.FileApplier", buildApplier(cfg))
+		t.Fatalf("buildApplier(file) = %T, want deploy.RestartApplier", buildApplier(cfg))
+	}
+	fileApplier, ok := restartApplier.Inner.(mosquitto.FileApplier)
+	if !ok {
+		t.Fatalf("buildApplier(file).Inner = %T, want mosquitto.FileApplier", restartApplier.Inner)
 	}
 	if fileApplier.ACLPath != cfg.ACLPath {
 		t.Errorf("FileApplier.ACLPath = %q, want %q", fileApplier.ACLPath, cfg.ACLPath)

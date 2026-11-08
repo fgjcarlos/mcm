@@ -16,8 +16,6 @@
 # Output: a single .tgz archive containing:
 #   mcm/
 #     mcm.db
-#     mcm.db-shm   (when present)
-#     mcm.db-wal   (when present)
 #     .bootstrap.json
 #   mosquitto/
 #     passwd
@@ -32,6 +30,10 @@
 # is `docker run --rm` so nothing persists on the host.
 
 set -euo pipefail
+# The archive contains credentials, the JWT bootstrap secret and may
+# include TLS private keys; create it owner-only unless the caller
+# explicitly changes its permissions afterwards (issue #295, S32).
+umask 077
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib-backup.sh
@@ -147,6 +149,11 @@ run_alpine_helper_rw() {
 # connection (SetMaxOpenConns(1)) so the .backup grabs a brief
 # exclusive lock and yields as soon as the copy is on disk. No server
 # downtime required.
+#
+# The -wal/-shm sidecar files are deliberately NOT copied: the .backup
+# output is a self-contained consistent snapshot, and a WAL/SHM from a
+# different point in time written next to it can corrupt the restored
+# database (issue #295, criterion "copia consistente").
 backup_sqlite_snapshot() {
     local src_volume="$1" out_path="$2"
     local tmpdir
@@ -163,8 +170,6 @@ backup_sqlite_snapshot() {
                 }
             fi
             sqlite3 /data/mcm.db \".timeout 5000\" '.backup /backup/mcm.db'
-            cp -p /data/mcm.db-shm /backup/mcm.db-shm 2>/dev/null || true
-            cp -p /data/mcm.db-wal /backup/mcm.db-wal 2>/dev/null || true
             if [ -f /data/.bootstrap.json ]; then
                 # Copy and then chmod 0644 so the host user running
                 # backup.sh can sha256 the file for the manifest. The
@@ -176,8 +181,6 @@ backup_sqlite_snapshot() {
             echo 'sqlite3 .backup completed'
         "
     cp -p "${tmpdir}/mcm.db" "$out_path"
-    [ -f "${tmpdir}/mcm.db-shm" ] && cp -p "${tmpdir}/mcm.db-shm" "${out_path%.*}.db-shm" || true
-    [ -f "${tmpdir}/mcm.db-wal" ] && cp -p "${tmpdir}/mcm.db-wal" "${out_path%.*}.db-wal" || true
     if [ -f "${tmpdir}/.bootstrap.json" ]; then
         cp -p "${tmpdir}/.bootstrap.json" "${out_path%/*}/.bootstrap.json"
         chmod 0644 "${out_path%/*}/.bootstrap.json"
@@ -227,8 +230,12 @@ backup_mosquitto_files() {
             done
             if [ -d /data/certs ]; then
                 cp -rp /data/certs /staging/mosquitto/certs
-                find /staging/mosquitto/certs -type f -exec chmod 0644 {} +
-                find /staging/mosquitto/certs -type d -exec chmod 0755 {} +
+                # Certificate private keys are secrets. Keep every
+                # certificate-tree file owner-only in the staging tree;
+                # the archive is also mode 0600 and tar preserves these
+                # owner permissions (S32).
+                find /staging/mosquitto/certs -type f -exec chmod 0600 {} +
+                find /staging/mosquitto/certs -type d -exec chmod 0700 {} +
             fi
         "
 }
@@ -284,59 +291,35 @@ if [ "$INCLUDE_BROKER_DATA" = true ]; then
 fi
 
 echo "backup.sh: writing manifest …"
-# Build a single manifest that includes every file we created PLUS
-# the manifest itself (so restore can verify integrity including the
-# manifest). The trick: stage a temporary manifest that already
-# contains the sha256 of the FINAL manifest content. The actual
-# final manifest is written to a temp path first, then sha256'd,
-# then re-rendered with that hash, then moved into place.
-TMP_MANIFEST="${STAGING_DIR}/.manifest.tmp"
-FINAL_MANIFEST="${STAGING_DIR}/manifest.json"
+# The manifest enumerates EVERY staged file (mcm.db, bootstrap,
+# mosquitto config, certificates, broker persistence when included) so
+# restore.sh can verify the integrity of the whole archive — not just
+# the database (issue #295, criterion "incluir manifiesto …
+# certificados y persistencia del broker cuando corresponda").
+# A manifest cannot contain its own digest (that would be
+# self-referential). It lists every payload file; the archive transport
+# protects manifest.json itself. Enumerate the staging tree dynamically
+# so optional certificates and broker persistence are covered too.
+manifest_file_args=()
+while IFS= read -r -d '' staged_file; do
+    rel_label="${staged_file#"${STAGING_DIR}/"}"
+    manifest_file_args+=(--file "$staged_file" --label "$rel_label")
+done < <(find "$STAGING_DIR" -type f ! -name 'manifest.json' -print0 | sort -z)
 
-# Pass 1: write everything except the manifest itself. Capture the
-# JSON content directly from write_manifest's stdout (the path it
-# prints) by sending the call's stdout to /dev/null and reading the
-# file we just wrote.
 write_manifest "$STAGING_DIR" \
     "operator=$OPERATOR" \
     "git_commit=$GIT_COMMIT" \
     "mcm_version=$MCM_VERSION" \
     "include_broker_data=$INCLUDE_BROKER_DATA" \
-    --file "${STAGING_DIR}/mcm/mcm.db"            --label "mcm/mcm.db" \
-    --file "${STAGING_DIR}/mcm/mcm.db-shm"       --label "mcm/mcm.db-shm" \
-    --file "${STAGING_DIR}/mcm/mcm.db-wal"       --label "mcm/mcm.db-wal" \
-    --file "${STAGING_DIR}/mcm/.bootstrap.json"  --label "mcm/.bootstrap.json" \
-    --file "${STAGING_DIR}/mosquitto/passwd"      --label "mosquitto/passwd" \
-    --file "${STAGING_DIR}/mosquitto/acl"         --label "mosquitto/acl" \
-    --file "${STAGING_DIR}/mosquitto/mosquitto.conf"  --label "mosquitto/mosquitto.conf" \
+    "${manifest_file_args[@]}" \
     > /dev/null
-mv "${STAGING_DIR}/manifest.json" "$TMP_MANIFEST"
-
-# Pass 2: include the manifest.json entry too. Compute the sha256 of
-# the Pass-1 manifest content (which is now at $TMP_MANIFEST) and
-# rewrite the manifest in place to include its own entry. The Pass-1
-# manifest ends with a single "}" on its own line; we replace it with
-# a trailing comma + the manifest entry + the closing brace.
-MANIFEST_SHA="$(sha256_file "$TMP_MANIFEST")"
-MANIFEST_SIZE="$(stat -c %s "$TMP_MANIFEST")"
-# Use awk for the splice so the multi-line replacement is explicit
-# (sed's `\n` in the replacement only works on GNU sed with the right
-# flags, and the pattern is fragile).
-awk -v sha="$MANIFEST_SHA" -v size="$MANIFEST_SIZE" '
-    /^}$/ && !inserted {
-        print "  , \"manifest.json\": { \"sha256\": \"" sha "\", \"size\": " size " }"
-        inserted = 1
-    }
-    { print }
-    END { if (!inserted) { print "  , \"manifest.json\": { \"sha256\": \"" sha "\", \"size\": " size " }" } }
-' "$TMP_MANIFEST" > "$FINAL_MANIFEST"
-rm -f "$TMP_MANIFEST"
 
 echo "backup.sh: packaging …"
 if [ "$BACKUP_FILE" = "-" ]; then
-    tar czf - -C "$STAGING_DIR" .
+    tar czf - --mode=go-rwx -C "$STAGING_DIR" .
 else
     mkdir -p "$(dirname "$BACKUP_FILE")"
-    tar czf "$BACKUP_FILE" -C "$STAGING_DIR" .
-    echo "backup.sh: wrote $BACKUP_FILE"
+    tar czf "$BACKUP_FILE" --mode=go-rwx -C "$STAGING_DIR" .
+    chmod 0600 "$BACKUP_FILE"
+    echo "backup.sh: wrote $BACKUP_FILE (mode 0600; contains secrets, store securely)"
 fi

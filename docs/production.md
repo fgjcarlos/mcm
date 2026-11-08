@@ -262,6 +262,28 @@ the only deploy mode that still benefits from the legacy `pid_path` +
 `MCM_MOSQUITTO_DEPLOY_MODE=file` and `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND`
 exclusively.
 
+##### Restarting the broker (issue #294)
+
+A RELOAD is not a RESTART. Mosquitto reads a bridge, a plugin or the
+dynamic security plugin only at start-up, so a change to those surfaces
+needs a broker restart to become active. `MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND`
+(default unset) is the controlled restart mechanism, separate from the
+reload command on purpose:
+
+- When it is set (e.g. `"systemctl restart mosquitto.service"`, or an
+  SSH hop / sidecar that bounces the broker), a change that needs a
+  restart is applied and the broker is restarted through that command.
+- When it is unset, MCM cannot restart the broker: a change that needs
+  a restart is refused before anything is written (or lands in
+  `pending_activation` where the surface cannot be verified), instead of
+  being reported active after a mere reload.
+
+The example production stack in `docker-compose.prod.yml` does NOT set
+a restart command — restarting a Compose service from inside a sibling
+container would need the Docker socket, which this deployment model
+forbids. Set the restart command when the broker runs under systemd,
+Kubernetes or another supervisor that can bounce it out-of-band.
+
 ##### Production path alignment (issue #294)
 
 Both `mosquitto.conf` and `mosquitto.prod.conf` reference the same
@@ -437,8 +459,14 @@ bash scripts/backup.sh /path/to/backup-$(date +%Y%m%d).tgz
   (default `alpine:3.21`).
 
 The output is a single `.tgz` containing the captured files plus a
-`manifest.json` with sha256 of every file. Restore validates the
-sha256 against the staging tree and refuses to proceed on mismatch.
+`manifest.json` with sha256 of every payload file (including optional
+certificates and broker persistence). The archive is created with mode
+`0600` and private member permissions because it contains the MCM JWT
+bootstrap secret, MQTT password hashes and may include TLS private keys.
+The archive is **not encrypted**: store it in an access-controlled,
+encrypted backup location and do not attach it to issues or logs. Restore
+validates the sha256 against the staging tree and refuses to proceed on
+mismatch.
 
 ### 6.3 Running a restore
 
@@ -446,7 +474,13 @@ sha256 against the staging tree and refuses to proceed on mismatch.
 # Stop the MCM service so it doesn't write to the volume mid-restore.
 task down
 
+# Into an EMPTY deployment (fresh bootstrap or wiped volumes):
 bash scripts/restore.sh --confirm backups/mcm-data.tgz
+
+# Over an existing deployment with data (replaces its state):
+bash scripts/restore.sh --confirm --overwrite backups/mcm-data.tgz
+# Equivalent Taskfile recipe:
+task restore RESTORE_FLAGS=--overwrite
 
 # Restart the MCM service AND the broker — the broker must re-read
 # the restored passwd/acl files; MCM's in-memory verifier cleartext
@@ -456,18 +490,27 @@ docker compose up -d
 docker compose restart mosquitto
 ```
 
-`scripts/restore.sh --confirm` requires explicit confirmation
-(there is no `--force` path; the prompt is the safety net). The
-script:
+`scripts/restore.sh --confirm` requires explicit confirmation, and
+additionally requires `--overwrite` when the destination volumes
+already contain data (an existing `mcm.db`, `passwd` or `acl`): a
+restore replaces them, and the script refuses to destroy existing
+data on a mere `--confirm`. Restoring over a freshly bootstrapped
+empty stack is the intended `--overwrite` case. The script:
 
 1. Extracts the archive to a private staging directory.
-2. Re-reads `manifest.json` and verifies every file's sha256.
+2. Re-reads `manifest.json` and verifies every file's sha256 — every
+   captured file is enumerated, including certificates and broker
+   persistence when `--include-broker-data` was used.
 3. Resolves the volumes via `docker compose --project-name volume ls`.
 4. Writes each file to its original volume path using a helper
    container that sets the correct UID/GID (MCM runs as UID 100 in
    the alpine-based image; the broker as UID 1883).
 5. Preserves file modes (`0600` for sensitive files like mcm.db and
    .bootstrap.json; `0644` for the broker config).
+6. VERIFIES the restored database content: SQLite `integrity_check`
+   plus a non-empty schema read-back. Stale `mcm.db-wal`/`mcm.db-shm`
+   sidecars from older archives are ignored — the `sqlite3 .backup`
+   snapshot is self-contained.
 
 ### 6.4 Recovery validation
 
@@ -480,7 +523,8 @@ flow end-to-end:
 2. Run `scripts/backup.sh` to capture the state.
 3. `docker compose down -v` (wipe EVERYTHING).
 4. `docker compose up -d` (re-up empty; MCM bootstraps a new admin).
-5. Run `scripts/restore.sh --confirm` to write the captured files.
+5. Run `scripts/restore.sh --confirm --overwrite` to replace the
+   freshly-bootstrapped files with the captured ones.
 6. Restart mosquitto (so it reads the restored passwd/acl).
 7. Verify: the original admin password works (proves .bootstrap.json
    + SQLite round-tripped), the captured user still exists, and the

@@ -2659,10 +2659,39 @@ components:
       additionalProperties: false
     Deployment:
       type: object
+      description: |
+        A deployment lifecycle record. The status names the explicit
+        lifecycle of the configuration states:
+
+        - `saved` — the record exists; the rendered content is not on disk yet.
+        - `applying` — the applier is writing the files and signalling the broker.
+        - `pending_activation` — the files are written and the broker was signalled,
+          but nothing proved that the change is active on the broker.
+        - `active_verified` — the broker was verified to serve the new configuration
+          (a positive and a negative MQTT round-trip, or a confirmed control channel).
+        - `failed` — the apply or the verification failed before the broker changed.
+        - `rolled_back` — the change was reverted from the snapshot after a failed
+          verification.
+        - `rollback_failed` — the revert failed too; the broker needs operator
+          intervention.
+
+        `applied` and `pending` are historical values kept for the records written
+        before the explicit lifecycle; the deploy service does not write them.
       properties:
         id: { type: integer, format: int64 }
+        revision_id: { type: string }
         actor: { type: string }
-        status: { type: string }
+        kind:
+          type: string
+          description: The surface the change belongs to.
+          enum: [passwd_acl, broker_config, bridges, plugins, dynsec]
+        reload_kind:
+          type: string
+          description: The activation the change needs (empty for the passwd/ACL surface).
+          enum: ["", reload, restart, both]
+        status:
+          type: string
+          enum: [saved, applying, pending_activation, active_verified, failed, rolled_back, rollback_failed, applied, pending]
         message: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

@@ -92,10 +92,12 @@ tasks:
       - bash scripts/backup.sh "{{.BACKUP_DIR}}/mcm-data.tgz"
 
   restore:
-    desc: Restore MCM + Mosquitto from a backup archive (issue #295)
+    desc: Restore MCM + Mosquitto from a backup archive; set RESTORE_FLAGS=--overwrite to replace existing data (issue #295)
+    vars:
+      RESTORE_FLAGS: '{{.RESTORE_FLAGS | default ""}}'
     cmds:
       - test -f {{.BACKUP_DIR}}/mcm-data.tgz
-      - bash scripts/restore.sh --confirm "{{.BACKUP_DIR}}/mcm-data.tgz"
+      - bash scripts/restore.sh --confirm {{.RESTORE_FLAGS}} "{{.BACKUP_DIR}}/mcm-data.tgz"
 
   test:go:
     desc: Run Go tests with -race
