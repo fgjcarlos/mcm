@@ -32,8 +32,11 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	}
 	var issues []ValidationIssue
 
-	// Multiplicity accounting keyed by directive name.
+	// Multiplicity remains file-wide; dependency accounting is scoped to
+	// the global section or the same listener/bridge block.
 	counts := make(map[string]int)
+	scopeIDs := dependencyScopeIDs(f)
+	dependencyCounts := make(map[dependencyKey]int)
 
 	// A directive belongs to a listener when Mosquitto would bind it to
 	// one: inside a braced listener block, or after a brace-less
@@ -41,7 +44,7 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	// follow it until the next listener.
 	inListener := listenerContext(f)
 
-	for _, it := range f.Items {
+	for index, it := range f.Items {
 		switch it.Kind {
 		case ItemBlockOpen:
 			spec, ok := cat.Lookup(it.Key)
@@ -53,7 +56,9 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 				})
 				continue
 			}
-			counts[strings.ToLower(it.Key)]++
+			name := strings.ToLower(it.Key)
+			counts[name]++
+			dependencyCounts[dependencyKey{scope: scopeIDs[index], name: name}]++
 
 		case ItemDirective:
 			spec, ok := cat.Lookup(it.Key)
@@ -64,7 +69,9 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 				})
 				continue
 			}
-			counts[strings.ToLower(it.Key)]++
+			name := strings.ToLower(it.Key)
+			counts[name]++
+			dependencyCounts[dependencyKey{scope: scopeIDs[index], name: name}]++
 
 			// Scope check. A directive that opens a listener is by
 			// definition written at the top level, so it is never
@@ -149,6 +156,29 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 		}
 	}
 
+	// Dependency post-pass. A declared dependency is a required directive:
+	// whenever its source directive is configured, each dependency must
+	// also appear in this configuration. Unknown directives remain
+	// preserved and are not dependency targets unless explicitly modeled.
+	for index, it := range f.Items {
+		if it.Kind != ItemDirective && it.Kind != ItemBlockOpen {
+			continue
+		}
+		spec, ok := cat.Lookup(it.Key)
+		if !ok {
+			continue
+		}
+		for _, dependency := range spec.Deps {
+			key := dependencyKey{scope: scopeIDs[index], name: strings.ToLower(dependency)}
+			if dependencyCounts[key] == 0 {
+				issues = append(issues, ValidationIssue{
+					Kind: "dependency", Line: it.Line, Directive: it.Key,
+					Message: fmt.Sprintf("%q requires %q", it.Key, dependency),
+				})
+			}
+		}
+	}
+
 	// Multiplicity post-pass.
 	for _, spec := range cat.Specs() {
 		count := counts[strings.ToLower(spec.Name)]
@@ -161,6 +191,45 @@ func Validate(f *File, cat *catalog.Catalog) []ValidationIssue {
 	}
 
 	return issues
+}
+
+type dependencyKey struct {
+	scope int
+	name  string
+}
+
+// dependencyScopeIDs returns a stable scope identifier for each item. Global
+// directives share scope 0; directives inside each braced block or each
+// brace-less listener belong to a distinct scope. Dependencies must be met
+// within that scope instead of being satisfied by another listener.
+func dependencyScopeIDs(f *File) []int {
+	if f == nil {
+		return nil
+	}
+	scopes := make([]int, len(f.Items))
+	current := 0
+	next := 1
+	var parents []int
+	for i, item := range f.Items {
+		scopes[i] = current
+		switch item.Kind {
+		case ItemBlockOpen:
+			parents = append(parents, current)
+			current = next
+			next++
+		case ItemBlockClose:
+			if len(parents) > 0 {
+				current = parents[len(parents)-1]
+				parents = parents[:len(parents)-1]
+			}
+		case ItemDirective:
+			if len(parents) == 0 && isBlockDirective(item.Key) {
+				current = next
+				next++
+			}
+		}
+	}
+	return scopes
 }
 
 // listenerContext marks the items that Mosquitto binds to a listener.

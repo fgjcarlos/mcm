@@ -2363,17 +2363,20 @@ func (s *Service) applyBrokerConfigRevision(ctx context.Context, actor, revision
 	// preview was taken against, the body must not carry inline
 	// credentials that the editor and the diffs would expose, and the
 	// catalog must not report a value the broker cannot accept.
+	validationFile := parsed
 	if strings.TrimSpace(rev.IncludeSnapshot) != "" {
-		if err := s.checkBrokerConfigIncludes(parsed, rev.IncludeSnapshot); err != nil {
+		resolved, err := s.resolveBrokerConfigIncludes(parsed, rev.IncludeSnapshot)
+		if err != nil {
 			return storage.Deployment{}, err
 		}
+		validationFile = resolved
 	}
 	if kind == "broker_config" {
 		if hasInlineCredentials(parsed) {
 			return storage.Deployment{}, ErrSensitiveBrokerConfig
 		}
 		if cat, ok := s.confCatalog.(*catalog.Catalog); ok {
-			for _, issue := range conf.Validate(parsed, cat) {
+			for _, issue := range conf.Validate(validationFile, cat) {
 				if issue.Kind == "type" || issue.Kind == "dependency" {
 					return storage.Deployment{}, ErrInvalidBrokerConfig
 				}

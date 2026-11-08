@@ -107,6 +107,67 @@ func TestBrokerConfigApplyWithoutVerificationSubject(t *testing.T) {
 	}
 }
 
+func TestBrokerConfigApplyAcceptsDependencyProvidedByInclude(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	root := t.TempDir()
+	path := filepath.Join(root, "mosquitto.conf")
+	original := "listener 8883\ncertfile /tmp/cert.pem\ninclude_dir parts\nconnection_messages true\n"
+	if err := os.Mkdir(filepath.Join(root, "parts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	included := filepath.Join(root, "parts", "tls.conf")
+	if err := os.WriteFile(included, []byte("keyfile /tmp/key.pem\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"mosquitto.conf": original,
+		"passwd":         "probe:hash\n",
+		"acl":            "user probe\ntopic readwrite probe/allowed\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat := loadTestCatalog(t)
+	applier := &configTestApplier{}
+	verifier := &configTestVerifier{path: path}
+	svc := deploy.NewService(applier, store.ACLStore(), store, store, verifier, app, config.MosquittoConfig{}, config.DeployConfig{Mode: "file", ACLPath: filepath.Join(root, "acl"), PasswdPath: filepath.Join(root, "passwd")}, nil).WithBrokerConfig(path, cat)
+	app.brokerCfgSvc, app.brokerCfgCatalog, app.deploySvc = svc, cat, svc
+	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+	token := loginAs(t, app, "admin", "secret")
+	proof := recentMFATestProof(t, app, token)
+	call := func(url, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := authedRequest("POST", url, body, token)
+		req.Header.Set("X-MCM-MFA", proof)
+		app.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := call("/api/v1/mqtt-users", `{"username":"probe"}`); rec.Code != 201 {
+		t.Fatalf("create verification subject: %d %s", rec.Code, rec.Body.String())
+	}
+	draft := strings.Replace(original, "connection_messages true", "connection_messages false", 1)
+	payload, _ := json.Marshal(map[string]string{"body": draft})
+	rec := call("/api/v1/broker/config/preview", string(payload))
+	var preview deploy.PreviewResult
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &preview) != nil {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := call("/api/v1/broker/config/apply", `{"revision_id":"`+preview.RevisionID+`","adopt":true}`); rec.Code != 200 {
+		t.Fatalf("apply with dependency in include: %d %s", rec.Code, rec.Body.String())
+	}
+	written, err := os.ReadFile(path)
+	if err != nil || string(written) != draft {
+		t.Fatalf("applied root = %q, want %q: %v", written, draft, err)
+	}
+	includeBody, err := os.ReadFile(included)
+	if err != nil || string(includeBody) != "keyfile /tmp/key.pem\n" {
+		t.Fatalf("include changed during apply: %q %v", includeBody, err)
+	}
+}
+
 func TestBrokerConfigApplyVerificationAndRecovery(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })

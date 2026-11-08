@@ -36,6 +36,13 @@ protocol websockets
 some_future_setting foo bar baz
 `
 
+func TestParseConfRejectsOverlongLine(t *testing.T) {
+	input := strings.Repeat("x", (1<<20)+1)
+	if _, err := ParseString(input, "mosquitto.conf"); err == nil {
+		t.Fatal("ParseString accepted a line beyond the previous 1 MiB scanner limit")
+	}
+}
+
 func TestParseConf_PreservesComments(t *testing.T) {
 	f, err := ParseString(sampleConf, "mosquitto.conf")
 	if err != nil {
@@ -76,6 +83,116 @@ func TestParseConf_PreservesUnknownDirectives(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("some_future_setting directive must be preserved as ItemDirective")
+	}
+}
+
+func TestParseConf_RoundTripPreservesLineEndingsAndFinalNewline(t *testing.T) {
+	for name, input := range map[string]string{
+		"CRLF with final newline":    "# existing broker\r\nmax_connections 20\r\nunknown_directive future\r\n",
+		"LF without final newline":   "# existing broker\nmax_connections 20",
+		"CRLF without final newline": "# existing broker\r\nmax_connections 20",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, err := ParseString(input, "mosquitto.conf")
+			if err != nil {
+				t.Fatalf("ParseString: %v", err)
+			}
+			rendered, err := f.Render()
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if string(rendered) != input {
+				t.Fatalf("round-trip changed source bytes:\n got %q\nwant %q", rendered, input)
+			}
+		})
+	}
+}
+
+func TestValidateCatalogDependencies(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("LoadVersion: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "certfile requires keyfile", body: "certfile /etc/mosquitto/cert.pem\n", want: "keyfile"},
+		{name: "keyfile requires certfile", body: "keyfile /etc/mosquitto/key.pem\n", want: "certfile"},
+		{name: "complete certificate pair", body: "certfile /etc/mosquitto/cert.pem\nkeyfile /etc/mosquitto/key.pem\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := ParseString(tc.body, "mosquitto.conf")
+			if err != nil {
+				t.Fatalf("ParseString: %v", err)
+			}
+			issues := Validate(f, cat)
+			if tc.want == "" {
+				for _, issue := range issues {
+					if issue.Kind == "dependency" {
+						t.Fatalf("unexpected dependency issue: %+v", issue)
+					}
+				}
+				return
+			}
+			for _, issue := range issues {
+				if issue.Kind == "dependency" && strings.Contains(issue.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("Validate(%q) = %+v, want dependency on %q", tc.body, issues, tc.want)
+		})
+	}
+}
+
+func TestValidateDependenciesAreScopedToListener(t *testing.T) {
+	cat, err := catalog.LoadVersion("2.0")
+	if err != nil {
+		t.Fatalf("LoadVersion: %v", err)
+	}
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{
+			name: "split across listeners is missing each counterpart",
+			body: "listener 8883 {\ncertfile /tmp/cert.pem\n}\nlistener 8884 {\nkeyfile /tmp/key.pem\n}\n",
+			want: 2,
+		},
+		{
+			name: "complete pair in one listener",
+			body: "listener 8883 {\ncertfile /tmp/cert.pem\nkeyfile /tmp/key.pem\n}\n",
+			want: 0,
+		},
+		{
+			name: "split across brace-less listeners",
+			body: "listener 8883\ncertfile /tmp/cert.pem\nlistener 8884\nkeyfile /tmp/key.pem\n",
+			want: 2,
+		},
+		{
+			name: "complete pair in brace-less listener",
+			body: "listener 8883\ncertfile /tmp/cert.pem\nkeyfile /tmp/key.pem\n",
+			want: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := ParseString(tc.body, "mosquitto.conf")
+			if err != nil {
+				t.Fatalf("ParseString: %v", err)
+			}
+			var dependencies int
+			for _, issue := range Validate(f, cat) {
+				if issue.Kind == "dependency" {
+					dependencies++
+				}
+			}
+			if dependencies != tc.want {
+				t.Fatalf("dependency issues = %d, want %d", dependencies, tc.want)
+			}
+		})
 	}
 }
 

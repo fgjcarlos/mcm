@@ -10,11 +10,6 @@ import (
 	"strings"
 )
 
-// maxIncludeDepth bounds recursive include_dir expansion. Eight is enough
-// for any plausible Mosquitto deployment and prevents infinite recursion
-// from a self-referential include_dir.
-const maxIncludeDepth = 8
-
 // IncludeSnapshot is the serialisable summary of every file pulled in
 // by an include_dir tree. The HTTP API returns it as JSON so the
 // operator can audit what was actually imported.
@@ -38,10 +33,6 @@ type IncludeFileEntry struct {
 // outside the root because the importer must present a deterministic
 // snapshot regardless of the host filesystem's link layout.
 var ErrIncludeSymlinkEscape = errors.New("include_dir traversal would escape root")
-
-// ErrIncludeCycle is returned when include_dir expansion loops back on a
-// directory already visited in the chain.
-var ErrIncludeCycle = errors.New("include_dir cycle detected")
 
 // IncludeResolver walks a configuration file's include_dir directives
 // and concatenates every included file's parsed AST after the top-level
@@ -67,16 +58,14 @@ func NewIncludeResolver(root string) *IncludeResolver {
 // Files are read with os.ReadFile (not a Reader) because include_dir is
 // intrinsically a filesystem concept.
 //
-// The visited set is keyed by the resolved inode (device+inode) so a
-// cycle created by symlinks or hardlinks is detected even when paths
-// differ.
+// A visited-file set avoids adding the same root-relative file twice when
+// include_dir entries overlap.
 func (r *IncludeResolver) Resolve(top *File) (*File, IncludeSnapshot, error) {
 	if r.root == "" {
 		return nil, IncludeSnapshot{}, errors.New("include resolver: root is empty")
 	}
 	snapshot := IncludeSnapshot{Root: r.root}
-	visited := make(map[string]string) // resolved path → SHA
-	visitedInodes := make(map[uint64]string)
+	visited := make(map[string]string) // root-relative path → SHA
 
 	out := &File{Path: top.Path}
 	out.Items = append(out.Items, top.Items...)
@@ -99,7 +88,7 @@ func (r *IncludeResolver) Resolve(top *File) (*File, IncludeSnapshot, error) {
 		if len(it.Values) > 1 {
 			pattern = strings.Join(it.Values[1:], " ")
 		}
-		if err := r.walk(out, dir, pattern, &snapshot, visited, visitedInodes, 0); err != nil {
+		if err := r.walk(out, dir, pattern, &snapshot, visited); err != nil {
 			return nil, snapshot, err
 		}
 	}
@@ -110,16 +99,10 @@ func (r *IncludeResolver) Resolve(top *File) (*File, IncludeSnapshot, error) {
 	return out, snapshot, nil
 }
 
-// walk descends one include_dir step, recursively visiting sub-directories
-// up to maxIncludeDepth. It writes the parsed Items of every regular file
-// matching the optional glob into dst, in lexical order. Symlinks are
-// evaluated and the resolved inode is recorded — if it falls outside the
-// configured root or has already been visited in this chain, the walk
-// aborts.
-func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *IncludeSnapshot, visited map[string]string, visitedInodes map[uint64]string, depth int) error {
-	if depth > maxIncludeDepth {
-		return fmt.Errorf("include_dir: max depth %d exceeded at %q", maxIncludeDepth, dir)
-	}
+// walk reads only direct regular .conf children of one include_dir, in
+// lexical order. Mosquitto does not recurse into subdirectories. Symlinked
+// .conf files are evaluated and refused if they escape the configured root.
+func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *IncludeSnapshot, visited map[string]string) error {
 	abs, err := filepath.Abs(filepath.Join(r.root, dir))
 	if err != nil {
 		return fmt.Errorf("include_dir %q: %w", dir, err)
@@ -143,15 +126,6 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 	if !strings.HasPrefix(resolved, r.root+string(filepath.Separator)) && resolved != r.root {
 		return fmt.Errorf("%w: include_dir %q resolves to %q (root %q)", ErrIncludeSymlinkEscape, dir, resolved, r.root)
 	}
-	inode, err := inodeOf(resolved)
-	if err != nil {
-		return err
-	}
-	if _, dup := visitedInodes[inode]; dup {
-		return fmt.Errorf("%w: directory %q already visited", ErrIncludeCycle, resolved)
-	}
-	visitedInodes[inode] = resolved
-
 	entries, err := os.ReadDir(resolved)
 	if err != nil {
 		return fmt.Errorf("read include_dir %q: %w", resolved, err)
@@ -164,6 +138,15 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 
 	for _, name := range names {
 		childPath := filepath.Join(resolved, name)
+		info, err := os.Stat(childPath)
+		if err != nil {
+			return fmt.Errorf("stat %q: %w", childPath, err)
+		}
+		// Mosquitto ignores subdirectories. Check this before resolving
+		// symlinks so an ignored nested directory cannot affect import.
+		if info.IsDir() || !info.Mode().IsRegular() || filepath.Ext(name) != ".conf" {
+			continue
+		}
 		actualPath, err := filepath.EvalSymlinks(childPath)
 		if err != nil {
 			return err
@@ -171,21 +154,7 @@ func (r *IncludeResolver) walk(dst *File, dir, pattern string, snapshot *Include
 		if actualPath != r.root && !strings.HasPrefix(actualPath, r.root+string(filepath.Separator)) {
 			return fmt.Errorf("%w: included file %q", ErrIncludeSymlinkEscape, name)
 		}
-		info, err := os.Stat(childPath)
-		if err != nil {
-			return fmt.Errorf("stat %q: %w", childPath, err)
-		}
-		if info.IsDir() {
-			// include_dir is not recursive by default in Mosquitto,
-			// but we recurse to honour nested layouts operators
-			// commonly use for ACL/cert files.
-			subdir, _ := filepath.Rel(r.root, childPath)
-			if err := r.walk(dst, subdir, pattern, snapshot, visited, visitedInodes, depth+1); err != nil {
-				return err
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() || filepath.Ext(name) != ".conf" || filepath.Ext(actualPath) != ".conf" {
+		if filepath.Ext(actualPath) != ".conf" {
 			continue
 		}
 		if pattern != "" {
