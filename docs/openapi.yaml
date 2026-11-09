@@ -1446,6 +1446,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/broker/config/support-matrix:
+    get:
+      tags: [Broker]
+      summary: Versioned support matrix of the Mosquitto directives
+      description: |
+        Requires auditor or higher. Returns, for the loaded broker version,
+        every directive the Mosquitto configuration manual documents and the
+        level of support MCM gives it: `managed` (edited through a dedicated
+        graphical control), `partial` (validated and preserved losslessly,
+        but edited in the advanced root editor) or `unsupported` (documented
+        upstream, not administered by MCM).
+
+        The matrix states the exact coverage of MCM for that broker version.
+        MCM does not claim compatibility with every Mosquitto release.
+      responses:
+        "200":
+          description: The support matrix of the loaded broker version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupportMatrixResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Broker config catalog is not loaded, or the broker version has no upstream directive inventory.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/broker/config/revisions:
     get:
       tags: [Broker]
@@ -3134,6 +3161,31 @@ components:
           type: array
           items: { $ref: "#/components/schemas/DirectiveSpec" }
       required: [version, directives]
+    SupportMatrixResponse:
+      type: object
+      properties:
+        version: { type: string, description: "Mosquitto version this matrix describes." }
+        counts:
+          type: object
+          properties:
+            managed: { type: integer }
+            partial: { type: integer }
+            unsupported: { type: integer }
+        directives:
+          type: array
+          items: { $ref: "#/components/schemas/SupportEntry" }
+      required: [version, counts, directives]
+    SupportEntry:
+      type: object
+      properties:
+        version: { type: string }
+        directive: { type: string }
+        level: { type: string, enum: [managed, partial, unsupported] }
+        surface:
+          type: string
+          enum: [settings, listeners, bridges, plugins, access, advanced]
+          description: The MCM control that manages the directive. Empty for an unsupported directive.
+      required: [version, directive, level]
     DirectiveSpec:
       type: object
       properties:

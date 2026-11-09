@@ -485,3 +485,81 @@ func TestBrokerConfigDisabledDefaults(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleBrokerConfigSupportMatrix covers
+// GET /api/v1/broker/config/support-matrix.
+func TestHandleBrokerConfigSupportMatrix(t *testing.T) {
+	t.Run("returns 200 with the version, counts and entries", func(t *testing.T) {
+		cat := loadTestCatalog(t)
+		app, store := newAppWithBroker(t, &fakeBrokerConfigService{}, cat, "")
+		t.Cleanup(func() { _ = store.Close() })
+		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAuditor)
+		token := loginAs(t, app, "admin", "secret")
+
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodGet, "/api/v1/broker/config/support-matrix", "", token)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Version    string         `json:"version"`
+			Counts     map[string]int `json:"counts"`
+			Directives []struct {
+				Directive string `json:"directive"`
+				Level     string `json:"level"`
+				Surface   string `json:"surface"`
+			} `json:"directives"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.Version != "2.0" {
+			t.Errorf("version = %q, want 2.0", resp.Version)
+		}
+		if len(resp.Directives) == 0 {
+			t.Fatal("directives must not be empty")
+		}
+		total := resp.Counts["managed"] + resp.Counts["partial"] + resp.Counts["unsupported"]
+		if total != len(resp.Directives) {
+			t.Errorf("counts sum to %d, want %d entries", total, len(resp.Directives))
+		}
+		for _, d := range resp.Directives {
+			switch d.Level {
+			case "managed", "partial", "unsupported":
+			default:
+				t.Errorf("directive %q has unknown level %q", d.Directive, d.Level)
+			}
+			if d.Level == "unsupported" && d.Surface != "" {
+				t.Errorf("directive %q is unsupported but names surface %q", d.Directive, d.Surface)
+			}
+		}
+	})
+
+	t.Run("returns 503 when catalog is not loaded", func(t *testing.T) {
+		app, store := newAppWithBroker(t, &fakeBrokerConfigService{}, nil, "")
+		t.Cleanup(func() { _ = store.Close() })
+		seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAuditor)
+		token := loginAs(t, app, "admin", "secret")
+
+		rec := httptest.NewRecorder()
+		req := authedRequest(http.MethodGet, "/api/v1/broker/config/support-matrix", "", token)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+	})
+
+	t.Run("requires authentication", func(t *testing.T) {
+		cat := loadTestCatalog(t)
+		app, store := newAppWithBroker(t, &fakeBrokerConfigService{}, cat, "")
+		t.Cleanup(func() { _ = store.Close() })
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/broker/config/support-matrix", nil)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+	})
+}
