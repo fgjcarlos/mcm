@@ -177,8 +177,15 @@ func renderTopic(rule TopicRule) conf.Item {
 	if direction != "" {
 		values = append(values, string(direction))
 		values = append(values, strconv.Itoa(rule.QoS))
-		if rule.LocalPrefix != "" {
-			values = append(values, rule.LocalPrefix)
+		if rule.LocalPrefix != "" || rule.RemotePrefix != "" {
+			localPrefix := rule.LocalPrefix
+			if localPrefix == "" {
+				// Mosquitto's topic grammar requires the local-prefix slot
+				// before remote-prefix. Quote an empty local prefix so the
+				// remote prefix remains in its intended position.
+				localPrefix = `""`
+			}
+			values = append(values, localPrefix)
 			if rule.RemotePrefix != "" {
 				values = append(values, rule.RemotePrefix)
 			}

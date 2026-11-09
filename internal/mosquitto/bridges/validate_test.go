@@ -138,6 +138,48 @@ func TestValidateRejectsBadTopicRules(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsLineBreaksInDirectiveValuesWithoutEchoingThem(t *testing.T) {
+	const injected = "sensitive\nallow_anonymous true"
+	cases := []struct {
+		name  string
+		field string
+		set   func(*Bridge)
+	}{
+		{"remote client id", "remote_client_id", func(b *Bridge) { b.RemoteClientID = injected }},
+		{"local client id", "local_client_id", func(b *Bridge) { b.LocalClientID = injected }},
+		{"remote username", "username", func(b *Bridge) { b.Username = injected }},
+		{"remote password", "password", func(b *Bridge) { b.Password = injected }},
+		{"local username", "local_username", func(b *Bridge) { b.LocalUsername = injected }},
+		{"local password", "local_password", func(b *Bridge) { b.LocalPassword = injected }},
+		{"notification topic", "notification_topic", func(b *Bridge) { b.NotificationTopic = injected; b.Notifications = boolPtr(true) }},
+		{"TLS CA file", "tls.ca_file", func(b *Bridge) { b.TLS.CAFile = injected }},
+		{"TLS CA path", "tls.ca_path", func(b *Bridge) { b.TLS.CAPath = injected }},
+		{"TLS certificate file", "tls.cert_file", func(b *Bridge) { b.TLS.CertFile = injected }},
+		{"TLS key file", "tls.key_file", func(b *Bridge) { b.TLS.KeyFile = injected }},
+		{"TLS ALPN", "tls.alpn", func(b *Bridge) { b.TLS.ALPN = injected }},
+		{"TLS identity", "tls.identity", func(b *Bridge) { b.TLS.Identity = injected }},
+		{"TLS PSK", "tls.psk", func(b *Bridge) { b.TLS.PSK = injected; b.TLS.Identity = "identity" }},
+		{"topic", "topics", func(b *Bridge) { b.Topics[0].Topic = "bridge\ninjected" }},
+		{"local topic prefix", "topics", func(b *Bridge) { b.Topics[0].LocalPrefix = "local\ninjected" }},
+		{"remote topic prefix", "topics", func(b *Bridge) { b.Topics[0].RemotePrefix = "remote\ninjected" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bridge := validBridge()
+			tc.set(&bridge)
+			issues := Validate(Document{Bridges: []Bridge{bridge}}, nil)
+			if !hasIssue(issues, IssueKindValue, "upstream", tc.field) {
+				t.Fatalf("issues = %v, want a single-line value issue for %s", issueKinds(issues), tc.field)
+			}
+			for _, issue := range issues {
+				if strings.Contains(issue.Message, "sensitive") || strings.Contains(issue.Message, "allow_anonymous") {
+					t.Fatalf("validation echoed input: %q", issue.Message)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateChecksTLSDependencies(t *testing.T) {
 	bridge := validBridge()
 	bridge.TLS = TLSOptions{CertFile: "/client.pem"}

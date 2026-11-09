@@ -295,6 +295,60 @@ persistence false
 	return string(rendered)
 }
 
+// TestBridgeAppliesRemotePrefixWithoutLocalPrefix proves against two real
+// brokers that an independently configured remote prefix changes the topic
+// seen by the remote broker.
+func TestBridgeAppliesRemotePrefixWithoutLocalPrefix(t *testing.T) {
+	remotePort := freePort(t)
+	localPort := freePort(t)
+
+	remote := startBroker(t, t.TempDir(), remotePort, remoteConf(remotePort))
+	t.Cleanup(func() { remote.stop(t) })
+
+	base := fmt.Sprintf("listener %d 127.0.0.1\nallow_anonymous true\npersistence false\n", localPort)
+	parsed, err := conf.ParseString(base, "mosquitto.conf")
+	if err != nil {
+		t.Fatalf("parse the base configuration: %v", err)
+	}
+	doc := bridges.Document{Bridges: []bridges.Bridge{{
+		Name:             "upstream",
+		Address:          fmt.Sprintf("127.0.0.1:%d", remotePort),
+		RemoteClientID:   "mcm-remote-prefix-it",
+		TryPrivate:       boolPtr(true),
+		KeepaliveSeconds: intPtr(5),
+		RestartTimeout:   "1 2",
+		StartType:        "automatic",
+		Topics: []bridges.TopicRule{{
+			Topic:        "bridge/#",
+			Direction:    bridges.DirectionOut,
+			QoS:          1,
+			RemotePrefix: "remote/",
+		}},
+	}}}
+	updated := bridges.Apply(parsed, doc)
+	rendered, err := updated.Render()
+	if err != nil {
+		t.Fatalf("render the bridge configuration: %v", err)
+	}
+	local := startBroker(t, t.TempDir(), localPort, string(rendered))
+	t.Cleanup(func() { local.stop(t) })
+
+	prefixed := subscribe(t, remote.addr, "remote/bridge/#")
+	t.Cleanup(prefixed.close)
+	unprefixed := subscribe(t, remote.addr, "bridge/#")
+	t.Cleanup(unprefixed.close)
+	publisher := subscribe(t, local.addr, "bridge/#")
+	t.Cleanup(publisher.close)
+	time.Sleep(2 * time.Second)
+	publisher.publish("bridge/prefix-probe", "remote-prefix-probe")
+	if !prefixed.waitForMessage("remote-prefix-probe", 5*time.Second) {
+		if unprefixed.waitForMessage("remote-prefix-probe", time.Second) {
+			t.Fatalf("remote broker received the topic without its configured remote prefix\nlocal broker logs:\n%s", local.logs())
+		}
+		t.Fatalf("remote broker did not receive the prefixed topic\nlocal broker logs:\n%s", local.logs())
+	}
+}
+
 // TestBridgeForwardsTheTrafficAndRecovers proves against two real brokers
 // that the configuration MCM writes carries the traffic in both
 // directions and that the bridge reconnects when the remote broker comes
