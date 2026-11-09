@@ -56,13 +56,63 @@ function boundText(field: SettingsField): string {
 // guesses a range.
 function defaultValuesFor(field: SettingsField): string[] {
   if (field.type === 'boolean') return ['true']
-  if (field.type === 'integer') return [field.default ?? '']
+  if (field.type === 'integer') {
+    const defaultValue = field.default?.trim() ? Number(field.default) : Number.NaN
+    const defaultWithinBounds = Number.isFinite(defaultValue) &&
+      (field.min === undefined || defaultValue >= field.min) &&
+      (field.max === undefined || defaultValue <= field.max)
+    if (defaultWithinBounds) return [field.default!]
+    if (field.min !== undefined) return [String(field.min)]
+    if (field.max !== undefined) return [String(field.max)]
+    return ['']
+  }
   if (field.type === 'enum') return [field.allowed_values?.[0] ?? '']
   if (field.type === 'duration') {
     const suffix = field.duration_suffixes?.[0] ?? ''
     return suffix ? [`1${suffix}`] : ['']
   }
   return ['']
+}
+
+function applyNotice(status: string | undefined, requiresRestart: boolean) {
+  switch (status) {
+    case 'active_verified':
+      return {
+        role: 'status' as const,
+        className: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100',
+        message: requiresRestart ? 'Settings applied. The broker was restarted.' : 'Settings applied. The broker was signalled to reload.',
+      }
+    case 'pending_activation':
+      return {
+        role: 'status' as const,
+        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
+        message: 'Settings were written, but broker activation is pending.',
+      }
+    case 'rolled_back':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'Settings did not activate; the previous configuration was restored.',
+      }
+    case 'rollback_failed':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'Settings activation and rollback failed; manual recovery is required.',
+      }
+    case 'failed':
+      return {
+        role: 'alert' as const,
+        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
+        message: 'Settings apply failed; check the broker before continuing.',
+      }
+    default:
+      return {
+        role: 'status' as const,
+        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
+        message: 'Apply completed, but broker activation status is unknown.',
+      }
+  }
 }
 
 export default function SettingsPanel({
@@ -74,10 +124,12 @@ export default function SettingsPanel({
   onLogout: () => void
   role?: string
 }) {
-  const { settings, preview, previewError, applyError, issues, isLoading, isPreviewing, isApplying, applied, requestPreview, apply } =
+  const { settings, preview, previewError, applyError, issues, isLoading, isPreviewing, isApplying, applied, applyResult, requestPreview, apply } =
     useSettings({ token, onLogout })
   const [draft, setDraft] = useState<Draft | undefined>()
   const [confirmRestart, setConfirmRestart] = useState(false)
+  const [appliedRequiresRestart, setAppliedRequiresRestart] = useState(false)
+  const appliedNotice = applyNotice(applyResult?.status, appliedRequiresRestart)
   const isAdmin = role === 'admin'
   // The preview endpoint requires an operator; the apply endpoint an
   // admin. The panel stays visible to an auditor, but the buttons that
@@ -136,19 +188,26 @@ export default function SettingsPanel({
 
   const handlePreview = () => {
     setConfirmRestart(false)
+    setAppliedRequiresRestart(false)
     void requestPreview(buildDocument(current, fields))
   }
 
   const handleApply = async () => {
     if (!preview?.revision_id) return
+    const requiresRestart = preview.requires_restart === true
+    setAppliedRequiresRestart(requiresRestart)
     const ok = await apply({
       revision_id: preview.revision_id,
-      force: preview.requires_restart,
-      adopt: preview.requires_restart,
+      force: requiresRestart,
+      // Settings apply is the adoption action for this reviewed revision.
+      // The backend requires a fresh adoption even for reload-only changes.
+      adopt: true,
     })
     if (ok) {
       setDraft(undefined)
       setConfirmRestart(false)
+    } else {
+      setAppliedRequiresRestart(false)
     }
   }
 
@@ -205,8 +264,8 @@ export default function SettingsPanel({
           </div>
         ) : null}
         {applied ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100" role="status">
-            Settings applied. The broker was signalled to reload.
+          <div className={`mt-5 rounded-2xl border p-5 text-sm ${appliedNotice.className}`} role={appliedNotice.role}>
+            {appliedNotice.message}
           </div>
         ) : null}
         {settings.warnings?.length ? (

@@ -6,6 +6,7 @@ import type {
   SettingsDocument,
   SettingsIssue,
   SettingsPreview,
+  SettingsApplyResult,
 } from './settingsTypes'
 
 function errorMessage(body: unknown, fallback: string) {
@@ -30,6 +31,7 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
   const [applied, setApplied] = useState(false)
+  const [applyResult, setApplyResult] = useState<SettingsApplyResult | null>(null)
   const previewRequestId = useRef(0)
   const applying = useRef(false)
 
@@ -63,6 +65,7 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
     setApplyError('')
     setIssues([])
     setApplied(false)
+    setApplyResult(null)
     setPreview(null)
     setIsPreviewing(true)
     try {
@@ -103,12 +106,13 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       })
-      const body = await response.json().catch(() => null) as { error?: string } | null
+      const body = await response.json().catch(() => null) as { error?: string; status?: string } | null
       if (!response.ok) {
         setApplyError(errorMessage(body, 'Apply failed.'))
         return false
       }
       setPreview(null)
+      setApplyResult({ status: typeof body?.status === 'string' ? body.status : 'unknown' })
       setApplied(true)
       await refresh()
       return true
@@ -131,6 +135,7 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
     isPreviewing,
     isApplying,
     applied,
+    applyResult,
     requestPreview,
     apply,
     refresh,
