@@ -119,6 +119,13 @@ var (
 	// ErrDeploymentStateIndeterminate reports that the broker or its lifecycle
 	// record could not be brought to a known, persisted state.
 	ErrDeploymentStateIndeterminate = errors.New("deployment state is indeterminate")
+
+	// ErrServiceUserShadowed reports that a stored MQTT user shares the
+	// configured broker service username. The rendered passwd would carry
+	// that username twice (store row + injected service entry), so the
+	// deploy is refused until the operator renames the stored user — the
+	// one mutation the service-account protection rules allow.
+	ErrServiceUserShadowed = errors.New("stored MQTT user shadows the configured broker service account")
 )
 
 // maxDiffLines is the maximum number of lines in a returned unified diff.
@@ -590,6 +597,18 @@ func (s *Service) renderConfig(ctx context.Context) (renderedConfig, error) {
 	users, err := s.mqttStore.ListMQTTUsers(ctx)
 	if err != nil {
 		return renderedConfig{}, fmt.Errorf("list mqtt users: %w", err)
+	}
+	// A stored user sharing the configured service username would render
+	// the same username twice (store row + injected service entry).
+	// Refuse with the one action the protection rules allow instead of
+	// failing later with a generic duplicate-entry error the operator
+	// cannot act on (issue #297).
+	if s.mosquittoCfg.Username != "" && s.mosquittoCfg.Password != "" {
+		for _, u := range users {
+			if !u.Disabled && u.Username == s.mosquittoCfg.Username {
+				return renderedConfig{}, fmt.Errorf("%w: rename stored MQTT user %q or change MCM_MOSQUITTO_USERNAME, then preview again", ErrServiceUserShadowed, u.Username)
+			}
+		}
 	}
 
 	// Read the on-disk passwd so we can preserve the service user's

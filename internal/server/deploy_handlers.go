@@ -58,6 +58,10 @@ func (d *deployAPI) handlePreview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "deploy is not configured"})
 		return
 	}
+	if errors.Is(err, deploy.ErrServiceUserShadowed) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
@@ -103,6 +107,10 @@ func (d *deployAPI) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, deploy.ErrDeployInProgress) {
 		writeJSON(w, http.StatusConflict, errorResponse{Error: "deploy already in progress"})
+		return
+	}
+	if errors.Is(err, deploy.ErrServiceUserShadowed) {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: err.Error()})
 		return
 	}
 	if errors.Is(err, deploy.ErrUnmanagedACLContent) {
