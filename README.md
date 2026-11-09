@@ -14,20 +14,35 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 
 ## Project status
 
-**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), manages the bridge connections to remote brokers and the plugins of the broker — including the security database of the dynamic security plugin — and provides observed traffic, operator accounts, MFA and audit views. The advanced root `mosquitto.conf` editor supports import, draft validation, immutable review, apply and revision recovery, while the directives that are not exposed yet are not editable from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+**Alpha — the graphical configuration MVP is not complete.** Today MCM manages MQTT users and basic ACLs, previews and applies their password/ACL files, manages the broker's MQTT listeners and its TLS certificate material, edits the general broker settings (persistence, queues, sessions and logging), manages the bridge connections to remote brokers and the plugins of the broker — including the security database of the dynamic security plugin — and provides observed traffic, broker metrics and logs, operator accounts, MFA and audit views. The advanced root `mosquitto.conf` editor supports import, draft validation, immutable review, apply and revision recovery, while the directives that are not exposed yet are not editable from the UI. `/api/v1/settings` is read-only and describes MCM settings, not the broker's full configuration.
+
+### Available today
 
 | Capability | Current scope |
 | --- | --- |
 | MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
 | Preview, apply and history | Available for password/ACL files, listeners, certificate material and the root configuration; apply requires recent MFA. Configuration recovery restores, reloads and verifies MQTT access after an activation failure. |
 | Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
+| General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
+| Broker configuration editor | Advanced root editor with catalog checks, disk/draft/last-verified state and drift detection, plus an explicit adoption gate. Includes remain read-only; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins too. |
+| Bridges | Available; a bridge states its destination, credentials, TLS and topic rules, and is activated through a reviewed revision. A broker restart is required. |
+| Plugins and Dynamic Security | A plugin catalog per broker version with a lossless editor of the plugin directives, and a Dynamic Security editor that reads the security database of the plugin from the broker itself. The file backend and the plugin backend are kept apart, and the migration between them is an explicit, reviewed operation. |
+| Directive support matrix | Published per broker version: every directive the Mosquitto manual documents, with the level of support MCM gives it. See [docs/support-matrix.md](./docs/support-matrix.md). |
+| Backup and restore | `task backup` and `task restore` capture and restore the MCM database, the broker configuration and its certificate material, with a manifest, checksum verification and a verified database restore. Broker persistence data is opt-in. |
+| Broker metrics and logs | Real `$SYS` metrics and broker log entries, with explicit limits on what is observed. Not a complete broker/client inventory. |
 | Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
-| Broker configuration editor | Advanced root editor with catalog checks, disk/draft/last-verified state and drift detection, plus an explicit adoption gate. Includes remain read-only; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins too. |
-| Plugins and Dynamic Security | A plugin catalog per broker version with a lossless editor of the plugin directives, and a Dynamic Security editor that reads the security database of the plugin from the broker itself. The file backend and the plugin backend are kept apart, and the migration between them is an explicit, reviewed operation. |
-| General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
-| Backup and restore | UI configuration copies contain the root file only, not a full backup. The Taskfile recipes have known limitations; complete backup/restore stays tracked in #295. |
 | Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
+
+### Not available yet
+
+| Area | Status |
+| --- | --- |
+| Directives without a dedicated control | Five directives per supported version are validated and preserved but edited only in the advanced root editor: `memory_limit`, `message_size_limit`, `port`, `sys_interval` and `user`. The rest of the upstream directives are preserved byte-for-byte and are not administered. See the [support matrix](./docs/support-matrix.md). |
+| Included configuration files | `include_dir` trees are resolved and inspected on import, but the included files are not editable through the UI. |
+| Multi-broker and fleets | Deferred. |
+| SSO, multi-tenancy and high availability | Deferred. |
+| PostgreSQL | Deferred. SQLite is the only implemented persistence backend. |
 
 See the [configuration workflow and security prerequisites](./docs/configuration-workflow.md). Track the work in [epic #308](https://github.com/fgjcarlos/mcm/issues/308), the [roadmap](./ROADMAP.md), and the [configuration scope and acceptance criteria](./docs/product-scope.md). The Compose broker currently targets the `eclipse-mosquitto:2.0` image family; this is not a full compatibility guarantee across every Mosquitto release.
 
@@ -201,8 +216,8 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task logs`       | Tail `mcm` logs (bootstrap admin prints here).            |
 | `task ready`      | Block until `/healthz` returns 200.                       |
 | `task smoke`      | Curl `/healthz`, `/readyz`, `/api/v1/status`.             |
-| `task backup`     | Legacy volume-only recipe; see [known backup limitations](./docs/production.md#6-backup-and-restore). |
-| `task restore`    | Known path bug; do not use for recovery until [#295](https://github.com/fgjcarlos/mcm/issues/295) is fixed.           |
+| `task backup`     | Capture an MCM + Mosquitto configuration archive; see [backup and restore](./docs/production.md#6-backup-and-restore). |
+| `task restore`    | Restore an archive after verifying its manifest; requires `--overwrite` to replace existing data. |
 | `task test:go`    | `go test ./... -race -count=1`.                           |
 | `task test:frontend` | Install `frontend/` deps and run Vitest.              |
 | `task test`       | Both test suites.                                         |
