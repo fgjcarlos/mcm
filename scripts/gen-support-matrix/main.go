@@ -79,25 +79,25 @@ func render() (string, error) {
 			return "", err
 		}
 		counts := matrix.Counts()
-		b.WriteString(fmt.Sprintf("## Mosquitto %s\n\n", version))
-		b.WriteString(fmt.Sprintf("The Mosquitto %s manual documents %d directives. MCM manages %d of them,\n",
-			version, len(upstream), counts[catalog.SupportManaged]))
-		b.WriteString(fmt.Sprintf("partially supports %d and does not manage %d.\n\n",
-			counts[catalog.SupportPartial], counts[catalog.SupportUnsupported]))
+		fmt.Fprintf(&b, "## Mosquitto %s\n\n", version)
+		fmt.Fprintf(&b, "The Mosquitto %s manual documents %d directives. MCM manages %d of them,\n",
+			version, len(upstream), counts[catalog.SupportManaged])
+		fmt.Fprintf(&b, "partially supports %d and does not manage %d.\n\n",
+			counts[catalog.SupportPartial], counts[catalog.SupportUnsupported])
 
 		for _, level := range []catalog.SupportLevel{
 			catalog.SupportManaged,
 			catalog.SupportPartial,
 			catalog.SupportUnsupported,
 		} {
-			b.WriteString(fmt.Sprintf("### %s (%d)\n\n", levelTitle(level), counts[level]))
+			fmt.Fprintf(&b, "### %s (%d)\n\n", levelTitle(level), counts[level])
 			directives := matrix.Directives(level)
 			if len(directives) == 0 {
 				b.WriteString("None.\n\n")
 				continue
 			}
 			for _, d := range directives {
-				b.WriteString(fmt.Sprintf("- `%s`\n", d))
+				fmt.Fprintf(&b, "- `%s`\n", d)
 			}
 			b.WriteString("\n")
 		}
@@ -117,8 +117,8 @@ func render() (string, error) {
 			if len(names) == 0 {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("| %s | %s | %d |\n",
-				surface, "`"+strings.Join(names, "`, `")+"`", len(names)))
+			fmt.Fprintf(&b, "| %s | %s | %d |\n",
+				surface, "`"+strings.Join(names, "`, `")+"`", len(names))
 		}
 		b.WriteString("\n")
 	}
