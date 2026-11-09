@@ -1,0 +1,227 @@
+# Upstream Mosquitto 2.0 directive inventory.
+#
+# This file lists every directive the Mosquitto 2.0 configuration manual
+# documents (man/mosquitto.conf.5.xml of the eclipse/mosquitto v2.0.18 tag).
+# It is the universe the support matrix classifies: a directive MCM does
+# not know is not "unsupported by the broker", it is simply not managed
+# by MCM for that version.
+#
+# The list is deliberately the upstream truth and not the MCM catalog:
+# the catalog only describes the directives MCM manages. Comparing the
+# two is what produces the "supported / partial / unsupported" rows of
+# the published matrix, and it is what keeps MCM from claiming a
+# compatibility it does not have.
+#
+# Regenerate the derived matrix with `go run ./scripts/gen-support-matrix`.
+---
+name: acl_file
+---
+name: address
+---
+name: addresses
+---
+name: allow_anonymous
+---
+name: allow_duplicate_messages
+---
+name: allow_zero_length_clientid
+---
+name: auth_plugin_deny_special_chars
+---
+name: auto_id_prefix
+---
+name: autosave_interval
+---
+name: autosave_on_changes
+---
+name: bind_address
+---
+name: bind_interface
+---
+name: bridge_alpn
+---
+name: bridge_attempt_unsubscribe
+---
+name: bridge_bind_address
+---
+name: bridge_cafile
+---
+name: bridge_capath
+---
+name: bridge_certfile
+---
+name: bridge_identity
+---
+name: bridge_insecure
+---
+name: bridge_keyfile
+---
+name: bridge_max_packet_size
+---
+name: bridge_outgoing_retain
+---
+name: bridge_protocol_version
+---
+name: bridge_psk
+---
+name: bridge_require_ocsp
+---
+name: bridge_tls_version
+---
+name: cafile
+---
+name: capath
+---
+name: certfile
+---
+name: check_retain_source
+---
+name: ciphers
+---
+name: cleansession
+---
+name: clientid_prefixes
+---
+name: connection
+---
+name: connection_messages
+---
+name: crlfile
+---
+name: dhparamfile
+---
+name: http_dir
+---
+name: idle_timeout
+---
+name: include_dir
+---
+name: keepalive_interval
+---
+name: keyfile
+---
+name: listener
+---
+name: local_cleansession
+---
+name: local_clientid
+---
+name: local_password
+---
+name: local_username
+---
+name: log_dest
+---
+name: log_facility
+---
+name: log_timestamp
+---
+name: log_timestamp_format
+---
+name: log_type
+---
+name: max_connections
+---
+name: max_inflight_bytes
+---
+name: max_inflight_messages
+---
+name: max_keepalive
+---
+name: max_packet_size
+---
+name: max_qos
+---
+name: max_queued_bytes
+---
+name: max_queued_messages
+---
+name: max_topic_alias
+---
+name: memory_limit
+---
+name: message_size_limit
+---
+name: mount_point
+---
+name: notification_topic
+---
+name: notifications
+---
+name: notifications_local_only
+---
+name: password_file
+---
+name: per_listener_settings
+---
+name: persistence
+---
+name: persistence_file
+---
+name: persistence_location
+---
+name: persistent_client_expiration
+---
+name: pid_file
+---
+name: plugin
+---
+name: port
+---
+name: protocol
+---
+name: psk_file
+---
+name: psk_hint
+---
+name: queue_qos0_messages
+---
+name: remote_clientid
+---
+name: remote_password
+---
+name: remote_username
+---
+name: require_certificate
+---
+name: restart_timeout
+---
+name: retain_available
+---
+name: round_robin
+---
+name: set_tcp_nodelay
+---
+name: socket_domain
+---
+name: start_type
+---
+name: sys_interval
+---
+name: threshold
+---
+name: tls_engine
+---
+name: tls_engine_kpass_sha1
+---
+name: tls_keyform
+---
+name: tls_version
+---
+name: topic
+---
+name: try_private
+---
+name: upgrade_outgoing_qos
+---
+name: use_identity_as_username
+---
+name: use_subject_as_username
+---
+name: use_username_as_clientid
+---
+name: user
+---
+name: websockets_headers_size
+---
+name: websockets_log_level

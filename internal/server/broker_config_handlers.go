@@ -220,6 +220,49 @@ func (b *brokerConfigAPI) handleCatalog(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// handleBrokerConfigSupportMatrix serves
+// GET /api/v1/broker/config/support-matrix — returns the versioned
+// support matrix: for every directive the Mosquitto manual documents
+// for the loaded broker version, whether MCM manages it, partially
+// supports it or does not support it.
+//
+// The matrix is the machine-readable form of the published page at
+// docs/support-matrix.md. It states the exact coverage of MCM so no
+// consumer has to assume universal compatibility.
+func (b *brokerConfigAPI) handleSupportMatrix(w http.ResponseWriter, r *http.Request) {
+	if b.catalog == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "broker config catalog is not loaded"})
+		return
+	}
+	version := b.catalog.VersionName()
+	upstream, err := catalog.UpstreamDirectives(version)
+	if err != nil {
+		// A broker version without an upstream inventory has no
+		// matrix to publish. Saying so is honest; inventing an empty
+		// matrix would look like "MCM manages nothing".
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{
+			Error: "no upstream directive inventory for broker version " + version,
+		})
+		return
+	}
+	matrix, err := catalog.SupportMatrix(b.catalog, upstream)
+	if err != nil {
+		slog.Error("support matrix build failed", "version", version, "error", err.Error())
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+		return
+	}
+	counts := matrix.Counts()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version": matrix.Version,
+		"counts": map[string]int{
+			"managed":     counts[catalog.SupportManaged],
+			"partial":     counts[catalog.SupportPartial],
+			"unsupported": counts[catalog.SupportUnsupported],
+		},
+		"directives": matrix.Entries,
+	})
+}
+
 // directivesFromRestartErr extracts the comma-joined directive list
 // the deploy service appended to ErrRequiresRestart (format
 // "directives <name1>,<name2>"). Returns an empty string when the

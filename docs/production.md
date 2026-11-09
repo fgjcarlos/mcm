@@ -12,13 +12,14 @@ Every `MCM_*` environment variable mentioned below is enforced by the strict tab
 
 ## Current limitations
 
-MCM is alpha. The complete graphical configuration and recovery workflow is still being built; see [product scope](product-scope.md) and [epic #308](https://github.com/fgjcarlos/mcm/issues/308).
+MCM is alpha. The graphical configuration and recovery workflow is implemented and verified against a real Mosquitto; see [product scope](product-scope.md), the [support matrix](support-matrix.md) and [epic #308](https://github.com/fgjcarlos/mcm/issues/308).
 
-- The deploy flow writes only password/ACL files. Listener and certificate management write the broker configuration through their own paths (issues [#299](https://github.com/fgjcarlos/mcm/issues/299) and [#300](https://github.com/fgjcarlos/mcm/issues/300)); the rest of `mosquitto.conf` — bridges, persistence, limits and plugins — is not managed.
-- The supplied production broker template uses `passwords` and does not reference an `acl_file`. Align both file references with the paths MCM writes before relying on managed permissions.
-- File mode requires compatible filesystem ownership and an explicit activation path. Without a PID path it writes files without signaling; the current connectivity check does not prove that a new policy is active. A broker-side trigger is operator-provided, not a bundled MCM component. See [#293](https://github.com/fgjcarlos/mcm/issues/293) and [#294](https://github.com/fgjcarlos/mcm/issues/294).
-- Partial-write recovery and immutable preview/apply revisions remain open. Test changes and recovery on a disposable deployment before enabling production writes.
-- The existing Taskfile backup/restore recipes are not a verified recovery mechanism. Read [section 6](#6-backup-and-restore) before upgrading or restoring.
+- The broker configuration is written through a reviewed revision, so an apply is bound to the exact preview that was approved. A change that the broker only reads at start-up (a listener, a bridge, a plugin) is reported as `pending_activation` until the restart is confirmed, not as active.
+- The activation path is operator-provided. MCM writes the files and then runs the reload or restart command you configure; it does not bundle a broker-side trigger. Without `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` and `MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND`, a change that needs a restart stays `pending_activation` instead of being reported active. See [section 3](#3-secrets-management).
+- File mode requires compatible filesystem ownership. The atomic replacement needs MCM to own the target directory, and the broker must be able to read the result.
+- Five directives per supported version are validated and preserved but have no dedicated graphical control, so the operator edits them in the advanced root editor. The [support matrix](support-matrix.md) lists them per version.
+- The included files of an `include_dir` tree are resolved and inspected on import, but they are not editable through the UI.
+- Read [section 6](#6-backup-and-restore) before upgrading or restoring: the backup is a script you run, and it captures the MCM database, the broker configuration and its certificate material. The broker's own persistence data is opt-in.
 - SQLite is the only implemented database backend; PostgreSQL and multiple-writer HA are not available.
 
 
@@ -384,7 +385,7 @@ page or with `docker buildx imagetools inspect --raw`.
 
 ```bash
 # First obtain and verify a consistent backup using the process in section 6.
-# Do not rely on the uncorrected Taskfile restore recipe.
+# Verify the restore path on a disposable deployment before you need it.
 
 # 2. Pull the new image and recreate the container.
 docker compose pull mcm

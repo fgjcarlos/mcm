@@ -59,7 +59,7 @@ In the UI, open **Administration → Account**. With MFA enabled, the *Recent MF
 
 `GET /api/v1/broker/config/copy` exports a JSON attachment with format `mcm-broker-config/v1`, the root `body`, and its SHA-256 `hash`. `POST` to the same path validates the format/hash and returns a fresh preview. Treat exported configuration as sensitive operator material.
 
-These copies **do not contain or restore** include files, MQTT passwords, ACL files, certificates/private keys, SQLite, retained messages, or broker persistence. They reference the include files and dependencies already present on this instance. They are not a replacement for a complete deployment backup; full backup/restore remains tracked separately in #295. Never delete an existing broker or its volumes to test this workflow.
+These copies **do not contain or restore** include files, MQTT passwords, ACL files, certificates/private keys, SQLite, retained messages, or broker persistence. They reference the include files and dependencies already present on this instance. They are not a replacement for a complete deployment backup; use the backup and restore path in [production section 6](./production.md#6-backup-and-restore) for that. Never delete an existing broker or its volumes to test this workflow.
 
 Revision history returns the latest 100 entries. An apply-attempt timestamp is not a successful activation: the deployment linked to the exact revision supplies the outcome. Recovering historical content always revalidates it and uses a new revision against the current base.
 

@@ -4,7 +4,7 @@
 
 MCM should let an operator administer the configuration of one external Mosquitto instance from a browser. After deployment access is configured, routine configuration changes should not require hand-editing files. REST remains the UI's automation interface. SQLite stores management state; Mosquitto remains responsible for MQTT behavior.
 
-This is the agreed target, not a description of completed functionality. Implementation is tracked in [epic #308](https://github.com/fgjcarlos/mcm/issues/308) and the [roadmap](../ROADMAP.md).
+This is the agreed target, implemented by [epic #308](https://github.com/fgjcarlos/mcm/issues/308). This document states the acceptance contract and the exact coverage that was delivered; the [roadmap](../ROADMAP.md) and the [support matrix](./support-matrix.md) carry the per-version detail.
 
 ## Current coverage
 
@@ -18,8 +18,10 @@ This is the agreed target, not a description of completed functionality. Impleme
 | Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
 | TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
 | Bridges and plugins | Bridge editor for the connections between brokers: destinations, client ids, credentials, TLS, reconnection and topic rules with a direction, a quality of service and local/remote prefixes, validated against names, dependencies and message loops and activated through a reviewed revision (issue #303). Plugin catalog per broker version with the supported plugins and their options, a lossless editor of the plugin directives of the managed file and a Dynamic Security editor that reads the security database of the plugin from the broker itself (issue #304). | Bridge editor and supported plugins, including Dynamic Security |
-| Diagnostics | Wildcard-observed traffic and MCM events | Explicit broker metrics/log sources with stated limitations |
-| Recovery | Root-configuration copy/revision recovery from UI; full volume/SQLite/certificate backup recipes still have known defects | Consistent, complete, tested backups and UI restore |
+| Diagnostics | Wildcard-observed traffic, broker `$SYS` metrics, broker log entries and MCM events | Explicit broker metrics/log sources with stated limitations |
+| Recovery | Root-configuration copy/revision recovery from UI; a verified backup and restore of the MCM database, the broker configuration and its certificate material | Consistent, complete, tested backups and UI restore |
+
+The exact directive coverage per broker version is published in the [support matrix](./support-matrix.md) and served over `GET /api/v1/broker/config/support-matrix`.
 
 ## Configuration ownership and compatibility
 
@@ -70,12 +72,25 @@ The proposed navigation is Configuration, MQTT Access, Changes, Diagnostics and 
 
 ## Known operational gaps
 
-- File replacement is atomic per file, not across the ACL/passwd pair; recovery does not currently cover every applier failure (#292).
-- File mode can skip signaling when PIDPath is absent, and CONNECT/CONNACK does not establish that the intended policy is active (#293).
-- The production template requires explicit path/ACL alignment and a verified permission/activation mechanism (#294).
-- Preview and Apply are not bound to an immutable revision (#296).
-- Renames and existing unmanaged file entries need an ownership and reference policy (#297, #298).
-- Backup/restore paths, snapshot consistency, volume selection and complete broker coverage need correction (#295).
+These gaps are the state after epic #308 was implemented and verified. They are stated so no
+consumer assumes coverage MCM does not deliver.
+
+- Native ACL coverage is partial: the directive-level editing of `deny` rules and of the `%u`
+  and `%c` pattern forms is not exposed through the graphical editor.
+- Five directives per supported version are validated and preserved but have no dedicated
+  graphical control, so the operator edits them in the advanced root editor: `memory_limit`,
+  `message_size_limit`, `port`, `sys_interval` and `user`. Every other upstream directive is
+  preserved byte-for-byte and is not administered. The published
+  [support matrix](./support-matrix.md) is the exact list per version.
+- The included files of an `include_dir` tree are resolved and inspected on import, but they
+  are not editable through the UI.
+- The broker-wide `port` directive is informational for the Compose stack: the broker is
+  published through explicit `listener` blocks.
+- The observed diagnostics are not a complete broker or client inventory. The `$SYS` metrics
+  and the broker log entries MCM reads are stated with their limits in the API response.
+- The production deployment requires the operator to provide the path alignment, the
+  permissions and the reload/restart command of the target host. MCM verifies the effective
+  files and the capabilities it was given; it cannot change how the host is operated.
 
 Report sensitive security findings through [SECURITY.md](../SECURITY.md); this scope document is not a vulnerability disclosure.
 

@@ -96,6 +96,19 @@ reload_kind: reload
 since_version: "1.0"
 description: Path to the Mosquitto ACL file. MCM writes this file on every apply.
 ---
+name: per_listener_settings
+type: boolean
+scope: global
+multiplicity: once
+reload_kind: reload
+since_version: "1.0"
+description: |
+  Turns the authentication and access control options into per-listener
+  options. Mosquitto only honours an `acl_file` declared inside a
+  `listener` block when this directive is enabled, and the broker refuses
+  to start when it is set after any other security setting. MCM writes
+  it ahead of the security directives it manages.
+---
 name: persistence
 type: boolean
 scope: global

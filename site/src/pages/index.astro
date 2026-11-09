@@ -63,7 +63,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
         </article>
         <article class="rounded-3xl border border-hairline bg-surface p-6">
           <h3 class="text-lg font-semibold text-ink-bright">Remaining work</h3>
-          <p class="mt-3 text-sm leading-relaxed text-ink-soft">Broader native ACL coverage, complete backup and restore (<a class="underline decoration-hairline-soft underline-offset-4 hover:text-ink-bright" href={`${repoURL}/issues/295`}>#295</a>), and an explicit Mosquitto version support matrix remain unfinished. Some configuration directives and included files are not editable through guided controls.</p>
+          <p class="mt-3 text-sm leading-relaxed text-ink-soft">Native ACL coverage is still partial. Five directives per supported version are validated and preserved but edited only in the advanced root editor, and the included files of an <code class="font-mono text-signal-pale">include_dir</code> tree are read but not edited. The <a class="underline decoration-hairline-soft underline-offset-4 hover:text-ink-bright" href={`${repoURL}/blob/main/docs/support-matrix.md`}>support matrix</a> lists the exact coverage of every Mosquitto version.</p>
         </article>
         <article class="rounded-3xl border border-hairline bg-surface p-6">
           <h3 class="text-lg font-semibold text-ink-bright">Known limitations</h3>
@@ -120,9 +120,10 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
     <section class="mt-20 rounded-3xl border border-caution/25 bg-caution-panel/10 p-6 sm:p-8" aria-labelledby="production-title">
       <p class="text-xs font-semibold uppercase tracking-[0.3em] text-caution-soft">Caution</p>
       <h2 id="production-title" class="mt-3 text-2xl font-semibold text-caution-bright">Alpha software; review production limits before applying changes.</h2>
-      <p class="mt-3 leading-relaxed text-ink-soft">Activation verification and recovery have known gaps, and backup/restore is incomplete. Review deployment requirements before enabling writes on an existing broker.</p>
+      <p class="mt-3 leading-relaxed text-ink-soft">The configuration journey is implemented and verified against a real Mosquitto, but some directives have no dedicated control and MCM is still alpha. Review the deployment requirements before enabling writes on an existing broker.</p>
       <div class="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-signal-pale">
         <a class="underline underline-offset-4" href={`${repoURL}/issues/308`}>Configuration tracker</a>
+        <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/support-matrix.md`}>Directive support matrix</a>
         <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/product-scope.md`}>Scope and acceptance criteria</a>
         <a class="underline underline-offset-4" href={`${repoURL}/blob/main/docs/production.md#current-limitations`}>Production limitations</a>
       </div>
