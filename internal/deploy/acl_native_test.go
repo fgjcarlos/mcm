@@ -457,11 +457,12 @@ func TestPickVerificationProbe_EmptyPolicyHasNoProbe(t *testing.T) {
 	}
 }
 
-// TestPickVerificationProbe_MissingCredentialsHaveNoProbe is covered by
-// the stricter base test TestPickVerificationProbe_MissingCredentialsHaveNoProbe
-// in acl_deny_test.go: there, an identity without a known cleartext
-// password yields no probe even when the managed service account could
-// serve as a fallback.
+// TestPickVerificationProbe_MissingCredentialsUseTheServiceFallback in
+// acl_deny_test.go pins the fallback of an identity without a known
+// cleartext password: the managed service account serves as the labelled
+// operational fallback (issue #339). The new file
+// activation_probe_message_test.go pins the deploy path of the same
+// scenario.
 
 // writeServicePasswd seeds the on-disk passwd file with the managed
 // service account, the way the broker bootstrap does. The deploy render

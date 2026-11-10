@@ -444,9 +444,12 @@ topic are chosen in this order:
 3. The **managed service account** and the grant MCM always emits for
    it (`readwrite mcm/healthcheck`).
 
-The third option is an operational fallback. It proves that the broker
-serves the new credentials and the service grant; it does **not** prove
-the client policy semantics.
+The third option is an operational fallback. It is used for **any** policy
+without a usable user-scoped probe, not only for a user with a `readwrite`
+grant: a policy whose only user-scoped grants are narrower than
+`readwrite`, a pattern-only policy and a deny-only policy all fall back to
+it. It proves that the broker serves the new credentials and the service
+grant; it does **not** prove the client policy semantics.
 
 Rules for the probe topic:
 
@@ -456,13 +459,117 @@ Rules for the probe topic:
   client id, so the placeholder cannot be expanded.
 - A grant is only usable when its identity has a known cleartext
   password. MCM never invents credentials.
+- An identity whose cleartext password is unknown is **skipped**: it does
+  not discard the valid candidates that come after it. MCM keeps looking
+  for another identity it can authenticate as.
+- An identity that owns only narrower grants (no `readwrite` of its own
+  and none through a `pattern` grant) is skipped for a different
+  reason: a probe publishes and subscribes, so it needs a `readwrite`
+  grant. MCM does not report a lost password for such an identity,
+  because the lost password is not why it was skipped.
 
 The deployment status names the probe, for example
 `activation probe: pattern grant`.
 
 If no probe is available at all (no usable grant and no configured
 service account), the verification stage fails, the deployment is rolled
-back and the deployment record names the missing probe.
+back and the deployment record names the missing probe. The message keeps
+the `no activation probe available` prefix and names the cause and the
+remedy (see below).
+
+### Activation probe after a restart of MCM
+
+The cleartext password of an MQTT user only lives in the process memory of
+MCM, so a restart of MCM loses it. A deploy after a restart therefore
+cannot verify the activation as the affected user: the verifier cannot
+authenticate as that user.
+
+MCM remembers the **first** identity it skips for that reason, in both
+probe phases: an identity that owns a `readwrite` grant — a user-scoped
+one or a `pattern` one — whose cleartext password MCM does not know.
+Whenever such an identity was recorded, the deployment message names it,
+the cause and the remedy, **whatever probe was used**:
+
+- with the probe of another identity:
+
+```text
+activation probe: user grant; MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately
+```
+
+- with the **managed service account** as the labelled operational
+  fallback. The last clause states that the client policy semantics of
+  the named user were **not** proven by that probe:
+
+```text
+activation probe: managed service healthcheck grant (operational fallback); MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately; this probe did not prove the client policy semantics of user "alice"
+```
+
+When no probe can be built at all, the message keeps the
+`no activation probe available` prefix and adds the same cause and the
+same remedy:
+
+```text
+no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account); MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately
+```
+
+The remedy is the same in both cases: reset the password of the named user
+and apply again immediately.
+
+An identity that owns **no** `readwrite` grant — neither of its own nor
+through a `pattern` grant — is never named as a lost password. Such an
+identity is skipped because a probe publishes and subscribes, so it
+needs a `readwrite` grant: the lost password is not the reason it was
+skipped. MCM remembers two different facts, because they answer two
+different questions:
+
+- the identity that owns a `readwrite` grant — a user-scoped one or a
+  `pattern` one — and whose cleartext password is unknown. The deployment
+  message names it, the cause and the remedy.
+- the identity that owns a **user-scoped** grant, whatever the permission
+  of that grant, and whose cleartext password is unknown. The
+  broker-configuration surface refuses on it (see below).
+
+### The broker-configuration surface
+
+The broker-configuration surface (`/api/v1/broker/config/apply`) has its
+own activation-state contract, and that contract does not change here.
+
+The surface refuses the apply in its **preflight**: the apply is rejected
+with the reason below, the broker configuration file is not written and
+no `pending_activation` deployment status is produced. It refuses in two
+situations, and both are the ones the surface had before the
+activation-probe feature:
+
+- MCM cannot authenticate as an identity that owns a user-scoped grant,
+  because the cleartext password of that identity only lived in the
+  process memory of MCM and a restart of MCM lost it. The reason names
+  the identity, the cause and the remedy:
+
+```text
+MQTT verification unavailable: no managed test identity with a known password and an ACL grant; MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately
+```
+
+The refusal keeps the `MQTT verification unavailable` wording, so a CI
+script that greps for it still recognizes the refusal.
+
+- No activation probe can be built at all: no usable grant, no
+  configured service account, or an unreadable managed file. The reason
+  is the plain wording, without an identity:
+  `MQTT verification unavailable: no managed test identity with a known password and an ACL grant`
+
+When no identity with a grant is affected **and** the operational
+fallback is available, the surface behaves exactly as it did before the
+feature: it uses the fallback and accepts the apply. A pattern-only
+policy is such a case, because a pattern grant is not a user-scoped
+grant: a lost cleartext password never refused that policy.
+
+The deploy surface and the broker-configuration surface therefore differ
+on purpose. The deploy surface skips the affected identity, names the
+cause and the remedy in the deployment message and keeps the change. The
+broker-configuration surface refuses the change, because the managed
+service account is not a test identity for it: the operational fallback
+proves that the broker serves the rendered credentials and the generated
+service grant, never the policy of a managed user.
 
 ### What the activation probe does not prove
 

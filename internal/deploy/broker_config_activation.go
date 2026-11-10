@@ -110,7 +110,22 @@ func (s *Service) verificationPrerequisites(ctx context.Context) (aclBody, passw
 	if err != nil {
 		return "", "", false, "MQTT verification unavailable: the managed password file is unreadable"
 	}
-	if _, ok := s.pickVerificationProbe(ctx, aclBody, passwdBody); !ok {
+	probe, ok := s.pickVerificationProbe(ctx, aclBody, passwdBody)
+	// This surface refused the whole apply before the activation-probe
+	// feature when MCM could not authenticate as an identity that owns a
+	// user-scoped grant: the cleartext password of that identity only
+	// lived in the process memory of MCM, so a restart of MCM lost it and
+	// the policy of that identity could never be verified here. The probe
+	// selection now skips such an identity instead of aborting (issue
+	// #340), so the surface restores that refusal itself. The reason
+	// names the identity, the cause and the remedy, so the operator knows
+	// what to fix; the "MQTT verification unavailable" wording stays,
+	// because a CI script greps for it.
+	if probe.unverifiedGrantUser != "" {
+		return "", "", false, "MQTT verification unavailable: no managed test identity with a known password and an ACL grant; " +
+			unknownCleartextPasswordCause(probe.unverifiedGrantUser)
+	}
+	if !ok {
 		return "", "", false, "MQTT verification unavailable: no managed test identity with a known password and an ACL grant"
 	}
 	return aclBody, passwdBody, true, ""
