@@ -232,10 +232,15 @@ func TestPickVerificationProbe_DenyOnlyPolicyWithoutServiceAccountHasNoProbe(t *
 	}
 }
 
-// TestPickVerificationProbe_MissingCredentialsHaveNoProbe pins that a
-// grant whose identity has no known cleartext password yields no probe and
-// no fallback: the verifier must never invent credentials.
-func TestPickVerificationProbe_MissingCredentialsHaveNoProbe(t *testing.T) {
+// TestPickVerificationProbe_MissingCredentialsUseTheServiceFallback pins
+// that an identity whose cleartext password is unknown does not abort the
+// probe selection: the identity owns a readwrite grant, but its cleartext
+// password only lived in the process memory of MCM, so MCM skips that
+// identity instead of discarding the candidates that come after it. The
+// managed service account then serves as the operational fallback, which
+// proves that the broker serves the new credentials and the service grant,
+// not the client policy semantics of the skipped identity.
+func TestPickVerificationProbe_MissingCredentialsUseTheServiceFallback(t *testing.T) {
 	t.Parallel()
 
 	deployCfg, _, _ := enabledDeployCfg(t)
@@ -252,8 +257,15 @@ func TestPickVerificationProbe_MissingCredentialsHaveNoProbe(t *testing.T) {
 	}, "\n")
 	passwdBody := "alice:$2a$10$hash\nsvc-mcm:$2a$10$hash\n"
 
-	if probe, ok := svc.pickVerificationProbe(context.Background(), aclBody, passwdBody); ok {
-		t.Fatalf("expected no probe without a known password, got %+v", probe)
+	probe, ok := svc.pickVerificationProbe(context.Background(), aclBody, passwdBody)
+	if !ok {
+		t.Fatal("expected the managed service account to serve as the operational fallback")
+	}
+	if probe.username != serviceFixtureUser {
+		t.Errorf("probe username = %q, want %q (the managed service account)", probe.username, serviceFixtureUser)
+	}
+	if probe.kind != probeKindServiceGrant {
+		t.Errorf("probe kind = %q, want %q", probe.kind, probeKindServiceGrant)
 	}
 }
 

@@ -1601,12 +1601,9 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 	}
 
 	// Bounded-retry verification (issue #293, acceptance criterion 4).
-	verifyResult, attempts, probeKind := s.runVerifier(ctx, aclRendered, passwdRendered)
+	verifyResult, attempts, probe := s.runVerifier(ctx, aclRendered, passwdRendered)
 	if verifyResult.OK {
-		msg := fmt.Sprintf("activation probe: %s", probeKind)
-		if attempts > 1 {
-			msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
-		}
+		msg := activationProbeMessage(probe, attempts)
 		if pendingActivationErr != nil {
 			return s.rollbackAfterPersistenceFailure(ctx, actor, d, aclSnapshot, passwdSnapshot, pendingActivationErr, previousManaged)
 		}
@@ -1642,10 +1639,10 @@ func (s *Service) applyRevision(ctx context.Context, actor, revisionID string) (
 
 // runVerifier invokes the ActiveVerifier with bounded retries and
 // backoff. Returns the last result, the number of attempts made and the
-// kind of probe that was exercised.
+// probe that was exercised.
 // The verifier context is bounded by HealthcheckTimeout so the deploy
 // respects the operator's overall budget.
-func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int, verificationProbeKind) {
+func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (diagnostics.VerifyActiveResult, int, verificationProbe) {
 	// Pick the probe identity and topic from the rendered config. If no
 	// usable probe exists the verifier is never invoked and the deploy is
 	// rolled back.
@@ -1654,9 +1651,9 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		return diagnostics.VerifyActiveResult{
 			OK:              false,
 			Stage:           "setup",
-			Message:         "no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account)",
+			Message:         noActivationProbeMessage(probe.unverifiedUser),
 			PositiveMessage: "skipped: no activation probe",
-		}, 0, ""
+		}, 0, probe
 	}
 
 	timeout := s.deployCfg.HealthcheckTimeout
@@ -1680,19 +1677,84 @@ func (s *Service) runVerifier(ctx context.Context, aclBody, passwdBody string) (
 		cancel()
 		last = result
 		if result.OK {
-			return result, attempt, probe.kind
+			return result, attempt, probe
 		}
 		if attempt < verifyAttempts {
 			select {
 			case <-time.After(time.Duration(attempt) * verifyBackoff):
 			case <-ctx.Done():
 				last.Message = fmt.Sprintf("verification cancelled after %d attempts: %v", attempt, ctx.Err())
-				return last, attempt, probe.kind
+				return last, attempt, probe
 			}
 		}
 	}
 	last.Message = fmt.Sprintf("%s (activation probe: %s)", last.Message, probe.kind)
-	return last, verifyAttempts, probe.kind
+	return last, verifyAttempts, probe
+}
+
+// noActivationProbeMessage is the diagnostic a deployment carries when no
+// activation probe could be built.
+//
+// The prefix is a contract: the broker-config activation classifies a
+// missing probe with strings.HasPrefix(message, "no activation probe
+// available"), so it must not change. When MCM knows which identity blocked
+// the probe, the message names that identity, the cause and the remedy.
+func noActivationProbeMessage(username string) string {
+	const prefix = "no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account)"
+	if username == "" {
+		return prefix
+	}
+	return prefix + "; " + unknownCleartextPasswordCause(username)
+}
+
+// activationProbeMessage builds the operator-visible message of a
+// successful activation probe.
+//
+// The managed service account is an operational fallback, so the message
+// states what the probe does NOT prove: the client policy semantics of the
+// affected user. When the fallback was used because MCM lost the cleartext
+// password of that user, the message also names the cause and the remedy.
+func activationProbeMessage(probe verificationProbe, attempts int) string {
+	msg := fmt.Sprintf("activation probe: %s", probe.kind)
+	if attempts > 1 {
+		msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
+	}
+	if probe.kind != probeKindServiceGrant {
+		return msg
+	}
+	if probe.unverifiedUser != "" {
+		msg = fmt.Sprintf("%s; %s", msg, unknownCleartextPasswordCause(probe.unverifiedUser))
+	}
+	return fmt.Sprintf("%s; %s", msg, operationalFallbackNote(probe.unverifiedUser))
+}
+
+// unknownCleartextPasswordCause names the cause of a missing activation
+// probe and the concrete remedy for it.
+//
+// The cleartext password of an MQTT user only lives in the process memory
+// of MCM, so a restart of MCM loses it. Without it the verifier cannot
+// authenticate as that user, so the deploy cannot prove that the policy of
+// that user is active. Resetting the password of that user and applying
+// again is the only action that restores the probe.
+func unknownCleartextPasswordCause(username string) string {
+	return fmt.Sprintf(
+		"MCM does not know the cleartext password of user %q because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately",
+		username,
+	)
+}
+
+// operationalFallbackNote states what the operational fallback proves and
+// what it does not prove.
+//
+// The fallback authenticates as the managed service account, so it proves
+// that the broker serves the freshly rendered credentials and the generated
+// service grant. The client policy semantics of the affected user are NOT
+// proven by it.
+func operationalFallbackNote(username string) string {
+	if username == "" {
+		return "this probe did not prove the client policy semantics"
+	}
+	return fmt.Sprintf("this probe did not prove the client policy semantics of user %q", username)
 }
 
 // verificationProbeKind labels how the deploy activation probe was built,
@@ -1720,6 +1782,11 @@ type verificationProbe struct {
 	allowedTopic string
 	deniedTopic  string
 	kind         verificationProbeKind
+	// unverifiedUser names the identity that owns a grant but whose
+	// cleartext password MCM does not know. It is empty when every
+	// candidate identity had a known password. The deployment uses it to
+	// name the real cause of a missing or downgraded probe.
+	unverifiedUser string
 }
 
 // pickVerificationProbe picks the identity and the concrete topic the deploy
@@ -1741,9 +1808,11 @@ type verificationProbe struct {
 // A deny rule is not a grant: it never activates an action, so it is never
 // selected as the positive probe.
 //
-// A grant whose identity has no known cleartext password yields no probe
-// at all: the verifier must never invent credentials, and the deploy fails
-// instead of falling back to the service account.
+// A grant whose identity has no known cleartext password is skipped: the
+// verifier must never invent credentials, but the identity that blocked
+// the selection must not discard the valid candidates that come after it
+// (issue #340). The skipped identity is remembered so the deployment can
+// name the real cause of a missing or downgraded probe.
 //
 // A grant is only usable as a probe when it yields one concrete topic
 // name: the verifier publishes to a topic, so a wildcard filter is
@@ -1759,6 +1828,10 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 		return verificationProbe{}, false
 	}
 
+	// unverifiedUser names the first identity that owns a readwrite grant
+	// but whose cleartext password MCM does not know.
+	var unverifiedUser string
+
 	// 1. A user-scoped readwrite grant.
 	for _, e := range entries {
 		// Skip the service user — it has # access, so it is never the
@@ -1770,13 +1843,22 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 		if !hasGrant {
 			continue
 		}
-		password, hasPassword := s.lookupCleartextPassword(e.Username)
-		if !hasPassword || password == "" {
-			return verificationProbe{}, false
-		}
 		if readwrite == nil {
 			// The identity only has narrower grants. A probe publishes and
 			// subscribes, so it needs a readwrite grant.
+			continue
+		}
+		password, hasPassword := s.lookupCleartextPassword(e.Username)
+		if !hasPassword || password == "" {
+			// The identity owns a readwrite grant but MCM cannot
+			// authenticate as it: its cleartext password only lived in
+			// the process memory and a restart of MCM lost it. Skip this
+			// identity instead of discarding the candidates that come
+			// after it (issue #340), and remember the cause so the
+			// deployment can name it.
+			if unverifiedUser == "" {
+				unverifiedUser = e.Username
+			}
 			continue
 		}
 		topic, ok := concreteProbeTopic(readwrite.TopicFilter, e.Username, false)
@@ -1820,7 +1902,12 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 	}
 
 	// 3. The managed service account.
-	return s.serviceVerificationProbe(entries, rules)
+	probe, ok := s.serviceVerificationProbe(entries, rules)
+	if !ok {
+		return verificationProbe{unverifiedUser: unverifiedUser}, false
+	}
+	probe.unverifiedUser = unverifiedUser
+	return probe, true
 }
 
 // userScopedGrants reports the user-scoped grants of an identity: whether

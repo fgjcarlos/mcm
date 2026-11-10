@@ -456,13 +456,45 @@ Rules for the probe topic:
   client id, so the placeholder cannot be expanded.
 - A grant is only usable when its identity has a known cleartext
   password. MCM never invents credentials.
+- An identity whose cleartext password is unknown is **skipped**: it does
+  not discard the valid candidates that come after it. MCM keeps looking
+  for another identity it can authenticate as.
 
 The deployment status names the probe, for example
 `activation probe: pattern grant`.
 
 If no probe is available at all (no usable grant and no configured
 service account), the verification stage fails, the deployment is rolled
-back and the deployment record names the missing probe.
+back and the deployment record names the missing probe. The message keeps
+the `no activation probe available` prefix and names the cause and the
+remedy (see below).
+
+### Activation probe after a restart of MCM
+
+The cleartext password of an MQTT user only lives in the process memory of
+MCM, so a restart of MCM loses it. A deploy after a restart therefore
+cannot verify the activation as the affected user: the verifier cannot
+authenticate as that user.
+
+The deploy then verifies with the **managed service account** as the
+labelled operational fallback. The deployment message names the probe that
+was exercised, names the cause and the remedy, and states that the client
+policy semantics of the affected user were **not** proven by that probe:
+
+```text
+activation probe: managed service healthcheck grant (operational fallback); MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately; this probe did not prove the client policy semantics of user "alice"
+```
+
+When no probe can be built at all, the message keeps the
+`no activation probe available` prefix and adds the same cause and the
+same remedy:
+
+```text
+no activation probe available (need a user readwrite grant, a pattern readwrite grant or the configured managed service account); MCM does not know the cleartext password of user "alice" because it only lives in the process memory and is lost on restart; reset that user's password and apply again immediately
+```
+
+The remedy is the same in both cases: reset the password of the named user
+and apply again immediately.
 
 ### What the activation probe does not prove
 

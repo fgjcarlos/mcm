@@ -80,6 +80,14 @@ type App struct {
 	// lost on restart, which is acceptable because issue #293 requires
 	// the verifier to run during the same process lifetime as the
 	// apply that produced the rendered config.
+	//
+	// The operator-visible consequence of that contract (issue #339): a
+	// deploy after a restart of MCM cannot verify the activation as the
+	// affected user, because the cleartext password of that user is
+	// gone. The deploy then verifies with the managed service account as
+	// an operational fallback and its deployment message names the cause
+	// and the remedy: reset the password of that user and apply again
+	// immediately.
 	userPasswords   map[string]string
 	userPasswordsMu sync.RWMutex
 }
@@ -338,6 +346,14 @@ func (a *App) pruneEventRetention(ctx context.Context) {
 // post-apply verification (issue #293). Returns the cleartext only if
 // it was stored in memory by a prior handleCreateMQTTUser call in the
 // same process lifetime.
+//
+// The operator-visible consequence of that contract (issue #339): after a
+// restart of MCM the cleartext password of a user is gone, so a deploy
+// cannot verify the activation as that user. The deploy falls back to the
+// managed service account (an operational fallback that does not prove the
+// client policy semantics of that user) and its deployment message tells
+// the operator to reset the password of that user and apply again
+// immediately.
 func (a *App) CleartextPassword(username string) (string, bool) {
 	if username == "" || a.userPasswords == nil {
 		return "", false
