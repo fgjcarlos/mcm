@@ -1710,20 +1710,24 @@ func noActivationProbeMessage(username string) string {
 // activationProbeMessage builds the operator-visible message of a
 // successful activation probe.
 //
-// The managed service account is an operational fallback, so the message
-// states what the probe does NOT prove: the client policy semantics of the
-// affected user. When the fallback was used because MCM lost the cleartext
-// password of that user, the message also names the cause and the remedy.
+// The cause and the remedy are named whenever MCM skipped an identity
+// whose cleartext password it does not know, whatever probe was used: the
+// skipped identity is the one the operator has to fix, so a probe on
+// another identity must not hide it.
+//
+// The managed service account is an operational fallback, so its message
+// also states what the probe does NOT prove: the client policy semantics
+// of the affected user.
 func activationProbeMessage(probe verificationProbe, attempts int) string {
 	msg := fmt.Sprintf("activation probe: %s", probe.kind)
 	if attempts > 1 {
 		msg = fmt.Sprintf("%s; verified after %d attempts", msg, attempts)
 	}
-	if probe.kind != probeKindServiceGrant {
-		return msg
-	}
 	if probe.unverifiedUser != "" {
 		msg = fmt.Sprintf("%s; %s", msg, unknownCleartextPasswordCause(probe.unverifiedUser))
+	}
+	if probe.kind != probeKindServiceGrant {
+		return msg
 	}
 	return fmt.Sprintf("%s; %s", msg, operationalFallbackNote(probe.unverifiedUser))
 }
@@ -1782,11 +1786,20 @@ type verificationProbe struct {
 	allowedTopic string
 	deniedTopic  string
 	kind         verificationProbeKind
-	// unverifiedUser names the identity that owns a grant but whose
-	// cleartext password MCM does not know. It is empty when every
-	// candidate identity had a known password. The deployment uses it to
-	// name the real cause of a missing or downgraded probe.
+	// unverifiedUser names the identity that owns a readwrite grant
+	// (user-scoped or pattern) but whose cleartext password MCM does not
+	// know. It is empty when every candidate identity had a known
+	// password. The deployment uses it to name the real cause of a
+	// missing or downgraded probe.
 	unverifiedUser string
+	// unverifiedGrantUser names the identity that owns a user-scoped
+	// grant but whose cleartext password MCM does not know, whatever the
+	// permission of that grant. It is empty when every candidate
+	// identity had a known password. The broker-configuration surface
+	// uses it to refuse an apply it could never verify, the way it
+	// refused before the probe selection learned to skip an identity
+	// instead of aborting (issue #340).
+	unverifiedGrantUser string
 }
 
 // pickVerificationProbe picks the identity and the concrete topic the deploy
@@ -1811,8 +1824,20 @@ type verificationProbe struct {
 // A grant whose identity has no known cleartext password is skipped: the
 // verifier must never invent credentials, but the identity that blocked
 // the selection must not discard the valid candidates that come after it
-// (issue #340). The skipped identity is remembered so the deployment can
-// name the real cause of a missing or downgraded probe.
+// (issue #340). The first skipped identity of either phase is remembered,
+// so the deployment can name the real cause of a missing or downgraded
+// probe whatever probe it used.
+//
+// The lookup of the cleartext password of an identity that owns a
+// user-scoped grant runs BEFORE the check for a readwrite grant: that is
+// the information flow the broker-configuration surface relied on before
+// this feature, and it is what tells that surface that MCM cannot
+// authenticate as the identity. Two facts are remembered, because they
+// answer two different questions: unverifiedUser names the identity that
+// owns a readwrite grant and is not provable, and the deployment message
+// names it; unverifiedGrantUser names the identity that owns any
+// user-scoped grant and is not provable, and the broker-configuration
+// surface refuses on it.
 //
 // A grant is only usable as a probe when it yields one concrete topic
 // name: the verifier publishes to a topic, so a wildcard filter is
@@ -1829,8 +1854,14 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 	}
 
 	// unverifiedUser names the first identity that owns a readwrite grant
-	// but whose cleartext password MCM does not know.
+	// but whose cleartext password MCM does not know. In the pattern phase
+	// the readwrite grant is the pattern one, which applies to every
+	// identity inside the ACL.
 	var unverifiedUser string
+	// unverifiedGrantUser names the first identity that owns a
+	// user-scoped grant but whose cleartext password MCM does not know,
+	// whatever the permission of that grant.
+	var unverifiedGrantUser string
 
 	// 1. A user-scoped readwrite grant.
 	for _, e := range entries {
@@ -1843,22 +1874,31 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 		if !hasGrant {
 			continue
 		}
-		if readwrite == nil {
-			// The identity only has narrower grants. A probe publishes and
-			// subscribes, so it needs a readwrite grant.
-			continue
-		}
+		// The cleartext password is looked up before the narrower-grant
+		// check: an identity that owns a user-scoped grant but whose
+		// cleartext password is unknown is an identity MCM cannot
+		// authenticate as, whatever the permission of that grant.
 		password, hasPassword := s.lookupCleartextPassword(e.Username)
 		if !hasPassword || password == "" {
-			// The identity owns a readwrite grant but MCM cannot
+			// The identity owns a user-scoped grant but MCM cannot
 			// authenticate as it: its cleartext password only lived in
 			// the process memory and a restart of MCM lost it. Skip this
 			// identity instead of discarding the candidates that come
-			// after it (issue #340), and remember the cause so the
-			// deployment can name it.
-			if unverifiedUser == "" {
+			// after it (issue #340), and remember the cause: the
+			// deployment names it when the identity owns a readwrite
+			// grant, and the broker-configuration surface refuses on it
+			// because it could never verify the policy of that identity.
+			if unverifiedGrantUser == "" {
+				unverifiedGrantUser = e.Username
+			}
+			if readwrite != nil && unverifiedUser == "" {
 				unverifiedUser = e.Username
 			}
+			continue
+		}
+		if readwrite == nil {
+			// The identity only has narrower grants. A probe publishes and
+			// subscribes, so it needs a readwrite grant.
 			continue
 		}
 		topic, ok := concreteProbeTopic(readwrite.TopicFilter, e.Username, false)
@@ -1871,6 +1911,11 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 			allowedTopic: topic,
 			deniedTopic:  deniedTopicFor(rules, e.Username),
 			kind:         probeKindUserGrant,
+			// The identity skipped above still has to reach the operator:
+			// the probe on this identity does not prove the policy of the
+			// skipped one.
+			unverifiedUser:      unverifiedUser,
+			unverifiedGrantUser: unverifiedGrantUser,
 		}, true
 	}
 
@@ -1885,6 +1930,13 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 			}
 			password, hasPassword := s.lookupCleartextPassword(e.Username)
 			if !hasPassword || password == "" {
+				// The pattern grant is a readwrite grant for this
+				// identity, so the lost cleartext password is the reason
+				// it cannot be the probe. Record it, so the deployment
+				// names the identity, the cause and the remedy.
+				if unverifiedUser == "" {
+					unverifiedUser = e.Username
+				}
 				continue
 			}
 			topic, ok := concreteProbeTopic(r.TopicFilter, e.Username, true)
@@ -1897,6 +1949,11 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 				allowedTopic: topic,
 				deniedTopic:  deniedTopicFor(rules, e.Username),
 				kind:         probeKindPatternGrant,
+				// The identity skipped above still has to reach the
+				// operator: the probe on this identity does not prove the
+				// policy of the skipped one.
+				unverifiedUser:      unverifiedUser,
+				unverifiedGrantUser: unverifiedGrantUser,
 			}, true
 		}
 	}
@@ -1904,9 +1961,10 @@ func (s *Service) pickVerificationProbe(_ context.Context, aclBody, passwdBody s
 	// 3. The managed service account.
 	probe, ok := s.serviceVerificationProbe(entries, rules)
 	if !ok {
-		return verificationProbe{unverifiedUser: unverifiedUser}, false
+		return verificationProbe{unverifiedUser: unverifiedUser, unverifiedGrantUser: unverifiedGrantUser}, false
 	}
 	probe.unverifiedUser = unverifiedUser
+	probe.unverifiedGrantUser = unverifiedGrantUser
 	return probe, true
 }
 

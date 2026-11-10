@@ -246,8 +246,10 @@ func TestApply_RejectedApplyLeavesTheBrokerFilesUntouched(t *testing.T) {
 	if deployment.Status != "rolled_back" {
 		t.Fatalf("Status = %q, want %q (message: %s)", deployment.Status, "rolled_back", deployment.Message)
 	}
-	if applier.callCount() < 2 {
-		t.Errorf("applier called %d times, want at least 2 (the apply and its rollback)", applier.callCount())
+	// Exactly two writes: the apply and its rollback. A third write would
+	// mean the rollback wrote something else on top of the restored bytes.
+	if applier.callCount() != 2 {
+		t.Errorf("applier called %d times, want exactly 2 (the apply and its rollback)", applier.callCount())
 	}
 
 	onDiskACL, err := os.ReadFile(aclPath)
