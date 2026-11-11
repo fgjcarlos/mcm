@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/config"
 	"github.com/fgjcarlos/mcm/internal/logging"
 	"github.com/fgjcarlos/mcm/internal/storage"
 )
@@ -614,6 +617,50 @@ func TestBrokerEventHubKeepsBrokerLogEntriesFromLowerRoles(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("auditor subscriber did not receive the broker log entry")
+	}
+}
+
+// The onboarding connection test (#353) observes the new account through
+// the broker log stream: the event of a connection line names the account
+// Mosquitto authenticated, not only the client id the client chose.
+func TestBrokerLogPollerPublishesTheConnectedUsername(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "mosquitto.log")
+	// The source keeps a bounded age window, so the line carries the current
+	// broker timestamp.
+	line := fmt.Sprintf("%d: New client connected from 172.18.0.1:52344 as auto-1F2E (p2, c1, k60, u'device-sensor-01').\n", time.Now().Unix())
+	if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	app, store := newTestApp(t, func(cfg *config.Config) { cfg.Mosquitto.LogPath = logPath })
+	defer store.Close()
+
+	events, unsubscribe := app.brokerEvents.Subscribe(1, auth.RoleAuditor)
+	defer unsubscribe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go app.StartBrokerLogPoller(ctx)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.Type != "broker_log_entry" {
+				continue
+			}
+			if event.Kind != "client_connected" || event.ClientID != "auto-1F2E" || event.Username != "device-sensor-01" {
+				t.Fatalf("broker log event = %#v; want client_connected auto-1F2E as device-sensor-01", event)
+			}
+			encoded, err := json.Marshal(event)
+			if err != nil {
+				t.Fatalf("marshal event: %v", err)
+			}
+			if !strings.Contains(string(encoded), `"username":"device-sensor-01"`) {
+				t.Fatalf("event JSON lacks the username field: %s", encoded)
+			}
+			return
+		case <-deadline:
+			t.Fatal("the log poller published no broker_log_entry event")
+		}
 	}
 }
 

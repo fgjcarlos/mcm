@@ -5,7 +5,8 @@
 // Classification is deliberately conservative:
 //
 //	Log shape                                           Severity  Kind
-//	"New client connected from ... as <id>"              info      client_connected
+//	"New client connected from ... as <id> (..., u'<user>')":
+//	                                                   info      client_connected
 //	"Client <id> disconnected"                          info      client_disconnected
 //	"Received PUBLISH from <id> (d<q>, q<q>, r<r>, m<m>, '<topic>', ...)":
 //	                                                   debug     publish_received
@@ -14,8 +15,10 @@
 //	contains "Warning:" or begins "Warning"           warning   warning
 //	all other lines                                     info      unclassified
 //
-// ClientID and Topic are set only for matching broker log shapes that name
-// them. The file source polls at most Limits.MaxBytesPerRead bytes per call.
+// ClientID, Username and Topic are set only for matching broker log shapes
+// that name them. Username is the account Mosquitto authenticated, read from
+// the u'<user>' field of the connection line; it is empty for an anonymous
+// client. The file source polls at most Limits.MaxBytesPerRead bytes per call.
 // It notices replacement by file identity and truncation by file size. On either
 // event it starts at byte zero of the current file; already-ingested entries
 // remain in the ring, and unread bytes from the old file are not recoverable.
@@ -48,14 +51,15 @@ const (
 	SeverityError   Severity = "error"
 )
 
-// Entry is one bounded record from Mosquitto's log. ClientID and Topic are
-// empty unless the matched broker line itself names that value.
+// Entry is one bounded record from Mosquitto's log. ClientID, Username and
+// Topic are empty unless the matched broker line itself names that value.
 type Entry struct {
 	ObservedAt time.Time `json:"observed_at"`
 	Severity   Severity  `json:"severity"`
 	Kind       string    `json:"kind"`
 	Message    string    `json:"message"`
 	ClientID   string    `json:"client_id,omitempty"`
+	Username   string    `json:"username,omitempty"`
 	Topic      string    `json:"topic,omitempty"`
 }
 
@@ -323,6 +327,7 @@ func severityRank(severity Severity) int {
 
 var (
 	connectedRE  = regexp.MustCompile(`New client connected from .+ as ([^\s]+)`)
+	usernameRE   = regexp.MustCompile(`\(p[0-9]+, c[0-9]+, k[0-9]+, u'([^']*)'\)`)
 	disconnectRE = regexp.MustCompile(`^Client ([^\s]+) disconnected`)
 	publishRE    = regexp.MustCompile(`Received PUBLISH from ([^\s]+) \(d[0-9]+, q[0-9]+, r[0-9]+, m[0-9]+, '([^']*)'`)
 )
@@ -354,6 +359,9 @@ func parseLine(raw string, maxMessage int) (Entry, bool) {
 	case connectedRE.MatchString(message):
 		entry.Kind = "client_connected"
 		entry.ClientID = connectedRE.FindStringSubmatch(message)[1]
+		if match := usernameRE.FindStringSubmatch(message); match != nil {
+			entry.Username = match[1]
+		}
 	case disconnectRE.MatchString(message):
 		entry.Kind = "client_disconnected"
 		entry.ClientID = disconnectRE.FindStringSubmatch(message)[1]

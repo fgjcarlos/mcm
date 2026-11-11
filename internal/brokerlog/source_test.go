@@ -37,6 +37,38 @@ func TestParseLineClassification(t *testing.T) {
 	}
 }
 
+// Mosquitto names the account of a connected client in the connection line
+// (u'<username>'). The onboarding test (#353) observes the new user through
+// that name; the client id is chosen by the client and proves nothing about
+// the account.
+func TestParseLineRecordsTheConnectedUsername(t *testing.T) {
+	cases := []struct {
+		name, line, clientID, username string
+	}{
+		{"mqtt v3.1.1", "New client connected from 172.18.0.1:52344 as auto-1F2E (p2, c1, k60, u'device-sensor-01').", "auto-1F2E", "device-sensor-01"},
+		{"mqtt v5", "New client connected from 10.0.0.7:40000 as plant-a (p5, c1, k30, u'probe').", "plant-a", "probe"},
+		{"anonymous", "New client connected from 127.0.0.1:1883 as sensor-a (p2, c1, k60)", "sensor-a", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := parseLine(tc.line, 1024)
+			if !ok {
+				t.Fatal("line was ignored")
+			}
+			if entry.Kind != "client_connected" || entry.ClientID != tc.clientID || entry.Username != tc.username {
+				t.Fatalf("entry = %+v; want client_connected client=%q username=%q", entry, tc.clientID, tc.username)
+			}
+		})
+	}
+
+	// A username is read only from the connection line: another line that
+	// happens to quote u'...' names no account.
+	entry, _ := parseLine("Client sensor-a sent u'admin' in a payload", 1024)
+	if entry.Username != "" {
+		t.Fatalf("non-connection line recorded username %q", entry.Username)
+	}
+}
+
 func testSource(t *testing.T, content string, limits Limits) (*FileSource, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "mosquitto.log")

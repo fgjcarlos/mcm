@@ -171,7 +171,7 @@ func (a *App) StartBrokerLogPoller(ctx context.Context) {
 			if !a.retainBrokerLog(entry) {
 				continue
 			}
-			a.brokerEvents.Publish(BrokerEvent{Type: "broker_log_entry", Source: "mosquitto_log", Severity: string(entry.Severity), Kind: entry.Kind, ClientID: entry.ClientID, Message: entry.Message, Topic: entry.Topic, ObservedAt: entry.ObservedAt})
+			a.brokerEvents.Publish(BrokerEvent{Type: "broker_log_entry", Source: "mosquitto_log", Severity: string(entry.Severity), Kind: entry.Kind, ClientID: entry.ClientID, Username: entry.Username, Message: entry.Message, Topic: entry.Topic, ObservedAt: entry.ObservedAt})
 		}
 	}
 	poll()
