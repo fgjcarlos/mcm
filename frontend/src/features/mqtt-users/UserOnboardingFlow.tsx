@@ -4,6 +4,7 @@ import { can, permissionTitle } from '../auth/permissions'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { ACLPermission, ACLScope } from '../acl/types'
+import ConnectionTestStep from './ConnectionTestStep'
 
 // The integrated onboarding journey of issue #341: the MQTT user, its
 // access rule, the preview and the apply in one place.
@@ -34,7 +35,7 @@ type DeployPreview = {
   scope_issues?: string[]
 }
 
-type Stage = 'user' | 'rule' | 'preview' | 'apply'
+type Stage = 'user' | 'rule' | 'preview' | 'apply' | 'test'
 
 type UserOnboardingFlowProps = {
   token: string
@@ -57,6 +58,7 @@ const STEPS: { id: Stage; label: string }[] = [
   { id: 'rule', label: 'Access rule' },
   { id: 'preview', label: 'Preview' },
   { id: 'apply', label: 'Apply' },
+  { id: 'test', label: 'Test connection' },
 ]
 
 // A deployment that left the configuration on disk. The activation
@@ -90,6 +92,7 @@ export default function UserOnboardingFlow({
   const [stage, setStage] = useState<Stage>(initialStage)
   const [username, setUsername] = useState(initialUsername)
   const [createdPassword, setCreatedPassword] = useState('')
+  const [passwordCopied, setPasswordCopied] = useState(false)
   const [creatingUser, setCreatingUser] = useState(false)
   const [userError, setUserError] = useState('')
 
@@ -131,6 +134,7 @@ export default function UserOnboardingFlow({
       const created = (await response.json()) as { id: number; username: string; password: string }
       setUsername(created.username)
       setCreatedPassword(created.password)
+      setPasswordCopied(false)
       onMutation?.(mutationID)
       onUserCreated?.(created.username)
       setStage('rule')
@@ -255,7 +259,7 @@ export default function UserOnboardingFlow({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT user onboarding</p>
           <p className="mt-1 text-sm text-slate-300">
-            User, access rule, preview and apply in one journey. The apply still needs a recent MFA confirmation and
+            User, access rule, preview, apply and a test with your own MQTT client in one journey. The apply still needs a recent MFA confirmation and
             verifies the activation against the live broker.
           </p>
         </div>
@@ -296,13 +300,27 @@ export default function UserOnboardingFlow({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">User created — save this password</p>
           <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
           <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{createdPassword}</pre>
-          <button
-            type="button"
-            onClick={() => setCreatedPassword('')}
-            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-          >
-            Dismiss
-          </button>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(createdPassword)
+                  .then(() => setPasswordCopied(true))
+                  .catch(() => null)
+              }}
+              className="rounded-xl border border-emerald-300/30 px-3 py-1.5 text-xs text-emerald-100 transition hover:border-emerald-300/60"
+            >
+              {passwordCopied ? 'Copied' : 'Copy password'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setCreatedPassword(''); setPasswordCopied(false) }}
+              className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -367,6 +385,7 @@ export default function UserOnboardingFlow({
           <label className="block">
             <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Permission</span>
             <select
+              aria-label="Permission"
               value={permission}
               onChange={(e) => setPermission(e.target.value as ACLPermission)}
               className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
@@ -555,6 +574,16 @@ export default function UserOnboardingFlow({
             </div>
           ) : null}
 
+          {result && APPLIED_STATUSES.includes(result.status) ? (
+            <button
+              type="button"
+              onClick={() => setStage('test')}
+              className="mr-3 rounded-xl border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70"
+            >
+              Test the connection
+            </button>
+          ) : null}
+
           <button
             type="button"
             onClick={() => { void handleApply() }}
@@ -565,6 +594,20 @@ export default function UserOnboardingFlow({
             {applying ? 'Applying…' : 'Apply and verify'}
           </button>
         </div>
+      ) : null}
+
+      {stage === 'test' && result ? (
+        <ConnectionTestStep
+          token={token}
+          onLogout={onLogout}
+          role={role}
+          username={username}
+          topicFilter={topicFilter}
+          permission={permission}
+          scope={scope}
+          listenerID={listenerID}
+          deployment={result}
+        />
       ) : null}
     </section>
   )
