@@ -6,7 +6,9 @@ into a Mosquitto ACL file.
 
 This page covers the rule model, the native scopes, the validation rules
 and the Mosquitto mapping. The deployment of a rendered file is described
-in the [production guide](production.md).
+in the [production guide](production.md). The operator journey that
+creates a user, its rule and applies both is described in the
+[onboarding guide](mqtt-onboarding.md).
 
 ## Rule model
 
