@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import MQTTUsersPanel from './MQTTUsersPanel'
@@ -243,6 +243,49 @@ describe('MQTTUsersPanel 403 forbidden handling', () => {
     await waitFor(() => {
       expect(onMutation).toHaveBeenCalledTimes(1)
     })
+    vi.unstubAllGlobals()
+  })
+
+  it('opens the onboarding journey from Add User', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Add User' }))
+
+    // The journey is one place for the user, its access rule, the preview and the apply.
+    expect(screen.getByRole('region', { name: 'MQTT user onboarding' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create user' })).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('opens the onboarding journey at the access rule step for an existing user', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+
+    await screen.findByText('sensor-01')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Complete setup' }))
+
+    expect(screen.getByRole('region', { name: 'MQTT user onboarding' })).toBeInTheDocument()
+    // The rule step starts from the existing identity.
+    expect(within(screen.getByRole('region', { name: 'MQTT user onboarding' })).getByText('sensor-01')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Create user' })).not.toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the complete setup control disabled for a viewer', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+
+    await screen.findByText('sensor-01')
+    const setupBtn = screen.getByRole('button', { name: 'Complete setup' })
+    expect(setupBtn).toBeDisabled()
+    expect(setupBtn).toHaveAttribute('title', 'Requires operator role or higher')
+
     vi.unstubAllGlobals()
   })
 })

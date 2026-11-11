@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
+import UserOnboardingFlow from './UserOnboardingFlow'
 
 type MQTTUser = {
   id: number
@@ -10,16 +11,16 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
+function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutation, onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
   const canWrite = can(role, 'mqttUser.write')
+  const canWriteRule = can(role, 'acl.write')
   const [users, setUsers] = useState<MQTTUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [showCreateForm, setShowCreateForm] = useState(false)
-  const [createUsername, setCreateUsername] = useState('')
-  const [createError, setCreateError] = useState('')
-  const [createSubmitting, setCreateSubmitting] = useState(false)
-  const [createdPassword, setCreatedPassword] = useState<{ userId: number; password: string } | null>(null)
+  // The integrated onboarding journey of issue #341: the user, its access
+  // rule, the preview and the apply in one place. It opens at the user
+  // step from "Add User" and at the rule step for an existing user.
+  const [onboarding, setOnboarding] = useState<{ stage: 'user' | 'rule'; username: string } | null>(null)
   const [resetUserId, setResetUserId] = useState<number | null>(null)
   const [resetPassword, setResetPassword] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
@@ -54,40 +55,6 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
       cancelled = true
     }
   }, [token, refreshTick, onLogout])
-
-  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (createSubmitting) return
-    setCreateSubmitting(true)
-    setCreateError('')
-    const mutationID = onMutationStart?.() ?? 0
-    try {
-      const response = await authenticatedFetch('/api/v1/mqtt-users', {
-        token,
-        onUnauthorized: onLogout,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: createUsername.trim() }),
-      })
-      if (!response.ok) {
-        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
-        setCreateError(errBody?.error ?? 'Create failed.')
-        return
-      }
-      const created = (await response.json()) as MQTTUser & { password: string }
-      setCreatedPassword({ userId: created.id, password: created.password })
-      setCreateUsername('')
-      setShowCreateForm(false)
-      onMutation?.(mutationID)
-      fetchUsers()
-    } catch (err) {
-      if (isUnauthorizedResponseError(err)) return
-      if (isForbiddenResponseError(err)) { setCreateError((err as Error).message); return }
-      setCreateError('Could not reach the server.')
-    } finally {
-      setCreateSubmitting(false)
-    }
-  }
 
   const handleToggle = async (user: MQTTUser) => {
     setTogglingId(user.id)
@@ -154,7 +121,6 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
         return
       }
       setDeleteConfirmId(null)
-      if (createdPassword?.userId === id) setCreatedPassword(null)
       if (resetUserId === id) {
         setResetUserId(null)
         setResetPassword(null)
@@ -178,9 +144,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
         <button
           type="button"
           onClick={() => {
-            setShowCreateForm(true)
-            setCreateError('')
-            setCreateUsername('')
+            setOnboarding({ stage: 'user', username: '' })
           }}
           disabled={!canWrite}
           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
@@ -194,19 +158,20 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
         <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
       ) : null}
 
-      {createdPassword ? (
-        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">User created — save this password</p>
-          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
-          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{createdPassword.password}</pre>
-          <button
-            type="button"
-            onClick={() => setCreatedPassword(null)}
-            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-          >
-            Dismiss
-          </button>
-        </div>
+      {onboarding ? (
+        <UserOnboardingFlow
+          token={token}
+          onLogout={onLogout}
+          role={role}
+          initialStage={onboarding.stage}
+          initialUsername={onboarding.username}
+          onMutationStart={onMutationStart}
+          onMutation={onMutation}
+          onApplyStart={onApplyStart}
+          onApplySuccess={onApplySuccess}
+          onUserCreated={() => { fetchUsers() }}
+          onClose={() => setOnboarding(null)}
+        />
       ) : null}
 
       {resetUserId !== null && resetPassword !== null ? (
@@ -224,46 +189,6 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
           >
             Dismiss
           </button>
-        </div>
-      ) : null}
-
-      {showCreateForm ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">New MQTT user</p>
-          <form onSubmit={handleCreate} className="mt-4 space-y-4">
-            <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Username</span>
-              <input
-                type="text"
-                required
-                value={createUsername}
-                onChange={(e) => setCreateUsername(e.target.value)}
-                placeholder="device-sensor-01"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
-              />
-              <span className="mt-1 block text-xs text-slate-400">A secure password will be generated automatically.</span>
-            </label>
-            {createError ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{createError}</div>
-            ) : null}
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={createSubmitting || !canWrite}
-                title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-              >
-                {createSubmitting ? 'Creating…' : 'Create user'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCreateForm(false)}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
         </div>
       ) : null}
 
@@ -315,6 +240,17 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOnboarding({ stage: 'rule', username: user.username })
+                          }}
+                          disabled={!canWriteRule}
+                          title={!canWriteRule ? permissionTitle('acl.write') : undefined}
+                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                        >
+                          Complete setup
+                        </button>
                         <button
                           type="button"
                           onClick={() => {
