@@ -10,6 +10,11 @@ MCM manages the configured `mosquitto.conf` through immutable previews. Importin
 4. Apply the reviewed revision. Read its result in **Changes**; saved files and a successful reload signal are not, by themselves, proof of MQTT activation. If the apply is refused because the broker cannot be restarted or because the activation could not be verified, nothing is written: fix the cause and apply the same revision again.
 5. To recover, select an earlier revision and prepare a new preview. Review it against today's configuration, then explicitly apply it.
 
+The MQTT user alta has its own journey in the *Users* panel: it chains
+the user, its access rule, the preview and the apply, and it keeps the
+same gates (recent MFA, activation verification with rollback). See
+[the onboarding guide](mqtt-onboarding.md).
+
 ## The workflow
 
 1. **Import.** `POST /api/v1/broker/config/import` with an empty body previews the root file as it is on disk. Include files stay separate: the root file is never rewritten with their bodies appended, and unknown directives are preserved.

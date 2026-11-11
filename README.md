@@ -291,6 +291,7 @@ Frontend work happens under [`frontend/`](./frontend/). Toolchain is pinned by [
 - [docs/openapi.yaml](./docs/openapi.yaml) — full REST + WebSocket contract.
 - [docs/production.md](./docs/production.md) — production deployment guide.
 - [docs/acl.md](./docs/acl.md) — ACL model and REST shape.
+- [docs/mqtt-onboarding.md](./docs/mqtt-onboarding.md) — the MQTT user onboarding journey: user, access rule, preview and apply in one place.
 - [docs/bridges.md](./docs/bridges.md) — bridge model, Mosquitto mapping and REST shape.
 - [docs/plugins.md](./docs/plugins.md) — plugin catalog, Dynamic Security model, management channel and REST shape.
 - [docs/json-schemas.md](./docs/json-schemas.md) — JSON Schema validators bound to MQTT topic filters.

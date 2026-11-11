@@ -61,23 +61,6 @@ try {
   for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
     await check(page.getByRole('navigation').getByRole('heading', { name, exact: true })).toBeVisible()
   }
-  await openNavigationGroup('MQTT Access')
-  await page.locator('nav a[href="/users"]').click()
-  await page.getByRole('button', { name: 'Add User', exact: true }).click()
-  await page.getByPlaceholder('device-sensor-01').fill('probe')
-  await page.getByRole('button', { name: 'Create user', exact: true }).click()
-  await check(page.getByRole('cell', { name: 'probe', exact: true })).toBeVisible()
-  await page.locator('nav a[href="/acls"]').click()
-  await page.getByRole('button', { name: 'Add Rule', exact: true }).click()
-  await page.getByPlaceholder('mqtt-username').fill('probe')
-  await page.getByPlaceholder('sensors/# or device/+/status').fill('probe/allowed')
-  // The default permission is read-only; the verification subject must be
-  // allowed to publish as well. The form carries several selects, so the
-  // permission one is addressed by its label.
-  await page.getByLabel(/^Permission/).selectOption('readwrite')
-  await page.getByRole('button', { name: 'Create rule', exact: true }).click()
-  await check(page.getByRole('cell', { name: 'probe/allowed', exact: true })).toBeVisible()
-
   await openNavigationGroup('Administration')
   await page.locator('nav a[href="/account"]').click()
   const enrollment = page.waitForResponse((response) => response.url().endsWith('/auth/mfa/setup'))
@@ -88,17 +71,39 @@ try {
   await page.getByPlaceholder('000000').fill(totp(secret))
   await page.getByRole('button', { name: 'Confirm & enable', exact: true }).click()
   await check(page.getByRole('button', { name: 'Disable MFA', exact: true })).toBeVisible()
-  console.log('[UI] MQTT test identity, ACL grant and MFA enrollment completed through the browser')
+  console.log('[UI] MFA enrollment completed through the browser')
 
-  await openNavigationGroup('Changes')
-  await page.locator('nav a[href="/deploy"]').click()
+  // The integrated onboarding journey of issue #341: the MQTT user, its
+  // access rule, the preview and the apply in a single journey, against a
+  // real Mosquitto.
+  await openNavigationGroup('MQTT Access')
+  await page.locator('nav a[href="/users"]').click()
+  await page.getByRole('button', { name: 'Add User', exact: true }).click()
+  const journey = page.getByRole('region', { name: 'MQTT user onboarding' })
+  await journey.getByPlaceholder('device-sensor-01').fill('probe')
+  await journey.getByRole('button', { name: 'Create user', exact: true }).click()
+  await check(journey.getByText('User created — save this password')).toBeVisible()
+  // The saved user is not applied yet, so the pending deploy banner covers it.
+  await check(page.getByText('Pending deploy')).toBeVisible()
+  await journey.getByPlaceholder('sensors/# or device/+/status').fill('probe/allowed')
+  // The form carries several selects, so the permission one is addressed by its label.
+  await journey.getByLabel(/^Permission/).selectOption('readwrite')
+  await journey.getByRole('button', { name: 'Save access rule', exact: true }).click()
+  await journey.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await confirmMFA()
-  await page.getByRole('button', { name: 'Preview Changes', exact: true }).click()
-  await page.getByRole('button', { name: 'Apply', exact: true }).click()
   const accessApply = page.waitForResponse((response) => response.url().endsWith('/deployments/apply'))
-  await page.getByRole('button', { name: 'Confirm Apply', exact: true }).click()
-  check((await (await accessApply).json()).status).toBe('active_verified')
-  console.log('[UI] ACL/password deployment verified against real Mosquitto')
+  await journey.getByRole('button', { name: 'Apply and verify', exact: true }).click()
+  const applied = await accessApply
+  check(applied.status()).toBe(200)
+  check((await applied.json()).status).toBe('active_verified')
+  await check(journey.getByText('Applied and verified')).toBeVisible()
+  // The journey cleared the pending deploy state: nothing is left saved-only.
+  await check(page.getByText('Pending deploy')).toHaveCount(0)
+  // The rule of the journey is an ordinary MCM rule: the ACL panel lists it.
+  await page.locator('nav a[href="/acls"]').click()
+  // The topic filter appears in the rule table and in the effective permissions table.
+  await check(page.getByRole('cell', { name: 'probe/allowed', exact: true }).first()).toBeVisible()
+  console.log('[UI] MQTT user, ACL grant and verified deployment completed in one journey')
 
   const current = page.waitForResponse((response) => response.url().endsWith('/broker/config'))
   // Configuration is expanded by default, including after navigating away.

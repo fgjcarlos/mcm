@@ -450,6 +450,57 @@ describe('App', () => {
     })
   })
 
+  it('completes the MQTT onboarding journey and clears the pending deploy banner', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'journey-token')
+
+    vi.stubGlobal('fetch', installFetchMock({
+      'GET /api/v1/auth/me': () =>
+        jsonResponse({
+          id: 9,
+          username: 'journey-admin',
+          disabled: false,
+          role: 'admin',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+      'GET /api/v1/status': () =>
+        jsonResponse({ broker: { status: 'connected', metrics: { traffic: { window_seconds: 300, message_count: 0, message_rate_per_minute: 0, rate_points: [], top_topics: [], top_clients: [], top_clients_available: false, persistence: 'In-memory' } } } }),
+      'GET /api/v1/mqtt-users': () => jsonResponse([]),
+      'POST /api/v1/mqtt-users': () => jsonResponse({ id: 7, username: 'probe', password: 'generated-secret' }),
+      'POST /api/v1/acls': () => jsonResponse({ id: 'rule-1', principal: 'probe' }),
+      'POST /api/v1/deployments/preview': () =>
+        jsonResponse({ revision_id: 'rev-1', acl_diff: '+user probe\n', passwd_diff: '+probe:$7$generated-secret\n', has_changes: true }),
+      'POST /api/v1/deployments/apply': () =>
+        jsonResponse({ id: 11, status: 'active_verified', message: 'activation probe: user grant', created_at: '2026-01-01T00:00:00Z' }),
+    }))
+
+    render(<App />)
+
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('link', { name: /users/i }))
+
+    await user.click(await screen.findByRole('button', { name: 'Add User' }))
+    await user.type(screen.getByPlaceholderText('device-sensor-01'), 'probe')
+    await user.click(screen.getByRole('button', { name: 'Create user' }))
+
+    // The saved user is not applied yet, so the pending deploy banner covers it.
+    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+
+    await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'probe/allowed')
+    await user.click(screen.getByRole('button', { name: 'Save access rule' }))
+    await user.click(await screen.findByRole('button', { name: 'Preview changes' }))
+    await user.type(await screen.findByPlaceholderText('Authenticator code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed for this session/)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    expect(await screen.findByText('Applied and verified')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
+    })
+  })
+
   it('logs out when the initial authenticated status request is unauthorized', async () => {
     window.localStorage.setItem('mcm_admin_token', 'expired-status-token')
 
