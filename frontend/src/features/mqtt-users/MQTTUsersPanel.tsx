@@ -11,7 +11,7 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutation, onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
+function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, onMutationStart, onMutation, onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; startOnboarding?: boolean; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
   const canWrite = can(role, 'mqttUser.write')
   const canWriteRule = can(role, 'acl.write')
   const [users, setUsers] = useState<MQTTUser[]>([])
@@ -19,8 +19,9 @@ function MQTTUsersPanel({ token, onLogout, role = '', onMutationStart, onMutatio
   const [error, setError] = useState('')
   // The integrated onboarding journey of issue #341: the user, its access
   // rule, the preview and the apply in one place. It opens at the user
-  // step from "Add User" and at the rule step for an existing user.
-  const [onboarding, setOnboarding] = useState<{ stage: 'user' | 'rule'; username: string } | null>(null)
+  // step from "Add User" and at the rule step for an existing user. The
+  // dashboard's "Connect an application" action (#354) opens it on mount.
+  const [onboarding, setOnboarding] = useState<{ stage: 'user' | 'rule'; username: string } | null>(() => (startOnboarding && canWrite ? { stage: 'user', username: '' } : null))
   const [resetUserId, setResetUserId] = useState<number | null>(null)
   const [resetPassword, setResetPassword] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)

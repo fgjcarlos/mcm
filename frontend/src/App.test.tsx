@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -1566,4 +1566,179 @@ describe('App', () => {
     expect(screen.queryByRole('link', { name: /Certificates/ })).not.toBeInTheDocument()
   })
 
+  describe('operational dashboard home (#354)', () => {
+    function homeRoutes(
+      { role = 'operator', broker = 'connected', messageCount = 0, statusFails = false, observedAt, lastMessageAt }: { role?: string; broker?: 'connected' | 'disconnected'; messageCount?: number; statusFails?: boolean; observedAt?: string; lastMessageAt?: string } = {},
+    ): Record<string, RouteHandler> {
+      return {
+        'GET /api/v1/auth/me': () =>
+          jsonResponse({ id: 21, username: `home-${role}`, disabled: false, role, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+        'GET /api/v1/status': () =>
+          statusFails
+            ? new Response('unavailable', { status: 503 })
+            : jsonResponse({
+                broker: {
+                  status: broker,
+                  observed_at: observedAt ?? new Date(Date.now() - 120_000).toISOString(),
+                  target: { host: 'mosquitto', port: 1883, address: 'mosquitto:1883', tls_enabled: false },
+                  metrics: {
+                    last_message_at: lastMessageAt ?? '0001-01-01T00:00:00Z',
+                    traffic: {
+                      window_seconds: 300,
+                      message_count: messageCount,
+                      message_rate_per_minute: messageCount / 5,
+                      rate_points: [],
+                      top_topics: [],
+                      top_clients: [],
+                      top_clients_available: false,
+                      top_clients_note: 'Unavailable in tests.',
+                      persistence: 'In-memory',
+                    },
+                  },
+                },
+              }),
+        'GET /api/v1/mqtt-users': () => jsonResponse([]),
+      }
+    }
+
+    function renderHome(token: string, options: Parameters<typeof homeRoutes>[0] = {}) {
+      window.localStorage.setItem('mcm_admin_token', token)
+      vi.stubGlobal('fetch', installFetchMock(homeRoutes(options)))
+      render(<App />)
+    }
+
+    it('tells a connected broker without traffic apart from a disconnection and offers operators to connect an application', async () => {
+      renderHome('idle-token')
+
+      const health = await screen.findByRole('region', { name: 'Broker health' })
+      expect(await within(health).findByText('Connected · no traffic')).toBeInTheDocument()
+      expect(within(health).getByText(/No traffic is not a disconnection/)).toBeInTheDocument()
+      expect(within(health).getByText('mosquitto:1883')).toBeInTheDocument()
+      expect(within(health).getByText('2 min ago')).toBeInTheDocument()
+      expect(within(health).getByText('None observed yet')).toBeInTheDocument()
+      expect(within(health).queryByText('Disconnected')).not.toBeInTheDocument()
+      expect(window.location.pathname).toBe('/')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Connect an application' }))
+
+      expect(await screen.findByRole('region', { name: 'MQTT user onboarding' })).toBeInTheDocument()
+      expect(window.location.pathname).toBe('/users')
+      expect(screen.getByRole('link', { name: /^Users/ })).toHaveAttribute('aria-current', 'page')
+    })
+
+    it('reports a disconnected broker as a disconnection, not as missing traffic', async () => {
+      renderHome('down-token', { broker: 'disconnected' })
+
+      const health = await screen.findByRole('region', { name: 'Broker health' })
+      expect(await within(health).findByText('Disconnected')).toBeInTheDocument()
+      expect(within(health).getByText(/MCM cannot reach the broker at mosquitto:1883/)).toBeInTheDocument()
+      expect(within(health).queryByText('Connected · no traffic')).not.toBeInTheDocument()
+    })
+
+    it('does not claim a disconnection when the broker status cannot be read', async () => {
+      renderHome('unknown-token', { statusFails: true })
+
+      const health = await screen.findByRole('region', { name: 'Broker health' })
+      expect(await within(health).findByText('Status unavailable')).toBeInTheDocument()
+      expect(within(health).getByText(/does not mean the broker is down/)).toBeInTheDocument()
+      expect(within(health).queryByText('Disconnected')).not.toBeInTheDocument()
+    })
+
+    it('reports recent traffic and the time of the last message when the broker is active', async () => {
+      renderHome('active-token', { messageCount: 6, lastMessageAt: new Date(Date.now() - 30_000).toISOString() })
+
+      const health = await screen.findByRole('region', { name: 'Broker health' })
+      expect(await within(health).findByText('Connected · receiving traffic')).toBeInTheDocument()
+      expect(within(health).getByText('The broker is reachable and clients are publishing: 6 messages observed in the last 5 minutes.')).toBeInTheDocument()
+      expect(within(health).getByText('Less than a minute ago')).toBeInTheDocument()
+    })
+
+    it('explains to a viewer who can connect an application instead of offering an action they cannot take', async () => {
+      renderHome('viewer-token', { role: 'viewer' })
+
+      const connect = await screen.findByRole('region', { name: 'Connect an application' })
+      expect(within(connect).getByText(/needs an operator or an admin/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Connect an application' })).not.toBeInTheDocument()
+    })
+
+    it('shows pending changes with the apply action to an admin', async () => {
+      window.localStorage.setItem('mcm_deploy_pending', '1')
+      renderHome('admin-token', { role: 'admin' })
+
+      const pending = await screen.findByRole('region', { name: 'Pending changes' })
+      expect(within(pending).getByText('Saved, not applied')).toBeInTheDocument()
+      await userEvent.click(within(pending).getByRole('button', { name: 'Review and apply' }))
+
+      expect(await screen.findByRole('link', { name: /^Deploy/ })).toHaveAttribute('aria-current', 'page')
+      expect(window.location.pathname).toBe('/deploy')
+    })
+
+    it('shows pending changes with the preview action to an operator and says an admin applies them', async () => {
+      window.localStorage.setItem('mcm_deploy_pending', '1')
+      renderHome('operator-token', { role: 'operator' })
+
+      const pending = await screen.findByRole('region', { name: 'Pending changes' })
+      expect(within(pending).getByText('Saved, not applied')).toBeInTheDocument()
+      expect(within(pending).getByRole('button', { name: 'Preview changes' })).toBeInTheDocument()
+      expect(within(pending).getByText(/An admin with MFA applies them/)).toBeInTheDocument()
+      expect(within(pending).queryByRole('button', { name: 'Review and apply' })).not.toBeInTheDocument()
+    })
+
+    it('shows pending changes to a viewer without an action they cannot take', async () => {
+      window.localStorage.setItem('mcm_deploy_pending', '1')
+      renderHome('viewer-pending-token', { role: 'viewer' })
+
+      const pending = await screen.findByRole('region', { name: 'Pending changes' })
+      expect(within(pending).getByText('Saved, not applied')).toBeInTheDocument()
+      expect(within(pending).getByText(/An operator can preview them and an admin applies them/)).toBeInTheDocument()
+      expect(within(pending).queryByRole('button')).not.toBeInTheDocument()
+    })
+
+    it('says no pending changes are recorded in this browser when the flag is clear', async () => {
+      renderHome('clear-token', { role: 'admin' })
+
+      const pending = await screen.findByRole('region', { name: 'Pending changes' })
+      expect(within(pending).getByText('Nothing pending in this browser')).toBeInTheDocument()
+    })
+
+    it('places broker health, pending changes and the connect action before recent traffic', async () => {
+      renderHome('order-token')
+
+      const health = await screen.findByRole('region', { name: 'Broker health' })
+      const pending = screen.getByRole('region', { name: 'Pending changes' })
+      const connect = screen.getByRole('region', { name: 'Connect an application' })
+      const traffic = screen.getByText('Message rate')
+      const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+      expect(follows(health, pending)).toBe(true)
+      expect(follows(pending, connect)).toBe(true)
+      expect(follows(connect, traffic)).toBe(true)
+    })
+
+    it.each([
+      ['/logs', /^Logs/],
+      ['/users', /^Users/],
+      ['/deploy', /^Deploy/],
+    ])('still opens %s on a direct browser load without redirecting to the dashboard', async (path, linkName) => {
+      window.history.replaceState(null, '', path)
+      renderHome('deep-link-token')
+
+      expect(await screen.findByRole('link', { name: linkName })).toHaveAttribute('aria-current', 'page')
+      expect(window.location.pathname).toBe(path)
+      expect(screen.queryByRole('region', { name: 'Broker health' })).not.toBeInTheDocument()
+    })
+
+    it('does not reopen the onboarding when the user returns to Users from the sidebar', async () => {
+      renderHome('reopen-token')
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Connect an application' }))
+      expect(await screen.findByRole('region', { name: 'MQTT user onboarding' })).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('link', { name: /^Dashboard/ }))
+      await screen.findByRole('region', { name: 'Broker health' })
+      await userEvent.click(screen.getByRole('link', { name: /^Users/ }))
+
+      expect(await screen.findByRole('button', { name: 'Add User' })).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'MQTT user onboarding' })).not.toBeInTheDocument()
+    })
+  })
 })

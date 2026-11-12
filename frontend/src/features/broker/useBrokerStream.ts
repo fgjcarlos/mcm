@@ -93,9 +93,45 @@ export type BrokerTrafficMetrics = {
 type StatusResponse = {
   broker: {
     status: BrokerConnectionStatus
+    observed_at?: string
+    target?: { address?: string }
     metrics: {
+      last_message_at?: string
       traffic: BrokerTrafficMetrics
     }
+  }
+}
+
+// Whether the broker status has been read at least once. "failed" means MCM
+// could not read it, which is not the same as a disconnected broker.
+export type BrokerStatusLoad = 'loading' | 'loaded' | 'failed'
+
+export type BrokerStatusFacts = {
+  load: BrokerStatusLoad
+  observedAt?: string
+  lastMessageAt?: string
+  address?: string
+}
+
+// Go serializes an unset time as its zero value; treat it as absent.
+function meaningfulTime(value?: string) {
+  if (!value) return undefined
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) || new Date(parsed).getUTCFullYear() < 2000 ? undefined : value
+}
+
+function laterTime(current?: string, next?: string) {
+  if (!next) return current
+  if (!current) return next
+  return Date.parse(next) > Date.parse(current) ? next : current
+}
+
+function factsFromStatus(status: StatusResponse, current: BrokerStatusFacts): BrokerStatusFacts {
+  return {
+    load: 'loaded',
+    observedAt: meaningfulTime(status.broker.observed_at),
+    lastMessageAt: laterTime(current.lastMessageAt, meaningfulTime(status.broker.metrics.last_message_at)),
+    address: status.broker.target?.address || current.address,
   }
 }
 
@@ -120,6 +156,7 @@ export function useBrokerStream(token: string, onLogout: () => void) {
   const [topics, setTopics] = useState<TopicMessage[]>([])
   const [liveTrafficMetrics, setLiveTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
   const [logs, setLogs] = useState<BrokerLog[]>([])
+  const [statusFacts, setStatusFacts] = useState<BrokerStatusFacts>({ load: 'loading' })
   const liveTrafficEvents = useRef<TopicMessage[]>([])
 
   useEffect(() => {
@@ -130,10 +167,12 @@ export function useBrokerStream(token: string, onLogout: () => void) {
         if (cancelled) return
         const traffic = withSnapshotAt(status.broker.metrics.traffic ?? emptyTrafficMetrics)
         setBrokerStatus(status.broker.status)
+        setStatusFacts((current) => factsFromStatus(status, current))
         setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, traffic) : traffic)
       })
       .catch(() => {
         if (!cancelled) {
+          setStatusFacts((current) => ({ ...current, load: 'failed' }))
           setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
         }
       })
@@ -163,10 +202,12 @@ export function useBrokerStream(token: string, onLogout: () => void) {
           if (destroyed) return
           const traffic = withSnapshotAt(status.broker.metrics.traffic ?? emptyTrafficMetrics)
           setBrokerStatus(status.broker.status)
+          setStatusFacts((current) => factsFromStatus(status, current))
           setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, traffic) : traffic)
         })
         .catch(() => {
           if (!destroyed) {
+            setStatusFacts((current) => ({ ...current, load: 'failed' }))
             setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
           }
         })
@@ -229,11 +270,13 @@ export function useBrokerStream(token: string, onLogout: () => void) {
           const event = JSON.parse((message as MessageEvent).data) as BrokerEvent
           if (event.type === 'broker_status' && event.status) {
             setBrokerStatus(event.status)
+            setStatusFacts((current) => ({ ...current, load: 'loaded', observedAt: meaningfulTime(event.observed_at) ?? current.observedAt }))
           }
           if (event.type === 'topic_message' && event.topic && event.source === 'observed') {
             const topicEvent = event as TopicMessage
             liveTrafficEvents.current = pruneTrafficEvents([topicEvent, ...liveTrafficEvents.current])
             setTopics((current) => [topicEvent, ...current].slice(0, 20))
+            setStatusFacts((current) => ({ ...current, lastMessageAt: laterTime(current.lastMessageAt, meaningfulTime(topicEvent.observed_at)) }))
             setLiveTrafficMetrics((current) => addTopicEventToTrafficMetrics(current, topicEvent))
           }
           if ((event.type === 'broker_log' || event.type === 'broker_log_entry') && event.source && event.severity && event.message) {
@@ -270,6 +313,7 @@ export function useBrokerStream(token: string, onLogout: () => void) {
     logs,
     uniqueTopicCount,
     liveTrafficMetrics,
+    statusFacts,
   }
 }
 

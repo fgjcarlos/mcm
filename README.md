@@ -30,7 +30,7 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 | Directive support matrix | Published per broker version: every directive the Mosquitto manual documents, with the level of support MCM gives it. See [docs/support-matrix.md](./docs/support-matrix.md). |
 | Backup and restore | `task backup` and `task restore` capture and restore the MCM database, the broker configuration and its certificate material, with a manifest, checksum verification and a verified database restore. Broker persistence data is opt-in. |
 | Broker metrics and logs | Real `$SYS` metrics and broker log entries, with explicit limits on what is observed. Not a complete broker/client inventory. |
-| Dashboard, topics and logs | Observed MQTT traffic and MCM connection events; not a complete broker/client inventory. |
+| Dashboard, topics and logs | The dashboard home leads with broker health (an idle broker is told apart from a disconnected one, with the time of the last status change and last message), changes saved but not applied in this browser with the next action the role allows, and a way to connect an application. Recent observed traffic follows; not a complete broker/client inventory. |
 | Operator accounts, roles, MFA and audit | Available; separate from MQTT users and broker permissions. |
 | Sparkplug B and JSON Schema | Optional diagnostics; observing a payload does not enforce validation in Mosquitto. |
 
