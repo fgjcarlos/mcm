@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addTopicEventToTrafficMetrics,
   buildTrafficMetrics,
+  emptyTrafficMetrics,
   type BrokerTrafficMetrics,
   type TopicMessage,
   useBrokerStream,
@@ -673,6 +674,35 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
        // Reset to epoch to minimize time-related test interference
        vi.setSystemTime(new Date(0))
      }
+   })
+
+   it('keeps a known broker status when the reconnect status refetch fails (#354)', async () => {
+     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(statusResponse(emptyTrafficMetrics))))
+     const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
+
+     await act(async () => {})
+     expect(result.current.statusFacts.load).toBe('loaded')
+
+     await act(async () => {
+       MockWebSocket.instances[0]!.open()
+     })
+     await act(async () => {
+       MockWebSocket.instances[0]!.serverClose()
+     })
+
+     const failingFetch = vi.fn(() => Promise.resolve(new Response('unavailable', { status: 503 })))
+     vi.stubGlobal('fetch', failingFetch)
+     await act(async () => {
+       vi.advanceTimersByTime(1500)
+     })
+     await act(async () => {
+       MockWebSocket.instances[1]!.open()
+     })
+     await act(async () => {})
+
+     expect(failingFetch).toHaveBeenCalled()
+     expect(result.current.statusFacts.load).toBe('loaded')
+     expect(result.current.brokerStatus).toBe('connected')
    })
 
    it('reconnect re-fetch does not double-count events already in the liveTrafficEvents buffer', async () => {

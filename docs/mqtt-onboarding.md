@@ -21,7 +21,9 @@ already exposes and keeps every gate the backend owns.
 | 4. Apply | `POST /api/v1/deployments/apply` with the preview revision. | The broker files, then the reload and the activation verification. |
 | 5. Test connection | Shows the connection data and a manual test for the operator's own MQTT client, then watches the broker. Offered only after a deployment that left the configuration on the broker. | Nothing. |
 
-The journey opens from **Add User** in the *Users* panel. **Complete
+The journey opens from **Add User** in the *Users* panel, or from
+**Connect an application** on the dashboard home, which opens the *Users*
+panel with the journey at step 1 (operators and admins only). **Complete
 setup** in a user row opens it at step 2 for a user that already exists,
 so an identity created outside the journey can still get its rule and its
 apply in the same place.

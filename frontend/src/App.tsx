@@ -15,6 +15,7 @@ import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
+import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLPermission, type ACLRule, type ACLScope, type ACLSelector } from './features/acl/types'
@@ -351,15 +352,24 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     logs,
     uniqueTopicCount,
     liveTrafficMetrics,
+    statusFacts,
   } = useBrokerStream(token, onLogout)
+  // Set only by the dashboard's "Connect an application" action so the Users
+  // panel opens its onboarding journey once; any other navigation clears it.
+  const [startOnboarding, setStartOnboarding] = useState(false)
 
-  const handleSelectNav = useCallback((item: NavItem) => {
+  const handleSelectNav = useCallback((item: NavItem, options?: { startOnboarding?: boolean }) => {
     if (item.id === 'broker-config' || item.id === 'changes') setVisitedBroker(true)
     if (window.location.pathname !== item.path) {
       window.history.pushState(null, '', item.path)
     }
+    setStartOnboarding(options?.startOnboarding === true)
     setActiveId(item.id)
   }, [])
+  const openPanel = useCallback((id: string, options?: { startOnboarding?: boolean }) => {
+    const item = navItems.find((candidate) => candidate.id === id)
+    if (item) handleSelectNav(item, options)
+  }, [handleSelectNav])
 
   const beginDeployMutation = useCallback(() => {
     nextMutationID.current += 1
@@ -381,6 +391,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     const handlePopState = () => {
       const selected = navIdFromPath(window.location.pathname)
       if (selected === 'broker-config' || selected === 'changes') setVisitedBroker(true)
+      setStartOnboarding(false)
       setActiveId(selected)
     }
     window.addEventListener('popstate', handlePopState)
@@ -463,11 +474,24 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : activeId === 'audit' ? (
         <AuditPanel events={auditEvents} error={auditError} />
       ) : activeId === 'dashboard' ? (
-        <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
+        <>
+          <DashboardHome
+            role={currentUser.role}
+            brokerStatus={brokerStatus}
+            streamState={streamState}
+            statusFacts={statusFacts}
+            messageCount={liveTrafficMetrics.message_count}
+            windowSeconds={liveTrafficMetrics.window_seconds}
+            deployPending={deployPending}
+            onOpenPanel={openPanel}
+            onConnectApplication={() => openPanel('users', { startOnboarding: true })}
+          />
+          <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />
+        </>
       ) : activeId === 'acls' ? (
         <ACLPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} />
       ) : activeId === 'users' ? (
-        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} onMutationStart={beginDeployMutation} onMutation={markDeployPending} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
+        <MQTTUsersPanel token={token} onLogout={onLogout} role={currentUser.role} startOnboarding={startOnboarding} onMutationStart={beginDeployMutation} onMutation={markDeployPending} onApplyStart={() => nextMutationID.current} onApplySuccess={clearDeployPending} />
       ) : activeId === 'listeners' ? (
         <ListenersPanel token={token} onLogout={onLogout} role={currentUser.role} onApplyStart={beginDeployMutation} onApplySuccess={clearDeployPending} />
       ) : activeId === 'certificates' ? (
