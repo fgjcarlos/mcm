@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
 import type { ListenerListResponse, ListenerSpec } from '../broker-config/types'
 import type { ACLPermission, ACLScope } from '../acl/types'
@@ -48,9 +48,11 @@ type StageTone = 'ok' | 'waiting' | 'unknown' | 'alert'
 type StageView = { tone: StageTone; text: string; confirmable: boolean }
 
 const OTHER_LISTENER = '__other__'
-// The activation probe of the deployment (internal/diagnostics) connects as
-// the new account with these client ids. Its connection is MCM's own and
-// never stands for the operator's client.
+// The activation probe of the deployment connects as the new account with
+// client ids built from diagnostics.ProbeClientIDPrefix
+// (internal/diagnostics/mqtt.go). Its connection is MCM's own and never
+// stands for the operator's client. A Go test
+// (internal/diagnostics/probe_prefix_test.go) pins that both values match.
 const MCM_PROBE_CLIENT_PREFIX = 'mcm-verify-'
 const LOG_ROLES = ['auditor', 'operator', 'admin']
 
@@ -107,6 +109,7 @@ export default function ConnectionTestStep({
   const [listeners, setListeners] = useState<ListenerSpec[]>([])
   const [listenersError, setListenersError] = useState('')
   const [selectedListener, setSelectedListener] = useState('')
+  const [unlistedListener, setUnlistedListener] = useState('')
   const [otherPort, setOtherPort] = useState('1883')
   const [otherTLS, setOtherTLS] = useState('no')
 
@@ -120,24 +123,40 @@ export default function ConnectionTestStep({
   const [deniedSeen, setDeniedSeen] = useState(false)
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({})
 
+  // The parent may pass a new onLogout on every render; the reads below must
+  // not run again (nor reset the chosen listener) because of it.
+  const onLogoutRef = useRef(onLogout)
+  useEffect(() => {
+    onLogoutRef.current = onLogout
+  })
+
   useEffect(() => {
     let cancelled = false
-    authenticatedFetch('/api/v1/listeners', { token, onUnauthorized: onLogout })
+    const onUnauthorized = () => onLogoutRef.current()
+    authenticatedFetch('/api/v1/listeners', { token, onUnauthorized })
       .then(async (response) => {
         if (!response.ok) throw new Error(`listeners request failed (${response.status})`)
         const data = (await response.json()) as ListenerListResponse
         if (cancelled) return
         const specs = data.specs ?? []
         setListeners(specs)
-        const preferred = scope === 'listener' ? specs.find((spec) => spec.ID === listenerID.trim()) : undefined
-        setSelectedListener(preferred?.ID ?? specs[0]?.ID ?? OTHER_LISTENER)
+        const ruleListener = scope === 'listener' ? listenerID.trim() : ''
+        if (ruleListener && !specs.some((spec) => spec.ID === ruleListener)) {
+          // The rule names a listener MCM does not manage: its port and TLS
+          // mode must come from the operator, not from another listener.
+          setUnlistedListener(ruleListener)
+          setSelectedListener(OTHER_LISTENER)
+          return
+        }
+        setUnlistedListener('')
+        setSelectedListener(ruleListener || specs[0]?.ID || OTHER_LISTENER)
       })
       .catch((err) => {
         if (cancelled || isUnauthorizedResponseError(err)) return
         setListenersError('MCM could not list its listeners; enter the listener of your broker below.')
         setSelectedListener(OTHER_LISTENER)
       })
-    authenticatedFetch('/api/v1/broker/diagnostics', { token, onUnauthorized: onLogout })
+    authenticatedFetch('/api/v1/broker/diagnostics', { token, onUnauthorized })
       .then(async (response) => {
         if (!response.ok) throw new Error(`the broker diagnostics answered ${response.status}`)
         const data = (await response.json()) as Diagnostics
@@ -150,7 +169,7 @@ export default function ConnectionTestStep({
     return () => {
       cancelled = true
     }
-  }, [token, onLogout, scope, listenerID])
+  }, [token, scope, listenerID])
 
   // The socket opens with the step, before the client connects: the broker
   // log entries are not replayed to a late subscriber.
@@ -221,7 +240,12 @@ export default function ConnectionTestStep({
   const operationView: StageView = (() => {
     const allowed = plan.allowed
     if (!allowed) return { tone: 'unknown', text: 'No operation is granted: the rule denies this topic filter.', confirmable: false }
-    if (operationSeen) return { tone: 'ok', text: `Operation verified: ${allowed.payload} reached ${allowed.topic}.`, confirmable: false }
+    if (operationSeen) {
+      // The monitor sees the publish; a subscription leaves no trace it can read.
+      const publishOnly =
+        allowed.operation === 'subscribe and publish' ? ' MCM saw the publish only; the subscription of your client is not observed.' : ''
+      return { tone: 'ok', text: `Operation verified: ${allowed.payload} reached ${allowed.topic}.${publishOnly}`, confirmable: false }
+    }
     if (confirmed.operation) return confirmedView
     if (!allowed.observable) return unobservable('a subscription leaves no trace MCM can read')
     if (stream === 'closed') return unobservable('the broker event stream is closed')
@@ -250,10 +274,16 @@ export default function ConnectionTestStep({
     }
   })()
 
-  const appliedView: StageView =
-    deployment.status === 'active_verified' || deployment.status === 'applied'
-      ? { tone: 'ok', text: 'Applied and verified by the deployment. That probe is MCM\'s own; it does not stand for your client.', confirmable: false }
-      : { tone: 'waiting', text: 'Applied — the deployment did not prove the activation yet.', confirmable: false }
+  const appliedView: StageView = (() => {
+    if (deployment.status === 'active_verified') {
+      return { tone: 'ok', text: 'Applied and verified by the deployment. That probe is MCM\'s own; it does not stand for your client.', confirmable: false }
+    }
+    // `applied` is a legacy status: it records the write, not an activation probe.
+    if (deployment.status === 'applied') {
+      return { tone: 'ok', text: 'Applied. This deployment status carries no activation proof.', confirmable: false }
+    }
+    return { tone: 'waiting', text: 'Applied — the deployment did not prove the activation yet.', confirmable: false }
+  })()
 
   const stages: { id: string; label: string; view: StageView }[] = [
     { id: 'applied', label: 'Applied', view: appliedView },
@@ -303,6 +333,11 @@ export default function ConnectionTestStep({
             <option value={OTHER_LISTENER}>A listener not managed by MCM</option>
           </select>
           {listenersError ? <span className="mt-1 block text-xs text-amber-200">{listenersError}</span> : null}
+          {unlistedListener && selectedListener === OTHER_LISTENER ? (
+            <span className="mt-1 block text-xs text-amber-200">
+              The rule names listener {unlistedListener}, which MCM does not list; enter its port and TLS mode below.
+            </span>
+          ) : null}
         </label>
         {selectedListener === OTHER_LISTENER ? (
           <>
@@ -365,6 +400,10 @@ export default function ConnectionTestStep({
           Configure any MQTT 3.1.1 or MQTT 5 client with the host, port, TLS mode, username and password above
           {tls.startsWith('Yes') ? ', and trust the broker certificate authority' : ''}
           {tls.includes('mTLS') ? ' and present a client certificate the broker accepts' : ''}.
+        </li>
+        <li>
+          Use a client id that does not start with {MCM_PROBE_CLIENT_PREFIX}: MCM&rsquo;s own activation probe uses that prefix, so
+          MCM ignores those connections.
         </li>
         {plan.allowed ? <li>Allowed operation: {operationSentence(plan.allowed, true)}</li> : null}
         {plan.denied ? <li>Operation that must stay denied: {operationSentence(plan.denied, false)}</li> : null}

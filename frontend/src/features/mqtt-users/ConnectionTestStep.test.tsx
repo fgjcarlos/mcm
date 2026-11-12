@@ -90,12 +90,16 @@ function routesWith(overrides: Record<string, RouteHandler> = {}): Record<string
   }
 }
 
-async function applyJourney(user: ReturnType<typeof userEvent.setup>, permission = 'readwrite', filter = 'probe/allowed') {
+async function applyJourney(user: ReturnType<typeof userEvent.setup>, permission = 'readwrite', filter = 'probe/allowed', listenerID = '') {
   await user.type(screen.getByPlaceholderText('device-sensor-01'), 'probe')
   await user.click(screen.getByRole('button', { name: 'Create user' }))
   await screen.findByText('User created — save this password')
   await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), filter)
   await user.selectOptions(screen.getByRole('combobox', { name: 'Permission' }), permission)
+  if (listenerID) {
+    await user.selectOptions(screen.getByRole('combobox', { name: 'ACL file' }), 'listener')
+    await user.type(screen.getByPlaceholderText('tls'), listenerID)
+  }
   await user.click(screen.getByRole('button', { name: 'Save access rule' }))
   await user.click(await screen.findByRole('button', { name: 'Preview changes' }))
   await user.type(await screen.findByPlaceholderText('Authenticator code'), '123456')
@@ -152,6 +156,27 @@ describe('one-time password', () => {
   })
 })
 
+describe('one-time password copy failure', () => {
+  it.each([
+    ['the clipboard is unavailable', undefined],
+    ['the browser refuses the copy', { writeText: vi.fn(() => Promise.reject(new Error('denied'))) }],
+  ])('says so and keeps the password on screen when %s', async (_case, clipboard) => {
+    vi.stubGlobal('fetch', installFetchMock(routesWith()))
+    Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await user.type(screen.getByPlaceholderText('device-sensor-01'), 'probe')
+    await user.click(screen.getByRole('button', { name: 'Create user' }))
+    await screen.findByText('User created — save this password')
+
+    await user.click(screen.getByRole('button', { name: 'Copy password' }))
+    expect(await screen.findByText('Copy failed: select the password and copy it by hand.')).toBeInTheDocument()
+    expect(screen.getByText('generated-secret')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copied' })).not.toBeInTheDocument()
+  })
+})
+
 describe('connection test step', () => {
   it('shows the listener, TLS, user and allowed operation without the password', async () => {
     vi.stubGlobal('fetch', installFetchMock(routesWith()))
@@ -169,6 +194,7 @@ describe('connection test step', () => {
     expect(within(region).getByText('readwrite on probe/allowed')).toBeInTheDocument()
     expect(within(region).getByText(/the one-time password shown when the user was created/)).toBeInTheDocument()
     expect(region.textContent).not.toContain('generated-secret')
+    expect(region).toHaveTextContent('Use a client id that does not start with mcm-verify-')
 
     await user.selectOptions(within(region).getByRole('combobox', { name: 'Listener' }), 'tls')
     expect(within(region).getByText('8883')).toBeInTheDocument()
@@ -213,6 +239,8 @@ describe('connection test step', () => {
     expect(stage('Operation')).toHaveTextContent('Watching')
     socket.send({ type: 'topic_message', source: 'observed', topic: 'probe/allowed', payload_preview: payload })
     expect(stage('Operation')).toHaveTextContent(`Operation verified: ${payload} reached probe/allowed`)
+    // readwrite: the monitor sees the publish; the subscription stays with the client.
+    expect(stage('Operation')).toHaveTextContent('MCM saw the publish only; the subscription of your client is not observed')
 
     expect(stage('Denied operation')).toHaveTextContent('No message with the denied payload reached the broker')
   })
@@ -293,6 +321,73 @@ describe('connection test step', () => {
 
     await waitFor(() => expect(stage('Operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic'))
     expect(stage('Denied operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic')
+  })
+
+  it('keeps the listener choice and does not reload it when the parent renders again', async () => {
+    const fetchMock = installFetchMock(routesWith())
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    const { rerender } = render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await applyJourney(user)
+    const region = await openTest(user)
+    await user.selectOptions(within(region).getByRole('combobox', { name: 'Listener' }), 'tls')
+
+    rerender(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await waitFor(() => expect(stage('Connection')).toHaveTextContent('Watching'))
+    expect(within(region).getByRole('combobox', { name: 'Listener' })).toHaveValue('tls')
+    const listenerReads = fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/v1/listeners'))
+    expect(listenerReads).toHaveLength(1)
+  })
+
+  it('asks for the listener by hand when the rule names one MCM does not list', async () => {
+    vi.stubGlobal('fetch', installFetchMock(routesWith()))
+    const user = userEvent.setup()
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await applyJourney(user, 'readwrite', 'probe/allowed', 'edge')
+    const region = await openTest(user)
+
+    await waitFor(() => expect(within(region).getByRole('combobox', { name: 'Listener' })).toHaveValue('__other__'))
+    expect(region).toHaveTextContent('The rule names listener edge, which MCM does not list')
+  })
+
+  it('does not claim an activation proof for a deployment recorded as applied', async () => {
+    vi.stubGlobal(
+      'fetch',
+      installFetchMock(
+        routesWith({
+          'POST /api/v1/deployments/apply': () =>
+            jsonResponse({ id: 13, status: 'applied', message: '', created_at: '2026-01-01T00:00:00Z' }),
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await applyJourney(user)
+    await openTest(user)
+
+    expect(stage('Applied')).toHaveTextContent('Applied. This deployment status carries no activation proof.')
+    expect(stage('Applied')).not.toHaveTextContent('verified')
+  })
+
+  it('keeps watching, not unobservable, while the diagnostics are still loading', async () => {
+    let release: (response: Response) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      installFetchMock(
+        routesWith({
+          'GET /api/v1/broker/diagnostics': () => new Promise<Response>((resolve) => { release = resolve }),
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await applyJourney(user)
+    await openTest(user)
+
+    await waitFor(() => expect(stage('Operation')).toHaveTextContent('Starting the watch'))
+    expect(stage('Operation')).not.toHaveTextContent('Not observable')
+    release(jsonResponse({ broker: { status: 'connected' }, sources: { broker_logs: { available: true } } }))
+    await waitFor(() => expect(stage('Operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic'))
   })
 
   it('reports every stage as not observable when the event stream closes', async () => {

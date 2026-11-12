@@ -93,6 +93,7 @@ export default function UserOnboardingFlow({
   const [username, setUsername] = useState(initialUsername)
   const [createdPassword, setCreatedPassword] = useState('')
   const [passwordCopied, setPasswordCopied] = useState(false)
+  const [passwordCopyFailed, setPasswordCopyFailed] = useState(false)
   const [creatingUser, setCreatingUser] = useState(false)
   const [userError, setUserError] = useState('')
 
@@ -135,6 +136,7 @@ export default function UserOnboardingFlow({
       setUsername(created.username)
       setCreatedPassword(created.password)
       setPasswordCopied(false)
+      setPasswordCopyFailed(false)
       onMutation?.(mutationID)
       onUserCreated?.(created.username)
       setStage('rule')
@@ -304,10 +306,15 @@ export default function UserOnboardingFlow({
             <button
               type="button"
               onClick={() => {
+                const copyFailed = () => { setPasswordCopied(false); setPasswordCopyFailed(true) }
+                if (typeof navigator.clipboard?.writeText !== 'function') {
+                  copyFailed()
+                  return
+                }
                 void navigator.clipboard
-                  ?.writeText(createdPassword)
-                  .then(() => setPasswordCopied(true))
-                  .catch(() => null)
+                  .writeText(createdPassword)
+                  .then(() => { setPasswordCopyFailed(false); setPasswordCopied(true) })
+                  .catch(copyFailed)
               }}
               className="rounded-xl border border-emerald-300/30 px-3 py-1.5 text-xs text-emerald-100 transition hover:border-emerald-300/60"
             >
@@ -315,12 +322,17 @@ export default function UserOnboardingFlow({
             </button>
             <button
               type="button"
-              onClick={() => { setCreatedPassword(''); setPasswordCopied(false) }}
+              onClick={() => { setCreatedPassword(''); setPasswordCopied(false); setPasswordCopyFailed(false) }}
               className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
             >
               Dismiss
             </button>
           </div>
+          {passwordCopyFailed ? (
+            <p role="status" className="mt-2 text-xs text-amber-200">
+              Copy failed: select the password and copy it by hand.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

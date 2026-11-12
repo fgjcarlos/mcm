@@ -77,7 +77,8 @@ The step shows:
   broker, so it suggests the host the browser uses to reach MCM;
 - the **listener**, picked from `GET /api/v1/listeners` (the listener of
   the rule when the rule is scoped to one), or a listener MCM does not
-  manage, with its port and TLS mode entered by hand;
+  manage, with its port and TLS mode entered by hand. A rule that names a
+  listener MCM does not list falls back to that manual entry and says so;
 - the **port**, the **TLS** mode (plain, TLS, or TLS with a client
   certificate) and the transport when the listener speaks WebSockets;
 - the **username** and the **allowed operation** (`<permission> on
@@ -87,7 +88,13 @@ The step shows:
 
 The one-time password is not shown again. It can be copied from its
 banner right after the user is created (**Copy password**); MCM does not
-keep it and has no way to retrieve it later.
+keep it and has no way to retrieve it later. When the browser has no
+clipboard or refuses the copy, the banner says *Copy failed* and the
+password stays on screen to be copied by hand.
+
+Give the client a client id that does not start with `mcm-verify-`: the
+activation probe of the deployment uses that prefix, and the step ignores
+those connections.
 
 The test uses a concrete topic inside the filter (every `+` or `#` level
 becomes `mcm-test`) and a unique payload (`mcm-test-<nonce>`):
@@ -108,7 +115,7 @@ stages apart:
 
 | Stage | Observed when | Not observable when |
 | --- | --- | --- |
-| Applied | The deployment reported `active_verified`, `applied` or `pending_activation`. | — |
+| Applied | The deployment reported `active_verified` (activation proven by MCM's own probe) or `pending_activation`. The legacy `applied` status reads as applied with no activation proof. | — |
 | Connection | A broker log line `New client connected … u'<username>'` names the new account. The deployment's own probe clients (`mcm-verify-*`) are ignored. | MCM does not ingest the broker log (`MCM_MOSQUITTO_LOG_PATH`), the role is below auditor, or the event stream is closed. |
 | Operation | The MCM monitor, which reads every topic, sees the unique payload on the test topic. For `readwrite` this proves the publish only; the subscription half stays with the operator's client. | The operation is a subscription, the monitor is not subscribed to `#` (or reports no subscriptions), or the event stream is closed. |
 | Denied operation | The denied payload reaches the broker: the step flags it, because another rule grants it to the account. Its absence is reported as consistent with the denial; MCM cannot see the refusal itself. | The denied operation is a subscription: the broker reports the refusal to the client only. |
