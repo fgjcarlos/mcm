@@ -194,6 +194,16 @@ describe('connection test step', () => {
     socket.send({ type: 'broker_log_entry', kind: 'client_connected', client_id: 'other', username: 'someone-else' })
     expect(stage('Connection')).toHaveTextContent('Watching')
 
+    // The activation probe of the deployment logs in as the new account too;
+    // its line reaches the stream a poll later and is MCM's own client.
+    for (const probe of ['mcm-verify-sub-1a2b3c', 'mcm-verify-pub-1a2b3c', 'mcm-verify-neg-1a2b3c', 'mcm-verify-deny-1a2b3c']) {
+      socket.send({ type: 'broker_log_entry', kind: 'client_connected', client_id: probe, username: 'probe' })
+      expect(stage('Connection')).toHaveTextContent('Watching')
+    }
+    // Its publish carries MCM's own payload, never the unique test payload.
+    socket.send({ type: 'topic_message', source: 'observed', topic: 'probe/allowed', payload_preview: 'mcm-verify' })
+    expect(stage('Operation')).toHaveTextContent('Watching')
+
     socket.send({ type: 'broker_log_entry', kind: 'client_connected', client_id: 'app-1', username: 'probe' })
     expect(stage('Connection')).toHaveTextContent('Connection observed: client app-1 as probe')
     expect(stage('Operation')).toHaveTextContent('Watching')
@@ -264,6 +274,25 @@ describe('connection test step', () => {
     await waitFor(() => expect(stage('Operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic'))
     expect(stage('Denied operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic')
     expect(stage('Connection')).toHaveTextContent('Watching')
+  })
+
+  it('says the operation cannot be observed when the diagnostics report no monitor subscriptions', async () => {
+    vi.stubGlobal(
+      'fetch',
+      installFetchMock(
+        routesWith({
+          'GET /api/v1/broker/diagnostics': () =>
+            jsonResponse({ broker: { status: 'disconnected' }, sources: { broker_logs: { available: true } } }),
+        }),
+      ),
+    )
+    const user = userEvent.setup()
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+    await applyJourney(user)
+    await openTest(user)
+
+    await waitFor(() => expect(stage('Operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic'))
+    expect(stage('Denied operation')).toHaveTextContent('Not observable: the MCM broker monitor is not subscribed to every topic')
   })
 
   it('reports every stage as not observable when the event stream closes', async () => {

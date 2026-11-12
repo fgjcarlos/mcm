@@ -48,6 +48,10 @@ type StageTone = 'ok' | 'waiting' | 'unknown' | 'alert'
 type StageView = { tone: StageTone; text: string; confirmable: boolean }
 
 const OTHER_LISTENER = '__other__'
+// The activation probe of the deployment (internal/diagnostics) connects as
+// the new account with these client ids. Its connection is MCM's own and
+// never stands for the operator's client.
+const MCM_PROBE_CLIENT_PREFIX = 'mcm-verify-'
 const LOG_ROLES = ['auditor', 'operator', 'admin']
 
 function tlsLabel(listener: ListenerSpec) {
@@ -165,6 +169,7 @@ export default function ConnectionTestStep({
         return
       }
       if (event.type === 'broker_log_entry' && event.kind === 'client_connected' && event.username === username) {
+        if ((event.client_id ?? '').startsWith(MCM_PROBE_CLIENT_PREFIX)) return
         setConnection({ clientID: event.client_id ?? '' })
         return
       }
@@ -194,7 +199,9 @@ export default function ConnectionTestStep({
   const websockets = listener?.Protocols?.includes('websockets') ?? false
 
   const loading = stream === 'connecting' || (diagnostics === null && diagnosticsError === '')
-  const monitorReadsAll = diagnostics?.broker?.monitor?.subscriptions?.includes('#') ?? null
+  // Diagnostics without a subscription list mean no monitor reads the
+  // topics; null only while the diagnostics are still loading.
+  const monitorReadsAll = diagnostics ? (diagnostics.broker?.monitor?.subscriptions?.includes('#') ?? false) : null
   const logs = diagnostics?.sources?.broker_logs
 
   const confirmedView: StageView = { tone: 'unknown', text: 'Confirmed by you — not observed by MCM.', confirmable: false }
