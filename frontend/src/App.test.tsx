@@ -647,7 +647,7 @@ describe('App', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('link', { name: /topics/i }))
 
-    expect(screen.getByText('No topic activity received yet.')).toBeInTheDocument()
+    expect(await screen.findByText('Connected · no messages received yet.')).toBeInTheDocument()
     MockWebSocket.instances[0]?.emit(
       'message',
       new MessageEvent('message', {
@@ -665,6 +665,109 @@ describe('App', () => {
 
     expect(await screen.findAllByText('factory/line-1/temperature')).toHaveLength(2)
     expect(window.location.pathname).toBe('/topics')
+  })
+
+  describe('live Topics view (issue #357)', () => {
+    async function openTopics() {
+      window.localStorage.setItem('mcm_admin_token', 'topics-live-token')
+      vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('topics-live-token')))
+      render(<App />)
+      await screen.findByText('Signed in')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('link', { name: /topics/i }))
+      return user
+    }
+
+    function emitTopic(topic: string, payload: string) {
+      MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'topic_message', source: 'observed', topic, payload_preview: payload, payload_format: 'json', payload_bytes: payload.length, observed_at: '2026-01-01T00:00:00Z' }) }))
+    }
+
+    it('keeps the row being read in place and focused while paused', async () => {
+      const user = await openTopics()
+      emitTopic('plant/a/row-being-read', '{"t":1}')
+      const row = await screen.findByRole('button', { name: /plant\/a\/row-being-read/ })
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      row.focus()
+      emitTopic('plant/b/arrived-while-paused', '{"t":2}')
+      emitTopic('plant/c/also-arrived', '{"t":3}')
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 2 new messages since pausing')
+      expect(document.activeElement).toBe(row)
+      expect(row).toBeInTheDocument()
+      expect(row).toHaveTextContent('plant/a/row-being-read')
+      expect(screen.queryByText('plant/b/arrived-while-paused')).not.toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('plant/a/row-being-read')
+    })
+
+    it('filters with an MQTT wildcard, shows the selected payload and clearly returns to live', async () => {
+      const user = await openTopics()
+      emitTopic('factory/line-1/temperature', '{"temperature":21.5}')
+      emitTopic('factory/line-2/temperature', '{"temperature":30}')
+      emitTopic('office/hvac/status', '"on"')
+      await screen.findByRole('button', { name: /office\/hvac\/status/ })
+
+      const filter = screen.getByRole('searchbox', { name: 'Filter topics' })
+      await user.type(filter, 'factory/+/temperature')
+      expect(screen.queryByRole('button', { name: /office\/hvac\/status/ })).not.toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: /factory\/line-\d\/temperature/ })).toHaveLength(2)
+
+      const row = screen.getByRole('button', { name: /factory\/line-1\/temperature/ })
+      await user.click(row)
+      expect(row).toHaveAttribute('aria-pressed', 'true')
+      const detail = screen.getByRole('region', { name: 'Message detail' })
+      expect(detail).toHaveTextContent('factory/line-1/temperature')
+      expect(detail).toHaveTextContent('{"temperature":21.5}')
+
+      await user.clear(filter)
+      await user.type(filter, 'HVAC')
+      expect(screen.getByRole('button', { name: /office\/hvac\/status/ })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /factory/ })).not.toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('office/hvac/status')
+      expect(screen.getByText('The selected message is hidden by the filter; showing the newest match.')).toBeInTheDocument()
+
+      await user.clear(filter)
+      await user.type(filter, 'nothing/#')
+      expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('No messages match the filter.')
+
+      await user.click(screen.getByRole('button', { name: 'Clear filter' }))
+      expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('{"temperature":21.5}')
+
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitTopic('factory/line-3/temperature', '{"temperature":18}')
+      await user.click(screen.getByRole('button', { name: 'Resume live' }))
+      expect(screen.getByRole('status', { name: 'Live feed state' })).toHaveTextContent('Back to live · 1 message arrived while paused; the live window now starts with the newest messages.')
+      expect(screen.getByRole('button', { name: /factory\/line-3\/temperature/ })).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('factory/line-1/temperature')
+    })
+
+    it('falls back to the newest message and says so when the selected one leaves the live window', async () => {
+      const user = await openTopics()
+      emitTopic('window/oldest', '"first"')
+      await user.click(await screen.findByRole('button', { name: /window\/oldest/ }))
+      for (let index = 1; index <= 20; index += 1) emitTopic(`window/newer-${index}`, `"${index}"`)
+      await screen.findByRole('button', { name: /window\/newer-20/ })
+      expect(screen.queryByRole('button', { name: /window\/oldest/ })).not.toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('window/newer-20')
+      expect(screen.getByText('The selected message left the live window; showing the newest message.')).toBeInTheDocument()
+    })
+
+    it('states the live window limit and tells no activity from a lost stream', async () => {
+      await openTopics()
+      expect(screen.getByText(/the newest 20 messages received while this page is open/)).toBeInTheDocument()
+      expect(screen.getByText(/no history to page through/)).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('Connected · no messages received yet.'))
+      MockWebSocket.instances[0]?.emit('close', new Event('close'))
+      expect(await screen.findByText('Not connected to the live event stream (reconnecting). New messages will not arrive until it reconnects.')).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('No messages: the live stream is reconnecting.')
+    })
+
+    it('tells a filter without matches apart from no activity', async () => {
+      const user = await openTopics()
+      emitTopic('plant/a/temp', '1')
+      await screen.findByRole('button', { name: /plant\/a\/temp/ })
+      await user.type(screen.getByRole('searchbox', { name: 'Filter topics' }), 'zzz')
+      expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('No messages match the filter.')
+      expect(screen.getByRole('region', { name: 'Topic messages' })).not.toHaveTextContent('no messages received yet')
+    })
   })
 
   it('restores an operator session and loads the ACL policy workspace', async () => {
