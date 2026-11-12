@@ -3,6 +3,8 @@ import type { BrokerLog } from '../broker/useBrokerStream'
 // Filter for the live Logs view (issue #357). Plain data so it can travel in
 // the URL of the Logs view (issue #354):
 // /logs?source=mcm|mosquitto_log&severity=warning,error&q=<text>
+// The order of logSources and logSeverities is the order the Logs view shows
+// them in and the order they are written to the URL.
 
 export type LogSourceFilter = 'all' | BrokerLog['source']
 
@@ -14,6 +16,8 @@ export type LogFilter = {
 }
 
 export const emptyLogFilter: LogFilter = { source: 'all', severities: [], text: '' }
+
+export const logSources: BrokerLog['source'][] = ['mcm', 'mosquitto_log']
 
 export const logSeverities: BrokerLog['severity'][] = ['debug', 'info', 'warning', 'error']
 
@@ -28,8 +32,6 @@ export function matchesLogFilter(log: BrokerLog, filter: LogFilter) {
   return text === '' || log.message.toLowerCase().includes(text)
 }
 
-const logSources: BrokerLog['source'][] = ['mcm', 'mosquitto_log']
-
 // Reads the filter from a URL query. Unknown values are ignored, so a stale
 // or hand-edited link still opens the view with whatever it can apply.
 export function parseLogFilterQuery(search: string): LogFilter {
@@ -43,8 +45,11 @@ export function parseLogFilterQuery(search: string): LogFilter {
   }
 }
 
-// Writes only the active criteria; severities in their usual order. Returns
-// '' for no filter, otherwise the query including its leading '?'.
+// Writes only the active criteria, always in the same order (source,
+// severity, q; severities in logSeverities order, whatever order they were
+// chosen in), so one filter has exactly one URL: LogsPanel compares it with
+// the current query to skip redundant history updates. Returns '' for no
+// filter, otherwise the query including its leading '?'.
 export function serializeLogFilterQuery(filter: LogFilter) {
   const params: string[] = []
   if (filter.source !== 'all') params.push(`source=${filter.source}`)

@@ -21,6 +21,7 @@ import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { LogsPanel } from './features/live-feed/LogsPanel'
 import { serializeLogFilterQuery } from './features/live-feed/logFilter'
 import { LiveFeedChrome } from './features/live-feed/LiveFeedChrome'
+import { emptyFeedText } from './features/live-feed/feedText'
 import { useLiveFeed } from './features/live-feed/useLiveFeed'
 import { isTopicFilterActive, isTopicPatternValid, matchesTopicFilter } from './features/live-feed/topicFilter'
 import { SeverityBadge } from './features/live-feed/SeverityBadge'
@@ -365,8 +366,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   // Set only by the dashboard's "Connect an application" action so the Users
   // panel opens its onboarding journey once; any other navigation clears it.
   const [startOnboarding, setStartOnboarding] = useState(false)
-  // Bumped on every navigation so a view that reads its state from the URL
-  // query (Logs) starts again from the URL it was opened with.
+  // Bumped on every navigation, including to the view already open, and used
+  // as the key of views that read their state from the URL query (Logs), so
+  // they remount and start again from the URL they were opened with.
   const [navigationKey, setNavigationKey] = useState(0)
 
   // search: an optional URL query for the target panel (for example a
@@ -374,8 +376,12 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   // links always open the plain panel.
   const handleSelectNav = useCallback((item: NavItem, options?: { startOnboarding?: boolean; search?: string }) => {
     if (item.id === 'broker-config' || item.id === 'changes') setVisitedBroker(true)
+    // Compare path and query together: opening the same view with another
+    // filter (a different query) is a new history entry, while opening exactly
+    // the current URL again adds none.
     const target = `${item.path}${options?.search ?? ''}`
-    if (`${window.location.pathname}${window.location.search}` !== target) {
+    const current = `${window.location.pathname}${window.location.search}`
+    if (current !== target) {
       window.history.pushState(null, '', target)
     }
     setStartOnboarding(options?.startOnboarding === true)
@@ -708,10 +714,16 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
         <section aria-label="Topic messages">
           {shown.length > 0 ? (
             <ol className="divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
-              {shown.map((topic) => <TopicRow key={topic.id} topic={topic} selected={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
+              {shown.map((topic) => <TopicRow key={topic.id} topic={topic} chosen={topic.id === selected?.id} inDetail={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
             </ol>
           ) : (
-            <p className="text-sm text-slate-300">{topicEmptyText(feed.visible.length > 0, streamState, feed.mode === 'paused' && feed.arrivedWhilePaused > 0)}</p>
+            <p className="text-sm text-slate-300">{emptyFeedText({
+              noun: messageNoun,
+              filterLabel: 'filter',
+              receivedAny: feed.visible.length > 0,
+              pausedWhileArriving: feed.mode === 'paused' && feed.arrivedWhilePaused > 0,
+              streamState,
+            })}</p>
           )}
         </section>
 
@@ -736,19 +748,13 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
   )
 }
 
-// pausedWithArrivals: paused on an empty window while new messages keep
-// arriving, which is neither idle nor disconnected.
-function topicEmptyText(hasMessages: boolean, streamState: BrokerStreamState, pausedWithArrivals: boolean) {
-  if (hasMessages) return 'No messages match the filter.'
-  if (pausedWithArrivals) return 'Paused before any messages arrived. Resume live to see them.'
-  if (streamState !== 'connected') return `No messages: the live stream is ${streamState}.`
-  return 'Connected · no messages received yet.'
-}
-
-function TopicRow({ topic, selected, onSelect }: { topic: LiveTopicMessage; selected: boolean; onSelect: () => void }) {
+// chosen: the row the user picked, exposed as pressed. inDetail: the row whose
+// message the detail shows, which is the newest one until a row is chosen; it
+// is only highlighted, since the user did not press it.
+function TopicRow({ topic, chosen, inDetail, onSelect }: { topic: LiveTopicMessage; chosen: boolean; inDetail: boolean; onSelect: () => void }) {
   return (
     <li>
-      <button type="button" aria-pressed={selected} onClick={onSelect} className={`block w-full px-3 py-2 text-left hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${selected ? 'bg-cyan-400/10' : ''}`}>
+      <button type="button" aria-pressed={chosen} onClick={onSelect} className={`block w-full px-3 py-2 text-left hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${inDetail ? 'bg-cyan-400/10' : ''}`}>
         <span className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 break-all font-mono text-sm text-cyan-100">{topic.topic}</span>
           {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}

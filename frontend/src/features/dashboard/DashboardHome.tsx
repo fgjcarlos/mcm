@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { can, requiredRoleFor } from '../auth/permissions'
 import type { BrokerConnectionStatus, BrokerLog, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
 import { logsPath, matchesLogFilter, type LogFilter } from '../live-feed/logFilter'
+import { plural } from '../live-feed/feedText'
 
 // The operational part of the dashboard home (issue #354): broker health and
 // how fresh it is, pending changes with the next allowed action, and the way
@@ -31,10 +32,6 @@ function formatAge(value: string | undefined, now = Date.now()) {
 
 const mcmProblems: LogFilter = { source: 'mcm', severities: ['warning', 'error'], text: '' }
 const mosquittoProblems: LogFilter = { source: 'mosquitto_log', severities: ['warning', 'error'], text: '' }
-
-function plural(count: number, one: string, many: string) {
-  return `${count} ${count === 1 ? one : many}`
-}
 
 const streamLabel: Record<BrokerStreamState, string> = {
   connecting: 'Connecting',

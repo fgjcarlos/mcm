@@ -1,17 +1,12 @@
 import type { BrokerStreamState, LiveEntry } from '../broker/useBrokerStream'
 import type { useLiveFeed } from './useLiveFeed'
+import { plural, type LiveFeedNoun } from './feedText'
 
 // Shared chrome of the live views (issue #357): the window limit, the
 // pause/resume control, the not-connected banner and the live feed state.
 // The noun names what the feed lists ("event"/"events", "message"/"messages").
 
 export type LiveFeed = ReturnType<typeof useLiveFeed<LiveEntry>>
-
-export type LiveFeedNoun = { one: string; many: string }
-
-function plural(count: number, one: string, many: string) {
-  return `${count} ${count === 1 ? one : many}`
-}
 
 function feedStateText(feed: LiveFeed, noun: LiveFeedNoun, windowSize: number) {
   if (feed.mode === 'paused') {
