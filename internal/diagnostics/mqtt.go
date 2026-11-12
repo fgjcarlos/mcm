@@ -363,7 +363,7 @@ func runPositiveTest(ctx context.Context, broker string, opts VerifyActiveOption
 	received := make(chan struct{}, 1)
 
 	// Subscriber client.
-	subOpts := newPahoOptions(broker, "mcm-verify-sub-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
+	subOpts := newPahoOptions(broker, ProbeClientIDPrefix+"sub-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
 	subClient := mqtt.NewClient(subOpts)
 	if token := subClient.Connect(); !token.WaitTimeout(opts.DialTimeout) || token.Error() != nil {
 		subClient.Disconnect(0)
@@ -382,7 +382,7 @@ func runPositiveTest(ctx context.Context, broker string, opts VerifyActiveOption
 	}
 
 	// Publisher client (separate connection).
-	pubOpts := newPahoOptions(broker, "mcm-verify-pub-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
+	pubOpts := newPahoOptions(broker, ProbeClientIDPrefix+"pub-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
 	pubClient := mqtt.NewClient(pubOpts)
 	if token := pubClient.Connect(); !token.WaitTimeout(opts.DialTimeout) || token.Error() != nil {
 		pubClient.Disconnect(0)
@@ -413,7 +413,7 @@ func runPositiveTest(ctx context.Context, broker string, opts VerifyActiveOption
 // covered by runDeniedTopicTest, which subscribes to the topic the
 // rendered policy denies.
 func runNegativeTest(ctx context.Context, broker string, opts VerifyActiveOptions) (string, bool) {
-	clientOpts := newPahoOptions(broker, "mcm-verify-neg-"+randSuffix(), "mcm-verify-nonexistent-user", "mcm-verify-dummy-pass", opts.TLS, opts.DialTimeout)
+	clientOpts := newPahoOptions(broker, ProbeClientIDPrefix+"neg-"+randSuffix(), "mcm-verify-nonexistent-user", "mcm-verify-dummy-pass", opts.TLS, opts.DialTimeout)
 	client := mqtt.NewClient(clientOpts)
 	if token := client.Connect(); !token.WaitTimeout(opts.DialTimeout) || token.Error() != nil {
 		client.Disconnect(0)
@@ -424,6 +424,14 @@ func runNegativeTest(ctx context.Context, broker string, opts VerifyActiveOption
 	client.Disconnect(0)
 	return "negative: broker accepted unknown user (expected rejection; broker may be serving the OLD passwd)", false
 }
+
+// ProbeClientIDPrefix starts the client id of every connection the
+// activation probe opens. The onboarding connection test in the UI ignores
+// connections whose client id carries it (they are MCM's own, not the
+// operator's client); frontend/src/features/mqtt-users/ConnectionTestStep.tsx
+// mirrors the value as MCM_PROBE_CLIENT_PREFIX and probe_prefix_test.go pins
+// that both stay equal.
+const ProbeClientIDPrefix = "mcm-verify-"
 
 // mqttSubscriptionRefused is the SUBACK return code a broker sends when it
 // refuses a subscription (MQTT 3.1.1 failure code 0x80).
@@ -455,7 +463,7 @@ func runDeniedTopicTest(ctx context.Context, broker string, opts VerifyActiveOpt
 		return fmt.Sprintf("negative permission: skipped (%q is not a usable topic filter)", filter), true
 	}
 
-	clientOpts := newPahoOptions(broker, "mcm-verify-deny-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
+	clientOpts := newPahoOptions(broker, ProbeClientIDPrefix+"deny-"+randSuffix(), opts.Username, opts.Password, opts.TLS, opts.DialTimeout)
 	client := mqtt.NewClient(clientOpts)
 	if token := client.Connect(); !token.WaitTimeout(opts.DialTimeout) || token.Error() != nil {
 		client.Disconnect(0)
