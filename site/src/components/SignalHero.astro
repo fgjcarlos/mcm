@@ -1,0 +1,52 @@
+---
+// Full-bleed route diagram under the hero copy. The SVG poster paints first;
+// the WebGL scene (three, loaded on idle) fades in over it once it has drawn.
+import RoutePoster from "./RoutePoster.astro";
+import { HOUSING_R, SIGNAL_X, STATIONS } from "../scripts/route-geometry";
+
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+const label = "absolute whitespace-nowrap text-enamel-muted data-lit:text-enamel-bright";
+---
+
+<figure data-signal-hero class:list={["group relative isolate overflow-hidden", className]}>
+  <figcaption class="sr-only">
+    Diagram: a configuration change is reviewed, confirmed with MFA, applied and probed. When the probe confirms it, the change is verified; when the probe fails, MCM rolls back to the previous revision.
+  </figcaption>
+  <div class="absolute inset-x-0 top-[max(4rem,42%)]">
+    <div class="mx-auto max-w-6xl px-6">
+      <div data-hero-rail class="relative h-0">
+        <RoutePoster />
+        <ol aria-hidden="true" class="relative z-20 font-mono text-xs uppercase tracking-[0.16em]">
+          {STATIONS.map((s) => (
+            <li data-stage={s.id} data-lit class:list={[label, "bottom-4 -translate-x-1/2"]} style={`left:${s.x * 100}%`}>{s.label}</li>
+          ))}
+          <li data-stage="signal" data-lit class:list={[label, "bottom-5 -translate-x-1/2"]} style={`left:${SIGNAL_X * 100}%`}>Verified</li>
+          <li data-stage="rolled" class:list={[label, "top-15"]} style={`right:calc(${(1 - SIGNAL_X) * 100}% - ${HOUSING_R}px)`}>Rolled back</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+  <canvas data-hero-canvas aria-hidden="true" class="absolute inset-0 z-10 size-full opacity-0 transition-opacity duration-700 ease-out group-data-live:opacity-100"></canvas>
+  <div class="absolute inset-x-0 bottom-4 z-20">
+    <div class="mx-auto max-w-6xl px-6">
+      <button
+        type="button"
+        data-hero-toggle
+        hidden
+        class="inline-flex min-h-9 items-center gap-2 rounded-[2px] border border-track-strong bg-frame px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:border-track-bright hover:text-enamel-bright"
+      >
+        <svg aria-hidden="true" viewBox="0 0 12 12" class="size-3" fill="currentColor"><path data-hero-toggle-icon d="M2 1h3v10H2zM7 1h3v10H7z" /></svg>
+        <span data-hero-toggle-label>Pause animation</span>
+      </button>
+    </div>
+  </div>
+</figure>
+
+<script>
+  import { bootSignalHero } from "../scripts/signal-hero";
+  bootSignalHero();
+</script>

@@ -1,0 +1,59 @@
+---
+// The route in its final state (verified): first paint, the reduced-motion
+// view and the no-WebGL fallback. The live scene draws the same geometry.
+import {
+  BLADE, BRANCH_DX, BRANCH_DY, COLORS, HOUSING_R, LAMP_R, LOCK_LIFT, LOCK_Y,
+  JUNCTION_X, SIGNAL_HOUSING_R, SIGNAL_R, SIGNAL_X, STATIONS, TRACK_W,
+} from "../scripts/route-geometry";
+
+const pct = (x: number) => `${x * 100}%`;
+const a = Math.atan2(BRANCH_DY, BRANCH_DX);
+const branch = `M${BLADE * Math.cos(a)} ${BLADE * Math.sin(a)}L${BRANCH_DX} ${BRANCH_DY}H4000`;
+---
+
+<svg aria-hidden="true" class="absolute -top-12 left-0 h-32 w-full overflow-visible" fill="none">
+  <defs>
+    <radialGradient id="route-glow-lamp">
+      <stop offset="0" stop-color={COLORS.lamp} stop-opacity="0.5" />
+      <stop offset="1" stop-color={COLORS.lamp} stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="route-glow-proceed">
+      <stop offset="0" stop-color={COLORS.proceed} stop-opacity="0.6" />
+      <stop offset="1" stop-color={COLORS.proceed} stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <g transform="translate(0 48)" stroke-width={TRACK_W}>
+    <line x1={pct(SIGNAL_X)} x2="300%" stroke={COLORS.enamel} stroke-opacity="0.28" />
+    <svg x={pct(JUNCTION_X)} overflow="visible">
+      <path d={branch} stroke={COLORS.enamel} stroke-opacity="0.28" />
+    </svg>
+    <line x1="-200%" x2={pct(SIGNAL_X)} stroke={COLORS.lamp} />
+    <svg x={pct(JUNCTION_X)} overflow="visible">
+      <path d={`M0 0H${BLADE}`} stroke={COLORS.enamel} />
+    </svg>
+
+    {STATIONS.map((s) => (
+      <svg x={pct(s.x)} overflow="visible">
+        <circle r={LAMP_R * 3} fill="url(#route-glow-lamp)" stroke="none" />
+        <circle r={HOUSING_R} stroke={COLORS.enamel} stroke-opacity="0.35" stroke-width="1.5" fill={COLORS.frame} />
+        <circle r={LAMP_R} fill={COLORS.lamp} stroke="none" />
+        {s.id === "mfa" && (
+          <g stroke={COLORS.lamp}>
+            <rect x="-7" y={LOCK_Y} width="14" height="11" fill={COLORS.lamp} stroke="none" />
+            <path transform={`translate(0 ${-LOCK_LIFT})`} d={`M-4.5 ${LOCK_Y}V${LOCK_Y - 5}a4.5 4.5 0 0 1 9 0V${LOCK_Y}`} stroke-width="2" />
+          </g>
+        )}
+      </svg>
+    ))}
+
+    <svg x={pct(SIGNAL_X)} overflow="visible">
+      <circle r={SIGNAL_R * 3} fill="url(#route-glow-proceed)" stroke="none" />
+      <circle r={SIGNAL_HOUSING_R} stroke={COLORS.enamel} stroke-opacity="0.35" stroke-width="1.5" fill={COLORS.frame} />
+      <circle r={SIGNAL_R} fill={COLORS.proceed} stroke="none" />
+    </svg>
+    <svg x={pct(SIGNAL_X)} y={BRANCH_DY} overflow="visible">
+      <circle r={HOUSING_R} stroke={COLORS.enamel} stroke-opacity="0.35" stroke-width="1.5" fill={COLORS.frame} />
+      <circle r={LAMP_R} fill={COLORS.lampOff} stroke="none" />
+    </svg>
+  </g>
+</svg>
