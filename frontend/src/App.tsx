@@ -19,12 +19,18 @@ import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { LogsPanel } from './features/live-feed/LogsPanel'
+import { LiveFeedChrome } from './features/live-feed/LiveFeedChrome'
+import { useLiveFeed } from './features/live-feed/useLiveFeed'
+import { isTopicFilterActive, isTopicPatternValid, matchesTopicFilter } from './features/live-feed/topicFilter'
 import { SeverityBadge } from './features/live-feed/SeverityBadge'
 import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLPermission, type ACLRule, type ACLScope, type ACLSelector } from './features/acl/types'
 import {
   defaultClientNote,
+  liveTopicWindow,
   useBrokerStream,
   type BrokerLog,
+  type BrokerStreamState,
+  type LiveTopicMessage,
   type BrokerRatePoint,
   type BrokerTrafficItem,
   type BrokerTrafficMetrics,
@@ -512,7 +518,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       ) : activeId === 'admin-users' ? (
         <AdminUsersPanel token={token} onLogout={onLogout} role={currentUser.role} />
       ) : (
-        <TopicsPanel topics={topics} latestTopic={latestTopic} />
+        <TopicsPanel topics={topics} streamState={streamState} />
       )}
     </DashboardFrame>
   )
@@ -652,49 +658,95 @@ function RateChart({ points }: { points: BrokerRatePoint[] }) {
   )
 }
 
-function TopicsPanel({ topics, latestTopic }: { topics: TopicMessage[]; latestTopic?: TopicMessage }) {
-  return (
-    <section className="mt-8 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-      <article className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">Latest message</p>
-        {latestTopic ? (
-          <>
-            <h3 className="mt-3 break-all text-2xl font-semibold text-white">{latestTopic.topic}</h3>
-            {latestTopic.schema_validation ? <SchemaValidationDetails validation={latestTopic.schema_validation} /> : null}
-            {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} /> : null}
-            <PayloadMetadata event={latestTopic} />
-            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{latestTopic.payload_preview}</pre>
-          </>
-        ) : (
-          <p className="mt-3 text-sm leading-7 text-slate-200/90">Waiting for messages from the development broker.</p>
-        )}
-      </article>
+const messageNoun = { one: 'message', many: 'messages' }
 
-      <article className="rounded-[1.75rem] border border-dashed border-cyan-300/25 bg-slate-900/70 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Topic explorer</p>
-        <div className="mt-4 space-y-3">
-          {topics.length === 0 ? (
-            <p className="text-sm text-slate-300">No topic activity received yet.</p>
+// Live Topics view (issue #357): compact rows on the left, the detail of the
+// selected message on the right (the newest visible one until a row is
+// chosen), a topic filter, a visual pause and the limit of the live window.
+function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; streamState: BrokerStreamState }) {
+  const feed = useLiveFeed(topics, liveTopicWindow)
+  const [filterText, setFilterText] = useState('')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+
+  const shown = feed.visible.filter((topic) => matchesTopicFilter(topic.topic, filterText))
+  const selected = selectedId === null ? undefined : shown.find((topic) => topic.id === selectedId)
+  const detail = selected ?? shown[0]
+  let fallbackNotice = ''
+  if (selectedId !== null && !selected && detail) {
+    fallbackNotice = feed.visible.some((topic) => topic.id === selectedId)
+      ? 'The selected message is hidden by the filter; showing the newest match.'
+      : 'The selected message left the live window; showing the newest message.'
+  }
+  const invalidPattern = isTopicFilterActive(filterText) && !isTopicPatternValid(filterText)
+
+  return (
+    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+      <LiveFeedChrome feed={feed} streamState={streamState} windowSize={liveTopicWindow} noun={messageNoun} label="Topic feed" />
+
+      <div className="mt-4 flex flex-wrap items-end gap-4">
+        <label className="text-sm text-slate-300">Filter topics{' '}
+          <input type="search" aria-label="Filter topics" aria-describedby="topic-filter-help" value={filterText} onChange={(event) => setFilterText(event.target.value)} className="ml-2 rounded-lg bg-slate-900 p-2 font-mono" />
+        </label>
+        {isTopicFilterActive(filterText) ? <button type="button" onClick={() => setFilterText('')} className="text-sm font-semibold text-cyan-200 underline">Clear filter</button> : null}
+        <p id="topic-filter-help" className="w-full text-xs text-slate-400">Text matches part of a topic, ignoring case. With + (one level) or # (the remaining levels, last only) it matches as an MQTT topic filter, such as factory/+/temperature.</p>
+        {invalidPattern ? <p className="w-full text-sm text-amber-200">Not a valid MQTT topic filter: + and # must fill a whole level, and # must be the last level.</p> : null}
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
+        <section aria-label="Topic messages">
+          {shown.length > 0 ? (
+            <ol className="divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
+              {shown.map((topic) => <TopicRow key={topic.id} topic={topic} selected={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
+            </ol>
           ) : (
-            topics.map((topic, index) => (
-              <div key={`${topic.topic}-${topic.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="break-all font-mono text-sm text-cyan-100">{topic.topic}</p>
-                    {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}
-                    {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
-                  </div>
-                  <span className="text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</span>
-                </div>
-                {topic.sparkplug ? <SparkplugDetails metadata={topic.sparkplug} sparkplugMetrics={topic.sparkplug_metrics} compact /> : null}
-                <p className="mt-2 line-clamp-2 break-all text-sm text-slate-300">{topic.payload_preview}</p>
-                <PayloadSummary event={topic} />
-              </div>
-            ))
+            <p className="text-sm text-slate-300">{topicEmptyText(feed.visible.length > 0, streamState, feed.mode === 'paused' && feed.arrivedWhilePaused > 0)}</p>
           )}
-        </div>
-      </article>
+        </section>
+
+        <section aria-label="Message detail" className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">{selected ? 'Selected message' : 'Newest message'}</p>
+          {fallbackNotice ? <p className="mt-3 text-sm text-amber-200">{fallbackNotice}</p> : null}
+          {detail ? (
+            <>
+              <h3 className="mt-3 break-all font-mono text-2xl font-semibold text-white">{detail.topic}</h3>
+              <p className="mt-1 font-mono text-xs text-slate-300">Received {detail.observed_at} ({new Date(detail.observed_at).toLocaleString()})</p>
+              {detail.schema_validation ? <SchemaValidationDetails validation={detail.schema_validation} /> : null}
+              {detail.sparkplug ? <SparkplugDetails metadata={detail.sparkplug} sparkplugMetrics={detail.sparkplug_metrics} /> : null}
+              <PayloadMetadata event={detail} />
+              <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{detail.payload_preview}</pre>
+            </>
+          ) : (
+            <p className="mt-3 text-sm leading-7 text-slate-200/90">Choose a message to see its payload here.</p>
+          )}
+        </section>
+      </div>
     </section>
+  )
+}
+
+// pausedWithArrivals: paused on an empty window while new messages keep
+// arriving, which is neither idle nor disconnected.
+function topicEmptyText(hasMessages: boolean, streamState: BrokerStreamState, pausedWithArrivals: boolean) {
+  if (hasMessages) return 'No messages match the filter.'
+  if (pausedWithArrivals) return 'Paused before any messages arrived. Resume live to see them.'
+  if (streamState !== 'connected') return `No messages: the live stream is ${streamState}.`
+  return 'Connected · no messages received yet.'
+}
+
+function TopicRow({ topic, selected, onSelect }: { topic: LiveTopicMessage; selected: boolean; onSelect: () => void }) {
+  return (
+    <li>
+      <button type="button" aria-pressed={selected} onClick={onSelect} className={`block w-full px-3 py-2 text-left hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${selected ? 'bg-cyan-400/10' : ''}`}>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 break-all font-mono text-sm text-cyan-100">{topic.topic}</span>
+          {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}
+          {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
+          <time dateTime={topic.observed_at} className="ml-auto shrink-0 font-mono text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</time>
+        </span>
+        <span className="mt-1 block truncate font-mono text-xs text-slate-300">{topic.payload_preview || 'Payload preview unavailable.'}</span>
+        <PayloadSummary event={topic} />
+      </button>
+    </li>
   )
 }
 
@@ -844,12 +896,13 @@ function SparkplugDetails({
 }
 
 function PayloadSummary({ event }: { event: TopicMessage }) {
+  // A span so it can sit inside a row button.
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
+    <span className="mt-2 flex flex-wrap gap-2">
       {payloadChips(event).map((chip) => (
         <span key={chip} className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-[0.7rem] text-slate-300">{chip}</span>
       ))}
-    </div>
+    </span>
   )
 }
 
