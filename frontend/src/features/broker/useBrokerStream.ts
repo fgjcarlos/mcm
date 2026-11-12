@@ -66,6 +66,9 @@ export type BrokerLog = BrokerEvent & { type: 'broker_log' | 'broker_log_entry';
 // Live entries carry an id assigned on arrival. It never changes while the
 // entry stays in its live window, so views can key rows by it and keep focus
 // and expanded state when newer entries are prepended (issue #357).
+// Contract: within one stream (topics, logs) ids grow by exactly one per
+// arrival and are never reused or reset, even across reconnects. useLiveFeed
+// relies on it to count arrivals as a difference of ids.
 export type LiveEntry = { id: number }
 export type LiveTopicMessage = TopicMessage & LiveEntry
 export type LiveBrokerLog = BrokerLog & LiveEntry
@@ -174,6 +177,8 @@ export function useBrokerStream(token: string, onLogout: () => void) {
   const [logs, setLogs] = useState<LiveBrokerLog[]>([])
   const [statusFacts, setStatusFacts] = useState<BrokerStatusFacts>({ load: 'loading' })
   const liveTrafficEvents = useRef<TopicMessage[]>([])
+  // Next LiveEntry id per stream: incremented by exactly one per arrival and
+  // never reset while mounted (see LiveEntry).
   const nextTopicId = useRef(1)
   const nextLogId = useRef(1)
 

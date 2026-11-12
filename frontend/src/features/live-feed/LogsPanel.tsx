@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { liveLogWindow, type BrokerLog, type BrokerStreamState, type LiveBrokerLog } from '../broker/useBrokerStream'
-import { emptyLogFilter, isLogFilterActive, logSeverities, matchesLogFilter, parseLogFilterQuery, serializeLogFilterQuery, type LogFilter, type LogSourceFilter } from './logFilter'
+import { emptyLogFilter, isLogFilterActive, logSeverities, logSources, matchesLogFilter, parseLogFilterQuery, serializeLogFilterQuery, type LogFilter, type LogSourceFilter } from './logFilter'
 import { useLiveFeed } from './useLiveFeed'
 import { LiveFeedChrome } from './LiveFeedChrome'
+import { emptyFeedText } from './feedText'
 import { SeverityBadge } from './SeverityBadge'
 
 // Live Logs view (issue #357): compact rows with an expandable detail,
@@ -11,12 +12,12 @@ import { SeverityBadge } from './SeverityBadge'
 // (issue #354): the view opens with the filter of its link and keeps the URL
 // in step without adding history entries.
 
-const sourceTitles: Record<BrokerLog['source'], string> = {
-  mcm: 'MCM events and logs',
-  mosquitto_log: 'Broker logs (Mosquitto)',
+// title: heading of the source region and its name in the event detail.
+// option: the shorter name in the Source select.
+const sourceLabels: Record<BrokerLog['source'], { title: string; option: string }> = {
+  mcm: { title: 'MCM events and logs', option: 'MCM events' },
+  mosquitto_log: { title: 'Broker logs (Mosquitto)', option: 'Broker logs (Mosquitto)' },
 }
-
-const sources: BrokerLog['source'][] = ['mcm', 'mosquitto_log']
 
 const eventNoun = { one: 'event', many: 'events' }
 
@@ -48,8 +49,7 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
       <label className="text-sm text-slate-300">Source{' '}
         <select aria-label="Source" value={filter.source} onChange={(event) => setFilter((current) => ({ ...current, source: event.target.value as LogSourceFilter }))} className="ml-2 rounded-lg bg-slate-900 p-2">
           <option value="all">All sources</option>
-          <option value="mcm">MCM events</option>
-          <option value="mosquitto_log">Broker logs (Mosquitto)</option>
+          {logSources.map((source) => <option key={source} value={source}>{sourceLabels[source].option}</option>)}
         </select>
       </label>
       <div role="group" aria-label="Severity" className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
@@ -63,27 +63,25 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
     </div>
 
     <div className={`mt-5 grid gap-5 ${filter.source === 'all' ? 'lg:grid-cols-2' : ''}`}>
-      {sources.filter((source) => filter.source === 'all' || filter.source === source).map((source) => {
+      {logSources.filter((source) => filter.source === 'all' || filter.source === source).map((source) => {
         const received = feed.visible.filter((log) => log.source === source)
         const shown = received.filter((log) => matchesLogFilter(log, filter))
-        return <section key={source} aria-label={sourceTitles[source]}>
-          <h3 className="text-sm font-semibold text-cyan-100">{sourceTitles[source]}</h3>
+        return <section key={source} aria-label={sourceLabels[source].title}>
+          <h3 className="text-sm font-semibold text-cyan-100">{sourceLabels[source].title}</h3>
           {shown.length > 0 ? <ol className="mt-3 divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
             {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}
-          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyText(received.length > 0, streamState, feed.mode === 'paused' && logs.some((log) => log.source === source))}</p>}
+          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyFeedText({
+            noun: eventNoun,
+            filterLabel: 'filters',
+            receivedAny: received.length > 0,
+            // Paused on an empty region while this source keeps receiving.
+            pausedWhileArriving: feed.mode === 'paused' && logs.some((log) => log.source === source),
+            streamState,
+          })}</p>}
         </section>
       })}
     </div>
   </section>
-}
-
-// pausedWithArrivals: the view is paused on an empty window while new events
-// keep arriving, which is neither idle nor disconnected.
-function emptyText(hasEvents: boolean, streamState: BrokerStreamState, pausedWithArrivals: boolean) {
-  if (hasEvents) return 'No events match the filters.'
-  if (pausedWithArrivals) return 'Paused before any events arrived. Resume live to see them.'
-  if (streamState !== 'connected') return `No events: the live stream is ${streamState}.`
-  return 'Connected · no events received yet.'
 }
 
 function LogRow({ log, expanded, onToggle }: { log: LiveBrokerLog; expanded: boolean; onToggle: () => void }) {
@@ -96,7 +94,7 @@ function LogRow({ log, expanded, onToggle }: { log: LiveBrokerLog; expanded: boo
     </button>
     {expanded ? <div id={detailId} role="region" aria-label="Event detail" className="border-t border-white/5 px-3 py-3 text-sm">
       <dl className="grid gap-x-4 gap-y-1 text-xs text-slate-300 sm:grid-cols-[auto_1fr]">
-        <dt className="text-slate-400">Source</dt><dd>{sourceTitles[log.source]}</dd>
+        <dt className="text-slate-400">Source</dt><dd>{sourceLabels[log.source].title}</dd>
         <dt className="text-slate-400">Severity</dt><dd>{log.severity}</dd>
         <dt className="text-slate-400">Received</dt><dd className="font-mono">{log.observed_at} ({new Date(log.observed_at).toLocaleString()})</dd>
       </dl>

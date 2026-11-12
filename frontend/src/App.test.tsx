@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -430,6 +430,21 @@ describe('App', () => {
       expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Connected · no events received yet.')
     })
 
+    it('says when more events arrived while paused than the live window keeps, before and after resuming', async () => {
+      const user = await openLogs()
+      emitLog('mcm', 'info', 'Row being read')
+      await screen.findByRole('button', { name: /Row being read/ })
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      for (let index = 1; index <= 101; index += 1) emitLog('mcm', 'info', `Paused arrival ${index}`)
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 101 new events since pausing. More arrived than the live window keeps, so the oldest of them will not be shown.')
+
+      await user.click(screen.getByRole('button', { name: 'Resume live' }))
+      expect(screen.getByRole('status', { name: 'Live feed state' })).toHaveTextContent('Back to live · 101 events arrived while paused; only the newest 100 are kept, so the oldest of them were dropped.')
+      expect(screen.getByText('Paused arrival 101')).toBeInTheDocument()
+      expect(screen.queryByText('Paused arrival 1')).not.toBeInTheDocument()
+      expect(screen.queryByText('Row being read')).not.toBeInTheDocument()
+    })
+
     it('shows only the selected source', async () => {
       const user = await openLogs()
       emitLog('mcm', 'info', 'MCM only line')
@@ -738,6 +753,7 @@ describe('App', () => {
       expect(screen.getAllByRole('button', { name: /factory\/line-\d\/temperature/ })).toHaveLength(2)
 
       const row = screen.getByRole('button', { name: /factory\/line-1\/temperature/ })
+      expect(row).toHaveAttribute('aria-pressed', 'false')
       await user.click(row)
       expect(row).toHaveAttribute('aria-pressed', 'true')
       const detail = screen.getByRole('region', { name: 'Message detail' })
@@ -785,6 +801,62 @@ describe('App', () => {
       MockWebSocket.instances[0]?.emit('close', new Event('close'))
       expect(await screen.findByText('Not connected to the live event stream (reconnecting). New messages will not arrive until it reconnects.')).toBeInTheDocument()
       expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('No messages: the live stream is reconnecting.')
+    })
+
+    it('shows the newest message by default without marking its row as pressed', async () => {
+      const user = await openTopics()
+      emitTopic('plant/a/older', '"older"')
+      emitTopic('plant/b/newest', '"newest"')
+      const newest = await screen.findByRole('button', { name: /plant\/b\/newest/ })
+      const older = screen.getByRole('button', { name: /plant\/a\/older/ })
+      const detail = screen.getByRole('region', { name: 'Message detail' })
+      expect(detail).toHaveTextContent('Newest message')
+      expect(detail).toHaveTextContent('plant/b/newest')
+      expect(newest).toHaveAttribute('aria-pressed', 'false')
+      expect(older).toHaveAttribute('aria-pressed', 'false')
+
+      await user.click(older)
+      expect(detail).toHaveTextContent('Selected message')
+      expect(detail).toHaveTextContent('plant/a/older')
+      expect(older).toHaveAttribute('aria-pressed', 'true')
+      expect(newest).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('keeps the chosen message in the detail while paused', async () => {
+      const user = await openTopics()
+      emitTopic('plant/a/chosen', '"chosen"')
+      emitTopic('plant/b/newer', '"newer"')
+      await user.click(await screen.findByRole('button', { name: /plant\/a\/chosen/ }))
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitTopic('plant/c/during-pause', '"later"')
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 1 new message since pausing')
+      const detail = screen.getByRole('region', { name: 'Message detail' })
+      expect(detail).toHaveTextContent('Selected message')
+      expect(detail).toHaveTextContent('plant/a/chosen')
+      expect(detail).toHaveTextContent('"chosen"')
+      expect(screen.queryByText('plant/c/during-pause')).not.toBeInTheDocument()
+    })
+
+    it('explains an invalid wildcard filter and clears the filter on request', async () => {
+      const user = await openTopics()
+      emitTopic('factory/line-1/temperature', '1')
+      emitTopic('office/hvac/status', '2')
+      await screen.findByRole('button', { name: /office\/hvac\/status/ })
+      const filter = screen.getByRole('searchbox', { name: 'Filter topics' })
+      const hint = 'Not a valid MQTT topic filter: + and # must fill a whole level, and # must be the last level.'
+      expect(screen.queryByText(hint)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Clear filter' })).not.toBeInTheDocument()
+
+      await user.type(filter, 'factory/line+/#')
+      expect(screen.getByText(hint)).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('No messages match the filter.')
+
+      await user.click(screen.getByRole('button', { name: 'Clear filter' }))
+      expect(filter).toHaveValue('')
+      expect(screen.queryByText(hint)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Clear filter' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /factory\/line-1\/temperature/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /office\/hvac\/status/ })).toBeInTheDocument()
     })
 
     it('tells a filter without matches apart from no activity', async () => {
@@ -1957,9 +2029,12 @@ describe('App', () => {
     describe('warnings that open filtered Logs (#354 T6)', () => {
       async function streamLogs(entries: Array<['mcm' | 'mosquitto_log', string, string]>) {
         await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0))
-        for (const [source, severity, message] of entries) {
-          MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: source === 'mcm' ? 'broker_log' : 'broker_log_entry', source, severity, message, observed_at: '2026-01-01T00:00:00Z' }) }))
-        }
+        // act: the views have rendered every streamed entry when this returns.
+        act(() => {
+          for (const [source, severity, message] of entries) {
+            MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: source === 'mcm' ? 'broker_log' : 'broker_log_entry', source, severity, message, observed_at: '2026-01-01T00:00:00Z' }) }))
+          }
+        })
       }
 
       function expectAppliedFilter(source: string, severities: string[]) {
@@ -1975,12 +2050,17 @@ describe('App', () => {
         const health = await screen.findByRole('region', { name: 'Broker health' })
         expect(await within(health).findByText('Disconnected')).toBeInTheDocument()
         await streamLogs([['mcm', 'info', 'Routine sync'], ['mosquitto_log', 'info', 'New connection'], ['mosquitto_log', 'debug', 'PINGREQ']])
-        // The header log counter proves the stream was processed.
-        await waitFor(() => expect(screen.getAllByText('Logs').some((label) => label.previousElementSibling?.textContent === '03')).toBe(true))
 
         expect(screen.queryByRole('link', { name: /related MCM event/ })).not.toBeInTheDocument()
         expect(screen.queryByRole('link', { name: /Mosquitto log entr/ })).not.toBeInTheDocument()
         expect(screen.queryByRole('region', { name: 'Diagnostic warnings' })).not.toBeInTheDocument()
+
+        // The Logs view lists the three events, so they had arrived when the
+        // home was checked above (nothing was streamed since).
+        await userEvent.click(screen.getByRole('link', { name: /^Logs/ }))
+        expect(await screen.findByText('Routine sync')).toBeInTheDocument()
+        expect(screen.getByText('New connection')).toBeInTheDocument()
+        expect(screen.getByText('PINGREQ')).toBeInTheDocument()
       })
 
       it('does not point at MCM events while the broker is connected', async () => {

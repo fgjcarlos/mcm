@@ -3,9 +3,10 @@ import type { LiveEntry } from '../broker/useBrokerStream'
 
 // Visual pause for a live window (issue #357). The stream keeps receiving
 // while paused; the view keeps showing the entries it had, so the row being
-// read neither moves nor loses focus. Entries are newest first and their ids
-// grow by one per arrival, which makes the arrival count exact even after the
-// window dropped older entries.
+// read neither moves nor loses focus. Entries are newest first and, per the
+// LiveEntry contract in useBrokerStream, their ids grow by exactly one per
+// arrival, so `newest id - newest id at pause` is the exact arrival count even
+// after the window dropped older entries.
 
 export type LiveFeedMode = 'live' | 'paused' | 'resumed'
 
