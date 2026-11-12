@@ -395,7 +395,7 @@ describe('App', () => {
       await user.click(screen.getByRole('button', { name: 'Pause' }))
       emitLog('mosquitto_log', 'error', 'Second socket error on client-7')
       await user.click(screen.getByRole('button', { name: 'Resume live' }))
-      expect(screen.getByRole('status', { name: 'Live feed state' })).toHaveTextContent('Back to live · 1 event that arrived while paused is now shown.')
+      expect(screen.getByRole('status', { name: 'Live feed state' })).toHaveTextContent('Back to live · 1 event arrived while paused; the live window now starts with the newest events.')
       expect(screen.getByText('Second socket error on client-7')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: 'Clear filters' }))

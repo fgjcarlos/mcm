@@ -37,6 +37,8 @@ export function useLiveFeed<T extends LiveEntry>(items: T[], windowSize: number)
     // More arrived than the window keeps: resuming will not show all of them.
     overflowed: arrivedWhilePaused > windowSize,
     resumedArrivals: state.mode === 'resumed' ? state.arrivals : 0,
+    // Some of those arrivals were dropped before the view returned to live.
+    resumedOverflowed: state.mode === 'resumed' && state.arrivals > windowSize,
     pause,
     resume,
   }

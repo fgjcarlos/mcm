@@ -25,9 +25,12 @@ function feedStateText(feed: ReturnType<typeof useLiveFeed<LiveBrokerLog>>) {
     return feed.overflowed ? `${arrived}. More arrived than the live window keeps, so the oldest of them will not be shown.` : arrived
   }
   if (feed.mode === 'resumed') {
-    return feed.resumedArrivals === 1
-      ? 'Back to live · 1 event that arrived while paused is now shown.'
-      : `Back to live · ${feed.resumedArrivals} events that arrived while paused are now shown.`
+    // Arrivals may be hidden by the filters or already dropped from the
+    // window, so say where they went rather than that they are all shown.
+    const arrived = `Back to live · ${plural(feed.resumedArrivals, 'event', 'events')} arrived while paused`
+    return feed.resumedOverflowed
+      ? `${arrived}; only the newest ${liveLogWindow} are kept, so the oldest of them were dropped.`
+      : `${arrived}; the live window now starts with the newest events.`
   }
   return 'Live · new events appear at the top.'
 }

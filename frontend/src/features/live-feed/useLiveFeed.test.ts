@@ -37,6 +37,9 @@ describe('useLiveFeed', () => {
     rerender({ items: window(9, 5) })
     expect(result.current.arrivedWhilePaused).toBe(6)
     expect(result.current.overflowed).toBe(true)
+    act(() => result.current.resume())
+    expect(result.current.resumedArrivals).toBe(6)
+    expect(result.current.resumedOverflowed).toBe(true)
   })
 
   it('counts arrivals when paused before anything arrived', () => {
@@ -55,6 +58,7 @@ describe('useLiveFeed', () => {
     expect(result.current.mode).toBe('resumed')
     expect(result.current.visible.map((entry) => entry.id)).toEqual([5, 4, 3, 2, 1])
     expect(result.current.resumedArrivals).toBe(2)
+    expect(result.current.resumedOverflowed).toBe(false)
     expect(result.current.arrivedWhilePaused).toBe(0)
     rerender({ items: window(6, 5) })
     expect(result.current.mode).toBe('resumed')
