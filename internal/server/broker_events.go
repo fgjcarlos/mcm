@@ -57,6 +57,7 @@ type BrokerEvent struct {
 	Severity         string                    `json:"severity,omitempty"`
 	Kind             string                    `json:"kind,omitempty"`
 	ClientID         string                    `json:"client_id,omitempty"`
+	Username         string                    `json:"username,omitempty"`
 	Message          string                    `json:"message,omitempty"`
 	ObservedAt       time.Time                 `json:"observed_at"`
 }

@@ -2,6 +2,13 @@
 
 This guide shows how to connect Node-RED to an MCM-managed Mosquitto broker. It includes example flows for publishing industrial telemetry and verifying ACL behavior.
 
+To check a new MQTT user from any client, Node-RED included, finish
+[the onboarding journey](../mqtt-onboarding.md#the-connection-test): its
+last step shows the connection data of the chosen listener and a
+concrete test topic, and MCM reports the connection and the operation it
+observes on the broker. The flows below are longer examples for
+Node-RED.
+
 ## Prerequisites
 
 - A running Mosquitto broker managed by MCM (see [deploy/mosquitto](../../deploy/mosquitto/README.md)).

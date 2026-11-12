@@ -19,6 +19,7 @@ already exposes and keeps every gate the backend owns.
 | 2. Access rule | `POST /api/v1/acls` with the topic filter, the permission and the ACL file scope. The principal is the user of step 1. | The ACL rule. |
 | 3. Preview | `POST /api/v1/deployments/preview`. | Nothing. It renders the ACL and password file diffs. |
 | 4. Apply | `POST /api/v1/deployments/apply` with the preview revision. | The broker files, then the reload and the activation verification. |
+| 5. Test connection | Shows the connection data and a manual test for the operator's own MQTT client, then watches the broker. Offered only after a deployment that left the configuration on the broker. | Nothing. |
 
 The journey opens from **Add User** in the *Users* panel. **Complete
 setup** in a user row opens it at step 2 for a user that already exists,
@@ -61,6 +62,69 @@ operator instead of an opaque failure.
 
 A failure in an earlier step names its own stage: *User creation
 failed*, *Access rule step failed*, *Preview step failed*.
+
+## The connection test
+
+An applied rule proves what the broker serves, not that the
+application can use it. The last step closes that gap with the client the
+application really uses: any MQTT 3.1.1 or MQTT 5 client works, and
+Node-RED is one optional example (see
+[the Node-RED guide](./integrations/node-red.md)).
+
+The step shows:
+
+- the **client host**, editable: MCM has no public address of the
+  broker, so it suggests the host the browser uses to reach MCM;
+- the **listener**, picked from `GET /api/v1/listeners` (the listener of
+  the rule when the rule is scoped to one), or a listener MCM does not
+  manage, with its port and TLS mode entered by hand. A rule that names a
+  listener MCM does not list falls back to that manual entry and says so;
+- the **port**, the **TLS** mode (plain, TLS, or TLS with a client
+  certificate) and the transport when the listener speaks WebSockets;
+- the **username** and the **allowed operation** (`<permission> on
+  <topic filter>`);
+- a warning when the listener admits anonymous clients, because a
+  connection there does not prove the credentials.
+
+The one-time password is not shown again. It can be copied from its
+banner right after the user is created (**Copy password**); MCM does not
+keep it and has no way to retrieve it later. When the browser has no
+clipboard or refuses the copy, the banner says *Copy failed* and the
+password stays on screen to be copied by hand.
+
+Give the client a client id that does not start with `mcm-verify-`: the
+activation probe of the deployment uses that prefix, and the step ignores
+those connections.
+
+The test uses a concrete topic inside the filter (every `+` or `#` level
+becomes `mcm-test`) and a unique payload (`mcm-test-<nonce>`):
+
+| Permission | Allowed operation | Operation that must stay denied |
+| --- | --- | --- |
+| `readwrite` | Subscribe to the test topic and publish the payload to it. | Publish `mcm-denied-<nonce>` to `mcm-denied-<nonce>/probe`, a topic outside the filter. None when the filter is `#`. |
+| `write` | Publish the payload to the test topic. | Subscribe to the test topic. |
+| `read` | Subscribe to the test topic; another account publishes to it. | Publish `mcm-denied-<nonce>` to the test topic. |
+| `deny` | None. | Publish `mcm-denied-<nonce>` to the test topic. |
+
+### What MCM observes
+
+MCM never runs the test and never takes the activation probe of the
+deployment for the application's client. It opens the broker event
+stream (`/api/v1/broker/events`) when the step opens and keeps four
+stages apart:
+
+| Stage | Observed when | Not observable when |
+| --- | --- | --- |
+| Applied | The deployment reported `active_verified` (activation proven by MCM's own probe) or `pending_activation`. The legacy `applied` status reads as applied with no activation proof. | — |
+| Connection | A broker log line `New client connected … u'<username>'` names the new account. The deployment's own probe clients (`mcm-verify-*`) are ignored. | MCM does not ingest the broker log (`MCM_MOSQUITTO_LOG_PATH`), the role is below auditor, or the event stream is closed. |
+| Operation | The MCM monitor, which reads every topic, sees the unique payload on the test topic. For `readwrite` this proves the publish only; the subscription half stays with the operator's client. | The operation is a subscription, the monitor is not subscribed to `#` (or reports no subscriptions), or the event stream is closed. |
+| Denied operation | The denied payload reaches the broker: the step flags it, because another rule grants it to the account. Its absence is reported as consistent with the denial; MCM cannot see the refusal itself. | The denied operation is a subscription: the broker reports the refusal to the client only. |
+
+A stage MCM cannot observe says why, and offers **Confirm manually**. A
+confirmed stage reads *Confirmed by you — not observed by MCM*.
+
+The broker log entry is read every 5 seconds and is not replayed to a
+late subscriber, so run the test once the step says *Watching*.
 
 ## The pending deploy banner
 

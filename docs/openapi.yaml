@@ -2559,6 +2559,12 @@ components:
         kind: { type: string }
         message: { type: string }
         client_id: { type: string }
+        username:
+          type: string
+          description: |
+            Account Mosquitto authenticated for a `client_connected` entry,
+            read from the `u'<user>'` field of the connection line. Absent for
+            an anonymous client and for every other kind.
         topic: { type: string }
       required: [observed_at, severity, kind, message]
     BrokerLogLimits:
@@ -2623,6 +2629,12 @@ components:
         severity: { type: string, enum: [debug, info, warning, error] }
         kind: { type: string }
         client_id: { type: string }
+        username:
+          type: string
+          description: |
+            Account Mosquitto authenticated for a `client_connected` entry,
+            read from the `u'<user>'` field of the connection line. Absent for
+            an anonymous client and for every other kind.
         message: { type: string }
         observed_at: { type: string, format: date-time }
       required: [type, observed_at]

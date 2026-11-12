@@ -37,6 +37,25 @@ func TestBrokerDiagnosticsDisconnectedContract(t *testing.T) {
 	if got.Sources.InternalMetrics.Endpoint != "/metrics" || got.Sources.InternalMetrics.Counters == nil {
 		t.Fatalf("internal metrics contract = %+v", got.Sources.InternalMetrics)
 	}
+
+	// The onboarding connection test reads broker.monitor.subscriptions: a
+	// monitor that never subscribed must serialize an empty array, not null
+	// or a missing field, so the UI reads "not subscribed" and not "unknown".
+	var raw struct {
+		Broker struct {
+			Monitor map[string]json.RawMessage `json:"monitor"`
+		} `json:"broker"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw diagnostics: %v", err)
+	}
+	subscriptions, ok := raw.Broker.Monitor["subscriptions"]
+	if !ok {
+		t.Fatalf("broker.monitor.subscriptions is absent: %s", rec.Body.String())
+	}
+	if string(subscriptions) != "[]" {
+		t.Fatalf("broker.monitor.subscriptions = %s, want []", subscriptions)
+	}
 }
 
 func TestBrokerDiagnosticsReportsSysSubscriptionRefusal(t *testing.T) {
