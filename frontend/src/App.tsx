@@ -18,6 +18,8 @@ import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFram
 import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
+import { LogsPanel } from './features/live-feed/LogsPanel'
+import { SeverityBadge } from './features/live-feed/SeverityBadge'
 import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLPermission, type ACLRule, type ACLScope, type ACLSelector } from './features/acl/types'
 import {
   defaultClientNote,
@@ -26,7 +28,6 @@ import {
   type BrokerRatePoint,
   type BrokerTrafficItem,
   type BrokerTrafficMetrics,
-  type BrokerStreamState,
   type SchemaValidation,
   type SparkplugDecodedPayload,
   type SparkplugMetadata,
@@ -955,25 +956,6 @@ function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) 
   )
 }
 
-function LogsPanel({ logs, streamState }: { logs: BrokerLog[]; streamState: BrokerStreamState }) {
-  const groups = [
-    ['MCM events and logs', logs.filter((log) => log.source === 'mcm')],
-    ['Broker logs (Mosquitto)', logs.filter((log) => log.source === 'mosquitto_log')],
-  ] as const
-  return <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Log feed · {streamState}</p>
-    <div className="mt-5 grid gap-5 lg:grid-cols-2">
-      {groups.map(([title, entries]) => <section key={title} aria-label={title}>
-        <h3 className="text-sm font-semibold text-cyan-100">{title}</h3>
-        <div className="mt-3 space-y-3">{entries.length === 0 ? <p className="text-sm text-slate-300">No events received yet.</p> : entries.map((log, index) => <article key={`${log.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-          <div className="flex justify-between gap-3"><div><SeverityBadge severity={log.severity} /> <span className="font-mono text-xs text-cyan-100">{log.source}</span></div><time className="text-xs text-slate-400">{new Date(log.observed_at).toLocaleString()}</time></div>
-          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-100">{log.message}</p>
-        </article>)}</div>
-      </section>)}
-    </div>
-  </section>
-}
-
 type DiagnosticsTraffic = BrokerTrafficMetrics
 type DiagnosticsLogEntry = { observed_at: string; severity: BrokerLog['severity']; kind: string; client_id?: string; topic?: string; message: string }
 type DiagnosticsPayload = {
@@ -1869,17 +1851,6 @@ function DiffBlock({ content }: { content: string }) {
       ))}
     </pre>
   )
-}
-
-function SeverityBadge({ severity }: { severity: BrokerLog['severity'] }) {
-  const className = {
-    debug: 'bg-slate-400/10 text-slate-200',
-    info: 'bg-cyan-400/10 text-cyan-200',
-    warning: 'bg-amber-400/10 text-amber-200',
-    error: 'bg-rose-400/10 text-rose-200',
-  }[severity]
-
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${className}`}>{severity}</span>
 }
 
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {

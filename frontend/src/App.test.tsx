@@ -341,6 +341,88 @@ describe('App', () => {
     expect(screen.getByRole('region', { name: 'Broker logs (Mosquitto)' })).toContainElement(screen.getByText('Broker line'))
   })
 
+  describe('live Logs view (issue #357)', () => {
+    async function openLogs() {
+      window.localStorage.setItem('mcm_admin_token', 'logs-token')
+      vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('logs-token')))
+      render(<App />)
+      await screen.findByText('Signed in')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('link', { name: /LogsOperations/i }))
+      return user
+    }
+
+    function emitLog(source: 'mcm' | 'mosquitto_log', severity: string, message: string) {
+      MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: source === 'mcm' ? 'broker_log' : 'broker_log_entry', source, severity, message, observed_at: '2026-01-01T00:00:00Z' }) }))
+    }
+
+    it('keeps the row being read in place and focused while paused', async () => {
+      const user = await openLogs()
+      emitLog('mcm', 'info', 'Row being read')
+      const row = await screen.findByRole('button', { name: /Row being read/ })
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      row.focus()
+      emitLog('mcm', 'warning', 'Arrived while paused')
+      emitLog('mcm', 'error', 'Also arrived while paused')
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 2 new events since pausing')
+      expect(document.activeElement).toBe(row)
+      expect(row).toHaveTextContent('Row being read')
+      expect(row).toBeInTheDocument()
+      expect(screen.queryByText('Arrived while paused')).not.toBeInTheDocument()
+    })
+
+    it('filters, expands an event and clearly returns to live', async () => {
+      const user = await openLogs()
+      emitLog('mcm', 'info', 'Routine sync')
+      emitLog('mosquitto_log', 'error', 'Socket error on client-7')
+      await screen.findByText('Socket error on client-7')
+
+      await user.click(within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: 'error' }))
+      expect(screen.queryByText('Routine sync')).not.toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('No events match the filters.')
+      await user.type(screen.getByRole('searchbox', { name: 'Search messages' }), 'client-7')
+      expect(screen.getByText('Socket error on client-7')).toBeInTheDocument()
+
+      const row = screen.getByRole('button', { name: /Socket error on client-7/ })
+      expect(row).toHaveAttribute('aria-expanded', 'false')
+      await user.click(row)
+      expect(row).toHaveAttribute('aria-expanded', 'true')
+      const detail = screen.getByRole('region', { name: 'Event detail' })
+      expect(detail).toHaveTextContent('Broker logs (Mosquitto)')
+      expect(detail).toHaveTextContent('2026-01-01T00:00:00Z')
+      expect(detail).toHaveTextContent('Socket error on client-7')
+
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitLog('mosquitto_log', 'error', 'Second socket error on client-7')
+      await user.click(screen.getByRole('button', { name: 'Resume live' }))
+      expect(screen.getByRole('status', { name: 'Live feed state' })).toHaveTextContent('Back to live · 1 event that arrived while paused is now shown.')
+      expect(screen.getByText('Second socket error on client-7')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+      expect(screen.getByText('Routine sync')).toBeInTheDocument()
+    })
+
+    it('states the live window limit and tells no activity from a lost stream', async () => {
+      await openLogs()
+      expect(screen.getByText(/the newest 100 events received while this page is open/)).toBeInTheDocument()
+      expect(screen.getByText(/no history to page through/)).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Connected · no events received yet.'))
+      MockWebSocket.instances[0]?.emit('close', new Event('close'))
+      expect(await screen.findByText('Not connected to the live event stream (reconnecting). New events will not arrive until it reconnects.')).toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('No events: the live stream is reconnecting.')
+    })
+
+    it('shows only the selected source', async () => {
+      const user = await openLogs()
+      emitLog('mcm', 'info', 'MCM only line')
+      emitLog('mosquitto_log', 'info', 'Broker only line')
+      await screen.findByText('Broker only line')
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Source' }), 'mosquitto_log')
+      expect(screen.queryByRole('region', { name: 'MCM events and logs' })).not.toBeInTheDocument()
+      expect(screen.getByText('Broker only line')).toBeInTheDocument()
+    })
+  })
+
   it('renders populated dashboard traffic widgets and latest broker activity', async () => {
     window.localStorage.setItem('mcm_admin_token', 'dashboard-token')
 
