@@ -19,6 +19,7 @@ import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { LogsPanel } from './features/live-feed/LogsPanel'
+import { serializeLogFilterQuery } from './features/live-feed/logFilter'
 import { LiveFeedChrome } from './features/live-feed/LiveFeedChrome'
 import { useLiveFeed } from './features/live-feed/useLiveFeed'
 import { isTopicFilterActive, isTopicPatternValid, matchesTopicFilter } from './features/live-feed/topicFilter'
@@ -364,16 +365,24 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   // Set only by the dashboard's "Connect an application" action so the Users
   // panel opens its onboarding journey once; any other navigation clears it.
   const [startOnboarding, setStartOnboarding] = useState(false)
+  // Bumped on every navigation so a view that reads its state from the URL
+  // query (Logs) starts again from the URL it was opened with.
+  const [navigationKey, setNavigationKey] = useState(0)
 
-  const handleSelectNav = useCallback((item: NavItem, options?: { startOnboarding?: boolean }) => {
+  // search: an optional URL query for the target panel (for example a
+  // filtered Logs link from the dashboard). The sidebar passes none, so its
+  // links always open the plain panel.
+  const handleSelectNav = useCallback((item: NavItem, options?: { startOnboarding?: boolean; search?: string }) => {
     if (item.id === 'broker-config' || item.id === 'changes') setVisitedBroker(true)
-    if (window.location.pathname !== item.path) {
-      window.history.pushState(null, '', item.path)
+    const target = `${item.path}${options?.search ?? ''}`
+    if (`${window.location.pathname}${window.location.search}` !== target) {
+      window.history.pushState(null, '', target)
     }
     setStartOnboarding(options?.startOnboarding === true)
     setActiveId(item.id)
+    setNavigationKey((current) => current + 1)
   }, [])
-  const openPanel = useCallback((id: string, options?: { startOnboarding?: boolean }) => {
+  const openPanel = useCallback((id: string, options?: { startOnboarding?: boolean; search?: string }) => {
     const item = navItems.find((candidate) => candidate.id === id)
     if (item) handleSelectNav(item, options)
   }, [handleSelectNav])
@@ -400,6 +409,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       if (selected === 'broker-config' || selected === 'changes') setVisitedBroker(true)
       setStartOnboarding(false)
       setActiveId(selected)
+      setNavigationKey((current) => current + 1)
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -473,7 +483,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         </div>
       ) : null}
       {activeId === 'broker-config' || activeId === 'changes' ? null : activeId === 'logs' ? (
-        <LogsPanel logs={logs} streamState={streamState} />
+        <LogsPanel key={navigationKey} logs={logs} streamState={streamState} />
       ) : activeId === 'broker-diagnostics' ? (
         <BrokerDiagnosticsPanel token={token} onLogout={onLogout} />
       ) : activeId === 'security' ? (
@@ -490,7 +500,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
             messageCount={liveTrafficMetrics.message_count}
             windowSeconds={liveTrafficMetrics.window_seconds}
             deployPending={deployPending}
+            logs={logs}
             onOpenPanel={openPanel}
+            onOpenLogs={(filter) => openPanel('logs', { search: serializeLogFilterQuery(filter) })}
             onConnectApplication={() => openPanel('users', { startOnboarding: true })}
           />
           <DashboardPanel metrics={liveTrafficMetrics} topics={topics} latestTopic={latestTopic} />

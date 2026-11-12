@@ -1,10 +1,13 @@
 import type { ReactNode } from 'react'
 import { can, requiredRoleFor } from '../auth/permissions'
-import type { BrokerConnectionStatus, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
+import type { BrokerConnectionStatus, BrokerLog, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
+import { logsPath, matchesLogFilter, type LogFilter } from '../live-feed/logFilter'
 
 // The operational part of the dashboard home (issue #354): broker health and
 // how fresh it is, pending changes with the next allowed action, and the way
 // to connect an application. Recent traffic is rendered after it.
+// Warnings backed by diagnostic events in the live window link to the Logs
+// view with the matching filter already applied.
 
 type BrokerHealth = 'checking' | 'unknown' | 'disconnected' | 'idle' | 'active'
 
@@ -24,6 +27,13 @@ function formatAge(value: string | undefined, now = Date.now()) {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours} h ago`
   return new Date(value).toLocaleString()
+}
+
+const mcmProblems: LogFilter = { source: 'mcm', severities: ['warning', 'error'], text: '' }
+const mosquittoProblems: LogFilter = { source: 'mosquitto_log', severities: ['warning', 'error'], text: '' }
+
+function plural(count: number, one: string, many: string) {
+  return `${count} ${count === 1 ? one : many}`
 }
 
 const streamLabel: Record<BrokerStreamState, string> = {
@@ -49,12 +59,18 @@ type DashboardHomeProps = {
   messageCount: number
   windowSeconds: number
   deployPending: boolean
+  logs: BrokerLog[]
   onOpenPanel: (id: 'deploy') => void
+  onOpenLogs: (filter: LogFilter) => void
   onConnectApplication: () => void
 }
 
-function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCount, windowSeconds, deployPending, onOpenPanel, onConnectApplication }: DashboardHomeProps) {
+function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCount, windowSeconds, deployPending, logs, onOpenPanel, onOpenLogs, onConnectApplication }: DashboardHomeProps) {
   const health = brokerHealth(statusFacts, brokerStatus, messageCount)
+  // MCM events explain a broker MCM cannot reach or read; while it is
+  // connected they are not tied to its health.
+  const mcmProblemCount = health === 'disconnected' || health === 'unknown' ? logs.filter((log) => matchesLogFilter(log, mcmProblems)).length : 0
+  const mosquittoProblemCount = logs.filter((log) => matchesLogFilter(log, mosquittoProblems)).length
   const windowMinutes = Math.round(windowSeconds / 60)
   const address = statusFacts.address || 'the configured address'
 
@@ -75,6 +91,20 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
           <HomeFact label="Last message" value={formatAge(statusFacts.lastMessageAt) ?? 'None observed yet'} />
           <HomeFact label="Live updates" value={streamLabel[streamState]} />
         </dl>
+        {mcmProblemCount > 0 || mosquittoProblemCount > 0 ? (
+          <section aria-label="Diagnostic warnings" className="mt-4 space-y-3">
+            {mcmProblemCount > 0 ? (
+              <HomeWarning text={`MCM recorded ${plural(mcmProblemCount, 'warning or error', 'warnings or errors')} in the live window.`} filter={mcmProblems} onOpenLogs={onOpenLogs}>
+                View {plural(mcmProblemCount, 'related MCM event', 'related MCM events')}
+              </HomeWarning>
+            ) : null}
+            {mosquittoProblemCount > 0 ? (
+              <HomeWarning text={`Mosquitto logged ${plural(mosquittoProblemCount, 'warning or error', 'warnings or errors')} in the live window.`} filter={mosquittoProblems} onOpenLogs={onOpenLogs}>
+                View {plural(mosquittoProblemCount, 'Mosquitto log entry', 'Mosquitto log entries')}
+              </HomeWarning>
+            ) : null}
+          </section>
+        ) : null}
       </HomeCard>
 
       <HomeCard label="Pending changes">
@@ -127,6 +157,24 @@ function HomeFact({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
       <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{label}</dt>
       <dd className="mt-1 break-all font-mono text-sm text-slate-100">{value}</dd>
+    </div>
+  )
+}
+
+function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; filter: LogFilter; onOpenLogs: (filter: LogFilter) => void; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-50">
+      <p>{text}</p>
+      <a
+        href={logsPath(filter)}
+        onClick={(event) => {
+          event.preventDefault()
+          onOpenLogs(filter)
+        }}
+        className="font-semibold text-amber-100 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200"
+      >
+        {children}
+      </a>
     </div>
   )
 }

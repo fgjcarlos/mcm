@@ -1944,5 +1944,150 @@ describe('App', () => {
       expect(await screen.findByRole('button', { name: 'Add User' })).toBeInTheDocument()
       expect(screen.queryByRole('region', { name: 'MQTT user onboarding' })).not.toBeInTheDocument()
     })
+
+    describe('warnings that open filtered Logs (#354 T6)', () => {
+      async function streamLogs(entries: Array<['mcm' | 'mosquitto_log', string, string]>) {
+        await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0))
+        for (const [source, severity, message] of entries) {
+          MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: source === 'mcm' ? 'broker_log' : 'broker_log_entry', source, severity, message, observed_at: '2026-01-01T00:00:00Z' }) }))
+        }
+      }
+
+      function expectAppliedFilter(source: string, severities: string[]) {
+        expect(screen.getByRole('combobox', { name: 'Source' })).toHaveValue(source)
+        const group = screen.getByRole('group', { name: 'Severity' })
+        for (const severity of ['debug', 'info', 'warning', 'error']) {
+          expect(within(group).getByRole('button', { name: severity })).toHaveAttribute('aria-pressed', String(severities.includes(severity)))
+        }
+      }
+
+      it('shows no warning link when there are no associated diagnostic events', async () => {
+        renderHome('quiet-down-token', { broker: 'disconnected' })
+        const health = await screen.findByRole('region', { name: 'Broker health' })
+        expect(await within(health).findByText('Disconnected')).toBeInTheDocument()
+        await streamLogs([['mcm', 'info', 'Routine sync'], ['mosquitto_log', 'info', 'New connection'], ['mosquitto_log', 'debug', 'PINGREQ']])
+        // The header log counter proves the stream was processed.
+        await waitFor(() => expect(screen.getAllByText('Logs').some((label) => label.previousElementSibling?.textContent === '03')).toBe(true))
+
+        expect(screen.queryByRole('link', { name: /related MCM event/ })).not.toBeInTheDocument()
+        expect(screen.queryByRole('link', { name: /Mosquitto log entr/ })).not.toBeInTheDocument()
+        expect(screen.queryByRole('region', { name: 'Diagnostic warnings' })).not.toBeInTheDocument()
+      })
+
+      it('does not point at MCM events while the broker is connected', async () => {
+        renderHome('healthy-token')
+        const health = await screen.findByRole('region', { name: 'Broker health' })
+        expect(await within(health).findByText('Connected · no traffic')).toBeInTheDocument()
+        await streamLogs([['mcm', 'warning', 'Slow status poll'], ['mosquitto_log', 'error', 'Socket error on sensor-2']])
+        // The Mosquitto warning proves the stream was processed.
+        expect(await screen.findByRole('link', { name: 'View 1 Mosquitto log entry' })).toBeInTheDocument()
+
+        expect(screen.queryByRole('link', { name: /related MCM event/ })).not.toBeInTheDocument()
+      })
+
+      it('opens the MCM warnings and errors from a disconnected broker warning, with the filter visible', async () => {
+        renderHome('mcm-warning-token', { broker: 'disconnected' })
+        const health = await screen.findByRole('region', { name: 'Broker health' })
+        expect(await within(health).findByText('Disconnected')).toBeInTheDocument()
+        await streamLogs([['mcm', 'info', 'Routine sync'], ['mcm', 'warning', 'Broker poll timed out'], ['mcm', 'error', 'Broker connection refused'], ['mosquitto_log', 'info', 'Broker info line']])
+
+        const link = await screen.findByRole('link', { name: 'View 2 related MCM events' })
+        expect(link).toHaveAttribute('href', '/logs?source=mcm&severity=warning,error')
+        await userEvent.click(link)
+
+        expect(await screen.findByRole('link', { name: /^Logs/ })).toHaveAttribute('aria-current', 'page')
+        expect(window.location.pathname).toBe('/logs')
+        expect(window.location.search).toBe('?source=mcm&severity=warning,error')
+        expectAppliedFilter('mcm', ['warning', 'error'])
+        expect(screen.getByText('Broker poll timed out')).toBeInTheDocument()
+        expect(screen.getByText('Broker connection refused')).toBeInTheDocument()
+        expect(screen.queryByText('Routine sync')).not.toBeInTheDocument()
+        expect(screen.queryByText('Broker info line')).not.toBeInTheDocument()
+      })
+
+      it('also points at MCM events when the broker status cannot be read', async () => {
+        renderHome('mcm-unknown-token', { statusFails: true })
+        const health = await screen.findByRole('region', { name: 'Broker health' })
+        expect(await within(health).findByText('Status unavailable')).toBeInTheDocument()
+        await streamLogs([['mcm', 'error', 'Status request failed']])
+
+        expect(await screen.findByRole('link', { name: 'View 1 related MCM event' })).toHaveAttribute('href', '/logs?source=mcm&severity=warning,error')
+      })
+
+      it('opens Mosquitto warnings and errors from a broker log warning with its count', async () => {
+        renderHome('mosquitto-warning-token')
+        await screen.findByRole('region', { name: 'Broker health' })
+        await streamLogs([['mosquitto_log', 'warning', 'Client sensor-1 disconnected'], ['mosquitto_log', 'error', 'Socket error on sensor-2'], ['mosquitto_log', 'warning', 'Client sensor-3 timed out'], ['mosquitto_log', 'info', 'New connection from 10.0.0.4'], ['mcm', 'warning', 'MCM warning line']])
+
+        const warnings = await screen.findByRole('region', { name: 'Diagnostic warnings' })
+        expect(warnings).toHaveTextContent('Mosquitto logged 3 warnings or errors in the live window.')
+        const link = within(warnings).getByRole('link', { name: 'View 3 Mosquitto log entries' })
+        expect(link).toHaveAttribute('href', '/logs?source=mosquitto_log&severity=warning,error')
+        await userEvent.click(link)
+
+        expect(await screen.findByRole('link', { name: /^Logs/ })).toHaveAttribute('aria-current', 'page')
+        expect(window.location.search).toBe('?source=mosquitto_log&severity=warning,error')
+        expectAppliedFilter('mosquitto_log', ['warning', 'error'])
+        expect(screen.getByText('Socket error on sensor-2')).toBeInTheDocument()
+        expect(screen.queryByText('New connection from 10.0.0.4')).not.toBeInTheDocument()
+        expect(screen.queryByText('MCM warning line')).not.toBeInTheDocument()
+      })
+
+      it('opens the sidebar Logs link unfiltered and restores the filtered view on back', async () => {
+        renderHome('sidebar-logs-token')
+        await screen.findByRole('region', { name: 'Broker health' })
+        await streamLogs([['mosquitto_log', 'error', 'Socket error on sensor-2'], ['mcm', 'info', 'Routine sync']])
+        await userEvent.click(await screen.findByRole('link', { name: 'View 1 Mosquitto log entry' }))
+        expectAppliedFilter('mosquitto_log', ['warning', 'error'])
+
+        await userEvent.click(screen.getByRole('link', { name: /^Logs/ }))
+        expect(screen.getByRole('link', { name: /^Logs/ })).toHaveAttribute('href', '/logs')
+        expect(window.location.pathname).toBe('/logs')
+        expect(window.location.search).toBe('')
+        expectAppliedFilter('all', [])
+        expect(screen.getByText('Routine sync')).toBeInTheDocument()
+
+        window.history.back()
+        await waitFor(() => expect(window.location.search).toBe('?source=mosquitto_log&severity=warning,error'))
+        await waitFor(() => expectAppliedFilter('mosquitto_log', ['warning', 'error']))
+        expect(screen.queryByText('Routine sync')).not.toBeInTheDocument()
+
+        window.history.back()
+        expect(await screen.findByRole('region', { name: 'Broker health' })).toBeInTheDocument()
+        expect(window.location.pathname).toBe('/')
+      })
+
+      it('applies the filter of a direct load of /logs?severity=error', async () => {
+        window.history.replaceState(null, '', '/logs?severity=error')
+        renderHome('direct-filter-token')
+
+        expect(await screen.findByRole('link', { name: /^Logs/ })).toHaveAttribute('aria-current', 'page')
+        expectAppliedFilter('all', ['error'])
+        await streamLogs([['mcm', 'info', 'Routine sync'], ['mcm', 'error', 'Disk full']])
+        expect(await screen.findByText('Disk full')).toBeInTheDocument()
+        expect(screen.queryByText('Routine sync')).not.toBeInTheDocument()
+        expect(window.location.pathname).toBe('/logs')
+        expect(window.location.search).toBe('?severity=error')
+      })
+
+      it('keeps the URL in step with filter changes without adding history entries', async () => {
+        window.history.replaceState(null, '', '/logs')
+        renderHome('sync-filter-token')
+        expect(await screen.findByRole('link', { name: /^Logs/ })).toHaveAttribute('aria-current', 'page')
+        const entries = window.history.length
+        const user = userEvent.setup()
+
+        await user.click(within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: 'error' }))
+        await user.click(within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: 'warning' }))
+        await user.selectOptions(screen.getByRole('combobox', { name: 'Source' }), 'mcm')
+        await user.type(screen.getByRole('searchbox', { name: 'Search messages' }), 'disk full')
+        expect(window.location.pathname).toBe('/logs')
+        expect(window.location.search).toBe('?source=mcm&severity=warning,error&q=disk%20full')
+
+        await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+        expect(window.location.search).toBe('')
+        expect(window.history.length).toBe(entries)
+      })
+    })
   })
 })
