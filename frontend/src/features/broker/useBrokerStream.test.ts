@@ -842,3 +842,38 @@ describe('useBrokerStream — reconnect behaviour (issue #169)', () => {
      }
    })
 })
+
+describe('useBrokerStream — stable arrival ids (issue #357)', () => {
+  beforeEach(() => {
+    MockWebSocket.instances = []
+    vi.stubGlobal('WebSocket', MockWebSocket)
+    stubFetchUnused()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('gives every live log and topic an arrival id that does not change when newer events arrive', async () => {
+    const { result } = renderHook(() => useBrokerStream('tok', noopLogout))
+
+    await act(async () => {
+      MockWebSocket.instances[0]!.open()
+      MockWebSocket.instances[0]!.message({ type: 'broker_log', source: 'mcm', severity: 'info', message: 'first', observed_at: '2026-01-01T00:00:00Z' })
+      MockWebSocket.instances[0]!.message({ type: 'topic_message', source: 'observed', topic: 'a/b', payload_preview: '1', observed_at: '2026-01-01T00:00:00Z' })
+    })
+    const firstLogId = result.current.logs[0]!.id
+    const firstTopicId = result.current.topics[0]!.id
+
+    await act(async () => {
+      MockWebSocket.instances[0]!.message({ type: 'broker_log_entry', source: 'mosquitto_log', severity: 'warning', message: 'second', observed_at: '2026-01-01T00:00:00Z' })
+      MockWebSocket.instances[0]!.message({ type: 'topic_message', source: 'observed', topic: 'a/b', payload_preview: '2', observed_at: '2026-01-01T00:00:00Z' })
+    })
+
+    expect(result.current.logs.map((log) => log.message)).toEqual(['second', 'first'])
+    expect(result.current.logs[1]!.id).toBe(firstLogId)
+    expect(result.current.logs[0]!.id).toBe(firstLogId + 1)
+    expect(result.current.topics[1]!.id).toBe(firstTopicId)
+    expect(result.current.topics[0]!.id).toBe(firstTopicId + 1)
+  })
+})

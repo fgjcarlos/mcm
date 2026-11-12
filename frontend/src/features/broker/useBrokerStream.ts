@@ -63,6 +63,12 @@ export type BrokerEvent = {
 
 export type TopicMessage = BrokerEvent & { type: 'topic_message'; topic: string }
 export type BrokerLog = BrokerEvent & { type: 'broker_log' | 'broker_log_entry'; source: 'mcm' | 'mosquitto_log'; severity: 'debug' | 'info' | 'warning' | 'error'; message: string }
+// Live entries carry an id assigned on arrival. It never changes while the
+// entry stays in its live window, so views can key rows by it and keep focus
+// and expanded state when newer entries are prepended (issue #357).
+export type LiveEntry = { id: number }
+export type LiveTopicMessage = TopicMessage & LiveEntry
+export type LiveBrokerLog = BrokerLog & LiveEntry
 export type BrokerConnectionStatus = 'connected' | 'disconnected'
 export type BrokerStreamState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
@@ -143,6 +149,9 @@ function factsFromStatus(status: StatusResponse, current: BrokerStatusFacts): Br
 }
 
 export const trafficWindowSeconds = 300
+// How many of the newest entries each live view keeps in memory.
+export const liveTopicWindow = 20
+export const liveLogWindow = 100
 export const defaultClientNote = 'Client identity is not included in MQTT application messages observed via wildcard subscriptions. Broker-sourced client metrics and broker log entries are reported separately by the broker diagnostics route.'
 
 export const emptyTrafficMetrics: BrokerTrafficMetrics = {
@@ -160,11 +169,13 @@ export const emptyTrafficMetrics: BrokerTrafficMetrics = {
 export function useBrokerStream(token: string, onLogout: () => void) {
   const [brokerStatus, setBrokerStatus] = useState<BrokerConnectionStatus>('disconnected')
   const [streamState, setStreamState] = useState<BrokerStreamState>('connecting')
-  const [topics, setTopics] = useState<TopicMessage[]>([])
+  const [topics, setTopics] = useState<LiveTopicMessage[]>([])
   const [liveTrafficMetrics, setLiveTrafficMetrics] = useState<BrokerTrafficMetrics>(emptyTrafficMetrics)
-  const [logs, setLogs] = useState<BrokerLog[]>([])
+  const [logs, setLogs] = useState<LiveBrokerLog[]>([])
   const [statusFacts, setStatusFacts] = useState<BrokerStatusFacts>({ load: 'loading' })
   const liveTrafficEvents = useRef<TopicMessage[]>([])
+  const nextTopicId = useRef(1)
+  const nextLogId = useRef(1)
 
   useEffect(() => {
     let cancelled = false
@@ -282,12 +293,14 @@ export function useBrokerStream(token: string, onLogout: () => void) {
           if (event.type === 'topic_message' && event.topic && event.source === 'observed') {
             const topicEvent = event as TopicMessage
             liveTrafficEvents.current = pruneTrafficEvents([topicEvent, ...liveTrafficEvents.current])
-            setTopics((current) => [topicEvent, ...current].slice(0, 20))
+            const liveTopic = { ...topicEvent, id: nextTopicId.current++ }
+            setTopics((current) => [liveTopic, ...current].slice(0, liveTopicWindow))
             setStatusFacts((current) => ({ ...current, lastMessageAt: laterTime(current.lastMessageAt, meaningfulTime(topicEvent.observed_at)) }))
             setLiveTrafficMetrics((current) => addTopicEventToTrafficMetrics(current, topicEvent))
           }
           if ((event.type === 'broker_log' || event.type === 'broker_log_entry') && event.source && event.severity && event.message) {
-            setLogs((current) => [event as BrokerLog, ...current].slice(0, 100))
+            const liveLog = { ...(event as BrokerLog), id: nextLogId.current++ }
+            setLogs((current) => [liveLog, ...current].slice(0, liveLogWindow))
           }
         } catch {
           // Malformed frame — log and skip. Do NOT change stream state;
