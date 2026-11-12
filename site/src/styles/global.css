@@ -1,59 +1,97 @@
 @import "tailwindcss";
 
+/* Interlocking signal box. Contrast on frame (WCAG 2.x): enamel 12.4,
+   enamel-soft 9.0, enamel-muted 6.2, lamp 8.6, proceed 5.5, danger-text 6.1.
+   danger (3.5) and lever-blue (2.9) are lamp/fill colours, never body text. */
 @theme {
-  /* Signal and caution, kept in Tailwind's own colour space so the console
-     renders exactly as it did before the tokens became the source of truth. */
-  --color-signal: oklch(78.9% 0.154 211.53);
-  --color-signal-bright: oklch(86.5% 0.127 207.078);
-  --color-signal-outline: oklch(91.7% 0.08 205.041);
-  --color-signal-pale: oklch(95.6% 0.045 203.388);
-  --color-caution: oklch(87.9% 0.169 91.605);
-  --color-caution-soft: oklch(92.4% 0.12 95.746);
-  --color-caution-bright: oklch(96.2% 0.059 95.617);
-  --color-caution-panel: oklch(82.8% 0.189 84.429);
-  /* Console field. The gradient stops keep the exact values the page has
-     always rendered; the palette tokens stay in Tailwind's colour space so
-     the utilities reproduce what they reproduced before. */
-  --color-floor: #020617;
-  --color-field: #0f172a;
-  --color-horizon: #1d4e89;
-  /* Ink. */
-  --color-ink: oklch(96.8% 0.007 247.896);
-  --color-ink-strong: oklch(92.9% 0.013 255.508);
-  --color-ink-soft: oklch(86.9% 0.022 252.894);
-  --color-ink-muted: oklch(70.4% 0.04 256.788);
-  --color-ink-bright: #ffffff;
-  /* Surfaces and lines. */
-  --color-surface: rgba(255, 255, 255, 0.04);
-  --color-surface-strong: rgba(255, 255, 255, 0.07);
-  --color-surface-faint: rgba(255, 255, 255, 0.03);
-  --color-surface-panel: rgba(2, 6, 23, 0.55);
-  --color-surface-code: rgba(2, 6, 23, 0.7);
-  --color-surface-chip: rgba(2, 6, 23, 0.4);
-  --color-hairline: rgba(255, 255, 255, 0.10);
-  --color-hairline-strong: rgba(255, 255, 255, 0.15);
-  --color-hairline-bright: rgba(255, 255, 255, 0.40);
-  --color-hairline-soft: rgba(255, 255, 255, 0.30);
-  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
+  /* Ground: the frame and two raised tones for panels and plates. */
+  --color-frame: #111214;
+  --color-frame-raised: #191a1d;
+  --color-frame-high: #212327;
+  /* Enamel: text and lever plates. */
+  --color-enamel-bright: #f2ede2;
+  --color-enamel: #d8d2c4;
+  --color-enamel-soft: #b9b3a6;
+  --color-enamel-muted: #9a9488;
+  /* Lamps. lamp = route set, caution, rolled back; proceed = verified only;
+     danger = failed only (use danger-text for text below 24px). */
+  --color-lamp: #e0a526;
+  --color-proceed: #2f9e5b;
+  --color-danger: #c8341f;
+  --color-danger-text: #ec6b55;
+  --color-lever-blue: #1f5fa8;
+  /* Track: hairline structural lines. */
+  --color-track: rgb(216 210 196 / 0.14);
+  --color-track-strong: rgb(216 210 196 / 0.28);
+  --color-track-bright: rgb(216 210 196 / 0.5);
+  /* Status, matching the app's deployment outcomes. */
+  --color-status-verified: var(--color-proceed);
+  --color-status-rolled-back: var(--color-lamp);
+  --color-status-failed: var(--color-danger);
+  --color-status-failed-text: var(--color-danger-text);
+
+  /* Big Shoulders with an optical-size axis: optical sizing follows the
+     font size, reaching the Display cut (opsz 72) at 72px and above. */
+  --font-display: "Big Shoulders Variable", "Arial Narrow", ui-sans-serif,
+    sans-serif;
+  --font-sans: "Overpass Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Overpass Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
     Monaco, Consolas, monospace;
 }
 
-.site-backdrop {
-  background: radial-gradient(
-    circle at top,
-    var(--color-horizon) 0%,
-    var(--color-field) 38%,
-    var(--color-floor) 100%
-  );
+/* shortcut: legacy aliases for index.astro, delete in T3 when components use the new tokens */
+@theme {
+  --color-signal: var(--color-lamp);
+  --color-signal-bright: var(--color-lamp);
+  --color-signal-outline: var(--color-lamp);
+  --color-signal-pale: var(--color-enamel);
+  --color-caution: var(--color-lamp);
+  --color-caution-soft: var(--color-lamp);
+  --color-caution-bright: var(--color-enamel-bright);
+  --color-caution-panel: var(--color-lamp);
+  --color-floor: var(--color-frame);
+  --color-field: var(--color-frame-raised);
+  --color-horizon: var(--color-frame-high);
+  --color-ink: var(--color-enamel);
+  --color-ink-strong: var(--color-enamel);
+  --color-ink-soft: var(--color-enamel-soft);
+  --color-ink-muted: var(--color-enamel-muted);
+  --color-ink-bright: var(--color-enamel-bright);
+  --color-surface: var(--color-frame-raised);
+  --color-surface-strong: var(--color-frame-high);
+  --color-surface-faint: var(--color-frame-raised);
+  --color-surface-panel: var(--color-frame-raised);
+  --color-surface-code: var(--color-frame);
+  --color-surface-chip: var(--color-frame);
+  --color-hairline: var(--color-track);
+  --color-hairline-strong: var(--color-track-strong);
+  --color-hairline-bright: var(--color-track-bright);
+  --color-hairline-soft: var(--color-track-strong);
 }
 
-html {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+/* Unlayered so it beats index.astro's Manrope-tuned tracking-tight utility. */
+h1,
+h2 {
+  letter-spacing: 0.01em;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background: var(--color-frame);
+    color: var(--color-enamel);
+    caret-color: var(--color-lamp);
+    scrollbar-color: var(--color-enamel-muted) var(--color-frame);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2 {
+    font-family: var(--font-display);
+  }
 }
 
 ::selection {
-  background: var(--color-signal);
-  color: var(--color-field);
+  background: var(--color-lamp);
+  color: var(--color-frame);
 }
