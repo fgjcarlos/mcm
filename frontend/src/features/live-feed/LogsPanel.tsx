@@ -70,7 +70,7 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
           <h3 className="text-sm font-semibold text-cyan-100">{sourceTitles[source]}</h3>
           {shown.length > 0 ? <ol className="mt-3 divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
             {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}
-          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyText(received.length > 0, streamState, feed.mode === 'paused' && feed.arrivedWhilePaused > 0)}</p>}
+          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyText(received.length > 0, streamState, feed.mode === 'paused' && logs.some((log) => log.source === source))}</p>}
         </section>
       })}
     </div>

@@ -421,6 +421,15 @@ describe('App', () => {
       expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Paused before any events arrived. Resume live to see them.')
     })
 
+    it('only calls a paused, empty source region paused when that source has new events', async () => {
+      const user = await openLogs()
+      await waitFor(() => expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Connected · no events received yet.'))
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitLog('mosquitto_log', 'info', 'Broker line during the pause')
+      expect(await screen.findByRole('region', { name: 'Broker logs (Mosquitto)' })).toHaveTextContent('Paused before any events arrived. Resume live to see them.')
+      expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Connected · no events received yet.')
+    })
+
     it('shows only the selected source', async () => {
       const user = await openLogs()
       emitLog('mcm', 'info', 'MCM only line')
@@ -2031,6 +2040,19 @@ describe('App', () => {
         expect(screen.getByText('Socket error on sensor-2')).toBeInTheDocument()
         expect(screen.queryByText('New connection from 10.0.0.4')).not.toBeInTheDocument()
         expect(screen.queryByText('MCM warning line')).not.toBeInTheDocument()
+      })
+
+      it('leaves a modified click on a warning link to the browser', async () => {
+        renderHome('modified-click-token')
+        await screen.findByRole('region', { name: 'Broker health' })
+        await streamLogs([['mosquitto_log', 'error', 'Socket error on sensor-2']])
+        const link = await screen.findByRole('link', { name: 'View 1 Mosquitto log entry' })
+        const user = userEvent.setup()
+        await user.keyboard('{Control>}')
+        await user.click(link)
+        await user.keyboard('{/Control}')
+        expect(window.location.pathname).toBe('/')
+        expect(screen.getByRole('region', { name: 'Broker health' })).toBeInTheDocument()
       })
 
       it('opens the sidebar Logs link unfiltered and restores the filtered view on back', async () => {

@@ -168,6 +168,8 @@ function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; fil
       <a
         href={logsPath(filter)}
         onClick={(event) => {
+          // Leave modified or non-primary clicks (new tab, new window) to the browser.
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
           event.preventDefault()
           onOpenLogs(filter)
         }}
