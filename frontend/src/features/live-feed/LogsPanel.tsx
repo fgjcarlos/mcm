@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { liveLogWindow, type BrokerLog, type BrokerStreamState, type LiveBrokerLog } from '../broker/useBrokerStream'
-import { emptyLogFilter, isLogFilterActive, logSeverities, matchesLogFilter, type LogFilter, type LogSourceFilter } from './logFilter'
+import { emptyLogFilter, isLogFilterActive, logSeverities, matchesLogFilter, parseLogFilterQuery, serializeLogFilterQuery, type LogFilter, type LogSourceFilter } from './logFilter'
 import { useLiveFeed } from './useLiveFeed'
 import { LiveFeedChrome } from './LiveFeedChrome'
 import { SeverityBadge } from './SeverityBadge'
 
 // Live Logs view (issue #357): compact rows with an expandable detail,
 // filters, a visual pause and the limit of the live window. MCM events stay
-// separate from Mosquitto log entries.
+// separate from Mosquitto log entries. The filter lives in the URL query
+// (issue #354): the view opens with the filter of its link and keeps the URL
+// in step without adding history entries.
 
 const sourceTitles: Record<BrokerLog['source'], string> = {
   mcm: 'MCM events and logs',
@@ -20,8 +22,14 @@ const eventNoun = { one: 'event', many: 'events' }
 
 export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; streamState: BrokerStreamState }) {
   const feed = useLiveFeed(logs, liveLogWindow)
-  const [filter, setFilter] = useState<LogFilter>(emptyLogFilter)
+  const [filter, setFilter] = useState<LogFilter>(() => parseLogFilterQuery(window.location.search))
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
+
+  useEffect(() => {
+    const search = serializeLogFilterQuery(filter)
+    if (window.location.search === search) return
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`)
+  }, [filter])
 
   const toggleSeverity = (severity: BrokerLog['severity']) => setFilter((current) => ({
     ...current,
@@ -62,7 +70,7 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
           <h3 className="text-sm font-semibold text-cyan-100">{sourceTitles[source]}</h3>
           {shown.length > 0 ? <ol className="mt-3 divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
             {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}
-          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyText(received.length > 0, streamState, feed.mode === 'paused' && feed.arrivedWhilePaused > 0)}</p>}
+          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyText(received.length > 0, streamState, feed.mode === 'paused' && logs.some((log) => log.source === source))}</p>}
         </section>
       })}
     </div>
