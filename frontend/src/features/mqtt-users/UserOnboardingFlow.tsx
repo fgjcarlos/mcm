@@ -565,7 +565,9 @@ export default function UserOnboardingFlow({
                   isVerified(result.status) ? 'text-emerald-200' : 'text-amber-200'
                 }`}
               >
-                {isVerified(result.status)
+                {result.status === 'applied'
+                  ? 'Applied — no activation proof recorded'
+                  : isVerified(result.status)
                   ? 'Applied and verified'
                   : result.status === 'pending_activation'
                     ? 'Applied — activation pending'

@@ -80,6 +80,10 @@ func TestParseLineReadsTheUsernameFromTheEndOfTheConnectionLine(t *testing.T) {
 		{"client id imitating an account", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin') (p2, c1, k60, u'mallory').", "mallory"},
 		{"anonymous client id imitating an account", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin') (p2, c1, k60).", ""},
 		{"account with a quote", "New client connected from 10.0.0.9:5000 as app (p2, c1, k60, u'o'brien').", "o'brien"},
+		{"glued imitation, anonymous", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin')(p2, c1, k60).", ""},
+		{"client id with a space imitating an account", "New client connected from 10.0.0.9:5000 as a b (p2, c1, k60, u'admin') (p2, c1, k60).", ""},
+		{"imitation followed by a dot", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin'). (p2, c1, k60, u'mallory').", "mallory"},
+		{"account with a parenthesis", "New client connected from 10.0.0.9:5000 as app (p2, c1, k60, u'we)ird').", "we)ird"},
 		{"trailing carriage return", "New client connected from 10.0.0.9:5000 as app (p5, c1, k30, u'probe').\r", "probe"},
 	}
 	for _, tc := range cases {

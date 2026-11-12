@@ -127,7 +127,11 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', MockWebSocket)
 })
 
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+
 afterEach(() => {
+  if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+  else delete (navigator as { clipboard?: unknown }).clipboard
   vi.unstubAllGlobals()
 })
 
@@ -363,6 +367,9 @@ describe('connection test step', () => {
     const user = userEvent.setup()
     render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
     await applyJourney(user)
+    // The apply banner must not claim the proof either.
+    expect(await screen.findByText('Applied — no activation proof recorded')).toBeInTheDocument()
+    expect(screen.queryByText('Applied and verified')).not.toBeInTheDocument()
     await openTest(user)
 
     expect(stage('Applied')).toHaveTextContent('Applied. This deployment status carries no activation proof.')
