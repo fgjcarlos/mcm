@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { can } from '../auth/permissions'
+import { can, requiredRoleFor } from '../auth/permissions'
 import type { BrokerConnectionStatus, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
 
 // The operational part of the dashboard home (issue #354): broker health and
@@ -71,7 +71,7 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
         </p>
         <dl className="mt-4 grid gap-2 sm:grid-cols-2">
           <HomeFact label="Address" value={statusFacts.address || 'Unknown'} />
-          <HomeFact label="Last status change" value={formatAge(statusFacts.observedAt) ?? 'Unknown'} />
+          <HomeFact label="Status reported" value={formatAge(statusFacts.observedAt) ?? 'Unknown'} />
           <HomeFact label="Last message" value={formatAge(statusFacts.lastMessageAt) ?? 'None observed yet'} />
           <HomeFact label="Live updates" value={streamLabel[streamState]} />
         </dl>
@@ -86,11 +86,11 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
               <HomeAction onClick={() => onOpenPanel('deploy')}>Review and apply</HomeAction>
             ) : can(role, 'deploy.preview') ? (
               <>
-                <p className="mt-2 text-sm leading-6 text-slate-300">An admin with MFA applies them.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">Applying them needs the {requiredRoleFor('deploy.apply')} role and MFA.</p>
                 <HomeAction onClick={() => onOpenPanel('deploy')}>Preview changes</HomeAction>
               </>
             ) : (
-              <p className="mt-2 text-sm leading-6 text-slate-300">An operator can preview them and an admin applies them.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">Previewing them needs the {requiredRoleFor('deploy.preview')} role or higher; applying them needs the {requiredRoleFor('deploy.apply')} role and MFA.</p>
             )}
           </>
         ) : (
@@ -106,7 +106,7 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
         {can(role, 'mqttUser.write') ? (
           <HomeAction onClick={onConnectApplication}>Connect an application</HomeAction>
         ) : (
-          <p className="mt-2 text-sm leading-6 text-slate-300">Connecting an application needs an operator or an admin: they create its MQTT user and access rule.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">Connecting an application needs the {requiredRoleFor('mqttUser.write')} role or higher.</p>
         )}
       </HomeCard>
     </div>

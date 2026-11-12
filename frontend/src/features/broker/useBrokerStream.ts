@@ -126,6 +126,13 @@ function laterTime(current?: string, next?: string) {
   return Date.parse(next) > Date.parse(current) ? next : current
 }
 
+// A failed status read only matters while the status was never known: once
+// it was read, the live stream keeps it current, so a failed refetch after a
+// reconnect must not hide it.
+function markStatusUnreadable(current: BrokerStatusFacts): BrokerStatusFacts {
+  return current.load === 'loaded' ? current : { ...current, load: 'failed' }
+}
+
 function factsFromStatus(status: StatusResponse, current: BrokerStatusFacts): BrokerStatusFacts {
   return {
     load: 'loaded',
@@ -172,7 +179,7 @@ export function useBrokerStream(token: string, onLogout: () => void) {
       })
       .catch(() => {
         if (!cancelled) {
-          setStatusFacts((current) => ({ ...current, load: 'failed' }))
+          setStatusFacts(markStatusUnreadable)
           setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
         }
       })
@@ -207,7 +214,7 @@ export function useBrokerStream(token: string, onLogout: () => void) {
         })
         .catch(() => {
           if (!destroyed) {
-            setStatusFacts((current) => ({ ...current, load: 'failed' }))
+            setStatusFacts(markStatusUnreadable)
             setLiveTrafficMetrics(liveTrafficEvents.current.length > 0 ? buildTrafficMetrics(liveTrafficEvents.current, emptyTrafficMetrics) : emptyTrafficMetrics)
           }
         })

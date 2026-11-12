@@ -1614,6 +1614,7 @@ describe('App', () => {
       expect(await within(health).findByText('Connected · no traffic')).toBeInTheDocument()
       expect(within(health).getByText(/No traffic is not a disconnection/)).toBeInTheDocument()
       expect(within(health).getByText('mosquitto:1883')).toBeInTheDocument()
+      expect(within(health).getByText('Status reported')).toBeInTheDocument()
       expect(within(health).getByText('2 min ago')).toBeInTheDocument()
       expect(within(health).getByText('None observed yet')).toBeInTheDocument()
       expect(within(health).queryByText('Disconnected')).not.toBeInTheDocument()
@@ -1657,7 +1658,7 @@ describe('App', () => {
       renderHome('viewer-token', { role: 'viewer' })
 
       const connect = await screen.findByRole('region', { name: 'Connect an application' })
-      expect(within(connect).getByText(/needs an operator or an admin/)).toBeInTheDocument()
+      expect(within(connect).getByText('Connecting an application needs the operator role or higher.')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Connect an application' })).not.toBeInTheDocument()
     })
 
@@ -1680,7 +1681,7 @@ describe('App', () => {
       const pending = await screen.findByRole('region', { name: 'Pending changes' })
       expect(within(pending).getByText('Saved, not applied')).toBeInTheDocument()
       expect(within(pending).getByRole('button', { name: 'Preview changes' })).toBeInTheDocument()
-      expect(within(pending).getByText(/An admin with MFA applies them/)).toBeInTheDocument()
+      expect(within(pending).getByText('Applying them needs the admin role and MFA.')).toBeInTheDocument()
       expect(within(pending).queryByRole('button', { name: 'Review and apply' })).not.toBeInTheDocument()
     })
 
@@ -1690,7 +1691,7 @@ describe('App', () => {
 
       const pending = await screen.findByRole('region', { name: 'Pending changes' })
       expect(within(pending).getByText('Saved, not applied')).toBeInTheDocument()
-      expect(within(pending).getByText(/An operator can preview them and an admin applies them/)).toBeInTheDocument()
+      expect(within(pending).getByText('Previewing them needs the operator role or higher; applying them needs the admin role and MFA.')).toBeInTheDocument()
       expect(within(pending).queryByRole('button')).not.toBeInTheDocument()
     })
 
