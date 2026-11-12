@@ -699,7 +699,7 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
               {shown.map((topic) => <TopicRow key={topic.id} topic={topic} selected={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
             </ol>
           ) : (
-            <p className="text-sm text-slate-300">{topicEmptyText(feed.visible.length > 0, streamState)}</p>
+            <p className="text-sm text-slate-300">{topicEmptyText(feed.visible.length > 0, streamState, feed.mode === 'paused' && feed.arrivedWhilePaused > 0)}</p>
           )}
         </section>
 
@@ -724,8 +724,11 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
   )
 }
 
-function topicEmptyText(hasMessages: boolean, streamState: BrokerStreamState) {
+// pausedWithArrivals: paused on an empty window while new messages keep
+// arriving, which is neither idle nor disconnected.
+function topicEmptyText(hasMessages: boolean, streamState: BrokerStreamState, pausedWithArrivals: boolean) {
   if (hasMessages) return 'No messages match the filter.'
+  if (pausedWithArrivals) return 'Paused before any messages arrived. Resume live to see them.'
   if (streamState !== 'connected') return `No messages: the live stream is ${streamState}.`
   return 'Connected · no messages received yet.'
 }

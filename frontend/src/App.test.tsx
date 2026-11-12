@@ -412,6 +412,15 @@ describe('App', () => {
       expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('No events: the live stream is reconnecting.')
     })
 
+    it('does not call a paused, empty window idle while events keep arriving', async () => {
+      const user = await openLogs()
+      await waitFor(() => expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Connected · no events received yet.'))
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitLog('mcm', 'info', 'Arrived during the pause')
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 1 new event since pausing')
+      expect(screen.getByRole('region', { name: 'MCM events and logs' })).toHaveTextContent('Paused before any events arrived. Resume live to see them.')
+    })
+
     it('shows only the selected source', async () => {
       const user = await openLogs()
       emitLog('mcm', 'info', 'MCM only line')
@@ -696,6 +705,15 @@ describe('App', () => {
       expect(row).toHaveTextContent('plant/a/row-being-read')
       expect(screen.queryByText('plant/b/arrived-while-paused')).not.toBeInTheDocument()
       expect(screen.getByRole('region', { name: 'Message detail' })).toHaveTextContent('plant/a/row-being-read')
+    })
+
+    it('does not call a paused, empty window idle while messages keep arriving', async () => {
+      const user = await openTopics()
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('Connected · no messages received yet.'))
+      await user.click(screen.getByRole('button', { name: 'Pause' }))
+      emitTopic('plant/a/during-pause', '{}')
+      expect(await screen.findByRole('status', { name: 'Live feed state' })).toHaveTextContent('Paused · 1 new message since pausing')
+      expect(screen.getByRole('region', { name: 'Topic messages' })).toHaveTextContent('Paused before any messages arrived. Resume live to see them.')
     })
 
     it('filters with an MQTT wildcard, shows the selected payload and clearly returns to live', async () => {
