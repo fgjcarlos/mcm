@@ -1,0 +1,31 @@
+---
+interface Props {
+  href: string;
+  variant?: "primary" | "ghost";
+  external?: boolean;
+  /** Forces a visual state, for the /system showcase only. */
+  state?: "hover" | "focus" | "active";
+}
+
+const { href, variant = "primary", external = false, state } = Astro.props;
+
+// An enamel lever plate; pulling it "throws" 1px down.
+const variants = {
+  primary:
+    "bg-enamel text-frame shadow-[inset_0_1px_0_rgb(255_255_255/0.4),inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-enamel-bright data-[state=hover]:bg-enamel-bright active:bg-enamel-soft active:shadow-none data-[state=active]:bg-enamel-soft data-[state=active]:shadow-none",
+  ghost:
+    "border border-track-strong text-enamel hover:border-track-bright hover:bg-frame-raised hover:text-enamel-bright data-[state=hover]:border-track-bright data-[state=hover]:bg-frame-raised data-[state=hover]:text-enamel-bright active:bg-frame-high data-[state=active]:bg-frame-high",
+};
+---
+
+<a
+  href={href}
+  data-state={state}
+  class:list={[
+    "inline-flex min-h-12 items-center gap-2.5 rounded-[3px] px-6 font-display text-base font-bold uppercase tracking-[0.14em] transition-colors duration-150 focus-visible:outline-offset-4 active:translate-y-px data-[state=active]:translate-y-px data-[state=focus]:outline-offset-4",
+    variants[variant],
+  ]}
+  {...(external && { rel: "noopener noreferrer", target: "_blank" })}
+>
+  <slot />
+</a>

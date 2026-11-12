@@ -1,0 +1,27 @@
+---
+interface Props {
+  titleId: string;
+  title: string;
+  id?: string;
+  class?: string;
+}
+
+const { titleId, title, id, class: className } = Astro.props;
+---
+
+<section id={id} aria-labelledby={titleId} class:list={["scroll-mt-8", className]}>
+  <h2 id={titleId} class="max-w-4xl pb-5 text-4xl font-bold uppercase leading-[0.95] text-enamel-bright sm:text-5xl">{title}</h2>
+  <div aria-hidden="true" class="flex items-center">
+    <span class="h-[3px] w-12 bg-enamel"></span>
+    <span class="h-px flex-1 bg-track-strong"></span>
+    <span class="size-2 rounded-full border border-track-bright"></span>
+  </div>
+  {Astro.slots.has("lede") && (
+    <div class="mt-6 max-w-[68ch] text-lg leading-relaxed text-enamel-soft">
+      <slot name="lede" />
+    </div>
+  )}
+  <div class="mt-12">
+    <slot />
+  </div>
+</section>

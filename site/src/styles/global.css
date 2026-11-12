@@ -39,42 +39,6 @@
     Monaco, Consolas, monospace;
 }
 
-/* shortcut: legacy aliases for index.astro, delete in T3 when components use the new tokens */
-@theme {
-  --color-signal: var(--color-lamp);
-  --color-signal-bright: var(--color-lamp);
-  --color-signal-outline: var(--color-lamp);
-  --color-signal-pale: var(--color-enamel);
-  --color-caution: var(--color-lamp);
-  --color-caution-soft: var(--color-lamp);
-  --color-caution-bright: var(--color-enamel-bright);
-  --color-caution-panel: var(--color-lamp);
-  --color-floor: var(--color-frame);
-  --color-field: var(--color-frame-raised);
-  --color-horizon: var(--color-frame-high);
-  --color-ink: var(--color-enamel);
-  --color-ink-strong: var(--color-enamel);
-  --color-ink-soft: var(--color-enamel-soft);
-  --color-ink-muted: var(--color-enamel-muted);
-  --color-ink-bright: var(--color-enamel-bright);
-  --color-surface: var(--color-frame-raised);
-  --color-surface-strong: var(--color-frame-high);
-  --color-surface-faint: var(--color-frame-raised);
-  --color-surface-panel: var(--color-frame-raised);
-  --color-surface-code: var(--color-frame);
-  --color-surface-chip: var(--color-frame);
-  --color-hairline: var(--color-track);
-  --color-hairline-strong: var(--color-track-strong);
-  --color-hairline-bright: var(--color-track-bright);
-  --color-hairline-soft: var(--color-track-strong);
-}
-
-/* Unlayered so it beats index.astro's Manrope-tuned tracking-tight utility. */
-h1,
-h2 {
-  letter-spacing: 0.01em;
-}
-
 @layer base {
   html {
     font-family: var(--font-sans);
@@ -86,8 +50,42 @@ h2 {
   }
 
   h1,
-  h2 {
+  h2,
+  h3 {
     font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  code {
+    color: var(--color-enamel-bright);
+  }
+
+  :not(pre) > code {
+    font-size: 0.875em;
+  }
+
+  summary {
+    cursor: pointer;
+  }
+
+  /* data-state="focus" lets /system show the ring statically. */
+  :focus-visible,
+  [data-state="focus"] {
+    outline: 2px solid var(--color-enamel-bright);
+    outline-offset: 3px;
+  }
+}
+
+/* Inline text link: hairline underline that lights on hover. */
+@utility link {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-track-bright);
+  text-underline-offset: 4px;
+
+  &:hover,
+  &[data-state="hover"] {
+    color: var(--color-enamel-bright);
+    text-decoration-color: currentColor;
   }
 }
 
