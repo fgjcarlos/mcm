@@ -326,8 +326,11 @@ func severityRank(severity Severity) int {
 }
 
 var (
-	connectedRE  = regexp.MustCompile(`New client connected from .+ as ([^\s]+)`)
-	usernameRE   = regexp.MustCompile(`\(p[0-9]+, c[0-9]+, k[0-9]+, u'([^']*)'\)`)
+	connectedRE = regexp.MustCompile(`New client connected from .+ as ([^\s]+)`)
+	// The account is the last group of the line: Mosquitto writes it after
+	// the client id, which the client chooses and may imitate the group. The
+	// account itself may contain a quote, so the match runs to the end.
+	usernameRE   = regexp.MustCompile(`^.*\(p[0-9]+, c[0-9]+, k[0-9]+, u'(.*)'\)\.?\s*$`)
 	disconnectRE = regexp.MustCompile(`^Client ([^\s]+) disconnected`)
 	publishRE    = regexp.MustCompile(`Received PUBLISH from ([^\s]+) \(d[0-9]+, q[0-9]+, r[0-9]+, m[0-9]+, '([^']*)'`)
 )

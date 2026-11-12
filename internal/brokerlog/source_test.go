@@ -70,6 +70,31 @@ func TestParseLineRecordsTheConnectedUsername(t *testing.T) {
 	}
 }
 
+// The account is the last group of the connection line, which Mosquitto
+// writes after the client id: a client id the client chooses must not
+// name another account, and an account may contain a quote.
+func TestParseLineReadsTheUsernameFromTheEndOfTheConnectionLine(t *testing.T) {
+	cases := []struct {
+		name, line, username string
+	}{
+		{"client id imitating an account", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin') (p2, c1, k60, u'mallory').", "mallory"},
+		{"anonymous client id imitating an account", "New client connected from 10.0.0.9:5000 as x (p2, c1, k60, u'admin') (p2, c1, k60).", ""},
+		{"account with a quote", "New client connected from 10.0.0.9:5000 as app (p2, c1, k60, u'o'brien').", "o'brien"},
+		{"trailing carriage return", "New client connected from 10.0.0.9:5000 as app (p5, c1, k30, u'probe').\r", "probe"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, ok := parseLine(tc.line, 1024)
+			if !ok || entry.Kind != "client_connected" {
+				t.Fatalf("entry = %+v; want client_connected", entry)
+			}
+			if entry.Username != tc.username {
+				t.Fatalf("username = %q; want %q", entry.Username, tc.username)
+			}
+		})
+	}
+}
+
 // The username is an optional field of the public log entry: a
 // connection without an account keeps the JSON earlier consumers read.
 func TestParseLineOmitsTheUsernameOfAnAnonymousConnection(t *testing.T) {
