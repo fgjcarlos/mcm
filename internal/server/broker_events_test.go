@@ -1030,3 +1030,15 @@ func adminToken(t *testing.T, app *App, store *storage.Store) string {
 	}
 	return tok
 }
+
+// The username of a broker log event is optional: an event without an
+// account keeps the JSON earlier consumers of /broker/events read.
+func TestBrokerEventOmitsAnEmptyUsername(t *testing.T) {
+	body, err := json.Marshal(BrokerEvent{Type: "broker_log_entry", Kind: "client_connected", ClientID: "sensor-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"username"`) {
+		t.Fatalf("event without an account serialized a username: %s", body)
+	}
+}

@@ -2,6 +2,7 @@ package brokerlog
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +67,28 @@ func TestParseLineRecordsTheConnectedUsername(t *testing.T) {
 	entry, _ := parseLine("Client sensor-a sent u'admin' in a payload", 1024)
 	if entry.Username != "" {
 		t.Fatalf("non-connection line recorded username %q", entry.Username)
+	}
+}
+
+// The username is an optional field of the public log entry: a
+// connection without an account keeps the JSON earlier consumers read.
+func TestParseLineOmitsTheUsernameOfAnAnonymousConnection(t *testing.T) {
+	for _, line := range []string{
+		"New client connected from 127.0.0.1:1883 as sensor-a (p2, c1, k60).",
+		"New client connected from 127.0.0.1:1883 as sensor-a (p2, c1, k60, u'').",
+	} {
+		entry, ok := parseLine(line, 1024)
+		if !ok {
+			t.Fatalf("line was ignored: %q", line)
+		}
+		entry.ObservedAt = time.Time{}
+		body, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), `"username"`) {
+			t.Fatalf("anonymous connection serialized a username: %s", body)
+		}
 	}
 }
 
