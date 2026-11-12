@@ -1,6 +1,8 @@
 // Invoked by the isolated Go integration fixture, not against a user broker.
+import { execFile, spawn } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { chromium, expect } from '@playwright/test'
 
 const check = expect.configure({ timeout: 15000 })
@@ -21,6 +23,70 @@ function totp(secret) {
   counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)))
   const digest = createHmac('sha1', key).update(counter).digest()
   return String((digest.readUInt32BE(digest[19] & 15) & 0x7fffffff) % 1000000).padStart(6, '0')
+}
+
+// The isolated broker of the Go fixture. The connection test of the
+// onboarding journey (#353) runs a real MQTT client from its image.
+const brokerContainer = process.env.MCM_E2E_BROKER_CONTAINER
+const servicePassword = process.env.MCM_E2E_SERVICE_PASSWORD
+const runFile = promisify(execFile)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// The one-time password of the journey's MQTT user. It is never printed:
+// a failure report redacts it from the page body.
+let probePassword = ''
+
+// The client arguments carry a password, so a failure reports the client's
+// own stderr and exit, never the command line Node would echo.
+async function brokerClient(args) {
+  try {
+    return await runFile('docker', ['exec', brokerContainer, ...args], { timeout: 15000 })
+  } catch (error) {
+    throw new Error(`${args[0]} in the isolated broker failed (exit ${error.code ?? error.signal}): ${String(error.stderr ?? '').trim()}`)
+  }
+}
+
+function mqttPublish(user, password, topic, payload, clientID) {
+  return brokerClient(['mosquitto_pub', '-h', '127.0.0.1', '-p', '1883', ...(clientID ? ['-i', clientID] : []), '-u', user, '-P', password, '-t', topic, '-m', payload])
+}
+
+// Proves a denied publish never reaches the broker, independently of the UI:
+// the service account subscribes to the denied topic (MCM always grants it
+// read #; after an apply it may write only its healthcheck topic). The
+// tested account publishes a control message on its granted topic before
+// the denied publish, which proves the subscription is live so the absence
+// means something, and another one after it, which bounds the wait: the
+// broker delivers to one subscriber in the order it processed the publishes.
+async function proveDenialWithServiceAccount({ deniedTopic, deniedPayload, controlTopic, publish }) {
+  const control = `${deniedPayload}-control`
+  const subscriber = spawn('docker', ['exec', brokerContainer, 'mosquitto_sub', '-h', '127.0.0.1', '-p', '1883', '-u', 'mcm', '-P', servicePassword, '-t', deniedTopic, '-t', controlTopic, '-W', '30'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const received = []
+  let pending = ''
+  let failure = ''
+  subscriber.stdout.setEncoding('utf8')
+  subscriber.stdout.on('data', (chunk) => {
+    const lines = (pending + chunk).split('\n')
+    pending = lines.pop()
+    received.push(...lines)
+  })
+  subscriber.stderr.setEncoding('utf8')
+  subscriber.stderr.on('data', (chunk) => { failure += chunk })
+  async function receive(payload, repeat) {
+    const deadline = Date.now() + 15000
+    while (!received.includes(payload)) {
+      if (Date.now() > deadline) throw new Error(`the service account never received ${payload} on ${controlTopic} ${failure.trim()}`)
+      if (repeat) await publish(controlTopic, payload)
+      await sleep(500)
+    }
+  }
+  try {
+    await receive(`${control}-before`, true)
+    await publish(deniedTopic, deniedPayload)
+    await publish(controlTopic, `${control}-after`)
+    await receive(`${control}-after`, false)
+  } finally {
+    subscriber.kill()
+  }
+  check(received.filter((payload) => payload === deniedPayload)).toEqual([])
 }
 
 let secret
@@ -83,6 +149,10 @@ try {
   await journey.getByPlaceholder('device-sensor-01').fill('probe')
   await journey.getByRole('button', { name: 'Create user', exact: true }).click()
   await check(journey.getByText('User created — save this password')).toBeVisible()
+  // The one-time password is read from its banner before anything dismisses
+  // it: the connection test below authenticates a real client with it.
+  probePassword = ((await journey.locator('pre').textContent()) ?? '').trim()
+  check(probePassword).not.toBe('')
   // The saved user is not applied yet, so the pending deploy banner covers it.
   await check(page.getByText('Pending deploy')).toBeVisible()
   await journey.getByPlaceholder('sensors/# or device/+/status').fill('probe/allowed')
@@ -99,6 +169,43 @@ try {
   await check(journey.getByText('Applied and verified')).toBeVisible()
   // The journey cleared the pending deploy state: nothing is left saved-only.
   await check(page.getByText('Pending deploy')).toHaveCount(0)
+
+  // The connection test of issue #353: a real MQTT client connects with the
+  // created credentials; the journey observes the connection in the broker
+  // log and the operation through the MCM monitor, and a publish outside the
+  // grant stays denied.
+  await journey.getByRole('button', { name: 'Test the connection', exact: true }).click()
+  const connectionTest = journey.getByRole('region', { name: 'Connection test' })
+  const stages = connectionTest.getByRole('list', { name: 'Connection test stages' })
+  // Broker log entries are not replayed: the watch must be open before the client connects.
+  await check(stages.getByLabel('Connection', { exact: true })).toContainText('Watching for a connection authenticated as probe.')
+  await check(stages.getByLabel('Operation', { exact: true })).toContainText('Watching ')
+  const [allowedTopic, allowedPayload] = await connectionTest.locator('li', { hasText: 'Allowed operation:' }).locator('code').allTextContents()
+  check(allowedTopic).toBe('probe/allowed')
+  check(allowedPayload).toMatch(/^mcm-test-[0-9a-f]{8}$/)
+  const [deniedPayload, deniedTopic] = await connectionTest.locator('li', { hasText: 'Operation that must stay denied:' }).locator('code').allTextContents()
+  check(deniedPayload).toMatch(/^mcm-denied-[0-9a-f]{8}$/)
+  check(deniedTopic).toBe(`${deniedPayload}/probe`)
+  // A client id of its own tells the test client apart from the deployment's
+  // activation probe, which also authenticates as probe and whose log line
+  // a later poll may still deliver: only the real client may satisfy this stage.
+  const clientID = `mcm-e2e-${allowedPayload}`
+  await mqttPublish('probe', probePassword, allowedTopic, allowedPayload, clientID)
+  // The log poller reads the broker log every 5 seconds.
+  await check(stages.getByLabel('Connection', { exact: true })).toContainText(`Connection observed: client ${clientID} as probe.`, { timeout: 20000 })
+  await check(stages.getByLabel('Operation', { exact: true })).toContainText(`Operation verified: ${allowedPayload} reached ${allowedTopic}.`, { timeout: 20000 })
+  await proveDenialWithServiceAccount({
+    deniedTopic,
+    deniedPayload,
+    controlTopic: allowedTopic,
+    publish: (topic, payload) => mqttPublish('probe', probePassword, topic, payload),
+  })
+  // The UI watch keeps reporting the absence well past two log polls.
+  await sleep(12000)
+  const denied = stages.getByLabel('Denied operation', { exact: true })
+  await check(denied).toContainText('No message with the denied payload reached the broker')
+  await check(denied).not.toContainText('The denied operation reached the broker')
+  console.log('[UI] A real MQTT client connected as the new user, its granted publish was verified and the denied one never reached the broker')
   // The rule of the journey is an ordinary MCM rule: the ACL panel lists it.
   await page.locator('nav a[href="/acls"]').click()
   // The topic filter appears in the rule table and in the effective permissions table.
@@ -143,7 +250,8 @@ try {
   check(errors).toEqual([])
 } catch (error) {
   console.error('[UI] journey failed:', error.message)
-  console.error('[UI] page body:', (await page.textContent('body').catch(() => '')).slice(0, 1200))
+  const body = (await page.textContent('body').catch(() => '')) ?? ''
+  console.error('[UI] page body:', (probePassword ? body.replaceAll(probePassword, '<redacted>') : body).slice(0, 1200))
   console.error('[UI] page errors:', errors)
   throw error
 } finally {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,12 +53,18 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 		return strings.TrimSpace(stdout.String())
 	}
 	directory := t.TempDir()
+	// The broker log lives in its own mount: MCM ingests it the way an
+	// operator's deployment does (mosquitto.log_path), and the connection
+	// test of the onboarding journey (#353) observes the created account
+	// through it. Keeping it out of the config directory leaves the
+	// configuration files MCM manages untouched by the broker's writes.
+	logDirectory := t.TempDir()
 	const servicePassword = "isolated-mcm-service-password"
 	hash, err := mosquitto.HashPassword(servicePassword, mosquitto.DefaultIterations)
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := "# existing broker, seeded before MCM starts\nuser root\nlistener 1883\nallow_anonymous false\npassword_file /mosquitto/config/passwd\nacl_file /mosquitto/config/acl\npersistence false\nconnection_messages true\nlog_dest stdout\n"
+	original := "# existing broker, seeded before MCM starts\nuser root\nlistener 1883\nallow_anonymous false\npassword_file /mosquitto/config/passwd\nacl_file /mosquitto/config/acl\npersistence false\nconnection_messages true\nlog_dest stdout\nlog_dest file /mosquitto/log/mosquitto.log\n"
 	for file, body := range map[string]string{"mosquitto.conf": original, "passwd": "mcm:" + hash + "\n", "acl": "user mcm\ntopic readwrite #\n"} {
 		if err := os.WriteFile(filepath.Join(directory, file), []byte(body), 0600); err != nil {
 			t.Fatal(err)
@@ -74,7 +81,7 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 	// The broker runs with the same uid as this process: the stock image
 	// otherwise chowns the mounted directory to its own user, which would
 	// take MCM's access away (the production path is tracked in #294).
-	container := run("run", "--detach", "--rm", "--name", name, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--publish", "127.0.0.1::1883", "--mount", "type=bind,src="+directory+",dst=/mosquitto/config", "eclipse-mosquitto:2.0", "mosquitto", "-c", "/mosquitto/config/mosquitto.conf")
+	container := run("run", "--detach", "--rm", "--name", name, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--publish", "127.0.0.1::1883", "--mount", "type=bind,src="+directory+",dst=/mosquitto/config", "--mount", "type=bind,src="+logDirectory+",dst=/mosquitto/log", "eclipse-mosquitto:2.0", "mosquitto", "-c", "/mosquitto/config/mosquitto.conf")
 	t.Cleanup(func() {
 		if t.Failed() {
 			logs, _ := exec.Command("docker", "logs", "--tail", "40", container).CombinedOutput()
@@ -86,12 +93,14 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 		// The broker container runs as root and may replace the mounted
 		// files, so restore ownership before the temporary directory is
 		// removed.
-		_ = filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
-			if err == nil {
-				_ = os.Chmod(path, 0o700)
-			}
-			return nil
-		})
+		for _, owned := range []string{directory, logDirectory} {
+			_ = filepath.Walk(owned, func(path string, info os.FileInfo, err error) error {
+				if err == nil {
+					_ = os.Chmod(path, 0o700)
+				}
+				return nil
+			})
+		}
 	})
 	published := run("port", container, "1883/tcp")
 	_, portString, err := net.SplitHostPort(published)
@@ -102,7 +111,7 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	brokerCfg := config.MosquittoConfig{Host: "127.0.0.1", Port: port, Username: "mcm", Password: servicePassword}
+	brokerCfg := config.MosquittoConfig{Host: "127.0.0.1", Port: port, Username: "mcm", Password: servicePassword, LogPath: filepath.Join(logDirectory, "mosquitto.log")}
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		probeCtx, probeCancel := context.WithTimeout(ctx, time.Second)
@@ -150,16 +159,38 @@ func TestBrokerConfigurationBrowserJourney(t *testing.T) {
 	probeSvc := svc
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
+	// The broker monitor and the log poller run as in production (run.go):
+	// the connection test of the journey proves a real client's connection
+	// and operation only through what they observe on the broker. They stop
+	// before the server closes, so no event outlives the journey.
+	monitorCtx, stopMonitor := context.WithCancel(ctx)
+	var monitors sync.WaitGroup
+	monitors.Add(2)
+	go func() { defer monitors.Done(); app.StartBrokerMonitor(monitorCtx, brokerCfg) }()
+	go func() { defer monitors.Done(); app.StartBrokerLogPoller(monitorCtx) }()
+	defer func() { stopMonitor(); monitors.Wait() }()
 	if _, err := probeSvc.Preview(ctx, "admin"); err != nil {
 		t.Fatalf("deploy preview unavailable in the fixture: %v", err)
 	}
 	command := exec.CommandContext(ctx, "node", filepath.Join(root, "frontend/e2e/configuration-journey.mjs"))
-	command.Env = append(os.Environ(), "MCM_UI_URL="+server.URL, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(root, "frontend/node_modules/.cache/ms-playwright"))
+	// The journey runs a real MQTT client from the broker image (docker exec)
+	// with the created credentials; the service account proves the denial
+	// independently of the UI.
+	command.Env = append(os.Environ(), "MCM_UI_URL="+server.URL, "MCM_E2E_BROKER_CONTAINER="+name, "MCM_E2E_SERVICE_PASSWORD="+servicePassword, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(root, "frontend/node_modules/.cache/ms-playwright"))
 	if browserPath := os.Getenv("PLAYWRIGHT_CHROMIUM_PATH"); browserPath != "" {
 		command.Env = append(command.Env, "PLAYWRIGHT_CHROMIUM_PATH="+browserPath)
 	}
 	output, err := command.CombinedOutput()
 	t.Logf("browser journey:\n%s", output)
+	// The broker's own record of the test client: the line the connection
+	// stage was derived from (it names the account, never the password).
+	if brokerLog, readErr := os.ReadFile(brokerCfg.LogPath); readErr == nil {
+		for _, line := range strings.Split(string(brokerLog), "\n") {
+			if strings.Contains(line, "New client connected") && strings.Contains(line, "u'probe'") {
+				t.Logf("broker log: %s", line)
+			}
+		}
+	}
 	if err != nil {
 		t.Fatalf("browser journey: %v", err)
 	}
