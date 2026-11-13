@@ -36,6 +36,7 @@ export const LOCK_LIFT = 5;
 export const COLORS = {
   frame: "#111214",
   enamel: "#d8d2c4",
+  enamelMuted: "#9a9488",
   lamp: "#e0a526",
   proceed: "#2f9e5b",
   danger: "#c8341f",

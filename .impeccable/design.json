@@ -395,7 +395,7 @@
       {
         "name": "lamp-glow",
         "value": "radial-gradient(lamp colour at 0.5–0.6 opacity → transparent), 3× the lamp radius",
-        "purpose": "Lit lamps in the route diagram only (SVG gradient / additive WebGL sprite)."
+        "purpose": "Lit lamps in the route diagram only (SVG gradient under the lens / additive WebGL sprite with a clear centre, so the lens keeps its colour; no bloom pass)."
       }
     ],
     "motion": [
@@ -412,7 +412,7 @@
       {
         "name": "story-relight",
         "value": "500ms",
-        "purpose": "Story lamps and the MFA lock fading up; track and points snap."
+        "purpose": "Story lamps and the MFA lock lighting: a lens grows from its centre at full colour (no olive cross-fade), the lock fades; the blade and recover switch snap."
       },
       {
         "name": "label-scramble",
@@ -430,6 +430,26 @@
         "purpose": "Hero scene loop alternating a verified run with a failed probe that rolls back."
       },
       {
+        "name": "hero-camera-entrance",
+        "value": "2.4s ease-in-out, once, after the 700ms crossfade",
+        "purpose": "Perspective camera swinging from the poster's straight-on framing to a low rake along the track toward the signal (\"route opening\"); rake fitted per resize, 12°–38° by stage aspect."
+      },
+      {
+        "name": "hero-camera-follow",
+        "value": "critically damped spring, ω 1.6 rad/s",
+        "purpose": "Camera trucks along the track after the route light's leading point (lamps, probe pulse, signal); no ambient drift."
+      },
+      {
+        "name": "lamp-blend",
+        "value": "OKLab interpolation",
+        "purpose": "Scene lamps, lock and points blade blend off → on through a darker amber, green or red, never an olive grey."
+      },
+      {
+        "name": "story-scroll-light",
+        "value": "animation-timeline: --story-N (view timelines), range: cover 50vh → cover 100% − 50vh, linear",
+        "purpose": "Amber travels along the story stage's track (stroke-dashoffset) while a step crosses the viewport centre line; IntersectionObserver stepping is the fallback."
+      },
+      {
         "name": "points-throw",
         "value": "1 - exp(-7t)·cos(9t)",
         "purpose": "Fast throw with a small overshoot for the points and the MFA lock."
@@ -437,10 +457,13 @@
     ],
     "motionContract": [
       "It reports a state.",
-      "Poster first paint.",
-      "Lazy, gated 3D (loaded + idle, on screen, motion allowed, WebGL2).",
-      "Reduced motion never requests the scene and disposes a running one.",
+      "Poster first paint; the hero camera starts at the poster's framing.",
+      "One entrance (hero camera rake), then motion only follows the route light or the scroll.",
+      "Lazy, gated 3D (loaded + idle, on screen, motion allowed, WebGL2); no post-processing.",
+      "Glow on lamps only; depth fog toward the frame; HTML labels projected onto their lamps.",
+      "Reduced motion never requests the scene, disposes a running one and keeps the story static.",
       "No WebGL keeps the poster.",
+      "No scroll-driven animations: the story steps its lit track on the IntersectionObserver.",
       "Pause/Play control once live.",
       "Off-screen and hidden-tab pause; dispose on pagehide.",
       "DPR 1 on coarse pointers or under 768px, otherwise at most 1.5."

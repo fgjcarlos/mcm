@@ -104,7 +104,7 @@
 }
 
 /* Route story stage: [data-route-step] relights the RoutePoster parts marked
-   data-on; lamps and the lock fade up, track and points snap. */
+   data-on; lenses grow and the lock fades up, track and points snap. */
 [data-route-step] [data-on] {
   opacity: 0;
 }
@@ -119,6 +119,81 @@
 @media (prefers-reduced-motion: no-preference) {
   [data-route-step] :is(circle, g)[data-on] {
     transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* A lens lights from its centre at full colour; a cross-fade over the
+     unlit lens would pass through a muddy olive mid-tone. */
+  [data-route-step] circle[data-lens] {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(0);
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  [data-route-step="0"] [data-lens][data-on*="0"],
+  [data-route-step="1"] [data-lens][data-on*="1"],
+  [data-route-step="2"] [data-lens][data-on*="2"],
+  [data-route-step="3"] [data-lens][data-on*="3"] {
+    transform: none;
+  }
+}
+
+/* Scroll-driven route light on the story stage. Where scroll-driven
+   animations exist, amber travels along the track while a step crosses the
+   viewport centre line (the IntersectionObserver's trigger): review → apply
+   over the Review step, apply → signal over the Apply step. Lamps, lock,
+   labels and recover still step on the observer. Without support, the
+   per-step lit lines (data-route-light) step instead. */
+[data-scrub] {
+  display: none;
+}
+
+@keyframes route-light {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@supports (animation-timeline: view()) and (timeline-scope: none) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-route-story][data-live] {
+      timeline-scope: --story-0, --story-1;
+    }
+
+    [data-route-story][data-live] [data-route-stage] [data-route-light] {
+      display: none;
+    }
+
+    [data-route-story][data-live] [data-scrub] {
+      display: inline;
+    }
+
+    [data-route-story][data-live] [data-scrub]:not([data-scrub="edge"]) {
+      stroke-dasharray: 1;
+      animation: route-light linear both;
+      animation-range: cover 50vh cover calc(100% - 50vh);
+    }
+
+    /* Timelines in their own rules: the build would otherwise fold
+       animation-timeline into the shorthand, which cannot carry it. */
+    [data-route-story][data-live] [data-route-stage] [data-scrub="0"] {
+      animation-timeline: --story-0;
+    }
+
+    /* apply → signal is two lines split at the points (--split): recover
+       drops the part past them. */
+    [data-route-story][data-live] [data-route-stage] [data-scrub="1"] {
+      animation-timeline: --story-1;
+      animation-range-end: cover calc(50vh + var(--split) * (100% - 100vh));
+    }
+
+    [data-route-story][data-live] [data-route-stage] [data-scrub="2"] {
+      animation-timeline: --story-1;
+      animation-range-start: cover calc(50vh + var(--split) * (100% - 100vh));
+    }
   }
 }
 

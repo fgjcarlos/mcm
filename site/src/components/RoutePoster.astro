@@ -17,9 +17,11 @@ interface Props {
   uid?: string;
   /** Station labels (story only; the hero draws its own). */
   labels?: boolean;
+  /** Story stage: add the scroll-driven lit track (global.css, data-scrub). */
+  scrub?: boolean;
 }
 
-const { step = "verify", uid = "route", labels = false } = Astro.props;
+const { step = "verify", uid = "route", labels = false, scrub = false } = Astro.props;
 const at = String(STORY_STEPS.indexOf(step));
 const not = (lit: string) => [..."0123"].filter((d) => !lit.includes(d)).join("");
 const show = (lit: string) => ({ "data-on": lit, opacity: lit.includes(at) ? undefined : 0 });
@@ -30,6 +32,8 @@ const tip = `${BLADE * Math.cos(a)} ${BLADE * Math.sin(a)}`;
 const branch = `M${tip}L${BRANCH_DX} ${BRANCH_DY}H4000`;
 // How far the route is set along the main line at each step.
 const reach = [STATIONS[0].x, STATIONS[2].x, SIGNAL_X, JUNCTION_X];
+// Scrubbed apply → signal light: the share of it before the points, where recover cuts it.
+const split = `--split:${(JUNCTION_X - reach[1]) / (SIGNAL_X - reach[1])}`;
 const housing = { stroke: COLORS.enamel, "stroke-opacity": "0.35", "stroke-width": "1.5", fill: COLORS.frame };
 
 const center = "bottom-4 -translate-x-1/2 data-lit:text-enamel-bright";
@@ -63,10 +67,20 @@ const stationLabels = [
       <path {...show("012")} d={branch} stroke={COLORS.enamel} stroke-opacity="0.28" />
       <path {...show("3")} d={branch} stroke={COLORS.lamp} />
     </svg>
-    {reach.map((x, i) => <line {...show(String(i))} x1="-200%" x2={pct(x)} stroke={COLORS.lamp} />)}
+    {reach.map((x, i) => <line {...show(String(i))} data-route-light x1="-200%" x2={pct(x)} stroke={COLORS.lamp} />)}
+    {scrub && (
+      <Fragment>
+        <line data-scrub="edge" x1="-200%" x2={pct(reach[0])} stroke={COLORS.lamp} />
+        <line data-scrub="0" pathLength="1" x1={pct(reach[0])} x2={pct(reach[1])} stroke={COLORS.lamp} />
+        <line data-scrub="1" pathLength="1" style={split} x1={pct(reach[1])} x2={pct(JUNCTION_X)} stroke={COLORS.lamp} />
+        <line {...show("012")} data-scrub="2" pathLength="1" style={split} x1={pct(JUNCTION_X)} x2={pct(SIGNAL_X)} stroke={COLORS.lamp} />
+      </Fragment>
+    )}
+    {/* The points blade is a lever: enamel-muted until the route light runs through it. */}
     <svg x={pct(JUNCTION_X)} overflow="visible">
-      <path {...show("012")} d={`M0 0H${BLADE}`} stroke={COLORS.enamel} />
-      <path {...show("3")} d={`M0 0L${tip}`} stroke={COLORS.enamel} />
+      <path {...show("01")} d={`M0 0H${BLADE}`} stroke={COLORS.enamelMuted} />
+      <path {...show("2")} d={`M0 0H${BLADE}`} stroke={COLORS.lamp} />
+      <path {...show("3")} d={`M0 0L${tip}`} stroke={COLORS.lamp} />
     </svg>
 
     {STATIONS.map((s) => (
@@ -74,7 +88,7 @@ const stationLabels = [
         <circle {...show(s.lit)} r={LAMP_R * 3} fill={`url(#${uid}-glow-lamp)`} stroke="none" />
         <circle r={HOUSING_R} {...housing} />
         {not(s.lit) && <circle {...show(not(s.lit))} r={LAMP_R} fill={COLORS.lampOff} stroke="none" />}
-        <circle {...show(s.lit)} r={LAMP_R} fill={COLORS.lamp} stroke="none" />
+        <circle {...show(s.lit)} data-lens r={LAMP_R} fill={COLORS.lamp} stroke="none" />
         {s.id === "mfa" && (
           <g {...show(s.lit)} stroke={COLORS.lamp}>
             <rect x="-7" y={LOCK_Y} width="14" height="11" fill={COLORS.lamp} stroke="none" />
@@ -93,14 +107,14 @@ const stationLabels = [
       <circle {...show("3")} r={SIGNAL_R * 3} fill={`url(#${uid}-glow-danger)`} stroke="none" />
       <circle r={SIGNAL_HOUSING_R} {...housing} />
       <circle {...show("01")} r={SIGNAL_R} fill={COLORS.lampOff} stroke="none" />
-      <circle {...show("2")} r={SIGNAL_R} fill={COLORS.proceed} stroke="none" />
-      <circle {...show("3")} r={SIGNAL_R} fill={COLORS.danger} stroke="none" />
+      <circle {...show("2")} data-lens r={SIGNAL_R} fill={COLORS.proceed} stroke="none" />
+      <circle {...show("3")} data-lens r={SIGNAL_R} fill={COLORS.danger} stroke="none" />
     </svg>
     <svg x={pct(SIGNAL_X)} y={BRANCH_DY} overflow="visible">
       <circle {...show("3")} r={LAMP_R * 3} fill={`url(#${uid}-glow-lamp)`} stroke="none" />
       <circle r={HOUSING_R} {...housing} />
       <circle {...show("012")} r={LAMP_R} fill={COLORS.lampOff} stroke="none" />
-      <circle {...show("3")} r={LAMP_R} fill={COLORS.lamp} stroke="none" />
+      <circle {...show("3")} data-lens r={LAMP_R} fill={COLORS.lamp} stroke="none" />
     </svg>
   </g>
 </svg>
