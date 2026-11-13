@@ -2,10 +2,12 @@
 import Layout from "../layouts/Layout.astro";
 import CaptureViewer from "../components/CaptureViewer.astro";
 import CautionPanel from "../components/CautionPanel.astro";
+import ClearanceRow from "../components/ClearanceRow.astro";
 import CommandStep from "../components/CommandStep.astro";
 import EvidenceFigure from "../components/EvidenceFigure.astro";
 import LeverButton from "../components/LeverButton.astro";
 import Lockup from "../components/Lockup.astro";
+import NotYetCleared from "../components/NotYetCleared.astro";
 import Plate from "../components/Plate.astro";
 import RoutePoster from "../components/RoutePoster.astro";
 import StatusLamp from "../components/StatusLamp.astro";
@@ -285,6 +287,17 @@ const label = "font-mono text-xs text-enamel-muted";
               </figure>
             ))}
           </div>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-clearance">
+          <h3 id="c-clearance" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">NotYetCleared and ClearanceRow</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The one place a page says what is not done. Each ClearanceRow is an unlit lamp, an engraved title, one plain sentence and a plate: Planned (blue), Limit or Deferred (neutral). Nothing in it is lit or green, and it is never boxed. Static, so it has no interactive states.</p>
+          <NotYetCleared class="mt-8 max-w-2xl">
+            <ClearanceRow title="Extra configuration files" kind="planned">Files loaded from a folder with <code>include_dir</code> are read but cannot be edited.</ClearanceRow>
+            <ClearanceRow title="Payload checks" kind="limit">Sparkplug B and JSON Schema diagnostics inspect messages for issues but never block or reject them.</ClearanceRow>
+            <ClearanceRow title="Management database" kind="deferred">SQLite is the only implemented management database; PostgreSQL is deferred.</ClearanceRow>
+            <Fragment slot="note">The optional note carries the one link to the full list, such as the <a class="link" href="#c-clearance">support matrix</a>.</Fragment>
+          </NotYetCleared>
         </section>
 
         <section class="py-10" aria-labelledby="c-caution">

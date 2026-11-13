@@ -1,0 +1,26 @@
+---
+import Plate from "./Plate.astro";
+
+type Kind = "planned" | "limit" | "deferred";
+
+interface Props {
+  title: string;
+  kind: Kind;
+}
+
+const { title, kind } = Astro.props;
+
+// The plate is the word for the unlit lamp; NotYetCleared defines each one.
+const plates: Record<Kind, { label: string; variant: "neutral" | "blue" }> = {
+  planned: { label: "Planned", variant: "blue" },
+  limit: { label: "Limit", variant: "neutral" },
+  deferred: { label: "Deferred", variant: "neutral" },
+};
+---
+
+<li class="grid grid-cols-[0.75rem_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 py-3.5" data-clearance={kind}>
+  <span aria-hidden="true" class="size-3 rounded-full border-2 border-enamel-muted bg-frame-high"></span>
+  <span class="font-display text-lg font-semibold uppercase leading-tight tracking-[0.08em] text-enamel-bright">{title}</span>
+  <Plate variant={plates[kind].variant}>{plates[kind].label}</Plate>
+  <p class="col-span-2 col-start-2 leading-relaxed text-enamel-soft"><slot /></p>
+</li>
