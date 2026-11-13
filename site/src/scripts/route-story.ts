@@ -24,6 +24,14 @@ function scramble(el: Element, word: string): void {
   requestAnimationFrame(frame);
 }
 
+/** The step to light when step `crossing` (an index, -1 if none) reaches the centre line, or null to keep `current`. */
+export function pickStep(current: number, crossing: number, count: number): number | null {
+  return Number.isInteger(crossing) && crossing >= 0 && crossing < count && crossing !== current ? crossing : null;
+}
+
+/** Whether a stage label lights in a step; `on` lists its steps as digits (data-label-on, STATIONS.lit). */
+export const labelLit = (on: string, step: number) => on.includes(String(step));
+
 export function bootRouteStory(): void {
   const story = document.querySelector<HTMLElement>("[data-route-story]");
   const stage = story?.querySelector<HTMLElement>("[data-route-stage]");
@@ -39,14 +47,15 @@ export function bootRouteStory(): void {
   let current = 0;
   steps[0]?.setAttribute("data-active", "");
 
-  const show = (i: number) => {
-    if (i < 0 || i === current) return;
+  const show = (crossing: number) => {
+    const i = pickStep(current, crossing, steps.length);
+    if (i === null) return;
     current = i;
     stage.dataset.routeStep = String(i);
     steps.forEach((s, k) => s.toggleAttribute("data-active", k === i));
     const animate = wide.matches && !reduce.matches;
     for (const { li, glyphs, word } of labels) {
-      const lit = li.dataset.labelOn!.includes(String(i));
+      const lit = labelLit(li.dataset.labelOn!, i);
       if (lit && animate && !li.hasAttribute("data-lit")) scramble(glyphs, word);
       li.toggleAttribute("data-lit", lit);
     }
