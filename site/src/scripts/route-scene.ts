@@ -231,20 +231,24 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
   function layout() {
     const s = stage.getBoundingClientRect();
     const r = rail!.getBoundingClientRect();
-    w = s.width;
-    const h = s.height;
+    // The rail is drawn at --route-scale (route-rail, global.css): lay the scene
+    // out in unscaled rail px and let the camera scale it like the poster.
+    const k = r.width / rail!.offsetWidth || 1;
+    w = s.width / k;
+    const h = s.height / k;
     const lowPower = matchMedia("(pointer: coarse)").matches || innerWidth < 768;
     renderer.setPixelRatio(lowPower ? 1 : Math.min(devicePixelRatio, 1.5));
-    renderer.setSize(w, h, false);
+    renderer.setSize(s.width, s.height, false);
     camera.right = w;
     camera.bottom = -h;
     camera.updateProjectionMatrix();
 
-    const ox = r.left - s.left;
-    y = -(r.top - s.top);
-    nodes = [0, ...STATIONS.map((st) => ox + st.x * r.width)];
-    jx = ox + JUNCTION_X * r.width;
-    sx = ox + SIGNAL_X * r.width;
+    const ox = (r.left - s.left) / k;
+    const railW = r.width / k;
+    y = -(r.top - s.top) / k;
+    nodes = [0, ...STATIONS.map((st) => ox + st.x * railW)];
+    jx = ox + JUNCTION_X * railW;
+    sx = ox + SIGNAL_X * railW;
     const by = y - BRANCH_DY;
 
     span(baseMainIn, 0, y, jx, y);

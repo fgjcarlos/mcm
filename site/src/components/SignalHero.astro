@@ -18,9 +18,13 @@ const label = "absolute whitespace-nowrap text-enamel-muted data-lit:text-enamel
   </figcaption>
   <div class="absolute inset-x-0 top-[max(4rem,42%)]">
     <div class="mx-auto max-w-6xl px-6">
-      <div data-hero-rail class="relative h-0">
-        <RoutePoster />
-        <ol aria-hidden="true" class="relative z-20 font-mono text-xs uppercase tracking-[0.16em]">
+      <div class="relative lg:[--route-scale:1.25] xl:[--route-scale:1.5] min-[120rem]:[--route-scale:2]">
+        <div data-hero-rail class="route-rail relative h-0">
+          <RoutePoster />
+        </div>
+        {/* A scaled rail is its own stacking context, so the labels get a
+            second rail of their own to stay above the canvas. */}
+        <ol aria-hidden="true" class="route-rail absolute top-0 left-0 z-20 h-0 font-mono text-xs uppercase tracking-[0.16em]">
           {STATIONS.map((s) => (
             <li data-stage={s.id} data-lit class:list={[label, "bottom-4 -translate-x-1/2"]} style={`left:${s.x * 100}%`}>{s.label}</li>
           ))}

@@ -60,7 +60,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
           </div>
         </div>
       </div>
-      <SignalHero class="mt-4 min-h-52 flex-1" />
+      <SignalHero class="mt-4 min-h-52 flex-1 xl:min-h-64" />
     </header>
 
     <div class="mx-auto w-full max-w-6xl px-6">
@@ -68,7 +68,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
         <RouteStory />
       </TrackSection>
 
-      <TrackSection class="mt-28 sm:mt-36" titleId="availability-title" title="What you can change today—and what remains.">
+      <TrackSection class="mt-28 sm:mt-36" titleId="availability-title" title={"What you can change today\u2060—and what remains."}>
         <p slot="lede">The available controls are real; coverage and production readiness are not complete.</p>
         <div class="grid divide-y divide-track lg:grid-cols-3 lg:divide-x lg:divide-y-0">
           <article class="pb-8 lg:pb-0 lg:pr-8">
@@ -164,7 +164,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
                 <Fragment>
                   <div class="border-t border-track pt-6">
                     <h3 class="text-xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Success checkpoint</h3>
-                    <ol class="mt-3 list-inside list-decimal space-y-2 leading-relaxed text-enamel-soft marker:font-mono marker:text-enamel-muted">
+                    <ol class="mt-3 max-w-[68ch] list-inside list-decimal space-y-2 leading-relaxed text-enamel-soft marker:font-mono marker:text-enamel-muted">
                       <li>After <code>task up</code> succeeds, open <code>http://localhost:8080</code> in your browser.</li>
                       <li>Sign in with the generated credentials from the first-start logs, or the administrator credentials configured before first start.</li>
                       <li>Confirm the dashboard shows the broker as connected.</li>
