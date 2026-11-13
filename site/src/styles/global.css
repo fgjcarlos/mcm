@@ -89,6 +89,32 @@
   }
 }
 
+/* Route story stage: [data-route-step] relights the RoutePoster parts marked
+   data-on; lamps and the lock fade up, track and points snap. */
+[data-route-step] [data-on] {
+  opacity: 0;
+}
+
+[data-route-step="0"] [data-on*="0"],
+[data-route-step="1"] [data-on*="1"],
+[data-route-step="2"] [data-on*="2"],
+[data-route-step="3"] [data-on*="3"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-route-step] :is(circle, g)[data-on] {
+    transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* The steps beside the stage dim while another one holds it. */
+@media (width >= 64rem) {
+  [data-route-story][data-live] [data-story-step]:not([data-active]) :is(h3, p) {
+    color: var(--color-enamel-muted);
+  }
+}
+
 ::selection {
   background: var(--color-lamp);
   color: var(--color-frame);
