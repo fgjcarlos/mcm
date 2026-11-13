@@ -115,6 +115,11 @@
   }
 }
 
+/* CaptureViewer: the page behind the open dialog does not scroll. */
+html:has(dialog[data-capture-viewer][open]) {
+  overflow: hidden;
+}
+
 ::selection {
   background: var(--color-lamp);
   color: var(--color-frame);
