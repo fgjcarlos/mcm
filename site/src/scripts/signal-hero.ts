@@ -31,13 +31,35 @@ const onScreen = (el: Element) =>
     io.observe(el);
   });
 
+let booting = false;
+let rebootArmed = false;
+
 export async function bootSignalHero(): Promise<void> {
   const stage = document.querySelector<HTMLElement>("[data-signal-hero]");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)");
-  if (!stage || reduce.matches || !hasWebGL()) return;
+  if (booting || !stage || reduce.matches || !hasWebGL()) return;
 
-  await Promise.all([loadedAndIdle(), onScreen(stage)]);
-  if (reduce.matches) return;
-  const { mountRouteScene } = await import("./route-scene");
-  mountRouteScene(stage, reduce);
+  booting = true;
+  try {
+    await Promise.all([loadedAndIdle(), onScreen(stage)]);
+    if (reduce.matches) return;
+    let scene: typeof import("./route-scene");
+    try {
+      scene = await import("./route-scene");
+    } catch {
+      return; // the chunk failed to load (network, stale deploy): the poster stays
+    }
+    scene.mountRouteScene(stage, reduce);
+  } finally {
+    booting = false;
+  }
+
+  // The scene disposes itself on pagehide; a page restored from the
+  // back/forward cache boots it again through the same gates.
+  if (!rebootArmed) {
+    rebootArmed = true;
+    addEventListener("pageshow", (e) => {
+      if (e.persisted) void bootSignalHero();
+    });
+  }
 }

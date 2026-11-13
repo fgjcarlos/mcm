@@ -31,76 +31,12 @@ import {
   BLADE, BRANCH_DX, BRANCH_DY, COLORS, HOUSING_R, JUNCTION_X, LAMP_R, LOCK_LIFT, LOCK_Y,
   SIGNAL_HOUSING_R, SIGNAL_R, SIGNAL_X, STATIONS, TRACK_W,
 } from "./route-geometry";
-
-// ---- Story: one cycle, in seconds. Odd cycles fail the probe and roll back.
-
-const CYCLE = 11.5;
-const VERIFIED_HOLD = 8; // a moment in a verified cycle that matches the poster
-const START = VERIFIED_HOLD - CYCLE; // cycle -1 = the poster's state; cycle 0 runs the full story
-
-const clamp01 = (p: number) => Math.min(1, Math.max(0, p));
-const easeOut = (p: number) => 1 - (1 - p) ** 3;
-const easeInOut = (p: number) => (p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2);
-// Points and lock: a fast throw, a small overshoot, then it settles.
-const thrown = (p: number) => (p >= 1 ? 1 : 1 - Math.exp(-7 * p) * Math.cos(9 * p));
-const at = (t: number, start: number, dur: number, ease = easeOut) => ease(clamp01((t - start) / dur));
-
-export interface RouteState {
-  /** Lit fraction of edge→review, review→MFA, MFA→apply, apply→probe. */
-  wipe: number[];
-  /** Station lamps: review, MFA, apply, probe. */
-  lamps: number[];
-  /** 0 locked, 1 released. */
-  lock: number;
-  /** 0 set to the branch (previous revision), 1 set to the main line. */
-  points: number;
-  /** Lit fraction of probe→signal, trailing the probe pulse. */
-  probe: number;
-  /** Junction→signal stays lit (0 once a failed route is dropped). */
-  tail: number;
-  /** Probe pulse position along probe→signal, or -1 when none travels. */
-  pulse: number;
-  proceed: number;
-  danger: number;
-  /** Lit fraction of the branch from the junction to the rolled-back lamp. */
-  branch: number;
-  rolled: number;
-}
-
-export function routeState(t: number, fail: boolean): RouteState {
-  const release = 1 - at(t, 10.7, 0.4);
-  const reset = 1 - at(t, 10.75, 0.5, thrown);
-  const probe = at(t, 4.8, 1, easeInOut);
-  const s: RouteState = {
-    wipe: [at(t, 0.3, 0.5), at(t, 1.2, 0.5), at(t, 2.5, 0.5), at(t, 3.8, 0.5)].map((w) => w * release),
-    lamps: [0.8, 2.15, 3.0, 4.3].map((start) => at(t, start, 0.15) * release),
-    lock: at(t, 1.8, 0.45, thrown) * reset,
-    points: at(t, 3.0, 0.5, thrown) * reset,
-    probe: probe * release,
-    tail: 1,
-    pulse: t >= 4.8 && t < 5.8 ? probe : -1,
-    proceed: 0,
-    danger: 0,
-    branch: 0,
-    rolled: 0,
-  };
-  if (fail) {
-    const drop = at(t, 7.0, 0.3);
-    s.danger = at(t, 5.8, 0.12) * (1 - drop);
-    s.tail = 1 - drop;
-    s.points = at(t, 3.0, 0.5, thrown) * (1 - at(t, 7.2, 0.5, thrown));
-    s.branch = at(t, 7.7, 0.5) * release;
-    s.rolled = at(t, 8.2, 0.15) * release;
-  } else {
-    s.proceed = at(t, 5.8, 0.2) * release;
-  }
-  return s;
-}
+import {
+  DEG, VERIFIED_HOLD, clamp01, cycleAt, easeInOut, follow, mixOklab, oklab, rakeFor, routeState,
+  signalLabel, srgb, type Lab, type RouteState,
+} from "./route-motion";
 
 // ---- Colour
-
-type Lab = [number, number, number];
-const srgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as Lab;
 
 /** fg at alpha over the frame, mixed in sRGB like the poster's stroke-opacity. */
 function over(fg: string, alpha: number): string {
@@ -109,42 +45,19 @@ function over(fg: string, alpha: number): string {
   return `#${mix.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function oklab(hex: string): Lab {
-  const [r, g, b] = srgb(hex).map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
-  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
-  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-  return [
-    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-  ];
-}
-
-/** Blends in OKLab: a lighting lamp passes through a darker amber (or green, red), never an olive grey. */
+/** Sets out to the OKLab blend of from→to at t (see mixOklab). */
 function blend(out: Color, from: Lab, to: Lab, t: number): Color {
-  const [L, A, B] = from.map((v, i) => v + (to[i] - v) * clamp01(t));
-  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
-  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
-  const s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
-  return out.setRGB(
-    Math.max(0, 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
-    Math.max(0, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
-    Math.max(0, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
-    LinearSRGBColorSpace,
-  );
+  const [r, g, b] = mixOklab(from, to, t);
+  return out.setRGB(r, g, b, LinearSRGBColorSpace);
 }
 
 // ---- Camera: it starts as the poster's straight-on view of the track diagram,
 // swings round once to rake along it from low on the left ("route opening"),
 // then only trucks after the route light.
 
-const DEG = Math.PI / 180;
 const PITCH = 6 * DEG; // from a little below the track, looking up along it
 const ENTER_AT = 0.7; // after the 700ms poster → canvas crossfade
 const ENTER_FOR = 2.4;
-const DOLLY = 0.16; // truck as a fraction of the route light's distance from the route's middle
-const SPRING = 1.6; // rad/s, critically damped: slow, no overshoot
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 // ---- Volume, in rail px like the rest of the geometry. z points out of the poster.
@@ -336,7 +249,7 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
   let rake = { x: 0, y: 0, d: 1 }; // fitted raking target and distance
   let yaw = 0; // raking turn, toward the signal
   let fov = 30; // vertical, from a horizontal field of view
-  let dollyK = DOLLY; // a narrow stage trucks less
+  let dollyK = 0; // a narrow stage trucks less
 
   /** Looks at (tx, ty) on the diagram from d away, turned by yaw and pitch. */
   function aim(fov: number, pitch: number, yaw: number, tx: number, ty: number, d: number) {
@@ -361,10 +274,7 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
   // poster shows them, as wide as there, in perspective.
   function fit() {
     // A wide stage rakes harder; a narrow one turns less so its far labels stay apart.
-    const q = clamp01((W / H - 2) / 3);
-    yaw = -(12 + 26 * q) * DEG;
-    fov = (2 * Math.atan(Math.tan(((45 + 25 * q) * DEG) / 2) / (W / H))) / DEG;
-    dollyK = DOLLY * (0.4 + 0.6 * q);
+    ({ yaw, fov, dollyK } = rakeFor(W, H));
     const travel = (dollyK * (sx - nodes[1])) / 2;
     // Half a label either side: "Review" left of the first lamp, "Verified" right of the signal.
     const x0 = nodes[1] - 36 - travel;
@@ -507,16 +417,14 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
   const labelIds = [...STATIONS.map((st) => st.id), "signal", "rolled"];
   const labels = labelIds.map((id) => stage.querySelector<HTMLElement>(`[data-stage="${id}"]`));
   let labelKey = "";
-  // probeFailed stays true from the failed probe until the cycle resets, so the
-  // signal label never reads "Verified" while the rollback is running.
-  function updateLabels(s: RouteState, probeFailed = false) {
+  function updateLabels(s: RouteState, signalText = "Verified") {
     const failed = s.danger > 0.5;
     const lit = [...s.lamps.map((v) => v > 0.5), s.proceed > 0.5 || failed, s.rolled > 0.5];
-    const key = `${lit}${probeFailed}`;
+    const key = `${lit}${signalText}`;
     if (key === labelKey) return;
     labelKey = key;
     labels.forEach((el, i) => el?.toggleAttribute("data-lit", lit[i]));
-    if (labels[4]) labels[4].textContent = probeFailed ? "Failed" : "Verified";
+    if (labels[4]) labels[4].textContent = signalText;
   }
 
   const screen = (x: number, yy: number, z = HOUSING_H): [number, number] => {
@@ -553,17 +461,11 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
   let dollyV = 0;
 
   function draw(dt = 0) {
-    const s = START + elapsed;
-    const cycle = Math.floor(s / CYCLE);
-    const t = s - cycle * CYCLE;
-    const fail = cycle % 2 === 1;
+    const { t, fail } = cycleAt(elapsed);
     const state = routeState(t, fail);
     apply(state);
 
-    const goal = dollyK * (focus(state) - (nodes[1] + sx) / 2);
-    if (Number.isNaN(dolly)) dolly = goal;
-    dollyV += (SPRING * SPRING * (goal - dolly) - 2 * SPRING * dollyV) * dt;
-    dolly += dollyV * dt;
+    [dolly, dollyV] = follow(dolly, dollyV, dollyK * (focus(state) - (nodes[1] + sx) / 2), dt);
     const e = easeInOut(clamp01((elapsed - ENTER_AT) / ENTER_FOR));
     const d0 = h / 2 / Math.tan((fov * DEG) / 2);
     aim(fov, PITCH * e, yaw * e, lerp(w / 2, rake.x, e) + dolly * e, lerp(-h / 2, rake.y, e), lerp(d0, rake.d, e));
@@ -574,7 +476,7 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
 
     renderer.render(scene, camera);
     placeLabels();
-    updateLabels(state, fail && t >= 5.8 && t < 10.75);
+    updateLabels(state, signalLabel(t, fail));
     if (!("live" in stage.dataset)) {
       stage.dataset.live = "";
       toggle!.hidden = false;
@@ -610,7 +512,7 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
     if (!raf && !disposed) draw(); // keep a paused frame correct
   });
 
-  // shortcut: a page restored from the back/forward cache keeps the poster, re-mount on pageshow if that matters.
+  // Back to the poster for good; signal-hero.ts boots a fresh scene after a back/forward-cache restore.
   function dispose() {
     disposed = true;
     sync();
@@ -621,6 +523,7 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
     materials.forEach((m) => m.dispose());
     sleepers.dispose();
     glowTex.dispose();
+    renderer.resetState(); // a re-booted scene reuses this canvas's context: leave it in its default state
     renderer.dispose();
     delete stage.dataset.live;
     toggle!.hidden = true;
@@ -628,18 +531,31 @@ export function mountRouteScene(stage: HTMLElement, reduce: MediaQueryList): voi
     updateLabels(routeState(VERIFIED_HOLD, false));
   }
 
+  const showPaused = () => {
+    toggleLabel.textContent = paused ? "Play animation" : "Pause animation";
+    toggleIcon.setAttribute("d", paused ? "M3 1l8 5-8 5z" : "M2 1h3v10H2zM7 1h3v10H7z");
+  };
+  showPaused(); // a scene re-booted after a back/forward-cache restore starts playing
   toggle.addEventListener(
     "click",
     () => {
       paused = !paused;
-      toggleLabel.textContent = paused ? "Play animation" : "Pause animation";
-      toggleIcon.setAttribute("d", paused ? "M3 1l8 5-8 5z" : "M2 1h3v10H2zM7 1h3v10H7z");
+      showPaused();
       sync();
     },
     { signal: ac.signal },
   );
   document.addEventListener("visibilitychange", sync, { signal: ac.signal });
   addEventListener("pagehide", dispose, { signal: ac.signal });
+  // A lost GPU context leaves a blank canvas: fall back to the poster instead.
+  canvas.addEventListener(
+    "webglcontextlost",
+    (e) => {
+      e.preventDefault();
+      dispose();
+    },
+    { signal: ac.signal },
+  );
   reduce.addEventListener("change", (e) => e.matches && dispose(), { signal: ac.signal });
 
   ro.observe(stage);

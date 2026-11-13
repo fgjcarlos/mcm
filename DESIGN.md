@@ -351,6 +351,10 @@ Motion and 3D are allowed freely, under these conditions, all of which the site 
 - **One entrance, then state.** The hero camera opens once from the poster's framing into its rake and then only follows the route light. The story's amber is driven by the scroll itself, so it moves only when the reader does.
 - **Reduced motion.** With `prefers-reduced-motion: reduce`, the scene is never requested. Switching to reduced motion mid-visit disposes the scene and returns to the poster. The story keeps its static diagrams and never runs the scroll-driven light.
 - **No WebGL.** The poster stays, and the page is complete without the scene.
+- **Lost GPU context.** On `webglcontextlost` the scene stops, disposes and fades back to the poster, and the pause button hides; it never leaves a blank canvas.
+- **Scene chunk fails to load.** A rejected `import()` of the scene (network, stale deploy) is caught: the poster stays, with no unhandled rejection.
+- **Back/forward cache.** The scene disposed on `pagehide` boots again on a persisted `pageshow`, through the same gates (motion allowed, WebGL2, on screen).
+- **Zero-size stage.** A hidden or not-yet-laid-out stage cannot latch a NaN or infinite value into the camera's rake or follow.
 - **No scroll-driven animations.** The story steps its lit track on the observer.
 - **Pause control.** A visible Pause/Play animation button appears once the scene is live.
 - **Off-screen pause.** The render loop stops when the hero leaves the viewport or the tab is hidden, and the scene is disposed on `pagehide`.
