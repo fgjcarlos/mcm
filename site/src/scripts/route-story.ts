@@ -1,5 +1,7 @@
 // Scroll story: lights the sticky route stage for the step crossing the
 // viewport centre. IntersectionObserver only; native scrolling is untouched.
+// The amber travelling along the track between steps is CSS scroll-driven
+// animation (global.css, data-scrub); without it, the lit track steps here too.
 // With reduced motion (or no JS) the stage stays hidden and every step keeps
 // its own static diagram.
 

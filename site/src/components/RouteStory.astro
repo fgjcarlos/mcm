@@ -1,7 +1,9 @@
 ---
 // "How a change travels": four steps scroll past a sticky route stage that
-// lights station by station (desktop, motion allowed, JS). Everywhere else
-// each step carries its own static diagram strip.
+// lights station by station (desktop, motion allowed, JS); where scroll-driven
+// animations exist, amber travels along its track with the scroll (each step
+// names its view timeline). Everywhere else each step carries its own static
+// diagram strip.
 import RoutePoster from "./RoutePoster.astro";
 import { STORY_STEPS } from "../scripts/route-geometry";
 
@@ -42,13 +44,13 @@ const steps = [
   <div aria-hidden="true" class="hidden lg:group-data-live:col-span-7 lg:group-data-live:col-start-6 lg:group-data-live:row-start-1 lg:group-data-live:block">
     <div data-route-stage data-route-step="0" class="sticky top-[calc(50svh-12rem)] flex h-96 flex-col justify-center overflow-hidden border-y border-track px-8">
       <div class="route-rail relative -mt-8 h-0 [--route-scale:1.25] xl:[--route-scale:1.5]">
-        <RoutePoster step="review" uid="route-stage" labels />
+        <RoutePoster step="review" uid="route-stage" labels scrub />
       </div>
     </div>
   </div>
   <ol class="max-w-3xl space-y-16 lg:group-data-live:col-span-5 lg:group-data-live:row-start-1 lg:group-data-live:space-y-0">
     {steps.map((s, i) => (
-      <li data-story-step class="lg:group-data-live:flex lg:group-data-live:min-h-[75svh] lg:group-data-live:flex-col lg:group-data-live:justify-center lg:group-data-live:first:min-h-96">
+      <li data-story-step style={`view-timeline-name:--story-${i}`} class="lg:group-data-live:flex lg:group-data-live:min-h-[55svh] lg:group-data-live:flex-col lg:group-data-live:justify-center lg:group-data-live:first:min-h-96">
         <div aria-hidden="true" class="-mx-6 mb-6 h-36 overflow-hidden px-6 lg:group-data-live:hidden">
           <div class="relative top-12 h-0">
             <RoutePoster step={STORY_STEPS[i]} uid={`route-step-${i}`} labels />
