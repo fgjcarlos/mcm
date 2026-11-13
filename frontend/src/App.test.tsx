@@ -1788,10 +1788,10 @@ describe('App', () => {
     window.localStorage.setItem('mcm_admin_token', 'navigation-token')
     vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('navigation-token')))
     render(<App />)
-    for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
+    for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
       expect(await screen.findByRole('heading', { name, level: 2 })).toBeInTheDocument()
     }
-    for (const group of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
+    for (const group of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
       const expanded = group === 'Configuration' || group === 'Diagnostics'
       const control = screen.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${group}` })
       expect(control).toHaveAttribute('aria-controls', `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
@@ -1799,7 +1799,7 @@ describe('App', () => {
     }
     expect(screen.getByRole('region', { name: 'Configuration' })).toBeInTheDocument()
     expect(screen.getByText('Observation · read-only')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /MQTT user directory|Users/ })).toHaveAttribute('href', '/users')
+    expect(screen.getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
     expect(screen.getByRole('link', { name: /ACLs/ })).toHaveAttribute('href', '/acls')
     expect(screen.getByRole('link', { name: /Configuration revisions/ })).toHaveAttribute('href', '/changes')
   })
@@ -1842,12 +1842,66 @@ describe('App', () => {
     }))
     render(<App />)
     await screen.findByText('Signed in')
-    expect(screen.getByRole('link', { name: /Users/ })).toHaveAttribute('href', '/users')
+    expect(screen.getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
     expect(screen.getByRole('link', { name: /Dashboard/ })).toHaveAttribute('href', '/dashboard')
     expect(screen.queryByRole('heading', { name: 'Configuration', level: 2 })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Changes', level: 2 })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Configuration revisions/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Certificates/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Panel operators/ })).not.toBeInTheDocument()
+  })
+
+  it('separates MQTT users from panel operators in unambiguous groups (#355)', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'grouped-accounts-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('grouped-accounts-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'admin', disabled: false, role: 'admin', created_at: '', updated_at: '' }),
+    }))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const mqttAccess = screen.getByRole('region', { name: 'MQTT Access' })
+    const panelAdministration = screen.getByRole('region', { name: 'Panel administration' })
+    expect(within(mqttAccess).getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
+    expect(within(panelAdministration).getByRole('link', { name: /^Panel operators/ })).toHaveAttribute('href', '/admin-users')
+    expect(within(mqttAccess).queryByRole('link', { name: /operators/i })).not.toBeInTheDocument()
+    expect(within(panelAdministration).queryByRole('link', { name: /MQTT/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Broker clients · devices and apps')).toBeInTheDocument()
+    expect(screen.getByText('MCM console · operator accounts')).toBeInTheDocument()
+  })
+
+  it('folds the navigation behind a keyboard-operable menu on narrow screens (#355)', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'mobile-menu-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('mobile-menu-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    const toggle = screen.getByRole('button', { name: 'Menu' })
+    const panel = document.getElementById(toggle.getAttribute('aria-controls') ?? '')
+    // Closed by default below lg: the content comes first, the desktop sidebar stays visible.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveClass('lg:hidden')
+    expect(panel).toHaveClass('hidden', 'lg:block')
+    expect(panel).toContainElement(screen.getByRole('navigation', { name: 'Primary navigation' }))
+
+    toggle.focus()
+    await user.keyboard('{Enter}')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(panel).not.toHaveClass('hidden')
+
+    screen.getByRole('link', { name: /^Dashboard/ }).focus()
+    await user.keyboard('{Escape}')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(panel).toHaveClass('hidden')
+    expect(toggle).toHaveFocus()
+
+    await user.keyboard(' ')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const logs = screen.getByRole('link', { name: /^Logs/ })
+    expect(logs).toHaveAttribute('href', '/logs')
+    await user.click(logs)
+    expect(window.location.pathname).toBe('/logs')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveFocus()
   })
 
   describe('operational dashboard home (#354)', () => {
@@ -1908,7 +1962,7 @@ describe('App', () => {
 
       expect(await screen.findByRole('region', { name: 'MQTT user onboarding' })).toBeInTheDocument()
       expect(window.location.pathname).toBe('/users')
-      expect(screen.getByRole('link', { name: /^Users/ })).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('aria-current', 'page')
     })
 
     it('reports a disconnected broker as a disconnection, not as missing traffic', async () => {
@@ -2001,7 +2055,7 @@ describe('App', () => {
 
     it.each([
       ['/logs', /^Logs/],
-      ['/users', /^Users/],
+      ['/users', /^MQTT users/],
       ['/deploy', /^Deploy/],
     ])('still opens %s on a direct browser load without redirecting to the dashboard', async (path, linkName) => {
       window.history.replaceState(null, '', path)
@@ -2020,7 +2074,7 @@ describe('App', () => {
 
       await userEvent.click(screen.getByRole('link', { name: /^Dashboard/ }))
       await screen.findByRole('region', { name: 'Broker health' })
-      await userEvent.click(screen.getByRole('link', { name: /^Users/ }))
+      await userEvent.click(screen.getByRole('link', { name: /^MQTT users/ }))
 
       expect(await screen.findByRole('button', { name: 'Add User' })).toBeInTheDocument()
       expect(screen.queryByRole('region', { name: 'MQTT user onboarding' })).not.toBeInTheDocument()

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { AdminUser } from '../auth/useAuthSession'
 import type { BrokerConnectionStatus, BrokerStreamState } from '../broker/useBrokerStream'
 
@@ -42,20 +42,46 @@ export function DashboardFrame({
   children,
 }: DashboardFrameProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['Configuration']))
+  // Below lg the sidebar folds behind a menu button so the content comes first.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const closeMenu = () => {
+    setMenuOpen(false)
+    menuButtonRef.current?.focus()
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-8">
-        <aside className="mb-4 w-full rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur lg:mb-0 lg:w-80 lg:p-6">
-          <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-5">
+        <aside
+          className="mb-4 w-full rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur lg:mb-0 lg:w-80 lg:p-6"
+          onKeyDown={({ key }) => {
+            if (key === 'Escape' && menuOpen) closeMenu()
+          }}
+        >
+          <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
               <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Control Manager</h1>
             </div>
-            <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">Alpha</div>
+            <div className="flex items-center gap-2">
+              <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">Alpha</div>
+              <button
+                ref={menuButtonRef}
+                type="button"
+                aria-expanded={menuOpen}
+                aria-controls="primary-menu"
+                onClick={() => setMenuOpen((open) => !open)}
+                className="flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 lg:hidden"
+              >
+                <span aria-hidden="true">{menuOpen ? '×' : '≡'}</span>
+                Menu
+              </button>
+            </div>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div id="primary-menu" className={`${menuOpen ? 'block' : 'hidden'} mt-5 border-t border-white/10 pt-1 lg:block`}>
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Broker</span>
               <span className={`h-3 w-3 rounded-full ${brokerStatus === 'connected' ? 'bg-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.9)]' : 'bg-rose-400'}`} />
@@ -65,7 +91,7 @@ export function DashboardFrame({
           </div>
 
           <nav className="mt-8 space-y-2" aria-label="Primary navigation">
-            {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration'].map((group) => {
+            {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration'].map((group) => {
               const items = navItems.filter((item) => (item.group ?? 'Diagnostics') === group)
               if (!items.length) return null
               const groupId = `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
@@ -97,6 +123,9 @@ export function DashboardFrame({
                   {observationGroup ? (
                     <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/90">Observation · read-only</p>
                   ) : null}
+                  {groupHints[group] ? (
+                    <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{groupHints[group]}</p>
+                  ) : null}
                   <div
                     id={groupId}
                     role="region"
@@ -114,6 +143,7 @@ export function DashboardFrame({
                           onClick={(event) => {
                             event.preventDefault()
                             onSelectNav(item)
+                            if (menuOpen) closeMenu()
                           }}
                           className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
                             isActive
@@ -151,6 +181,7 @@ export function DashboardFrame({
               </button>
             </div>
           </div>
+          </div>
         </aside>
 
         <main className="flex-1 lg:pl-6">
@@ -175,6 +206,12 @@ export function DashboardFrame({
       </div>
     </div>
   )
+}
+
+// Says whose accounts each group manages, so broker clients and console operators never blur.
+const groupHints: Record<string, string> = {
+  'MQTT Access': 'Broker clients · devices and apps',
+  'Panel administration': 'MCM console · operator accounts',
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

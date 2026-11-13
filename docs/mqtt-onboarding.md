@@ -1,7 +1,7 @@
 # The MQTT onboarding journey
 
 MCM admits an MQTT user in one journey: the user, its access rule, the
-preview and the apply, without leaving the **Users** panel. The journey
+preview and the apply, without leaving the **MQTT users** panel. The journey
 exists because the alta used to be a multi-window errand: create the user
 in *Users*, create the rule in *ACLs*, then go to *Changes*, preview,
 apply and confirm MFA. The intermediate "saved but not applied" state is
@@ -41,7 +41,7 @@ into the Mosquitto ACL file.
   `POST /api/v1/auth/mfa/step-up`. The button stays disabled until the
   proof exists, the proof is sent in the `X-MCM-MFA` header, and it is
   kept in browser memory only. An account without an enrollment is
-  refused; enable it under **Administration → Account**.
+  refused; enable it under **Panel administration → Account**.
 - **Activation verification.** The apply still verifies the activation
   against the live broker and rolls back from the snapshot when the
   verification fails. The journey reports that outcome; it never decides
