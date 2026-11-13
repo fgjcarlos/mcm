@@ -1,0 +1,28 @@
+---
+import type { ImageMetadata } from "astro";
+
+interface Props {
+  image: ImageMetadata;
+  alt: string;
+  openLabel: string;
+  /** Forces a visual state, for the /system showcase only. */
+  state?: "hover" | "focus";
+  class?: string;
+}
+
+const { image, alt, openLabel, state, class: className } = Astro.props;
+---
+
+<figure class:list={["min-w-0", className]}>
+  <a
+    class="block border border-track-strong transition-colors duration-150 hover:border-enamel-muted data-[state=hover]:border-enamel-muted"
+    href={image.src}
+    aria-label={openLabel}
+    data-state={state}
+  >
+    <img class="block h-auto w-full" src={image.src} width={image.width} height={image.height} alt={alt} loading="lazy" />
+  </a>
+  <figcaption class="mt-4 max-w-[72ch] text-sm leading-relaxed text-enamel-soft">
+    <slot />
+  </figcaption>
+</figure>

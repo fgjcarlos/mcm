@@ -1,0 +1,23 @@
+---
+interface Props {
+  n: number;
+  label: string;
+  code: string;
+}
+
+const { n, label, code } = Astro.props;
+// Callers may pass a falsy expression; only render the slot when it has markup.
+const extra = Astro.slots.has("default") ? (await Astro.slots.render("default")).trim() : "";
+---
+
+<li class="group grid grid-cols-[2.75rem_minmax(0,1fr)] gap-x-4 sm:grid-cols-[3rem_minmax(0,1fr)] sm:gap-x-6">
+  <div class="flex flex-col items-center">
+    <span class="flex size-11 items-center justify-center rounded-[2px] bg-enamel font-display text-xl font-bold leading-none text-frame shadow-[inset_0_1px_0_rgb(255_255_255/0.4),inset_0_-2px_0_rgb(0_0_0/0.22)] sm:size-12">{String(n).padStart(2, "0")}</span>
+    <span aria-hidden="true" class="mt-3 w-px flex-1 bg-track-strong group-last:hidden"></span>
+  </div>
+  <div class="min-w-0 pb-12 group-last:pb-0">
+    <p class="pt-2.5 font-display text-lg font-semibold uppercase leading-tight tracking-[0.08em] text-enamel">{label}</p>
+    <pre tabindex="0" class="mt-3 overflow-x-auto border border-track-strong bg-frame-raised px-4 py-3 font-mono text-sm leading-relaxed"><code>{code}</code></pre>
+    {extra && <div class="mt-10"><Fragment set:html={extra} /></div>}
+  </div>
+</li>

@@ -1,0 +1,29 @@
+---
+type Status = "verified" | "rolled-back" | "failed" | "pending";
+
+interface Props {
+  status: Status;
+}
+
+const { status } = Astro.props;
+
+const labels: Record<Status, string> = {
+  verified: "verified",
+  "rolled-back": "rolled back",
+  failed: "failed",
+  pending: "pending",
+};
+
+// Colour is never the only signal: the label always renders, and pending is a hollow lamp.
+const lamps: Record<Status, string> = {
+  verified: "bg-status-verified",
+  "rolled-back": "bg-status-rolled-back",
+  failed: "bg-status-failed",
+  pending: "border-2 border-enamel-muted",
+};
+---
+
+<span class="inline-flex items-center gap-2 align-baseline font-mono text-[0.8125rem] font-medium text-enamel-bright" data-status={status}>
+  <span aria-hidden="true" class:list={["size-2.5 shrink-0 self-center rounded-full", lamps[status]]}></span>
+  <slot>{labels[status]}</slot>
+</span>
