@@ -5,9 +5,9 @@ max_score: 40
 na_heuristics: 
 p0_count: 0
 p1_count: 3
-target_identity: "file:/home/fgjcarlos/projects/mcm/site/src/pages/index.astro"
+target_identity: "file:site/src/pages/index.astro"
 target_fingerprint: "sha256:444ecc8e5f8ce09f056b3a3e88ba4867f37f717f8bd149a0b89eb1d8a18b8bce"
-target_path: /home/fgjcarlos/projects/mcm/site/src/pages/index.astro
+target_path: site/src/pages/index.astro
 timestamp: 2026-11-12T20-55-11Z
 slug: site-src-pages-index-astro
 ---
