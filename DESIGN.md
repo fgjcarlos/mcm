@@ -149,6 +149,10 @@ components:
     textColor: "{colors.enamel-bright}"
     rounded: "{rounded.lamp}"
     size: "10px"
+  clearance-lamp:
+    backgroundColor: "{colors.frame-high}"
+    rounded: "{rounded.lamp}"
+    size: "12px"
 ---
 
 # Design System: Mosquitto Control Manager (MCM)
@@ -212,6 +216,8 @@ Source of truth: the `@theme` block in `site/src/styles/global.css`. Contrast on
 **The Amber Route Rule.** Amber says "a route is set": the lit track, a caution that applies before you act, and the route back after a rollback. It is never a generic highlight.
 
 **The Colour Is Never Alone Rule.** Every lamp state also has a word: StatusLamp always renders its label, pending is a hollow ring, and the diagram labels say Verified, Failed or Rolled back.
+
+**The Not Yet Cleared Rule.** Every limit, planned piece and deferred area is said once, as an unlit ClearanceRow in the one Not yet cleared list; the CautionPanel keeps only the before-you-apply warning and its links.
 
 ## Typography
 
@@ -288,13 +294,14 @@ The call to action is a lever plate, and pulling it throws it.
 
 ### Chips: Plate and StatusLamp
 
-- **Plate:** a static engraved fact (Alpha, Apache 2.0, a version), with 2px corners, Big Shoulders 700 0.9375rem capitals and the plate bevel. Neutral is frame-high with enamel text, lamp is amber with frame text (Alpha only), and blue is lever-blue with enamel-bright text. It has no interactive states.
+- **Plate:** a static engraved fact (Alpha, Apache 2.0, a version), with 2px corners, Big Shoulders 700 0.9375rem capitals and the plate bevel. Neutral is frame-high with enamel text (also Limit and Deferred), lamp is amber with frame text (Alpha only), and blue is lever-blue with enamel-bright text (also Planned). It has no interactive states.
 - **StatusLamp:** a 10px round lamp plus its label in Overpass Mono 0.8125rem: verified (green), rolled back (amber), failed (red), pending (a hollow enamel-muted ring). The label always renders.
 
 ### Cards / Containers: TrackSection and CautionPanel
 
 - **TrackSection:** the section container. A Big Shoulders headline, then the track rule (3px enamel set segment, 1px track-strong hairline, signal ring), an optional lede and the content. It has no background, border or padding.
 - **CautionPanel:** the one boxed region on the page, used for "before you apply, read this". A 1px amber border at 45%, a 6% amber tint, an 8px 45° amber hazard stripe on top and 24–40px padding. It is never nested and never repeated on a page.
+- **NotYetCleared and ClearanceRow:** the one list of what is not done, beside Available controls. A Title heading, a caption-size legend for the plates, then ClearanceRows between track hairlines: an unlit 12px lamp (frame-high lens, 2px enamel-muted ring), a Big Shoulders step-label title, a Plate (Planned blue; Limit or Deferred neutral) and one plain sentence below. An optional note carries the single link to the full list. It is not a box, nothing in it is lit, and Available controls next to it stays neutral, never green.
 - **Rule:** nothing is nested inside a box. Columns are divided by track hairlines.
 
 ### Inputs / Fields

@@ -553,6 +553,14 @@
       "css": ".ds-caution { border: 1px solid rgb(224 165 38 / 0.45); background: rgb(224 165 38 / 0.06); } .ds-stripe { height: 8px; background: repeating-linear-gradient(-45deg, var(--color-lamp, #e0a526) 0 10px, transparent 10px 20px); } .ds-caution-in { padding: 40px; } .ds-caution h2 { margin: 0; max-width: 48rem; font: 700 2.25rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-caution p { margin-top: 20px; max-width: 68ch; font: 400 1rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); }"
     },
     {
+      "name": "Not Yet Cleared",
+      "kind": "custom",
+      "refersTo": "clearance-lamp",
+      "description": "The one list of what is not done: unlit lamp, engraved title, plate (Planned blue; Limit or Deferred neutral) and one plain sentence per row, between track hairlines. Never boxed, never lit.",
+      "html": "<article class=\"ds-nyc\"><h3>Not yet cleared</h3><ul><li><span class=\"ds-nyc-lamp\" aria-hidden=\"true\"></span><span class=\"ds-nyc-title\">Extra configuration files</span><span class=\"ds-plate ds-plate-blue\">Planned</span><p>Files loaded from a folder with <code>include_dir</code> are read but cannot be edited.</p></li><li><span class=\"ds-nyc-lamp\" aria-hidden=\"true\"></span><span class=\"ds-nyc-title\">Payload checks</span><span class=\"ds-plate ds-plate-neutral\">Limit</span><p>Sparkplug B and JSON Schema diagnostics inspect messages for issues but never block or reject them.</p></li></ul></article>",
+      "css": ".ds-nyc h3 { margin: 0; font: 600 1.5rem/1.2 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-nyc ul { margin: 16px 0 0; padding: 0; list-style: none; border-block: 1px solid var(--color-track, rgb(216 210 196 / 0.14)); } .ds-nyc li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; column-gap: 16px; row-gap: 6px; padding: 14px 0; } .ds-nyc li + li { border-top: 1px solid var(--color-track, rgb(216 210 196 / 0.14)); } .ds-nyc-lamp { width: 12px; height: 12px; box-sizing: border-box; border-radius: 9999px; border: 2px solid var(--color-enamel-muted, #9a9488); background: var(--color-frame-high, #212327); } .ds-nyc-title { font: 600 1.125rem/1.25 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-nyc p { grid-column: 2 / span 2; margin: 0; font: 400 1rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); }"
+    },
+    {
       "name": "Text Link",
       "kind": "custom",
       "refersTo": null,
