@@ -171,9 +171,9 @@ const navItems: NavItem[] = [
   {
     id: 'users',
     group: 'MQTT Access',
-    label: 'Users',
+    label: 'MQTT users',
     path: '/users',
-    eyebrow: 'Identity',
+    eyebrow: 'Broker clients',
     title: 'MQTT user directory',
     description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
   },
@@ -276,7 +276,7 @@ const navItems: NavItem[] = [
   // Administration
   {
     id: 'security',
-    group: 'Administration',
+    group: 'Panel administration',
     label: 'Security',
     path: '/security',
     eyebrow: 'Audit',
@@ -285,7 +285,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'audit',
-    group: 'Administration',
+    group: 'Panel administration',
     label: 'Audit',
     path: '/audit',
     eyebrow: 'Security',
@@ -294,7 +294,7 @@ const navItems: NavItem[] = [
   },
   {
     id: 'account',
-    group: 'Administration',
+    group: 'Panel administration',
     label: 'Account',
     path: '/account',
     eyebrow: 'Security',
@@ -303,11 +303,11 @@ const navItems: NavItem[] = [
   },
   {
     id: 'admin-users',
-    group: 'Administration',
-    label: 'Operators',
+    group: 'Panel administration',
+    label: 'Panel operators',
     path: '/admin-users',
-    eyebrow: 'Administration',
-    title: 'Admin user directory',
+    eyebrow: 'Console accounts',
+    title: 'Panel operator directory',
     description: 'Manage dashboard operators: provision accounts, assign roles, reset credentials, and deactivate stale users.',
     minRole: 'admin',
   },

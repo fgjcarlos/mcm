@@ -124,10 +124,25 @@ try {
   await page.locator('input[autocomplete="username"]').fill('admin')
   await page.locator('input[autocomplete="current-password"]').fill('ui-test-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Administration']) {
+  for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
     await check(page.getByRole('navigation').getByRole('heading', { name, exact: true })).toBeVisible()
   }
-  await openNavigationGroup('Administration')
+  // #355: at 360 px the navigation folds behind a keyboard-operable Menu button.
+  await page.setViewportSize({ width: 360, height: 740 })
+  const menu = page.getByRole('button', { name: 'Menu', exact: true })
+  await check(menu).toHaveAttribute('aria-expanded', 'false')
+  await check(page.getByRole('navigation')).toBeHidden()
+  await check(page.locator('main h2').first()).toBeInViewport()
+  await menu.focus()
+  await page.keyboard.press('Enter')
+  await check(page.getByRole('navigation')).toBeVisible()
+  await page.locator('nav a[href="/dashboard"]').focus()
+  await page.keyboard.press('Escape')
+  await check(page.getByRole('navigation')).toBeHidden()
+  await check(menu).toBeFocused()
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await check(menu).toBeHidden()
+  await openNavigationGroup('Panel administration')
   await page.locator('nav a[href="/account"]').click()
   const enrollment = page.waitForResponse((response) => response.url().endsWith('/auth/mfa/setup'))
   await page.getByRole('button', { name: 'Enable MFA', exact: true }).click()
