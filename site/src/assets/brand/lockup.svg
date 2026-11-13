@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 32" width="96" height="32" role="img" aria-label="MCM">
+  <g fill="none" stroke-width="3" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M9 25H30" stroke="#d8d2c4"/>
+    <path d="M2 25H9L18 16" stroke="#e0a526"/>
+  </g>
+  <circle cx="24" cy="10" r="5.5" fill="#e0a526"/>
+  <!-- MCM letterforms drawn at the mark's stroke weight. -->
+  <path fill="#d8d2c4" d="M40 25.5V7.5H43L48 15.2L53 7.5H56V25.5H53V13.5L48 21.2L43 13.5V25.5ZM61 7.5H73V10.5H64V22.5H73V25.5H61ZM78 25.5V7.5H81L86 15.2L91 7.5H94V25.5H91V13.5L86 21.2L81 13.5V25.5Z"/>
+</svg>
