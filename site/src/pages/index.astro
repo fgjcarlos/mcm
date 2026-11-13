@@ -1,5 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import CaptureViewer from "../components/CaptureViewer.astro";
 import CautionPanel from "../components/CautionPanel.astro";
 import CommandStep from "../components/CommandStep.astro";
 import EvidenceFigure from "../components/EvidenceFigure.astro";
@@ -38,7 +39,9 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
           <div class="flex flex-wrap items-center gap-3">
             <Plate variant="lamp">Alpha</Plate>
             <Plate>Apache 2.0</Plate>
-            <a class="link text-sm text-enamel-soft" href={`${repoURL}/actions/workflows/ci.yml`} rel="noopener noreferrer" target="_blank">Image CI workflow</a>
+            <a class="inline-flex" href={`${repoURL}/actions/workflows/ci.yml`} rel="noopener noreferrer" target="_blank">
+              <img class="h-5 w-auto" src={`${repoURL}/actions/workflows/ci.yml/badge.svg?branch=main`} height="20" alt="CI workflow status on main: the GitHub Actions badge reads passing when the latest run succeeded and failing when it did not" />
+            </a>
           </div>
         </div>
 
@@ -66,7 +69,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </TrackSection>
 
       <TrackSection class="mt-28 sm:mt-36" titleId="availability-title" title="What you can change today—and what remains.">
-        <p slot="lede">The current alpha manages one Mosquitto broker. The available controls are real; coverage and production readiness are not complete.</p>
+        <p slot="lede">The available controls are real; coverage and production readiness are not complete.</p>
         <div class="grid divide-y divide-track lg:grid-cols-3 lg:divide-x lg:divide-y-0">
           <article class="pb-8 lg:pb-0 lg:pr-8">
             <h3 class="text-2xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Available controls</h3>
@@ -76,11 +79,16 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
               <li><span class="font-semibold text-enamel">What it carries:</span> general settings and bridges.</li>
               <li><span class="font-semibold text-enamel">What it extends:</span> plugins including Dynamic Security, and editing the main <code>mosquitto.conf</code> file.</li>
             </ul>
-            <p class="mt-4 leading-relaxed text-enamel-soft">Applying changes requires a fresh multi-factor authentication (MFA) check: enter a new code from your authenticator app.</p>
           </article>
           <article class="py-8 lg:px-8 lg:py-0">
             <h3 class="text-2xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Remaining work</h3>
-            <p class="mt-4 leading-relaxed text-enamel-soft">Native ACL coverage is still partial. Five directives per supported version are validated and preserved but edited only in the advanced root editor, and the included files of an <code>include_dir</code> tree are read but not edited. The <a class="link" href={`${repoURL}/blob/main/docs/support-matrix.md`}>support matrix</a> lists the exact coverage of every Mosquitto version.</p>
+            <p class="mt-4 leading-relaxed text-enamel-soft">Some parts of a broker configuration cannot be edited from MCM's forms yet:</p>
+            <ul class="mt-4 space-y-3 leading-relaxed text-enamel-soft">
+              <li><span class="font-semibold text-enamel">Access rules:</span> the access control list (ACL) editor cannot edit every kind of Mosquitto rule yet.</li>
+              <li><span class="font-semibold text-enamel">Five settings per supported version:</span> MCM checks and keeps them, but you change them only by editing the main <code>mosquitto.conf</code> file in the advanced editor.</li>
+              <li><span class="font-semibold text-enamel">Extra configuration files:</span> files loaded from a folder with <code>include_dir</code> are read but cannot be edited.</li>
+            </ul>
+            <p class="mt-4 leading-relaxed text-enamel-soft">The <a class="link" href={`${repoURL}/blob/main/docs/support-matrix.md`}>support matrix</a> lists exactly what MCM covers for each Mosquitto version.</p>
           </article>
           <article class="pt-8 lg:pl-8 lg:pt-0">
             <h3 class="text-2xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Known limitations</h3>
@@ -94,24 +102,22 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </TrackSection>
 
       <TrackSection class="mt-28 sm:mt-36" titleId="evidence-title" title="Review, apply, verify.">
-        <p slot="lede">Real captures from a running MCM local stack. Select any image to inspect its full-size file. The dashboard also has a Broker diagnostics workspace reporting the broker's own view of connections, logs and metrics.</p>
+        <p slot="lede">Real captures from a running MCM local stack. Select any image to inspect it at full size. The dashboard also has a Broker diagnostics workspace reporting the broker's own view of connections, logs and metrics.</p>
         <EvidenceFigure
           image={deployPanel}
           alt="MCM deploy panel showing configuration preview controls and deployment history with a verified activation entry."
           openLabel="Open full-size MCM deploy panel capture"
         >
-          <p>Deploy panel: preview configuration changes before applying them. Sensitive changes require a fresh authenticator code.</p>
-          <ul class="mt-3 space-y-2">
-            <li><StatusLamp status="verified">Verified activation:</StatusLamp> the probe confirmed the change took effect.</li>
-            <li><StatusLamp status="rolled-back">Rolled back deployment:</StatusLamp> the change was reverted because the activation could not be confirmed.</li>
-            <li><StatusLamp status="failed">Failed apply:</StatusLamp> the apply failed and the previous configuration was restored.</li>
+          <ul aria-label="Deployment outcomes in this capture" class="mb-3 flex flex-wrap gap-x-6 gap-y-2">
+            <li><StatusLamp status="verified" /></li>
+            <li><StatusLamp status="rolled-back" /></li>
+            <li><StatusLamp status="failed" /></li>
           </ul>
-          <p class="mt-3">These records show both recovery paths, not only successful deployments.</p>
+          <p>Deploy panel: preview configuration changes before applying them; the history records every outcome, including both recovery paths.</p>
           <details class="mt-3">
             <summary class="text-enamel">Why the outcomes occurred</summary>
-            <p class="mt-1">Entry 3 was verified by a user-grant probe. Entry 2 rolled back because the configured managed service account lacked a user read/write grant, so no activation probe was available. Entry 1 failed during apply and restored the saved snapshot.</p>
+            <p class="mt-1">Entry 3 was verified by a user-grant probe, entry 2 rolled back because no activation probe was available, and entry 1 failed during apply and restored the saved snapshot.</p>
           </details>
-          <a class="link mt-3 inline-block" href={deployPanel.src}>Open full-size capture</a>.
         </EvidenceFigure>
         <div class="mt-16 grid gap-12 sm:grid-cols-2 sm:gap-8">
           <EvidenceFigure
@@ -119,20 +125,20 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
             alt="MCM broker overview showing connection status, observed message rate and top topics."
             openLabel="Open full-size broker overview capture"
           >
-            Broker overview: check the broker connection status, observed message rate, and top topics. Observed messages are not a complete client inventory. <a class="link" href={brokerOverview.src}>Full-size</a>.
+            Broker overview: check the broker connection status, observed message rate, and top topics. Observed messages are not a complete client inventory.
           </EvidenceFigure>
           <EvidenceFigure
             image={mqttUsers}
             alt="MCM MQTT user directory showing user status and controls to disable an account or reset its password."
             openLabel="Open full-size MQTT user directory capture"
           >
-            MQTT user directory: check account status and available controls to disable a user or reset their password. <a class="link" href={mqttUsers.src}>Full-size</a>.
+            MQTT user directory: check account status and available controls to disable a user or reset their password.
           </EvidenceFigure>
         </div>
       </TrackSection>
 
       <CautionPanel class="mt-28 sm:mt-36" titleId="production-title" title="Alpha software; review production limits before applying changes.">
-        <p>The configuration journey is implemented and verified against a real Mosquitto, but some directives have no dedicated control and MCM is still alpha. Review the deployment requirements before enabling writes on an existing broker.</p>
+        <p>The configuration journey is implemented and verified against a real Mosquitto, but some directives have no dedicated control. Review the deployment requirements before enabling writes on an existing broker.</p>
         <div class="mt-6 flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold text-enamel">
           <a class="link" href={`${repoURL}/issues/308`}>Configuration tracker</a>
           <a class="link" href={`${repoURL}/blob/main/docs/support-matrix.md`}>Directive support matrix</a>
@@ -146,10 +152,10 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
         <ul class="mt-4 flex flex-wrap gap-2">
           {stack.map((item) => <li class="border border-track-strong px-3 py-1 font-mono text-xs text-enamel">{item}</li>)}
         </ul>
-        <p class="mt-4 text-sm leading-relaxed text-enamel-muted">MCM's application includes the dashboard and management API; Mosquitto runs separately. SQLite is the only implemented management database.</p>
+        <p class="mt-4 text-sm leading-relaxed text-enamel-muted">MCM's application includes the dashboard and management API; Mosquitto runs separately.</p>
       </details>
 
-      <TrackSection class="mt-28 sm:mt-36" id="quick-start" titleId="quick-start-title" title="Run the alpha locally.">
+      <TrackSection class="mt-28 sm:mt-36" id="quick-start" titleId="quick-start-title" title="Run MCM locally.">
         <p slot="lede">For this local development setup, install <a class="link" href="https://git-scm.com/downloads">Git</a> to clone the source, <a class="link" href="https://docs.docker.com/compose/install/">Docker Compose</a> to run the containers, and <a class="link" href="https://taskfile.dev/installation/">Task</a> to run the project commands. These steps start a development stack, not a production deployment.</p>
         <ol>
           {quickStart.map((step, idx) => (
@@ -159,7 +165,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
                   <div class="border-t border-track pt-6">
                     <h3 class="text-xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Success checkpoint</h3>
                     <ol class="mt-3 list-inside list-decimal space-y-2 leading-relaxed text-enamel-soft marker:font-mono marker:text-enamel-muted">
-                      <li>Open <a class="link font-mono text-enamel" href="http://localhost:8080">http://localhost:8080</a>.</li>
+                      <li>After <code>task up</code> succeeds, open <code>http://localhost:8080</code> in your browser.</li>
                       <li>Sign in with the generated credentials from the first-start logs, or the administrator credentials configured before first start.</li>
                       <li>Confirm the dashboard shows the broker as connected.</li>
                     </ol>
@@ -198,4 +204,5 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </footer>
     </div>
   </main>
+  <CaptureViewer />
 </Layout>
