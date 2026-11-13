@@ -1,0 +1,23 @@
+---
+interface Props {
+  variant?: "neutral" | "lamp" | "blue";
+}
+
+const { variant = "neutral" } = Astro.props;
+
+// Contrast: enamel on frame-high 10.4, frame on lamp 8.6, enamel-bright on lever-blue 5.52.
+const variants = {
+  neutral: "bg-frame-high text-enamel ring-1 ring-inset ring-track-strong",
+  lamp: "bg-lamp text-frame",
+  blue: "bg-lever-blue text-enamel-bright",
+};
+---
+
+<span
+  class:list={[
+    "inline-flex items-center rounded-[2px] px-2.5 pb-[0.3rem] pt-[0.35rem] font-display text-[0.9375rem] font-bold uppercase leading-none tracking-[0.12em] shadow-[inset_0_1px_0_rgb(255_255_255/0.2),inset_0_-1px_0_rgb(0_0_0/0.4)]",
+    variants[variant],
+  ]}
+>
+  <slot />
+</span>

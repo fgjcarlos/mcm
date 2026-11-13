@@ -1,266 +1,670 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-02-06T12:00:00Z",
+  "generatedAt": "2026-11-13T07:04:19Z",
   "title": "Design System: Mosquitto Control Manager (MCM)",
   "extensions": {
     "colorMeta": {
-      "signal": {
-        "role": "primary",
-        "displayName": "Signal",
-        "canonical": "#00d3f3",
+      "frame": {
+        "role": "neutral",
+        "displayName": "Frame",
+        "canonical": "#111214",
+        "oklch": "oklch(18.2% 0.004 264.5)",
+        "cssVar": "--color-frame",
         "tonalRamp": [
-          "#cefafe",
-          "#a2f4fd",
-          "#53eafd",
-          "#00d3f3",
-          "#06b6d4",
-          "#0e7490"
+          "#0b0b0c",
+          "#242527",
+          "#414244",
+          "#606164",
+          "#818285",
+          "#a4a5a7",
+          "#c8c9cb",
+          "#eeeeef"
         ]
       },
-      "signal-bright": {
-        "role": "primary",
-        "displayName": "Signal Bright",
-        "canonical": "#53eafd"
-      },
-      "signal-outline": {
-        "role": "primary",
-        "displayName": "Signal Outline",
-        "canonical": "#a2f4fd"
-      },
-      "signal-pale": {
-        "role": "primary",
-        "displayName": "Signal Pale",
-        "canonical": "#cefafe"
-      },
-      "caution": {
-        "role": "tertiary",
-        "displayName": "Caution",
-        "canonical": "#ffd230",
+      "frame-raised": {
+        "role": "neutral",
+        "displayName": "Frame Raised",
+        "canonical": "#191a1d",
+        "oklch": "oklch(21.8% 0.006 271.1)",
+        "cssVar": "--color-frame-raised",
         "tonalRamp": [
-          "#fef3c6",
-          "#fee685",
-          "#ffd230",
-          "#ffb900",
-          "#f59e0b"
+          "#0b0b0c",
+          "#242527",
+          "#414245",
+          "#606165",
+          "#818286",
+          "#a4a5a8",
+          "#c8c9cb",
+          "#eeeeef"
         ]
       },
-      "caution-soft": {
+      "frame-high": {
+        "role": "neutral",
+        "displayName": "Frame High",
+        "canonical": "#212327",
+        "oklch": "oklch(25.6% 0.008 264.4)",
+        "cssVar": "--color-frame-high",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#232528",
+          "#404246",
+          "#5f6166",
+          "#808287",
+          "#a3a5a9",
+          "#c8c9cc",
+          "#eeeeef"
+        ]
+      },
+      "enamel-bright": {
+        "role": "primary",
+        "displayName": "Enamel Bright",
+        "canonical": "#f2ede2",
+        "oklch": "oklch(94.7% 0.016 86.4)",
+        "cssVar": "--color-enamel-bright",
+        "tonalRamp": [
+          "#0d0b08",
+          "#28251e",
+          "#454239",
+          "#656157",
+          "#868278",
+          "#a8a59c",
+          "#cbc9c3",
+          "#efeeec"
+        ]
+      },
+      "enamel": {
+        "role": "primary",
+        "displayName": "Enamel",
+        "canonical": "#d8d2c4",
+        "oklch": "oklch(86.5% 0.020 87.5)",
+        "cssVar": "--color-enamel",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251c",
+          "#464237",
+          "#666154",
+          "#878276",
+          "#a9a59a",
+          "#ccc9c1",
+          "#efeeec"
+        ]
+      },
+      "enamel-soft": {
+        "role": "neutral",
+        "displayName": "Enamel Soft",
+        "canonical": "#b9b3a6",
+        "oklch": "oklch(76.8% 0.019 86.2)",
+        "cssVar": "--color-enamel-soft",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251d",
+          "#464137",
+          "#666155",
+          "#878276",
+          "#a9a59a",
+          "#ccc9c1",
+          "#efeeec"
+        ]
+      },
+      "enamel-muted": {
+        "role": "neutral",
+        "displayName": "Enamel Muted",
+        "canonical": "#9a9488",
+        "oklch": "oklch(66.8% 0.019 84.6)",
+        "cssVar": "--color-enamel-muted",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251d",
+          "#464138",
+          "#666155",
+          "#878277",
+          "#a9a49b",
+          "#ccc9c2",
+          "#efeeec"
+        ]
+      },
+      "lamp": {
+        "role": "secondary",
+        "displayName": "Route Amber",
+        "canonical": "#e0a526",
+        "oklch": "oklch(75.8% 0.147 80.8)",
+        "cssVar": "--color-lamp",
+        "tonalRamp": [
+          "#120900",
+          "#322200",
+          "#573d00",
+          "#7e5a02",
+          "#a87905",
+          "#cb9d45",
+          "#e4c48d",
+          "#f8edda"
+        ]
+      },
+      "proceed": {
+        "role": "secondary",
+        "displayName": "Proceed Green",
+        "canonical": "#2f9e5b",
+        "oklch": "oklch(62.1% 0.141 152.6)",
+        "cssVar": "--color-proceed",
+        "tonalRamp": [
+          "#001004",
+          "#012e14",
+          "#035027",
+          "#03753b",
+          "#319959",
+          "#6aba82",
+          "#a3d8b1",
+          "#e2f4e6"
+        ]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Signal Red",
+        "canonical": "#c8341f",
+        "oklch": "oklch(55.1% 0.188 31.3)",
+        "cssVar": "--color-danger",
+        "tonalRamp": [
+          "#1e0000",
+          "#4b0500",
+          "#7d0f01",
+          "#b31b03",
+          "#d84d37",
+          "#f57d68",
+          "#ffb3a5",
+          "#fee9e5"
+        ]
+      },
+      "danger-text": {
+        "role": "secondary",
+        "displayName": "Signal Red Text",
+        "canonical": "#ec6b55",
+        "oklch": "oklch(68.0% 0.164 31.5)",
+        "cssVar": "--color-danger-text",
+        "tonalRamp": [
+          "#1e0000",
+          "#4b0500",
+          "#7d0f01",
+          "#ab2e1b",
+          "#cf5743",
+          "#ec8370",
+          "#feb4a5",
+          "#fee9e5"
+        ]
+      },
+      "lever-blue": {
         "role": "tertiary",
-        "displayName": "Caution Soft",
-        "canonical": "#fee685"
+        "displayName": "Lever Blue",
+        "canonical": "#1f5fa8",
+        "oklch": "oklch(48.5% 0.133 254.6)",
+        "cssVar": "--color-lever-blue",
+        "tonalRamp": [
+          "#000b1f",
+          "#00244d",
+          "#024180",
+          "#2261aa",
+          "#4984cd",
+          "#76a8e7",
+          "#a9ccf9",
+          "#e4f0fe"
+        ]
       },
-      "caution-bright": {
-        "role": "tertiary",
-        "displayName": "Caution Bright",
-        "canonical": "#fef3c6"
-      },
-      "caution-panel": {
-        "role": "tertiary",
-        "displayName": "Caution Panel",
-        "canonical": "#ffb900"
-      },
-      "floor": {
+      "track": {
         "role": "neutral",
-        "displayName": "Floor",
-        "canonical": "#020617"
+        "displayName": "Track",
+        "canonical": "rgb(216 210 196 / 0.14)",
+        "oklch": "oklch(86.5% 0.020 87.5)",
+        "cssVar": "--color-track",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251c",
+          "#464237",
+          "#666154",
+          "#878276",
+          "#a9a59a",
+          "#ccc9c1",
+          "#efeeec"
+        ],
+        "note": "Translucent enamel over the frame; the ramp follows the enamel hue."
       },
-      "field": {
+      "track-strong": {
         "role": "neutral",
-        "displayName": "Field",
-        "canonical": "#0f172a"
+        "displayName": "Track Strong",
+        "canonical": "rgb(216 210 196 / 0.28)",
+        "oklch": "oklch(86.5% 0.020 87.5)",
+        "cssVar": "--color-track-strong",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251c",
+          "#464237",
+          "#666154",
+          "#878276",
+          "#a9a59a",
+          "#ccc9c1",
+          "#efeeec"
+        ],
+        "note": "Translucent enamel over the frame; the ramp follows the enamel hue."
       },
-      "horizon": {
+      "track-bright": {
         "role": "neutral",
-        "displayName": "Horizon",
-        "canonical": "#1d4e89"
+        "displayName": "Track Bright",
+        "canonical": "rgb(216 210 196 / 0.5)",
+        "oklch": "oklch(86.5% 0.020 87.5)",
+        "cssVar": "--color-track-bright",
+        "tonalRamp": [
+          "#0d0b07",
+          "#28251c",
+          "#464237",
+          "#666154",
+          "#878276",
+          "#a9a59a",
+          "#ccc9c1",
+          "#efeeec"
+        ],
+        "note": "Translucent enamel over the frame; the ramp follows the enamel hue."
       },
-      "ink": {
-        "role": "neutral",
-        "displayName": "Ink",
-        "canonical": "#f1f5f9"
+      "status-verified": {
+        "role": "status",
+        "displayName": "Status Verified",
+        "canonical": "#2f9e5b",
+        "oklch": "oklch(62.1% 0.141 152.6)",
+        "cssVar": "--color-status-verified",
+        "tonalRamp": [
+          "#001004",
+          "#012e14",
+          "#035027",
+          "#03753b",
+          "#319959",
+          "#6aba82",
+          "#a3d8b1",
+          "#e2f4e6"
+        ],
+        "aliasOf": "proceed"
       },
-      "ink-strong": {
-        "role": "neutral",
-        "displayName": "Ink Strong",
-        "canonical": "#e2e8f0"
+      "status-rolled-back": {
+        "role": "status",
+        "displayName": "Status Rolled Back",
+        "canonical": "#e0a526",
+        "oklch": "oklch(75.8% 0.147 80.8)",
+        "cssVar": "--color-status-rolled-back",
+        "tonalRamp": [
+          "#120900",
+          "#322200",
+          "#573d00",
+          "#7e5a02",
+          "#a87905",
+          "#cb9d45",
+          "#e4c48d",
+          "#f8edda"
+        ],
+        "aliasOf": "lamp"
       },
-      "ink-soft": {
-        "role": "neutral",
-        "displayName": "Ink Soft",
-        "canonical": "#cad5e2"
+      "status-failed": {
+        "role": "status",
+        "displayName": "Status Failed",
+        "canonical": "#c8341f",
+        "oklch": "oklch(55.1% 0.188 31.3)",
+        "cssVar": "--color-status-failed",
+        "tonalRamp": [
+          "#1e0000",
+          "#4b0500",
+          "#7d0f01",
+          "#b31b03",
+          "#d84d37",
+          "#f57d68",
+          "#ffb3a5",
+          "#fee9e5"
+        ],
+        "aliasOf": "danger"
       },
-      "ink-muted": {
-        "role": "neutral",
-        "displayName": "Ink Muted",
-        "canonical": "#90a1b9"
-      },
-      "ink-bright": {
-        "role": "neutral",
-        "displayName": "Ink Bright",
-        "canonical": "#ffffff"
-      },
-      "surface": {
-        "role": "surface",
-        "displayName": "Surface",
-        "canonical": "rgba(255,255,255,0.04)"
-      },
-      "surface-strong": {
-        "role": "surface",
-        "displayName": "Surface Strong",
-        "canonical": "rgba(255,255,255,0.07)"
-      },
-      "surface-faint": {
-        "role": "surface",
-        "displayName": "Surface Faint",
-        "canonical": "rgba(255,255,255,0.03)"
-      },
-      "surface-panel": {
-        "role": "surface",
-        "displayName": "Surface Panel",
-        "canonical": "rgba(2,6,23,0.55)"
-      },
-      "surface-code": {
-        "role": "surface",
-        "displayName": "Surface Code",
-        "canonical": "rgba(2,6,23,0.7)"
-      },
-      "surface-chip": {
-        "role": "surface",
-        "displayName": "Surface Chip",
-        "canonical": "rgba(2,6,23,0.4)"
-      },
-      "hairline": {
-        "role": "border",
-        "displayName": "Hairline",
-        "canonical": "rgba(255,255,255,0.10)"
-      },
-      "hairline-strong": {
-        "role": "border",
-        "displayName": "Hairline Strong",
-        "canonical": "rgba(255,255,255,0.15)"
-      },
-      "hairline-bright": {
-        "role": "border",
-        "displayName": "Hairline Bright",
-        "canonical": "rgba(255,255,255,0.40)"
-      },
-      "hairline-soft": {
-        "role": "border",
-        "displayName": "Hairline Soft",
-        "canonical": "rgba(255,255,255,0.30)"
+      "status-failed-text": {
+        "role": "status",
+        "displayName": "Status Failed Text",
+        "canonical": "#ec6b55",
+        "oklch": "oklch(68.0% 0.164 31.5)",
+        "cssVar": "--color-status-failed-text",
+        "tonalRamp": [
+          "#1e0000",
+          "#4b0500",
+          "#7d0f01",
+          "#ab2e1b",
+          "#cf5743",
+          "#ec8370",
+          "#feb4a5",
+          "#fee9e5"
+        ],
+        "aliasOf": "danger-text"
       }
     },
     "typographyMeta": {
       "display": {
         "displayName": "Display",
-        "purpose": "Hero claim, once per page."
+        "purpose": "Hero claim, one per page: 3rem, then 4.5rem at 40rem, then 5.5rem at 64rem, uppercase."
       },
       "headline": {
         "displayName": "Headline",
-        "purpose": "Section titles under an eyebrow."
+        "purpose": "TrackSection heading: 2.25rem, then 3rem at 40rem, uppercase."
       },
-      "label": {
-        "displayName": "Eyebrow",
-        "purpose": "Uppercase wide-tracked section markers."
+      "title-step": {
+        "displayName": "Title Step",
+        "purpose": "Story step titles (Review, Apply, Verify, Recover), uppercase."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Column headings such as Available controls, uppercase."
+      },
+      "label-plate": {
+        "displayName": "Label Plate",
+        "purpose": "Engraved lever label (LeverButton); Plates use 0.9375rem at +0.12em."
+      },
+      "label-step": {
+        "displayName": "Label Step",
+        "purpose": "Command-step labels, disclosure summaries; the lockup uses +0.1em."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "Opening paragraph of a section (1.25rem in the hero from 40rem), at most 62–68ch."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text, at most 68–72ch, text-wrap: pretty."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Figure captions, troubleshooting notes, footer."
       },
       "mono": {
         "displayName": "Mono",
-        "purpose": "Commands, stack, numerals \u2014 the technical layer."
+        "purpose": "Commands in command blocks; inline code at 0.875em."
+      },
+      "mono-label": {
+        "displayName": "Mono Label",
+        "purpose": "Diagram station labels and small controls (Pause, Copy, Close), uppercase."
       }
     },
-    "shadows": [],
+    "shadows": [
+      {
+        "name": "lever-bevel",
+        "value": "inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -2px 0 rgb(0 0 0 / 0.22)",
+        "purpose": "Primary lever and command-step numbers; removed while the lever is pressed."
+      },
+      {
+        "name": "plate-bevel",
+        "value": "inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -1px 0 rgb(0 0 0 / 0.4)",
+        "purpose": "Plates."
+      },
+      {
+        "name": "lamp-glow",
+        "value": "radial-gradient(lamp colour at 0.5–0.6 opacity → transparent), 3× the lamp radius",
+        "purpose": "Lit lamps in the route diagram only (SVG gradient under the lens / additive WebGL sprite with a clear centre, so the lens keeps its colour; no bloom pass)."
+      }
+    ],
     "motion": [
       {
-        "name": "hover-quiet",
-        "value": "transition: color/border-color/background-color 150ms ease",
-        "purpose": "Hover color and border shifts only; no transforms."
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Fades and relights: story lamps, lock and labels."
+      },
+      {
+        "name": "control-transition",
+        "value": "150ms",
+        "purpose": "Colour and border changes on levers, links and small controls."
+      },
+      {
+        "name": "story-relight",
+        "value": "500ms",
+        "purpose": "Story lamps and the MFA lock lighting: a lens grows from its centre at full colour (no olive cross-fade), the lock fades; the blade and recover switch snap."
+      },
+      {
+        "name": "label-scramble",
+        "value": "360ms",
+        "purpose": "Glyph decode on a lighting story label (aria-hidden copy only; 64rem+, motion allowed)."
+      },
+      {
+        "name": "scene-fade-in",
+        "value": "700ms ease-out",
+        "purpose": "WebGL hero fading in over the SVG poster after its first frame."
+      },
+      {
+        "name": "route-cycle",
+        "value": "11.5s",
+        "purpose": "Hero scene loop alternating a verified run with a failed probe that rolls back."
+      },
+      {
+        "name": "hero-camera-entrance",
+        "value": "2.4s ease-in-out, once, after the 700ms crossfade",
+        "purpose": "Perspective camera swinging from the poster's straight-on framing to a low rake along the track toward the signal (\"route opening\"); rake fitted per resize, 12°–38° by stage aspect."
+      },
+      {
+        "name": "hero-camera-follow",
+        "value": "critically damped spring, ω 1.6 rad/s",
+        "purpose": "Camera trucks along the track after the route light's leading point (lamps, probe pulse, signal); no ambient drift."
+      },
+      {
+        "name": "lamp-blend",
+        "value": "OKLab interpolation",
+        "purpose": "Scene lamps, lock and points blade blend off → on through a darker amber, green or red, never an olive grey."
+      },
+      {
+        "name": "story-scroll-light",
+        "value": "animation-timeline: --story-N (view timelines), range: cover 50vh → cover 100% − 50vh, linear",
+        "purpose": "Amber travels along the story stage's track (stroke-dashoffset) while a step crosses the viewport centre line; IntersectionObserver stepping is the fallback."
+      },
+      {
+        "name": "points-throw",
+        "value": "1 - exp(-7t)·cos(9t)",
+        "purpose": "Fast throw with a small overshoot for the points and the MFA lock."
       }
+    ],
+    "motionContract": [
+      "It reports a state.",
+      "Poster first paint; the hero camera starts at the poster's framing.",
+      "One entrance (hero camera rake), then motion only follows the route light or the scroll.",
+      "Lazy, gated 3D (loaded + idle, on screen, motion allowed, WebGL2); no post-processing.",
+      "Glow on lamps only; depth fog toward the frame; HTML labels projected onto their lamps.",
+      "Reduced motion never requests the scene, disposes a running one and keeps the story static.",
+      "No WebGL keeps the poster.",
+      "No scroll-driven animations: the story steps its lit track on the IntersectionObserver.",
+      "Pause/Play control once live.",
+      "Off-screen and hidden-tab pause; dispose on pagehide.",
+      "DPR 1 on coarse pointers or under 768px, otherwise at most 1.5."
     ],
     "breakpoints": [
       {
         "name": "sm",
-        "value": "640px"
+        "value": "40rem"
+      },
+      {
+        "name": "md",
+        "value": "48rem"
       },
       {
         "name": "lg",
-        "value": "1024px"
+        "value": "64rem"
+      },
+      {
+        "name": "xl",
+        "value": "80rem"
+      },
+      {
+        "name": "hero-2x",
+        "value": "120rem"
       }
-    ]
+    ],
+    "routeScale": [
+      {
+        "surface": "hero",
+        "values": {
+          "base": 1,
+          "lg": 1.25,
+          "xl": 1.5,
+          "hero-2x": 2
+        }
+      },
+      {
+        "surface": "story-stage",
+        "values": {
+          "lg": 1.25,
+          "xl": 1.5
+        }
+      }
+    ],
+    "focusRing": "outline: 2px solid var(--color-enamel-bright); outline-offset: 3px (4px on levers)",
+    "browserSurfaces": {
+      "selection": "lamp on frame",
+      "caret": "lamp",
+      "scrollbar": "enamel-muted on frame",
+      "underlineOffset": "4px",
+      "numerals": "tabular-nums for numbers that line up"
+    },
+    "storybook": "/system"
   },
   "components": [
     {
-      "name": "Primary Button",
+      "name": "Lever Button (primary)",
       "kind": "button",
-      "refersTo": "button-primary",
-      "description": "The one solid action; pill, cyan, uppercase tracked.",
-      "html": "<a class=\"btn-primary\" href=\"#\">View on GitHub \u2192</a>",
-      "css": ".btn-primary { display:inline-flex; align-items:center; gap:8px; border-radius:9999px; background:var(--color-signal); color:var(--color-floor); padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:background-color 150ms ease; } .btn-primary:hover { background:var(--color-signal-bright); }"
+      "refersTo": "lever-primary",
+      "description": "The one call to action per view: an enamel lever plate that throws 1px when pulled.",
+      "html": "<a class=\"ds-lever\" href=\"#\">Try locally <svg aria-hidden=\"true\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M8 2v11M3 8.5l5 5 5-5\"/></svg></a>",
+      "css": ".ds-lever { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 24px; border-radius: 3px; font: 700 1rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; text-decoration: none; transition: background-color 150ms, color 150ms, border-color 150ms; background: var(--color-enamel, #d8d2c4); color: var(--color-frame, #111214); box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -2px 0 rgb(0 0 0 / 0.22); } .ds-lever:hover { background: var(--color-enamel-bright, #f2ede2); } .ds-lever:active { background: var(--color-enamel-soft, #b9b3a6); box-shadow: none; transform: translateY(1px); } .ds-lever:focus-visible { outline: 2px solid var(--color-enamel-bright, #f2ede2); outline-offset: 4px; }"
     },
     {
-      "name": "Ghost Button",
+      "name": "Lever Button (ghost)",
       "kind": "button",
-      "refersTo": "button-ghost",
-      "description": "Secondary links styled as quiet pills.",
-      "html": "<a class=\"btn-ghost\" href=\"#\">OpenAPI spec</a>",
-      "css": ".btn-ghost { display:inline-flex; align-items:center; border-radius:9999px; border:1px solid var(--color-hairline-strong); background:var(--color-surface); color:var(--color-ink); padding:12px 20px; font-size:0.875rem; font-weight:600; text-transform:uppercase; letter-spacing:0.18em; transition:border-color 150ms ease,color 150ms ease; } .btn-ghost:hover { border-color:var(--color-hairline-bright); color:var(--color-ink-bright); }"
+      "refersTo": "lever-ghost",
+      "description": "Secondary action on the track: a hairline outline that lights on hover.",
+      "html": "<a class=\"ds-lever-ghost\" href=\"#\">GitHub</a>",
+      "css": ".ds-lever-ghost { display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 24px; border-radius: 3px; font: 700 1rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; text-decoration: none; transition: background-color 150ms, color 150ms, border-color 150ms; background: transparent; color: var(--color-enamel, #d8d2c4); border: 1px solid var(--color-track-strong, rgb(216 210 196 / 0.28)); } .ds-lever-ghost:hover { border-color: var(--color-track-bright, rgb(216 210 196 / 0.5)); background: var(--color-frame-raised, #191a1d); color: var(--color-enamel-bright, #f2ede2); } .ds-lever-ghost:active { background: var(--color-frame-high, #212327); transform: translateY(1px); } .ds-lever-ghost:focus-visible { outline: 2px solid var(--color-enamel-bright, #f2ede2); outline-offset: 4px; }"
     },
     {
-      "name": "Feature Card",
-      "kind": "card",
-      "refersTo": "card-feature",
-      "description": "Tonal surface card for capability lists.",
-      "html": "<article class=\"card-feature\"><h3>MQTT users and basic ACLs</h3><p>Create, disable and rotate MQTT credentials.</p></article>",
-      "css": ".card-feature { border-radius:1.5rem; border:1px solid var(--color-hairline); background:var(--color-surface); padding:24px; transition:border-color 150ms ease,background-color 150ms ease; } .card-feature:hover { border-color:color-mix(in srgb,var(--color-signal-bright) 30%,transparent); background:var(--color-surface-strong); }"
-    },
-    {
-      "name": "Stack Chip",
+      "name": "Plate",
       "kind": "chip",
-      "refersTo": "chip-stack",
-      "description": "Mono pill for stack/technical names.",
-      "html": "<ul><li class=\"chip-stack\">Go 1.25</li></ul>",
-      "css": ".chip-stack { border-radius:9999px; border:1px solid var(--color-hairline); background:var(--color-surface-chip); padding:4px 12px; font-family:'JetBrains Mono Variable',monospace; font-size:0.75rem; color:var(--color-signal-pale); }"
+      "refersTo": "plate-lamp",
+      "description": "Static engraved fact: lamp (Alpha only), neutral and blue variants.",
+      "html": "<span class=\"ds-plate ds-plate-lamp\">Alpha</span> <span class=\"ds-plate ds-plate-neutral\">Apache 2.0</span> <span class=\"ds-plate ds-plate-blue\">Mosquitto 2.0</span>",
+      "css": ".ds-plate { display: inline-flex; align-items: center; padding: 0.35rem 10px 0.3rem; border-radius: 2px; font: 700 0.9375rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -1px 0 rgb(0 0 0 / 0.4); } .ds-plate-lamp { background: var(--color-lamp, #e0a526); color: var(--color-frame, #111214); } .ds-plate-neutral { background: var(--color-frame-high, #212327); color: var(--color-enamel, #d8d2c4); box-shadow: inset 0 0 0 1px var(--color-track-strong, rgb(216 210 196 / 0.28)); } .ds-plate-blue { background: var(--color-lever-blue, #1f5fa8); color: var(--color-enamel-bright, #f2ede2); }"
     },
     {
-      "name": "Command Block",
+      "name": "Status Lamp",
+      "kind": "chip",
+      "refersTo": "status-lamp",
+      "description": "Deployment outcome: a lamp plus its label, so colour is never the only signal; pending is hollow.",
+      "html": "<span class=\"ds-status\"><span class=\"ds-lamp ds-verified\"></span>verified</span> <span class=\"ds-status\"><span class=\"ds-lamp ds-rolled\"></span>rolled back</span> <span class=\"ds-status\"><span class=\"ds-lamp ds-failed\"></span>failed</span> <span class=\"ds-status\"><span class=\"ds-lamp ds-pending\"></span>pending</span>",
+      "css": ".ds-status { display: inline-flex; align-items: center; gap: 8px; margin-right: 20px; font: 500 0.8125rem/1.4 'Overpass Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-enamel-bright, #f2ede2); } .ds-lamp { width: 10px; height: 10px; border-radius: 9999px; box-sizing: border-box; } .ds-verified { background: var(--color-status-verified, #2f9e5b); } .ds-rolled { background: var(--color-status-rolled-back, #e0a526); } .ds-failed { background: var(--color-status-failed, #c8341f); } .ds-pending { border: 2px solid var(--color-enamel-muted, #9a9488); }"
+    },
+    {
+      "name": "Track Section heading",
       "kind": "custom",
-      "refersTo": "code",
-      "description": "Quickstart command line inside a rounded dark block.",
-      "html": "<code class=\"cmd-block\">task up</code>",
-      "css": ".cmd-block { display:block; border-radius:1rem; border:1px solid var(--color-hairline); background:var(--color-surface-code); padding:12px 16px; font-family:'JetBrains Mono Variable',monospace; font-size:0.875rem; color:var(--color-signal-pale); overflow-x:auto; }"
+      "refersTo": null,
+      "description": "Every section opens with its heading on a track rule: set segment, hairline, signal ring. No eyebrow.",
+      "html": "<section class=\"ds-track\"><h2>Review, apply, verify.</h2><div class=\"ds-rule\" aria-hidden=\"true\"><span></span><span></span><span></span></div><p>Real captures from a running MCM local stack.</p></section>",
+      "css": ".ds-track h2 { margin: 0; padding-bottom: 20px; font: 700 3rem/0.95 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-rule { display: flex; align-items: center; } .ds-rule span:nth-child(1) { width: 48px; height: 3px; background: var(--color-enamel, #d8d2c4); } .ds-rule span:nth-child(2) { flex: 1; height: 1px; background: var(--color-track-strong, rgb(216 210 196 / 0.28)); } .ds-rule span:nth-child(3) { width: 8px; height: 8px; border-radius: 9999px; border: 1px solid var(--color-track-bright, rgb(216 210 196 / 0.5)); } .ds-track p { margin-top: 24px; max-width: 68ch; font: 400 1.125rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); }"
+    },
+    {
+      "name": "Command Step",
+      "kind": "custom",
+      "refersTo": "command-block",
+      "description": "Numbered lever plate with its command in a scrollable, focusable block and a Copy control.",
+      "html": "<div class=\"ds-step\"><span class=\"ds-step-n\">01</span><div><div class=\"ds-step-head\"><p>Clone and build</p><button type=\"button\" class=\"ds-ctl\">Copy</button></div><pre tabindex=\"0\"><code>git clone https://github.com/fgjcarlos/mcm.git &amp;&amp; cd mcm &amp;&amp; task build</code></pre></div></div>",
+      "css": ".ds-step { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 24px; } .ds-step-n { display: flex; width: 48px; height: 48px; align-items: center; justify-content: center; border-radius: 2px; background: var(--color-enamel, #d8d2c4); color: var(--color-frame, #111214); font: 700 1.25rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; font-variant-numeric: tabular-nums; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -2px 0 rgb(0 0 0 / 0.22); } .ds-step-head { display: flex; justify-content: space-between; gap: 16px; } .ds-step-head p { margin: 10px 0 0; font: 600 1.125rem/1.25 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-enamel, #d8d2c4); } .ds-step pre { margin: 12px 0 0; overflow-x: auto; padding: 12px 16px; border: 1px solid var(--color-track-strong, rgb(216 210 196 / 0.28)); background: var(--color-frame-raised, #191a1d); color: var(--color-enamel-bright, #f2ede2); font: 400 0.875rem/1.625 'Overpass Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-step pre:focus-visible { outline: 2px solid var(--color-enamel-bright, #f2ede2); outline-offset: 3px; } .ds-ctl { min-height: 36px; padding: 0 12px; border-radius: 2px; border: 1px solid var(--color-track-strong, rgb(216 210 196 / 0.28)); background: var(--color-frame, #111214); color: var(--color-enamel, #d8d2c4); font: 400 0.75rem/1 'Overpass Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; transition: border-color 150ms, color 150ms, background-color 150ms; } .ds-ctl:hover { border-color: var(--color-track-bright, rgb(216 210 196 / 0.5)); background: var(--color-frame-raised, #191a1d); color: var(--color-enamel-bright, #f2ede2); } .ds-ctl:focus-visible { outline: 2px solid var(--color-enamel-bright, #f2ede2); outline-offset: 3px; }"
+    },
+    {
+      "name": "Caution Panel",
+      "kind": "card",
+      "refersTo": null,
+      "description": "The one boxed region: read this before you apply. Amber hairline, 6% tint, hazard stripe; never nested.",
+      "html": "<section class=\"ds-caution\"><div class=\"ds-stripe\" aria-hidden=\"true\"></div><div class=\"ds-caution-in\"><h2>Alpha software; review production limits before applying changes.</h2><p>Review the deployment requirements before enabling writes on an existing broker.</p></div></section>",
+      "css": ".ds-caution { border: 1px solid rgb(224 165 38 / 0.45); background: rgb(224 165 38 / 0.06); } .ds-stripe { height: 8px; background: repeating-linear-gradient(-45deg, var(--color-lamp, #e0a526) 0 10px, transparent 10px 20px); } .ds-caution-in { padding: 40px; } .ds-caution h2 { margin: 0; max-width: 48rem; font: 700 2.25rem/1 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-caution p { margin-top: 20px; max-width: 68ch; font: 400 1rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); }"
+    },
+    {
+      "name": "Not Yet Cleared",
+      "kind": "custom",
+      "refersTo": "clearance-lamp",
+      "description": "The one list of what is not done: unlit lamp, engraved title, plate (Planned blue; Limit or Deferred neutral) and one plain sentence per row, between track hairlines. Never boxed, never lit.",
+      "html": "<article class=\"ds-nyc\"><h3>Not yet cleared</h3><ul><li><span class=\"ds-nyc-lamp\" aria-hidden=\"true\"></span><span class=\"ds-nyc-title\">Extra configuration files</span><span class=\"ds-plate ds-plate-blue\">Planned</span><p>Files loaded from a folder with <code>include_dir</code> are read but cannot be edited.</p></li><li><span class=\"ds-nyc-lamp\" aria-hidden=\"true\"></span><span class=\"ds-nyc-title\">Payload checks</span><span class=\"ds-plate ds-plate-neutral\">Limit</span><p>Sparkplug B and JSON Schema diagnostics inspect messages for issues but never block or reject them.</p></li></ul></article>",
+      "css": ".ds-nyc h3 { margin: 0; font: 600 1.5rem/1.2 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-nyc ul { margin: 16px 0 0; padding: 0; list-style: none; border-block: 1px solid var(--color-track, rgb(216 210 196 / 0.14)); } .ds-nyc li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; column-gap: 16px; row-gap: 6px; padding: 14px 0; } .ds-nyc li + li { border-top: 1px solid var(--color-track, rgb(216 210 196 / 0.14)); } .ds-nyc-lamp { width: 12px; height: 12px; box-sizing: border-box; border-radius: 9999px; border: 2px solid var(--color-enamel-muted, #9a9488); background: var(--color-frame-high, #212327); } .ds-nyc-title { font: 600 1.125rem/1.25 'Big Shoulders Variable', 'Arial Narrow', ui-sans-serif, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-enamel-bright, #f2ede2); } .ds-nyc p { grid-column: 2 / span 2; margin: 0; font: 400 1rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); }"
+    },
+    {
+      "name": "Text Link",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Inline link: inherits colour, hairline underline 4px below that lights on hover.",
+      "html": "<p class=\"ds-p\">The <a class=\"ds-link\" href=\"#\">support matrix</a> lists exactly what MCM covers.</p>",
+      "css": ".ds-p { font: 400 1rem/1.625 'Overpass Variable', ui-sans-serif, system-ui, sans-serif; color: var(--color-enamel-soft, #b9b3a6); } .ds-link { color: inherit; text-decoration: underline; text-decoration-color: var(--color-track-bright, rgb(216 210 196 / 0.5)); text-underline-offset: 4px; } .ds-link:hover { color: var(--color-enamel-bright, #f2ede2); text-decoration-color: currentColor; } .ds-link:focus-visible { outline: 2px solid var(--color-enamel-bright, #f2ede2); outline-offset: 3px; }"
     }
   ],
   "narrative": {
-    "northStar": "The Control Room",
-    "overview": "MCM's site is a dark telemetry console: a calm operations room where the state of one broker is read before anything is changed. Depth comes from tonal layers of translucent surfaces over a deep radial field \u2014 no shadows, no drama. Cyan is the signal color; JetBrains Mono carries everything technical; Manrope carries the human layer. The console never sells: it reports.",
+    "northStar": "\"La Cabina de Enclavamiento\" (the interlocking signal box)",
+    "overview": "**Creative North Star: \"La Cabina de Enclavamiento\" (the interlocking signal box)**\n\nMCM is drawn as a signal box at night. In an interlocking, a route cannot clear until every lever and point along it is proven, and that is how MCM treats a configuration change. Review, MFA, apply and probe light lamp by lamp along a track. The route then holds green (verified) or falls back to the previous one (rolled back). The page is the frame of the box: near-black ground, enamel lever plates with engraved condensed capitals, hairline track diagrams as the structural line, and lamps that light only when something is true.\n\nThe tone is a control room, cinematic and precise. It is dark because a signal box works in the dark, so the lamps are the brightest things in the room. Density is low and every section reads like a panel of the frame: a track rule under the heading, the content set out along it. Nothing is a card and nothing is glass. Real captures of the running app are the only imagery.\n\nMotion and 3D are part of the world, and they are allowed freely, with one condition: they report a state. The hero runs the route as a live WebGL scene, and the story section relights the same route as you scroll. Every animated surface has a static twin, so the page reads the same with motion off, without WebGL and before any script runs. `/system` (linked from the footer as \"Brand system\") is the living storybook: every token, component and state on this page is rendered there from the same source.",
     "keyCharacteristics": [
-      "Dark tonal console with translucent surfaces and zero shadows",
-      "Cyan as the single signal accent; amber strictly for caution",
-      "Uppercase wide-tracked eyebrows label every section like a readout",
-      "Pill geometry for interactive and meta elements; rounded-3xl containers",
-      "Mono for stack, commands and numerals \u2014 the technical layer is typographically distinct"
+      "Near-black frame ground with enamel text and plates. There are no gradients on surfaces and no glass.",
+      "Lamps carry meaning: amber means a route is set (or caution, or rolled back), green means verified, red means failed.",
+      "Big Shoulders engraved capitals for display and plates, Overpass for reading, Overpass Mono for commands, data and diagram labels.",
+      "Hairline track rules and route diagrams are the structure. Sections never sit in cards, and no label sits above a heading.",
+      "One route geometry (`site/src/scripts/route-geometry.ts`) drives the SVG poster, the WebGL scene, the hero labels and the story stage.",
+      "Motion is free, but it always reports a state and always has a poster, reduced-motion and no-WebGL equivalent."
     ],
     "rules": [
       {
-        "name": "The Signal Rule",
-        "body": "Cyan marks signal and action; its largest legal field is a 10% tint. Amber appears only in the caution panel.",
+        "name": "The Proven Green Rule",
+        "body": "Green appears only where a change has been verified. It is never a \"success\" accent, a CTA colour or decoration. If nothing was verified, nothing is green.",
         "section": "colors"
       },
       {
-        "name": "The Technical Layer Rule",
-        "body": "Anything a terminal could say is JetBrains Mono; anything a person says in prose is Manrope.",
+        "name": "The Red Means Failed Rule",
+        "body": "Red appears only for a failed apply or probe. It never signals emphasis, deletion or a warning. Use `danger-text` for any red text under 24px.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber Route Rule",
+        "body": "Amber says \"a route is set\": the lit track, a caution that applies before you act, and the route back after a rollback. It is never a generic highlight.",
+        "section": "colors"
+      },
+      {
+        "name": "The Colour Is Never Alone Rule",
+        "body": "Every lamp state also has a word: StatusLamp always renders its label, pending is a hollow ring, and the diagram labels say Verified, Failed or Rolled back.",
+        "section": "colors"
+      },
+      {
+        "name": "The Engraved Plate Rule",
+        "body": "Big Shoulders capitals are for things engraved on the frame: the claim, section names, levers, plates and step labels. Running text is never set in capitals.",
         "section": "typography"
+      },
+      {
+        "name": "The Instrument Rule",
+        "body": "Mono is for commands, code, file names, tabular data and diagram labels only. It is never a costume to make prose look technical.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Eyebrow Rule",
+        "body": "No kicker or label sits above a heading. The heading carries its own weight, and the TrackSection rule beneath it does the framing.",
+        "section": "typography"
+      },
+      {
+        "name": "The Lamps Carry Light Rule",
+        "body": "Only a lit lamp glows. Nothing else on the page emits light or casts a shadow.",
+        "section": "elevation"
       }
     ],
     "dos": [
-      "Keep every section under a cyan uppercase eyebrow",
-      "State status honestly where it is claimed",
-      "Separate surfaces with hairlines and tonal tints, never shadows"
+      "**Do** use green only for verified, red only for failed, and amber for a set route, a caution or a rollback.",
+      "**Do** give every lamp colour a word next to it (StatusLamp label, diagram label).",
+      "**Do** draw any route diagram from `route-geometry.ts` inside a `.route-rail`, so the poster, labels and scene stay aligned.",
+      "**Do** give every animated or 3D surface a poster first paint, a reduced-motion frame, a no-WebGL fallback, a pause control, an off-screen pause and a DPR cap.",
+      "**Do** open sections with a TrackSection and keep running text at 68–72ch or narrower.",
+      "**Do** theme the browser surfaces from the palette: amber selection, amber caret, enamel-muted on frame scrollbar, 2px enamel-bright focus ring, 4px underline offset, tabular numerals for numbers that line up.",
+      "**Do** add every new component or state to `/system` in the same change.",
+      "**Do** use only real captures of the running app as imagery, with their alt text and intrinsic size."
     ],
     "donts": [
-      "Don't add a second accent color",
-      "Don't use gradients other than the fixed body radial field",
-      "Don't animate beyond hover color/border transitions",
-      "Don't nest translucent cards inside translucent cards"
+      "**Don't** put a kicker or eyebrow label above a heading.",
+      "**Don't** wrap sections or columns in cards, nest a box in a box, or use glass, blur or surface gradients.",
+      "**Don't** use green, red or amber as decoration, emphasis or a brand accent.",
+      "**Don't** set red text under 24px in `danger`; use `danger-text`. Never set text in `lever-blue`.",
+      "**Don't** animate anything that does not report a state, or ship an animation without its static twin.",
+      "**Don't** draw message traffic, packets or anything else MCM does not route. The scene shows the change route only.",
+      "**Don't** use mono for prose, or Big Shoulders capitals for running text.",
+      "**Don't** add drop shadows or hard offset shadows. Depth is the bevel on plates and the light of lamps.",
+      "**Don't** use the Eclipse or Mosquitto logos or their motifs. The mark is MCM's own."
     ]
   }
 }

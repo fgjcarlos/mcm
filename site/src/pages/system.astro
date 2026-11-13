@@ -1,0 +1,318 @@
+---
+import Layout from "../layouts/Layout.astro";
+import CaptureViewer from "../components/CaptureViewer.astro";
+import CautionPanel from "../components/CautionPanel.astro";
+import ClearanceRow from "../components/ClearanceRow.astro";
+import CommandStep from "../components/CommandStep.astro";
+import EvidenceFigure from "../components/EvidenceFigure.astro";
+import LeverButton from "../components/LeverButton.astro";
+import Lockup from "../components/Lockup.astro";
+import NotYetCleared from "../components/NotYetCleared.astro";
+import Plate from "../components/Plate.astro";
+import RoutePoster from "../components/RoutePoster.astro";
+import StatusLamp from "../components/StatusLamp.astro";
+import TrackSection from "../components/TrackSection.astro";
+import Mark from "../assets/brand/mark.svg";
+import LockupMark from "../assets/brand/lockup.svg";
+import brokerOverview from "../assets/hmi-overview.webp";
+import css from "../styles/global.css?raw";
+import { STORY_STEPS } from "../scripts/route-geometry";
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
+
+// Tokens are read from global.css so this page cannot drift from the theme.
+const declared: Record<string, string> = Object.fromEntries(
+  [...css.matchAll(/--color-([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()]),
+);
+const resolve = (value: string): string => {
+  const alias = value.match(/^var\(--color-([\w-]+)\)$/);
+  return alias ? resolve(declared[alias[1]]) : value;
+};
+// "#rrggbb" or "rgb(r g b / a)" -> [r, g, b, a]
+const channels = (value: string): number[] =>
+  value.startsWith("#")
+    ? [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16)).concat(1)
+    : value.match(/[\d.]+/g)!.map(Number).concat(1).slice(0, 4);
+const rgb = (token: string) => channels(resolve(declared[token]));
+const frame = rgb("frame");
+// Translucent tokens are measured as they render: composited over the frame.
+const over = ([r, g, b, a]: number[], ground = frame) => [r, g, b].map((c, i) => c * a + ground[i] * (1 - a));
+const luminance = (color: number[]) => {
+  const [r, g, b] = color.map((c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (fg: number[], bg: number[]) => {
+  const [hi, lo] = [luminance(over(fg, bg)), luminance(bg)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+const tokens = Object.entries(declared).map(([name, value]) => {
+  const resolved = resolve(value);
+  const ratio = contrast(rgb(name), frame);
+  const use = name === "frame" ? "Ground" : ratio >= 4.5 ? "Text" : ratio >= 3 ? "Large text, lamps" : "Surface or fill only";
+  return { name, value, resolved, ratio, use };
+});
+
+const pairs = [
+  { fg: "frame", bg: "enamel", where: "Primary lever, step numbers" },
+  { fg: "frame", bg: "lamp", where: "Lamp plate" },
+  { fg: "enamel-bright", bg: "lever-blue", where: "Blue plate" },
+  { fg: "enamel", bg: "frame-high", where: "Neutral plate" },
+  { fg: "enamel-bright", bg: "frame-raised", where: "Command block" },
+].map((pair) => ({ ...pair, ratio: contrast(rgb(pair.fg), over(rgb(pair.bg))) }));
+
+const typeScale = [
+  {
+    name: "Display",
+    spec: "Big Shoulders 700 · 5.5rem / 0.92 · uppercase",
+    class: "font-display text-5xl font-bold uppercase leading-[0.92] text-enamel-bright sm:text-7xl lg:text-[5.5rem]",
+    sample: "Manage a Mosquitto broker from the web.",
+  },
+  {
+    name: "Headline",
+    spec: "Big Shoulders 700 · 3rem / 0.95 · uppercase",
+    class: "font-display text-4xl font-bold uppercase leading-[0.95] text-enamel-bright sm:text-5xl",
+    sample: "Review, apply, verify.",
+  },
+  {
+    name: "Title",
+    spec: "Big Shoulders 600 · 1.5rem · uppercase, +0.04em",
+    class: "font-display text-2xl font-semibold uppercase tracking-[0.04em] text-enamel-bright",
+    sample: "Available controls",
+  },
+  {
+    name: "Body",
+    spec: "Overpass 400 · 1.125rem / 1.625 · 68ch",
+    class: "max-w-[68ch] text-lg leading-relaxed text-enamel-soft",
+    sample:
+      "Mosquitto is the server that routes MQTT messages between devices. MCM adds a browser interface and API to manage one Mosquitto broker; Mosquitto continues to handle the messages.",
+  },
+  {
+    name: "Mono",
+    spec: "Overpass Mono 400 · 0.875rem · commands and data only",
+    class: "whitespace-pre-wrap font-mono text-sm text-enamel-bright",
+    sample: "task logs    # first-boot credentials are printed here when generated",
+  },
+];
+
+const leverStates = [undefined, "hover", "active", "focus"] as const;
+const label = "font-mono text-xs text-enamel-muted";
+---
+
+<Layout
+  title="Brand system — Mosquitto Control Manager"
+  description="The brand system behind the MCM site: mark, colour, type and components in every state."
+  noindex
+>
+  <main class="mx-auto w-full max-w-6xl px-6 pb-16">
+    <header>
+      <div class="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 border-b border-track py-5">
+        <Lockup href={base} />
+        <Plate variant="lamp">Alpha</Plate>
+      </div>
+      <div class="max-w-4xl pt-16 sm:pt-20">
+        <h1 class="text-5xl font-bold uppercase leading-[0.92] text-enamel-bright sm:text-7xl">Brand system</h1>
+        <p class="mt-6 max-w-[62ch] text-lg leading-relaxed text-enamel-soft">
+          Mosquitto Control Manager (MCM) is drawn as a night signal box: a configuration change is a route that cannot clear until it is proven. This page shows every token and component the public site uses, in each of its states.
+        </p>
+      </div>
+    </header>
+
+    <TrackSection class="mt-24" titleId="mark-title" title="Mark">
+      <p slot="lede">A route set through a set of points, cleared by a lit signal lamp. The straight line stays unset. One 3-unit stroke on a 32-unit grid.</p>
+      <div class="flex flex-wrap items-end gap-x-12 gap-y-8">
+        {[16, 32, 128].map((size) => (
+          <figure class="flex flex-col items-start gap-3">
+            <Mark width={size} height={size} aria-hidden="true" />
+            <figcaption class={label}>mark {size}px</figcaption>
+          </figure>
+        ))}
+      </div>
+      <div class="mt-12 flex flex-wrap items-end gap-x-12 gap-y-8 border-t border-track pt-12">
+        {[16, 32, 128].map((size) => (
+          <figure class="flex max-w-full flex-col items-start gap-3">
+            <LockupMark width={size * 3} height={size} aria-hidden="true" class="h-auto max-w-full" />
+            <figcaption class={label}>lockup {size}px</figcaption>
+          </figure>
+        ))}
+      </div>
+    </TrackSection>
+
+    <TrackSection class="mt-28" titleId="colour-title" title="Colour">
+      <p slot="lede">Contrast is measured on the frame, the page ground, from the values in <code>global.css</code>. Translucent track tokens are composited over the frame first. Green means verified and red means failed, nothing else.</p>
+      <ul class="divide-y divide-track border-y border-track">
+        {tokens.map((token) => (
+          <li class="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-5 gap-y-1 py-4 sm:grid-cols-[3rem_minmax(0,1fr)_7rem_11rem]">
+            <span class="row-span-2 size-12 border border-track-strong sm:row-span-1" style={`background: ${token.resolved}`}></span>
+            <span class="min-w-0">
+              <code class="block break-all">--color-{token.name}</code>
+              <span class="block break-all font-mono text-xs text-enamel-muted">{token.value === token.resolved ? token.value : `${token.value} → ${token.resolved}`}</span>
+            </span>
+            <span class="font-mono text-sm tabular-nums text-enamel-bright">{token.ratio.toFixed(2)}:1</span>
+            <span class="text-sm text-enamel-soft max-sm:col-start-2">{token.use}</span>
+          </li>
+        ))}
+      </ul>
+      <h3 class="mt-12 text-2xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Pairs off the frame</h3>
+      <ul class="mt-4 divide-y divide-track border-y border-track">
+        {pairs.map((pair) => (
+          <li class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-1 py-3 sm:grid-cols-[minmax(0,1fr)_7rem_14rem]">
+            <span class="flex min-w-0 items-center gap-3">
+              <span class="shrink-0 px-2 py-1 font-mono text-xs" style={`background: ${resolve(declared[pair.bg])}; color: ${resolve(declared[pair.fg])}`}>Aa</span>
+              <code class="break-all text-sm">{pair.fg} on {pair.bg}</code>
+            </span>
+            <span class="font-mono text-sm tabular-nums text-enamel-bright">{pair.ratio.toFixed(2)}:1</span>
+            <span class="text-sm text-enamel-soft max-sm:col-span-2">{pair.where}</span>
+          </li>
+        ))}
+      </ul>
+    </TrackSection>
+
+    <TrackSection class="mt-28" titleId="type-title" title="Type">
+      <p slot="lede">Big Shoulders for engraved display lettering, Overpass for reading, Overpass Mono for commands and data. All three are self-hosted.</p>
+      <dl class="divide-y divide-track border-y border-track">
+        {typeScale.map((step) => (
+          <div class="grid gap-3 py-8 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-10">
+            <dt>
+              <span class="block font-display text-lg font-semibold uppercase tracking-[0.08em] text-enamel">{step.name}</span>
+              <span class={label}>{step.spec}</span>
+            </dt>
+            <dd class={`min-w-0 break-words ${step.class}`}>{step.sample}</dd>
+          </div>
+        ))}
+      </dl>
+    </TrackSection>
+
+    <TrackSection class="mt-28" titleId="components-title" title="Components">
+      <p slot="lede">Hover, active and focus are forced with <code>data-state</code> so every state is visible at once. None of these components has a disabled state: they are links, and the site never shows a control that cannot act.</p>
+
+      <div class="divide-y divide-track border-y border-track">
+        <section class="py-10" aria-labelledby="c-lever">
+          <h3 id="c-lever" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">LeverButton</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The call to action. Primary is an enamel lever plate; ghost runs on the track. Pulling it throws 1px down.</p>
+          {(["primary", "ghost"] as const).map((variant) => (
+            <div class="mt-8 flex flex-wrap gap-x-8 gap-y-6">
+              {leverStates.map((state) => (
+                <div class="flex flex-col items-start gap-3">
+                  <LeverButton href="#c-lever" variant={variant} state={state}>{variant === "primary" ? "Try locally" : "GitHub"}</LeverButton>
+                  <span class={label}>{variant} · {state ?? "default"}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </section>
+
+        <section class="py-10" aria-labelledby="c-plate">
+          <h3 id="c-plate" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">Plate</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">An engraved lever plate for short facts. Static, so it has no interactive states.</p>
+          <div class="mt-8 flex flex-wrap gap-x-8 gap-y-6">
+            <div class="flex flex-col items-start gap-3"><Plate>Apache 2.0</Plate><span class={label}>neutral</span></div>
+            <div class="flex flex-col items-start gap-3"><Plate variant="lamp">Alpha</Plate><span class={label}>lamp</span></div>
+            <div class="flex flex-col items-start gap-3"><Plate variant="blue">Mosquitto 2.0</Plate><span class={label}>blue</span></div>
+          </div>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-status">
+          <h3 id="c-status" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">StatusLamp</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">Deployment outcomes as in the app. The label always renders, so colour is never the only signal; pending is a hollow lamp.</p>
+          <ul class="mt-8 flex flex-wrap gap-x-10 gap-y-4">
+            <li><StatusLamp status="verified" /></li>
+            <li><StatusLamp status="rolled-back" /></li>
+            <li><StatusLamp status="failed" /></li>
+            <li><StatusLamp status="pending" /></li>
+          </ul>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-track">
+          <h3 id="c-track" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">TrackSection</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">Every section on the site opens with its heading on a track rule: a set route segment, the hairline, and a signal at the end. No label sits above the heading. The sections of this page are TrackSections.</p>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-link">
+          <h3 id="c-link" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">Text link</h3>
+          <div class="mt-8 flex flex-wrap gap-x-10 gap-y-6">
+            {([undefined, "hover", "focus"] as const).map((state) => (
+              <div class="flex flex-col items-start gap-3">
+                <a class="link text-enamel-soft" href="#c-link" data-state={state}>support matrix</a>
+                <span class={label}>{state ?? "default"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-step">
+          <h3 id="c-step" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">CommandStep</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">A numbered lever with its command. Long commands scroll sideways and the block takes keyboard focus. The last step can carry a success or recovery slot.</p>
+          <ol class="mt-8">
+            <CommandStep n={1} label="Clone and build" code="git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build" />
+            <CommandStep n={2} label="Find the initial administrator sign-in" code="task logs    # first-boot credentials are printed here when generated">
+              <div class="border-t border-track pt-6">
+                <h4 class="font-display text-xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Success checkpoint</h4>
+                <p class="mt-2 text-enamel-soft">Confirm the dashboard shows the broker as connected.</p>
+              </div>
+            </CommandStep>
+          </ol>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-figure">
+          <h3 id="c-figure" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">EvidenceFigure</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">A real capture on the track, caption below. Selecting it opens the CaptureViewer dialog at full size; without JavaScript it opens the file itself. No card around it.</p>
+          <div class="mt-8 grid gap-10 sm:grid-cols-3 sm:gap-6">
+            {([undefined, "hover", "focus"] as const).map((state) => (
+              <EvidenceFigure
+                image={brokerOverview}
+                alt="MCM broker overview showing connection status, observed message rate and top topics."
+                openLabel="Open full-size broker overview capture"
+                state={state}
+              >
+                <span class="font-mono text-xs text-enamel-muted">{state ?? "default"}</span>
+              </EvidenceFigure>
+            ))}
+          </div>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-route">
+          <h3 id="c-route" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">RoutePoster</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The route at each story step, drawn from <code>route-geometry.ts</code>. The hero shows the verify step as its first paint, its reduced-motion frame and its no-WebGL fallback; the WebGL scene and the story stage draw the same geometry.</p>
+          <div class="mt-8 grid gap-x-10 gap-y-4 lg:grid-cols-2">
+            {STORY_STEPS.map((step, i) => (
+              <figure class="min-w-0">
+                <div aria-hidden="true" class="h-36 overflow-hidden px-8">
+                  <div class="relative top-12 h-0"><RoutePoster step={step} uid={`system-route-${i}`} labels /></div>
+                </div>
+                <figcaption class={label}>{step}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-clearance">
+          <h3 id="c-clearance" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">NotYetCleared and ClearanceRow</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The one place a page says what is not done. Each ClearanceRow is an unlit lamp, an engraved title, one plain sentence and a plate: Planned (blue), Limit or Deferred (neutral). Nothing in it is lit or green, and it is never boxed. Static, so it has no interactive states.</p>
+          <NotYetCleared class="mt-8 max-w-2xl">
+            <ClearanceRow title="Extra configuration files" kind="planned">Files loaded from a folder with <code>include_dir</code> are read but cannot be edited.</ClearanceRow>
+            <ClearanceRow title="Payload checks" kind="limit">Sparkplug B and JSON Schema diagnostics inspect messages for issues but never block or reject them.</ClearanceRow>
+            <ClearanceRow title="Management database" kind="deferred">SQLite is the only implemented management database; PostgreSQL is deferred.</ClearanceRow>
+            <Fragment slot="note">The optional note carries the one link to the full list, such as the <a class="link" href="#c-clearance">support matrix</a>.</Fragment>
+          </NotYetCleared>
+        </section>
+
+        <section class="py-10" aria-labelledby="c-caution">
+          <h3 id="c-caution" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">CautionPanel</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The only amber region on the site. Amber otherwise marks only a set route (the diagram lamps and the mark), the rolled-back lamp and the Alpha plate.</p>
+          <CautionPanel class="mt-8" titleId="c-caution-example" title="Alpha software; review production limits before applying changes.">
+            <p>Review the deployment requirements before enabling writes on an existing broker.</p>
+          </CautionPanel>
+        </section>
+      </div>
+    </TrackSection>
+
+    <footer class="mt-28 border-t border-track pt-8 text-sm text-enamel-muted">
+      <a class="link" href={base}>Back to Mosquitto Control Manager</a>
+    </footer>
+  </main>
+  <CaptureViewer />
+</Layout>

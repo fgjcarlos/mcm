@@ -1,0 +1,32 @@
+---
+import type { ImageMetadata } from "astro";
+
+interface Props {
+  image: ImageMetadata;
+  alt: string;
+  openLabel: string;
+  /** Forces a visual state, for the /system showcase only. */
+  state?: "hover" | "focus";
+  class?: string;
+}
+
+const { image, alt, openLabel, state, class: className } = Astro.props;
+// The image link opens the CaptureViewer dialog when JS runs; without JS it,
+// and the caption link, open the file itself.
+---
+
+<figure class:list={["min-w-0", className]}>
+  <a
+    class="block border border-track-strong transition-colors duration-150 hover:border-enamel-muted data-[state=hover]:border-enamel-muted"
+    href={image.src}
+    aria-label={openLabel}
+    data-capture-open
+    data-state={state}
+  >
+    <img class="block h-auto w-full" src={image.src} width={image.width} height={image.height} alt={alt} loading="lazy" />
+  </a>
+  <figcaption class="mt-4 max-w-[72ch] text-sm leading-relaxed text-enamel-soft">
+    <slot />
+    <a class="link mt-3 block w-fit" href={image.src}>Open full-size file</a>
+  </figcaption>
+</figure>

@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- Source of site/public/og.png (1200x630). Render instructions: PROVENANCE.md. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  @font-face { font-family: "BSD"; src: url("../../../node_modules/@fontsource-variable/big-shoulders/files/big-shoulders-latin-opsz-normal.woff2") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "OP"; src: url("../../../node_modules/@fontsource-variable/overpass/files/overpass-latin-wght-normal.woff2") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "OPM"; src: url("../../../node_modules/@fontsource-variable/overpass-mono/files/overpass-mono-latin-wght-normal.woff2") format("woff2"); font-weight: 300 700; }
+  * { font-variation-settings: "opsz" 72; }
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: #111214; color: #d8d2c4; }
+  .head { position: absolute; top: 56px; left: 72px; display: flex; align-items: center; gap: 18px; }
+  .name { font: 600 30px/1 "BSD"; letter-spacing: 0.08em; text-transform: uppercase; color: #d8d2c4; }
+  .plate { font: 700 15px/1 "OPM"; letter-spacing: 0.22em; text-transform: uppercase; color: #111214; background: #e0a526; padding: 8px 12px 6px; border-radius: 2px; }
+  h1 { position: absolute; top: 132px; left: 68px; margin: 0; width: 1000px; font: 700 112px/0.92 "BSD"; text-transform: uppercase; letter-spacing: 0.01em; color: #f2ede2; }
+  svg.track { position: absolute; left: 0; bottom: 0; }
+  .lbl { font: 600 14px "OPM"; letter-spacing: 0.18em; fill: #9a9488; }
+  .url { position: absolute; right: 72px; top: 64px; font: 500 16px/1 "OPM"; color: #9a9488; letter-spacing: 0.04em; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <svg viewBox="0 0 32 32" width="56" height="56" aria-hidden="true">
+      <g fill="none" stroke-width="3" stroke-linecap="butt" stroke-linejoin="miter">
+        <path d="M9 25H30" stroke="#d8d2c4"/>
+        <path d="M2 25H9L18 16" stroke="#e0a526"/>
+      </g>
+      <circle cx="24" cy="10" r="5.5" fill="#e0a526"/>
+    </svg>
+    <span class="name">Mosquitto Control Manager (MCM)</span>
+    <span class="plate">Alpha</span>
+  </div>
+  <div class="url">fgjcarlos.github.io/mcm</div>
+  <h1>Manage a Mosquitto broker from the web.</h1>
+
+  <!-- Mimic diagram: review, MFA, apply, probe, then verified (proceed) or rolled back (failure branch). -->
+  <svg class="track" width="1200" height="200" viewBox="0 0 1200 200">
+    <g fill="none" stroke-width="3">
+      <path d="M0 120H1200" stroke="rgb(216 210 196 / 0.28)"/>
+      <path d="M0 120H987" stroke="#e0a526"/>
+      <path d="M860 120L910 170H1200" stroke="rgb(216 210 196 / 0.28)"/>
+    </g>
+    <g fill="#e0a526">
+      <circle cx="160" cy="120" r="9"/>
+      <circle cx="380" cy="120" r="9"/>
+      <circle cx="600" cy="120" r="9"/>
+      <circle cx="820" cy="120" r="9"/>
+    </g>
+    <circle cx="1000" cy="120" r="13" fill="#2f9e5b"/>
+    <circle cx="1000" cy="170" r="9" fill="none" stroke="#e0a526" stroke-width="3"/>
+    <text class="lbl" x="160" y="96" text-anchor="middle">REVIEW</text>
+    <text class="lbl" x="380" y="96" text-anchor="middle">MFA</text>
+    <text class="lbl" x="600" y="96" text-anchor="middle">APPLY</text>
+    <text class="lbl" x="820" y="96" text-anchor="middle">PROBE</text>
+    <text class="lbl" x="1000" y="92" text-anchor="middle" style="fill:#2f9e5b">VERIFIED</text>
+    <text class="lbl" x="1028" y="175" style="fill:#e0a526">ROLLED BACK</text>
+  </svg>
+</body>
+</html>

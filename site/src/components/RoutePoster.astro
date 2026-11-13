@@ -1,0 +1,134 @@
+---
+// The route at one story step. The hero uses the default, "verify" (the
+// verified final state), as first paint, reduced-motion view and no-WebGL
+// fallback; the live scene draws the same geometry. Every part that changes
+// between steps carries data-on (the STORY_STEPS indexes in which it shows)
+// and opacity 0 otherwise, so a [data-route-step] ancestor can relight it
+// from CSS (global.css).
+import {
+  BLADE, BRANCH_DX, BRANCH_DY, COLORS, HOUSING_R, LAMP_R, LOCK_LIFT, LOCK_Y,
+  JUNCTION_X, SIGNAL_HOUSING_R, SIGNAL_R, SIGNAL_X, STATIONS, STORY_STEPS, TRACK_W,
+  type StoryStep,
+} from "../scripts/route-geometry";
+
+interface Props {
+  step?: StoryStep;
+  /** Prefix for the gradient ids; unique per instance on a page. */
+  uid?: string;
+  /** Station labels (story only; the hero draws its own). */
+  labels?: boolean;
+  /** Story stage: add the scroll-driven lit track (global.css, data-scrub). */
+  scrub?: boolean;
+}
+
+const { step = "verify", uid = "route", labels = false, scrub = false } = Astro.props;
+const at = String(STORY_STEPS.indexOf(step));
+const not = (lit: string) => [..."0123"].filter((d) => !lit.includes(d)).join("");
+const show = (lit: string) => ({ "data-on": lit, opacity: lit.includes(at) ? undefined : 0 });
+
+const pct = (x: number) => `${x * 100}%`;
+const a = Math.atan2(BRANCH_DY, BRANCH_DX);
+const tip = `${BLADE * Math.cos(a)} ${BLADE * Math.sin(a)}`;
+const branch = `M${tip}L${BRANCH_DX} ${BRANCH_DY}H4000`;
+// How far the route is set along the main line at each step.
+const reach = [STATIONS[0].x, STATIONS[2].x, SIGNAL_X, JUNCTION_X];
+// Scrubbed apply → signal light: the share of it before the points, where recover cuts it.
+const split = `--split:${(JUNCTION_X - reach[1]) / (SIGNAL_X - reach[1])}`;
+const housing = { stroke: COLORS.enamel, "stroke-opacity": "0.35", "stroke-width": "1.5", fill: COLORS.frame };
+
+const center = "bottom-4 -translate-x-1/2 data-lit:text-enamel-bright";
+const signal = "bottom-5 -translate-x-1/2 not-data-lit:opacity-0";
+const stationLabels = [
+  ...STATIONS.map((s) => ({ text: s.label, lit: s.lit, cls: center, style: `left:${pct(s.x)}` })),
+  { text: "Verified", lit: "2", cls: `${signal} data-lit:text-enamel-bright`, style: `left:${pct(SIGNAL_X)}` },
+  { text: "Failed", lit: "3", cls: `${signal} data-lit:text-danger-text`, style: `left:${pct(SIGNAL_X)}` },
+  { text: "Rolled back", lit: "3", cls: "top-15 data-lit:text-enamel-bright", style: `right:calc(${(1 - SIGNAL_X) * 100}% - ${HOUSING_R}px)` },
+];
+---
+
+<svg aria-hidden="true" class="absolute -top-12 left-0 h-32 w-full overflow-visible" fill="none">
+  <defs>
+    <radialGradient id={`${uid}-glow-lamp`}>
+      <stop offset="0" stop-color={COLORS.lamp} stop-opacity="0.5" />
+      <stop offset="1" stop-color={COLORS.lamp} stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id={`${uid}-glow-proceed`}>
+      <stop offset="0" stop-color={COLORS.proceed} stop-opacity="0.6" />
+      <stop offset="1" stop-color={COLORS.proceed} stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id={`${uid}-glow-danger`}>
+      <stop offset="0" stop-color={COLORS.danger} stop-opacity="0.55" />
+      <stop offset="1" stop-color={COLORS.danger} stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <g transform="translate(0 48)" stroke-width={TRACK_W}>
+    {reach.map((x, i) => <line {...show(String(i))} x1={pct(x)} x2="300%" stroke={COLORS.enamel} stroke-opacity="0.28" />)}
+    <svg x={pct(JUNCTION_X)} overflow="visible">
+      <path {...show("012")} d={branch} stroke={COLORS.enamel} stroke-opacity="0.28" />
+      <path {...show("3")} d={branch} stroke={COLORS.lamp} />
+    </svg>
+    {reach.map((x, i) => <line {...show(String(i))} data-route-light x1="-200%" x2={pct(x)} stroke={COLORS.lamp} />)}
+    {scrub && (
+      <Fragment>
+        <line data-scrub="edge" x1="-200%" x2={pct(reach[0])} stroke={COLORS.lamp} />
+        <line data-scrub="0" pathLength="1" x1={pct(reach[0])} x2={pct(reach[1])} stroke={COLORS.lamp} />
+        <line data-scrub="1" pathLength="1" style={split} x1={pct(reach[1])} x2={pct(JUNCTION_X)} stroke={COLORS.lamp} />
+        <line {...show("012")} data-scrub="2" pathLength="1" style={split} x1={pct(JUNCTION_X)} x2={pct(SIGNAL_X)} stroke={COLORS.lamp} />
+      </Fragment>
+    )}
+    {/* The points blade is a lever: enamel-muted until the route light runs through it. */}
+    <svg x={pct(JUNCTION_X)} overflow="visible">
+      <path {...show("01")} d={`M0 0H${BLADE}`} stroke={COLORS.enamelMuted} />
+      <path {...show("2")} d={`M0 0H${BLADE}`} stroke={COLORS.lamp} />
+      <path {...show("3")} d={`M0 0L${tip}`} stroke={COLORS.lamp} />
+    </svg>
+
+    {STATIONS.map((s) => (
+      <svg x={pct(s.x)} overflow="visible">
+        <circle {...show(s.lit)} r={LAMP_R * 3} fill={`url(#${uid}-glow-lamp)`} stroke="none" />
+        <circle r={HOUSING_R} {...housing} />
+        {not(s.lit) && <circle {...show(not(s.lit))} r={LAMP_R} fill={COLORS.lampOff} stroke="none" />}
+        <circle {...show(s.lit)} data-lens r={LAMP_R} fill={COLORS.lamp} stroke="none" />
+        {s.id === "mfa" && (
+          <g {...show(s.lit)} stroke={COLORS.lamp}>
+            <rect x="-7" y={LOCK_Y} width="14" height="11" fill={COLORS.lamp} stroke="none" />
+            <path transform={`translate(0 ${-LOCK_LIFT})`} d={`M-4.5 ${LOCK_Y}V${LOCK_Y - 5}a4.5 4.5 0 0 1 9 0V${LOCK_Y}`} stroke-width="2" />
+          </g>
+          <g {...show(not(s.lit))} stroke={COLORS.enamel} stroke-opacity="0.35">
+            <rect x="-7" y={LOCK_Y} width="14" height="11" fill={COLORS.lampOff} stroke-width="1.5" />
+            <path d={`M-4.5 ${LOCK_Y}V${LOCK_Y - 5}a4.5 4.5 0 0 1 9 0V${LOCK_Y}`} stroke-width="2" />
+          </g>
+        )}
+      </svg>
+    ))}
+
+    <svg x={pct(SIGNAL_X)} overflow="visible">
+      <circle {...show("2")} r={SIGNAL_R * 3} fill={`url(#${uid}-glow-proceed)`} stroke="none" />
+      <circle {...show("3")} r={SIGNAL_R * 3} fill={`url(#${uid}-glow-danger)`} stroke="none" />
+      <circle r={SIGNAL_HOUSING_R} {...housing} />
+      <circle {...show("01")} r={SIGNAL_R} fill={COLORS.lampOff} stroke="none" />
+      <circle {...show("2")} data-lens r={SIGNAL_R} fill={COLORS.proceed} stroke="none" />
+      <circle {...show("3")} data-lens r={SIGNAL_R} fill={COLORS.danger} stroke="none" />
+    </svg>
+    <svg x={pct(SIGNAL_X)} y={BRANCH_DY} overflow="visible">
+      <circle {...show("3")} r={LAMP_R * 3} fill={`url(#${uid}-glow-lamp)`} stroke="none" />
+      <circle r={HOUSING_R} {...housing} />
+      <circle {...show("012")} r={LAMP_R} fill={COLORS.lampOff} stroke="none" />
+      <circle {...show("3")} data-lens r={LAMP_R} fill={COLORS.lamp} stroke="none" />
+    </svg>
+  </g>
+</svg>
+{labels && (
+  <ol aria-hidden="true" class="relative z-20 font-mono text-xs uppercase tracking-[0.16em]">
+    {stationLabels.map((l) => (
+      <li
+        data-label-on={l.lit}
+        data-lit={l.lit.includes(at) ? "" : undefined}
+        class:list={["absolute whitespace-nowrap text-enamel-muted transition-[color,opacity] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none", l.cls]}
+        style={l.style}
+      >
+        <span class="sr-only">{l.text}</span><span aria-hidden="true" data-glyphs>{l.text}</span>
+      </li>
+    ))}
+  </ol>
+)}

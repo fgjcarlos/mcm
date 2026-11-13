@@ -1,59 +1,215 @@
 @import "tailwindcss";
 
+/* Interlocking signal box. Contrast on frame (WCAG 2.x): enamel 12.4,
+   enamel-soft 9.0, enamel-muted 6.2, lamp 8.6, proceed 5.5, danger-text 6.1.
+   danger (3.5) and lever-blue (2.9) are lamp/fill colours, never body text. */
 @theme {
-  /* Signal and caution, kept in Tailwind's own colour space so the console
-     renders exactly as it did before the tokens became the source of truth. */
-  --color-signal: oklch(78.9% 0.154 211.53);
-  --color-signal-bright: oklch(86.5% 0.127 207.078);
-  --color-signal-outline: oklch(91.7% 0.08 205.041);
-  --color-signal-pale: oklch(95.6% 0.045 203.388);
-  --color-caution: oklch(87.9% 0.169 91.605);
-  --color-caution-soft: oklch(92.4% 0.12 95.746);
-  --color-caution-bright: oklch(96.2% 0.059 95.617);
-  --color-caution-panel: oklch(82.8% 0.189 84.429);
-  /* Console field. The gradient stops keep the exact values the page has
-     always rendered; the palette tokens stay in Tailwind's colour space so
-     the utilities reproduce what they reproduced before. */
-  --color-floor: #020617;
-  --color-field: #0f172a;
-  --color-horizon: #1d4e89;
-  /* Ink. */
-  --color-ink: oklch(96.8% 0.007 247.896);
-  --color-ink-strong: oklch(92.9% 0.013 255.508);
-  --color-ink-soft: oklch(86.9% 0.022 252.894);
-  --color-ink-muted: oklch(70.4% 0.04 256.788);
-  --color-ink-bright: #ffffff;
-  /* Surfaces and lines. */
-  --color-surface: rgba(255, 255, 255, 0.04);
-  --color-surface-strong: rgba(255, 255, 255, 0.07);
-  --color-surface-faint: rgba(255, 255, 255, 0.03);
-  --color-surface-panel: rgba(2, 6, 23, 0.55);
-  --color-surface-code: rgba(2, 6, 23, 0.7);
-  --color-surface-chip: rgba(2, 6, 23, 0.4);
-  --color-hairline: rgba(255, 255, 255, 0.10);
-  --color-hairline-strong: rgba(255, 255, 255, 0.15);
-  --color-hairline-bright: rgba(255, 255, 255, 0.40);
-  --color-hairline-soft: rgba(255, 255, 255, 0.30);
-  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
+  /* Ground: the frame and two raised tones for panels and plates. */
+  --color-frame: #111214;
+  --color-frame-raised: #191a1d;
+  --color-frame-high: #212327;
+  /* Enamel: text and lever plates. */
+  --color-enamel-bright: #f2ede2;
+  --color-enamel: #d8d2c4;
+  --color-enamel-soft: #b9b3a6;
+  --color-enamel-muted: #9a9488;
+  /* Lamps. lamp = route set, caution, rolled back; proceed = verified only;
+     danger = failed only (use danger-text for text below 24px). */
+  --color-lamp: #e0a526;
+  --color-proceed: #2f9e5b;
+  --color-danger: #c8341f;
+  --color-danger-text: #ec6b55;
+  --color-lever-blue: #1f5fa8;
+  /* Track: hairline structural lines. */
+  --color-track: rgb(216 210 196 / 0.14);
+  --color-track-strong: rgb(216 210 196 / 0.28);
+  --color-track-bright: rgb(216 210 196 / 0.5);
+  /* Status, matching the app's deployment outcomes. */
+  --color-status-verified: var(--color-proceed);
+  --color-status-rolled-back: var(--color-lamp);
+  --color-status-failed: var(--color-danger);
+  --color-status-failed-text: var(--color-danger-text);
+
+  /* Big Shoulders with an optical-size axis: optical sizing follows the
+     font size, reaching the Display cut (opsz 72) at 72px and above. */
+  --font-display: "Big Shoulders Variable", "Arial Narrow", ui-sans-serif,
+    sans-serif;
+  --font-sans: "Overpass Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Overpass Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
     Monaco, Consolas, monospace;
 }
 
-.site-backdrop {
-  background: radial-gradient(
-    circle at top,
-    var(--color-horizon) 0%,
-    var(--color-field) 38%,
-    var(--color-floor) 100%
-  );
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background: var(--color-frame);
+    color: var(--color-enamel);
+    caret-color: var(--color-lamp);
+    scrollbar-color: var(--color-enamel-muted) var(--color-frame);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  /* No one-word last lines ("it.") in running text. */
+  p {
+    text-wrap: pretty;
+  }
+
+  code {
+    color: var(--color-enamel-bright);
+  }
+
+  :not(pre) > code {
+    font-size: 0.875em;
+  }
+
+  summary {
+    cursor: pointer;
+  }
+
+  /* data-state="focus" lets /system show the ring statically. */
+  :focus-visible,
+  [data-state="focus"] {
+    outline: 2px solid var(--color-enamel-bright);
+    outline-offset: 3px;
+  }
 }
 
-html {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+/* Inline text link: hairline underline that lights on hover. */
+@utility link {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-track-bright);
+  text-underline-offset: 4px;
+
+  &:hover,
+  &[data-state="hover"] {
+    color: var(--color-enamel-bright);
+    text-decoration-color: currentColor;
+  }
+}
+
+/* A route diagram drawn at --route-scale: the layout box is 1/scale of the
+   column and the transform scales it back, so the poster's % positions, px
+   radii and labels grow together (route-scene.ts reads the same rail). */
+.route-rail {
+  width: calc(100% / var(--route-scale, 1));
+  transform: scale(var(--route-scale, 1));
+  transform-origin: 0 0;
+}
+
+/* Route story stage: [data-route-step] relights the RoutePoster parts marked
+   data-on; lenses grow and the lock fades up, track and points snap. */
+[data-route-step] [data-on] {
+  opacity: 0;
+}
+
+[data-route-step="0"] [data-on*="0"],
+[data-route-step="1"] [data-on*="1"],
+[data-route-step="2"] [data-on*="2"],
+[data-route-step="3"] [data-on*="3"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-route-step] :is(circle, g)[data-on] {
+    transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* A lens lights from its centre at full colour; a cross-fade over the
+     unlit lens would pass through a muddy olive mid-tone. */
+  [data-route-step] circle[data-lens] {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(0);
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  [data-route-step="0"] [data-lens][data-on*="0"],
+  [data-route-step="1"] [data-lens][data-on*="1"],
+  [data-route-step="2"] [data-lens][data-on*="2"],
+  [data-route-step="3"] [data-lens][data-on*="3"] {
+    transform: none;
+  }
+}
+
+/* Scroll-driven route light on the story stage. Where scroll-driven
+   animations exist, amber travels along the track while a step crosses the
+   viewport centre line (the IntersectionObserver's trigger): review → apply
+   over the Review step, apply → signal over the Apply step. Lamps, lock,
+   labels and recover still step on the observer. Without support, the
+   per-step lit lines (data-route-light) step instead. */
+[data-scrub] {
+  display: none;
+}
+
+@keyframes route-light {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@supports (animation-timeline: view()) and (timeline-scope: none) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-route-story][data-live] {
+      timeline-scope: --story-0, --story-1;
+    }
+
+    [data-route-story][data-live] [data-route-stage] [data-route-light] {
+      display: none;
+    }
+
+    [data-route-story][data-live] [data-scrub] {
+      display: inline;
+    }
+
+    [data-route-story][data-live] [data-scrub]:not([data-scrub="edge"]) {
+      stroke-dasharray: 1;
+      animation: route-light linear both;
+      animation-range: cover 50vh cover calc(100% - 50vh);
+    }
+
+    /* Timelines in their own rules: the build would otherwise fold
+       animation-timeline into the shorthand, which cannot carry it. */
+    [data-route-story][data-live] [data-route-stage] [data-scrub="0"] {
+      animation-timeline: --story-0;
+    }
+
+    /* apply → signal is two lines split at the points (--split): recover
+       drops the part past them. */
+    [data-route-story][data-live] [data-route-stage] [data-scrub="1"] {
+      animation-timeline: --story-1;
+      animation-range-end: cover calc(50vh + var(--split) * (100% - 100vh));
+    }
+
+    [data-route-story][data-live] [data-route-stage] [data-scrub="2"] {
+      animation-timeline: --story-1;
+      animation-range-start: cover calc(50vh + var(--split) * (100% - 100vh));
+    }
+  }
+}
+
+/* The steps beside the stage dim while another one holds it. */
+@media (width >= 64rem) {
+  [data-route-story][data-live] [data-story-step]:not([data-active]) :is(h3, p) {
+    color: var(--color-enamel-muted);
+  }
+}
+
+/* CaptureViewer: the page behind the open dialog does not scroll. */
+html:has(dialog[data-capture-viewer][open]) {
+  overflow: hidden;
 }
 
 ::selection {
-  background: var(--color-signal);
-  color: var(--color-field);
+  background: var(--color-lamp);
+  color: var(--color-frame);
 }

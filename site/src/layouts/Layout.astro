@@ -1,37 +1,53 @@
 ---
-import "@fontsource-variable/manrope";
-import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/big-shoulders/opsz.css";
+import "@fontsource-variable/overpass";
+import "@fontsource-variable/overpass-mono";
 import "../styles/global.css";
 
 interface Props {
   title: string;
   description: string;
+  noindex?: boolean;
 }
 
-const { title, description } = Astro.props;
+const { title, description, noindex = false } = Astro.props;
 const ogTitle = title;
 const ogDescription = description;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? "https://fgjcarlos.github.io/mcm").toString();
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
+const ogImage = new URL(`${base}og.png`, Astro.site ?? "https://fgjcarlos.github.io").toString();
+const ogImageAlt = "Mosquitto Control Manager (MCM), alpha: manage a Mosquitto broker from the web.";
 ---
 
 <!doctype html>
-<html lang="en" class="bg-floor text-ink">
+<html lang="en" class="bg-frame text-enamel">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#111214" />
+    <link rel="icon" href={`${base}favicon-32.png`} type="image/png" sizes="32x32" />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
     <link rel="canonical" href={canonical} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={ogTitle} />
     <meta property="og:description" content={ogDescription} />
     <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={ogImageAlt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={ogTitle} />
     <meta name="twitter:description" content={ogDescription} />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content={ogImageAlt} />
   </head>
-  <body class="site-backdrop min-h-screen antialiased">
+  <body class="min-h-screen antialiased">
     <slot />
   </body>
 </html>
