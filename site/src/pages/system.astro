@@ -1,17 +1,20 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import CaptureViewer from "../components/CaptureViewer.astro";
 import CautionPanel from "../components/CautionPanel.astro";
 import CommandStep from "../components/CommandStep.astro";
 import EvidenceFigure from "../components/EvidenceFigure.astro";
 import LeverButton from "../components/LeverButton.astro";
 import Lockup from "../components/Lockup.astro";
 import Plate from "../components/Plate.astro";
+import RoutePoster from "../components/RoutePoster.astro";
 import StatusLamp from "../components/StatusLamp.astro";
 import TrackSection from "../components/TrackSection.astro";
 import Mark from "../assets/brand/mark.svg";
 import LockupMark from "../assets/brand/lockup.svg";
 import brokerOverview from "../assets/hmi-overview.webp";
 import css from "../styles/global.css?raw";
+import { STORY_STEPS } from "../scripts/route-geometry";
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
 
@@ -254,7 +257,7 @@ const label = "font-mono text-xs text-enamel-muted";
 
         <section class="py-10" aria-labelledby="c-figure">
           <h3 id="c-figure" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">EvidenceFigure</h3>
-          <p class="mt-2 max-w-[68ch] text-enamel-soft">A real capture on the track, caption below, opening the full-size file. No card around it.</p>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">A real capture on the track, caption below. Selecting it opens the CaptureViewer dialog at full size; without JavaScript it opens the file itself. No card around it.</p>
           <div class="mt-8 grid gap-10 sm:grid-cols-3 sm:gap-6">
             {([undefined, "hover", "focus"] as const).map((state) => (
               <EvidenceFigure
@@ -269,9 +272,24 @@ const label = "font-mono text-xs text-enamel-muted";
           </div>
         </section>
 
+        <section class="py-10" aria-labelledby="c-route">
+          <h3 id="c-route" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">RoutePoster</h3>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The route at each story step, drawn from <code>route-geometry.ts</code>. The hero shows the verify step as its first paint, its reduced-motion frame and its no-WebGL fallback; the WebGL scene and the story stage draw the same geometry.</p>
+          <div class="mt-8 grid gap-x-10 gap-y-4 lg:grid-cols-2">
+            {STORY_STEPS.map((step, i) => (
+              <figure class="min-w-0">
+                <div aria-hidden="true" class="h-36 overflow-hidden px-8">
+                  <div class="relative top-12 h-0"><RoutePoster step={step} uid={`system-route-${i}`} labels /></div>
+                </div>
+                <figcaption class={label}>{step}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
         <section class="py-10" aria-labelledby="c-caution">
           <h3 id="c-caution" class="text-2xl font-semibold tracking-[0.02em] text-enamel-bright">CautionPanel</h3>
-          <p class="mt-2 max-w-[68ch] text-enamel-soft">The only amber region on the site. Amber otherwise appears only as the rolled-back lamp, the Alpha plate and the mark's set route.</p>
+          <p class="mt-2 max-w-[68ch] text-enamel-soft">The only amber region on the site. Amber otherwise marks only a set route (the diagram lamps and the mark), the rolled-back lamp and the Alpha plate.</p>
           <CautionPanel class="mt-8" titleId="c-caution-example" title="Alpha software; review production limits before applying changes.">
             <p>Review the deployment requirements before enabling writes on an existing broker.</p>
           </CautionPanel>
@@ -283,4 +301,5 @@ const label = "font-mono text-xs text-enamel-muted";
       <a class="link" href={base}>Back to Mosquitto Control Manager</a>
     </footer>
   </main>
+  <CaptureViewer />
 </Layout>

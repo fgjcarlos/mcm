@@ -1,246 +1,364 @@
 ---
 name: Mosquitto Control Manager (MCM)
-description: Dark telemetry console for administering one Mosquitto broker — cyan signal, mono technicals, verified states.
+description: A night signal box for one Mosquitto broker. A configuration change is a route that cannot clear until it is proven.
 colors:
-  signal: "#00d3f3"
-  signal-bright: "#53eafd"
-  signal-outline: "#a2f4fd"
-  signal-pale: "#cefafe"
-  caution: "#ffd230"
-  caution-soft: "#fee685"
-  caution-bright: "#fef3c6"
-  caution-panel: "#ffb900"
-  floor: "#020617"
-  field: "#0f172a"
-  horizon: "#1d4e89"
-  ink: "#f1f5f9"
-  ink-strong: "#e2e8f0"
-  ink-soft: "#cad5e2"
-  ink-muted: "#90a1b9"
-  ink-bright: "#ffffff"
-  surface: "rgba(255,255,255,0.04)"
-  surface-strong: "rgba(255,255,255,0.07)"
-  surface-faint: "rgba(255,255,255,0.03)"
-  surface-panel: "rgba(2,6,23,0.55)"
-  surface-code: "rgba(2,6,23,0.7)"
-  surface-chip: "rgba(2,6,23,0.4)"
-  hairline: "rgba(255,255,255,0.10)"
-  hairline-strong: "rgba(255,255,255,0.15)"
-  hairline-bright: "rgba(255,255,255,0.40)"
-  hairline-soft: "rgba(255,255,255,0.30)"
+  frame: "#111214"
+  frame-raised: "#191a1d"
+  frame-high: "#212327"
+  enamel-bright: "#f2ede2"
+  enamel: "#d8d2c4"
+  enamel-soft: "#b9b3a6"
+  enamel-muted: "#9a9488"
+  lamp: "#e0a526"
+  proceed: "#2f9e5b"
+  danger: "#c8341f"
+  danger-text: "#ec6b55"
+  lever-blue: "#1f5fa8"
+  track: "rgb(216 210 196 / 0.14)"
+  track-strong: "rgb(216 210 196 / 0.28)"
+  track-bright: "rgb(216 210 196 / 0.5)"
+  status-verified: "#2f9e5b"
+  status-rolled-back: "#e0a526"
+  status-failed: "#c8341f"
+  status-failed-text: "#ec6b55"
 typography:
   display:
-    fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.25rem, 5vw, 3.75rem)"
-    fontWeight: 600
-    letterSpacing: "-0.025em"
-    lineHeight: 1.1
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
+    fontSize: "5.5rem"
+    fontWeight: 700
+    lineHeight: 0.92
   headline:
-    fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.875rem"
-    fontWeight: 600
-    letterSpacing: "-0.025em"
-    lineHeight: 1.2
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
+    fontSize: "3rem"
+    fontWeight: 700
+    lineHeight: 0.95
+  title-step:
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
+    fontSize: "2.25rem"
+    fontWeight: 700
+    lineHeight: 1
   title:
-    fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
+    fontSize: "1.5rem"
+    fontWeight: 600
+    letterSpacing: "0.04em"
+  label-plate:
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 700
+    lineHeight: 1
+    letterSpacing: "0.14em"
+  label-step:
+    fontFamily: "Big Shoulders Variable, Arial Narrow, ui-sans-serif, sans-serif"
     fontSize: "1.125rem"
     fontWeight: 600
+    letterSpacing: "0.08em"
+  lede:
+    fontFamily: "Overpass Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 400
+    lineHeight: 1.625
   body:
-    fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Overpass Variable, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1rem"
     fontWeight: 400
     lineHeight: 1.625
-  label:
-    fontFamily: "Manrope Variable, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.75rem"
-    fontWeight: 600
-    letterSpacing: "0.3em"
-    lineHeight: 1.4
+  caption:
+    fontFamily: "Overpass Variable, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.625
   mono:
-    fontFamily: "JetBrains Mono Variable, ui-monospace, SFMono-Regular, Menlo, monospace"
+    fontFamily: "Overpass Mono Variable, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.625
+  mono-label:
+    fontFamily: "Overpass Mono Variable, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
     fontSize: "0.75rem"
-    lineHeight: 1.5
+    fontWeight: 400
+    letterSpacing: "0.16em"
 rounded:
-  pill: "9999px"
-  card: "1.5rem"
-  code: "1rem"
+  plate: "2px"
+  lever: "3px"
+  lamp: "9999px"
 spacing:
-  section: "5rem"
-  card-inner: "1.5rem"
-  grid-gap: "1rem"
+  gutter: "1.5rem"
+  container: "72rem"
+  heading-to-content: "3rem"
+  step: "4rem"
+  section: "7rem"
+  section-wide: "9rem"
 components:
-  button-primary:
-    backgroundColor: "{colors.signal}"
-    textColor: "{colors.floor}"
-    rounded: "{rounded.pill}"
-    padding: "12px 20px"
-  button-ghost:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.pill}"
-    padding: "12px 20px"
-  card-feature:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink-soft}"
-    rounded: "{rounded.card}"
-    padding: "24px"
-  panel-console:
-    backgroundColor: "{colors.surface-panel}"
-    rounded: "{rounded.card}"
-    padding: "32px"
-  panel-caution:
-    backgroundColor: "{colors.caution-panel} at 10% opacity"
-    rounded: "{rounded.card}"
-    padding: "24px 32px"
-  chip-stack:
-    backgroundColor: "{colors.surface-chip}"
-    textColor: "{colors.signal-pale}"
-    rounded: "{rounded.pill}"
-    padding: "4px 12px"
+  lever-primary:
+    backgroundColor: "{colors.enamel}"
+    textColor: "{colors.frame}"
+    typography: "{typography.label-plate}"
+    rounded: "{rounded.lever}"
+    padding: "0 24px"
+    height: "48px"
+  lever-primary-hover:
+    backgroundColor: "{colors.enamel-bright}"
+    textColor: "{colors.frame}"
+  lever-primary-active:
+    backgroundColor: "{colors.enamel-soft}"
+    textColor: "{colors.frame}"
+  lever-ghost:
+    backgroundColor: "{colors.frame}"
+    textColor: "{colors.enamel}"
+    typography: "{typography.label-plate}"
+    rounded: "{rounded.lever}"
+    padding: "0 24px"
+    height: "48px"
+  lever-ghost-hover:
+    backgroundColor: "{colors.frame-raised}"
+    textColor: "{colors.enamel-bright}"
+  plate-neutral:
+    backgroundColor: "{colors.frame-high}"
+    textColor: "{colors.enamel}"
+    rounded: "{rounded.plate}"
+    padding: "5px 10px"
+  plate-lamp:
+    backgroundColor: "{colors.lamp}"
+    textColor: "{colors.frame}"
+    rounded: "{rounded.plate}"
+    padding: "5px 10px"
+  plate-blue:
+    backgroundColor: "{colors.lever-blue}"
+    textColor: "{colors.enamel-bright}"
+    rounded: "{rounded.plate}"
+    padding: "5px 10px"
+  command-number:
+    backgroundColor: "{colors.enamel}"
+    textColor: "{colors.frame}"
+    rounded: "{rounded.plate}"
+    size: "48px"
+  command-block:
+    backgroundColor: "{colors.frame-raised}"
+    textColor: "{colors.enamel-bright}"
+    typography: "{typography.mono}"
+    padding: "12px 16px"
+  control-small:
+    backgroundColor: "{colors.frame}"
+    textColor: "{colors.enamel}"
+    typography: "{typography.mono-label}"
+    rounded: "{rounded.plate}"
+    padding: "0 12px"
+    height: "36px"
+  status-lamp:
+    textColor: "{colors.enamel-bright}"
+    rounded: "{rounded.lamp}"
+    size: "10px"
 ---
 
 # Design System: Mosquitto Control Manager (MCM)
 
 ## Overview
 
-**Creative North Star: "The Control Room"**
+**Creative North Star: "La Cabina de Enclavamiento" (the interlocking signal box)**
 
-MCM's site is a dark telemetry console: a calm operations room where the state of one broker is read before anything is changed. Depth comes from tonal layers of translucent surfaces over a deep radial field — no shadows, no drama. Cyan is the signal color of the console; JetBrains Mono carries everything technical (stack, commands, numbers), and Manrope carries the human layer of headlines and body copy.
+MCM is drawn as a signal box at night. In an interlocking, a route cannot clear until every lever and point along it is proven, and that is how MCM treats a configuration change. Review, MFA, apply and probe light lamp by lamp along a track. The route then holds green (verified) or falls back to the previous one (rolled back). The page is the frame of the box: near-black ground, enamel lever plates with engraved condensed capitals, hairline track diagrams as the structural line, and lamps that light only when something is true.
 
-The console never sells: it reports. Status labels (Alpha, Apache 2.0, CI), section eyebrows in wide uppercase tracking, and the amber caution panel all speak the operator's language of states and evidence. Motion is limited to quiet border and background shifts on hover; nothing blinks, nothing parades.
+The tone is a control room, cinematic and precise. It is dark because a signal box works in the dark, so the lamps are the brightest things in the room. Density is low and every section reads like a panel of the frame: a track rule under the heading, the content set out along it. Nothing is a card and nothing is glass. Real captures of the running app are the only imagery.
 
-**Implementation alignment:** `site/src/styles/global.css` defines the page palette as named `@theme` color tokens. The landing page uses the corresponding token utilities throughout, and `.site-backdrop` applies the radial field through `horizon`, `field`, and `floor`.
+Motion and 3D are part of the world, and they are allowed freely, with one condition: they report a state. The hero runs the route as a live WebGL scene, and the story section relights the same route as you scroll. Every animated surface has a static twin, so the page reads the same with motion off, without WebGL and before any script runs. `/system` (linked from the footer as "Brand system") is the living storybook: every token, component and state on this page is rendered there from the same source.
 
 **Key Characteristics:**
 
-- Dark tonal console: translucent surfaces (`bg-surface`, `bg-surface-panel`) with `backdrop-blur` over a radial deep-blue field; zero box-shadows.
-- Cyan as the single signal accent; amber strictly for caution (production-readiness warnings).
-- Uppercase wide-tracked eyebrows (`text-xs`, `tracking-[0.3em]`) label every section like a console readout.
-- Pill geometry for everything interactive or meta (buttons, badges, chips); `rounded-3xl` for content containers.
-- Mono for stack chips, command blocks, and step numbers — the technical layer is typographically distinct.
+- Near-black frame ground with enamel text and plates. There are no gradients on surfaces and no glass.
+- Lamps carry meaning: amber means a route is set (or caution, or rolled back), green means verified, red means failed.
+- Big Shoulders engraved capitals for display and plates, Overpass for reading, Overpass Mono for commands, data and diagram labels.
+- Hairline track rules and route diagrams are the structure. Sections never sit in cards, and no label sits above a heading.
+- One route geometry (`site/src/scripts/route-geometry.ts`) drives the SVG poster, the WebGL scene, the hero labels and the story stage.
+- Motion is free, but it always reports a state and always has a poster, reduced-motion and no-WebGL equivalent.
 
 ## Colors
 
-The named `@theme` tokens in `site/src/styles/global.css` are the single source of truth for the page palette. Cyan is the signal accent over a deep blue-black field, with amber reserved for caution.
+Source of truth: the `@theme` block in `site/src/styles/global.css`. Contrast on the frame (WCAG 2.x) is computed live on `/system` from that file.
 
 ### Primary
 
-- **Signal** (#00d3f3, `text-signal` / `bg-signal`): the primary action and strongest live signal — primary button background. Used sparingly; its rarity is its voice.
-- **Signal Bright** (#53eafd, `text-signal-bright` / `bg-signal-bright`): section eyebrows, hover state of the primary button.
-- **Signal Outline** (#a2f4fd, `outline-signal-outline`): keyboard focus outlines.
-- **Signal Pale** (#cefafe, `text-signal-pale`): text sitting on signal-tinted surfaces (stack chips, alpha badge, code text).
-- **Caution** (#ffd230, `border-caution`): caution-panel border.
-- **Caution Soft** (#fee685, `text-caution-soft`): caution label.
-- **Caution Bright** (#fef3c6, `text-caution-bright`): caution heading.
-- **Caution Panel** (#ffb900, `bg-caution-panel/10`): amber caution-panel tint.
+- **Enamel** (`enamel`): body text on the frame (12.4:1) and the face of the primary lever plate and the command-step numbers.
+- **Enamel Bright** (`enamel-bright`): headings, the hover state of the primary lever, code text and the focus ring.
+
+### Secondary: the lamps
+
+- **Route Amber** (`lamp`): a set route. The lit track and station lamps of the diagram, the mark's set route, the Alpha plate, the CautionPanel (hazard stripe, 45% border, 6% tint), the rolled-back status and the text selection. 8.6:1 on the frame.
+- **Proceed Green** (`proceed`, aliased by `status-verified`): verified, and nothing else. The verified signal lamp and the verified StatusLamp. 5.5:1 on the frame.
+- **Signal Red** (`danger`, aliased by `status-failed`): failed, and nothing else. The failed signal lamp and the failed StatusLamp. At 3.5:1 it is a lamp and fill colour only.
+- **Signal Red Text** (`danger-text`, aliased by `status-failed-text`): the readable form of red for text under 24px, such as the story's "Failed" label. 6.1:1.
+
+### Tertiary
+
+- **Lever Blue** (`lever-blue`): the blue member of the lever-colour set, used only as the fill of the blue Plate with enamel-bright text (5.5:1). At 2.9:1 on the frame it is never text.
 
 ### Neutral
 
-- **Floor** (#020617, `bg-floor` / `text-floor`): page floor.
-- **Field** (#0f172a): middle of the radial backdrop and selection text.
-- **Horizon** (#1d4e89): glow at the top of `.site-backdrop`'s radial field.
-- **Ink** (#f1f5f9, `text-ink`): default text.
-- **Ink Strong** (#e2e8f0, `text-ink-strong`): disclosure summary.
-- **Ink Soft** (#cad5e2, `text-ink-soft`): body copy.
-- **Ink Muted** (#90a1b9, `text-ink-muted`): captions and footer.
-- **Ink Bright** (#ffffff, `text-ink-bright`): headlines and hover text.
-
-### Surfaces and lines
-
-- **Surface** (rgba(255,255,255,0.04), `bg-surface`): quiet translucent surface.
-- **Surface Strong** (rgba(255,255,255,0.07), `bg-surface-strong`): hover surface.
-- **Surface Faint** (rgba(255,255,255,0.03), `bg-surface-faint`): disclosure surface.
-- **Surface Panel** (rgba(2,6,23,0.55), `bg-surface-panel`): console and evidence panels.
-- **Surface Code** (rgba(2,6,23,0.7), `bg-surface-code`): command blocks.
-- **Surface Chip** (rgba(2,6,23,0.4), `bg-surface-chip`): stack chips.
-- **Hairline** (rgba(255,255,255,0.10), `border-hairline`): surface separators.
-- **Hairline Strong** (rgba(255,255,255,0.15), `border-hairline-strong`): ghost button border.
-- **Hairline Bright** (rgba(255,255,255,0.40), `border-hairline-bright`): hover border.
-- **Hairline Soft** (rgba(255,255,255,0.30), `decoration-hairline-soft`): link decoration.
+- **Frame** (`frame`): the page ground, the browser `theme-color`, the WebGL clear colour, and the text on enamel and amber plates.
+- **Frame Raised** (`frame-raised`): command blocks and ghost-lever hover.
+- **Frame High** (`frame-high`): the neutral plate, ghost-lever active, and unlit lamp lenses.
+- **Enamel Soft** (`enamel-soft`): ledes, body copy and captions (9.0:1).
+- **Enamel Muted** (`enamel-muted`): secondary notes, footer, unlit diagram labels, the scrollbar thumb (6.2:1).
+- **Track** (`track`): hairline dividers and section rules.
+- **Track Strong** (`track-strong`): borders of command blocks, figures and small controls; the unset rail of the diagram.
+- **Track Bright** (`track-bright`): link underlines and hover borders.
 
 ### Named Rules
 
-**The Signal Rule.** Cyan marks signal and action: the primary button, eyebrows, active tints. It never fills large quiet areas; the largest cyan field is the stack panel's 10% tint. Amber appears only in the caution panel.
+**The Proven Green Rule.** Green appears only where a change has been verified. It is never a "success" accent, a CTA colour or decoration. If nothing was verified, nothing is green.
+
+**The Red Means Failed Rule.** Red appears only for a failed apply or probe. It never signals emphasis, deletion or a warning. Use `danger-text` for any red text under 24px.
+
+**The Amber Route Rule.** Amber says "a route is set": the lit track, a caution that applies before you act, and the route back after a rollback. It is never a generic highlight.
+
+**The Colour Is Never Alone Rule.** Every lamp state also has a word: StatusLamp always renders its label, pending is a hollow ring, and the diagram labels say Verified, Failed or Rolled back.
 
 ## Typography
 
-**Display Font:** Manrope Variable (ui-sans-serif, system-ui fallback)
-**Body Font:** Manrope Variable
-**Label/Mono Font:** JetBrains Mono Variable (ui-monospace, SFMono-Regular, Menlo fallback)
+**Display Font:** Big Shoulders Variable, with an optical-size axis (opsz) that reaches its Display cut at 72px (fallback Arial Narrow, then the system sans)
+**Body Font:** Overpass Variable (fallback: system sans)
+**Label/Mono Font:** Overpass Mono Variable (fallback: system monospace)
 
-**Character:** A geometric humanist sans with tight, confident display tracking, paired with a technical mono — the pairing says "console that reads like an instrument, not a brochure."
+All three are self-hosted through Fontsource; nothing loads from a third party.
+
+**Character:** Big Shoulders is the engraved lettering of a lever plate: condensed capitals, tight and loud. Overpass, from highway signage, does the reading at a relaxed 1.625 leading. Overpass Mono is reserved for what a terminal or an instrument would print.
 
 ### Hierarchy
 
-- **Display** (600, `text-4xl` → `sm:text-6xl`, tight): the hero claim — one per page.
-- **Headline** (600, `text-3xl`, tight): section titles under an eyebrow.
-- **Title** (600, `text-lg`): card titles.
-- **Body** (400, `text-sm`–`text-lg`, `leading-relaxed`): explanatory copy; secondary ink-soft on dark surfaces.
-- **Label / eyebrow** (600, `text-xs`, uppercase, `tracking-[0.3em]`–`[0.4em]`, signal-bright): console-style section markers.
-- **Mono** (400, `text-xs`–`text-sm`): stack chips, command blocks, step numerals.
+- **Display** (700, 3rem → 4.5rem at 40rem → 5.5rem at 64rem, line-height 0.92, uppercase): the hero claim, one per page. The /system page title uses the same face at 3rem → 4.5rem.
+- **Headline** (700, 2.25rem → 3rem at 40rem, line-height 0.95, uppercase): the TrackSection heading. The CautionPanel heading is one step down (1.875rem → 2.25rem, line-height 1).
+- **Title, story step** (700, 2.25rem, line-height 1, uppercase): Review / Apply / Verify / Recover.
+- **Title** (600, 1.5rem, +0.04em, uppercase): column headings such as Available controls. The quick-start sub-headings are 1.25rem.
+- **Plate and step labels** (Big Shoulders 700 1rem +0.14em on levers; 700 0.9375rem +0.12em on plates; 600 1.125rem +0.08em on command-step labels, disclosure summaries and the lockup at +0.1em; uppercase): engraved labels.
+- **Lede** (Overpass 400, 1.125rem, 1.25rem in the hero from 40rem up, line-height 1.625, at most 62–68ch): the opening paragraph of a section.
+- **Body** (Overpass 400, 1rem, 1.625, at most 68–72ch): running text. Paragraphs use `text-wrap: pretty`, and headings use `balance`.
+- **Caption** (Overpass 400, 0.875rem, 1.625): figure captions, troubleshooting notes, footer.
+- **Mono** (Overpass Mono 400, 0.875rem, 1.625): commands in command blocks; inline `code` at 0.875em in enamel-bright.
+- **Mono label** (Overpass Mono, 0.75rem, +0.16em, uppercase): diagram station labels; small controls (Pause, Copy, Close) at +0.12em; StatusLamp at 0.8125rem 500 in lower case.
 
 ### Named Rules
 
-**The Technical Layer Rule.** Anything a terminal could say — commands, stack names, versions, numerals — is set in JetBrains Mono. Anything a person says in prose is Manrope.
+**The Engraved Plate Rule.** Big Shoulders capitals are for things engraved on the frame: the claim, section names, levers, plates and step labels. Running text is never set in capitals.
+
+**The Instrument Rule.** Mono is for commands, code, file names, tabular data and diagram labels only. It is never a costume to make prose look technical.
+
+**The No Eyebrow Rule.** No kicker or label sits above a heading. The heading carries its own weight, and the TrackSection rule beneath it does the framing.
 
 ## Layout
 
-Single-page vertical flow inside `max-w-6xl` with `px-6`; sections separated by `mt-20` (5rem). Hero: stacked badges → eyebrow → display claim → explanatory lede → alpha status → action row (pill buttons wrap). Availability uses three clearly labeled categories in a three-column card grid at desktop; evidence pairs the full-width deploy capture with two supporting captures in a two-column grid. The production caution panel precedes quick start. Quick start is a numbered vertical command list with a success checkpoint and recovery branches. Technical stack stays in a collapsed disclosure; footer has a top hairline and two-row flex. Density is low: generous padding (`p-6`–`p-8`), no more than three cards per row.
+The page is one vertical flow inside a 72rem container with 1.5rem gutters. The hero is the exception: it is a header at least `min(100svh, 64rem)` tall. The lockup, plates and CI badge sit on a hairline bar, then the claim, lede, alpha line and the two levers sit at the left. The route diagram runs full-bleed across the bottom of the header, its track crossing the whole viewport while the stations stay aligned to the content column.
+
+Sections are separated by 7rem (9rem from 40rem up). Each one opens with a TrackSection heading, an optional lede at most 68ch wide, and the content 3rem below. Within a section, related items sit 1–1.5rem apart and distinct groups sit 3–4rem apart. Columns are divided by track hairlines, never boxed.
+
+The route diagram scales as one unit through `--route-scale` (the `.route-rail` rule in `global.css`). The hero uses 1 below 64rem, 1.25 at 64rem, 1.5 at 80rem and 2 at 120rem. The story stage uses 1.25, then 1.5 at 80rem. Lamp radii, track weight and labels grow with the diagram, so it never thins out on wide screens.
+
+The story section, from 64rem up with motion allowed, is a 12-column grid: steps in columns 1–5 and a sticky 24rem stage in columns 6–12, centred on the viewport. The first step is as tall as the stage, so it starts level with it. The others are 75svh tall, so each crosses the viewport centre in turn. Below 64rem or with reduced motion, each step carries its own static diagram strip. Breakpoints are Tailwind's (40, 48, 64, 80rem) plus 120rem for the hero scale. At 390px the page has no horizontal overflow.
 
 ## Elevation & Depth
 
-Flat. No box-shadows anywhere; depth is conveyed by tonal layering: translucent white tints (`bg-surface`), dark panels (`bg-surface-panel` + `backdrop-blur`), cyan-tinted panels for signal areas, and hairline borders (`border-hairline`, `border-signal-bright/20`). The only ambient effect is `.site-backdrop`'s radial gradient, using `--color-horizon` at the top and fading through `--color-field` to `--color-floor`.
+The frame is flat, and the whole page sits on one plane. Depth is physical and small: enamel plates and levers carry an inner bevel, as if pressed from metal, and lamps carry light, not shadow. There are no drop shadows, no glass, no blur and no gradients on surfaces. The lamp glows (radial gradients in the SVG poster, additive sprites in the WebGL scene) and the CautionPanel's hazard stripe are the only gradients.
+
+### Shadow Vocabulary
+
+- **Lever bevel** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -2px 0 rgb(0 0 0 / 0.22)`): the primary lever and the command-step numbers. It is removed while the lever is pressed.
+- **Plate bevel** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -1px 0 rgb(0 0 0 / 0.4)`): Plates.
+- **Lamp glow** (a radial lamp-colour gradient to transparent at 3× the lamp radius, 0.5–0.6 peak opacity): lit lamps in the route diagram only.
+
+### Named Rules
+
+**The Lamps Carry Light Rule.** Only a lit lamp glows. Nothing else on the page emits light or casts a shadow.
 
 ## Shapes
 
-Pills (`rounded-full`) for all interactive and meta elements: buttons, badges, stack chips, step numerals. Content containers use `rounded-3xl` (1.5rem); inline code blocks `rounded-2xl`. Corners are generous but never card-nested-in-card.
+Hard, machined edges. Plates, step numbers and small controls have 2px corners, and levers have 3px. Lamps and status dots are the only circles. Lines are the main form: 1px track hairlines, a 3px set-route segment at the start of every section rule ending in a small signal ring, and the 3px track of the route diagram with its points blade and branch. Figures have a 1px track-strong border and no radius. The mark is drawn on a 32-unit grid with one 3-unit stroke.
 
 ## Components
 
-### Buttons
+Every component lives in `site/src/components/` and is rendered in each of its states on `/system`.
 
-- **Shape:** pill (`rounded-full`), `px-5 py-3`, `text-sm font-semibold uppercase tracking-[0.18em]`.
-- **Primary:** solid Signal (#00d3f3) on Floor text; hover brightens to Signal Bright (#53eafd). One per view.
-- **Ghost:** `border-hairline-strong bg-surface text-ink`; hover `border-hairline-bright text-ink-bright`.
-- **Hover/Focus:** color/border transitions only; no transforms.
+### Buttons: LeverButton
 
-### Chips
+The call to action is a lever plate, and pulling it throws it.
 
-- **Stack chip:** pill, `border-hairline bg-surface-chip`, mono `text-xs` Signal Cyan Pale.
+- **Shape:** 3px corners, at least 48px tall, 24px side padding, Big Shoulders 700 1rem +0.14em capitals.
+- **Primary:** an enamel plate with frame text and the lever bevel. Hover goes to enamel-bright, and pressed goes to enamel-soft with no bevel and a 1px drop. "Try locally" is the only primary in a view.
+- **Ghost:** a track-strong outline on the frame with enamel text. Hover brightens the border to track-bright, fills with frame-raised and turns the text enamel-bright. Pressed fills with frame-high.
+- **Focus:** the global 2px enamel-bright outline, offset 4px.
+- **States:** colours change over 150ms. There is no disabled state: the site never shows a control that cannot act.
 
-### Cards / Containers
+### Chips: Plate and StatusLamp
 
-- **Feature card:** `rounded-3xl border-hairline bg-surface p-6`; hover shifts border to `border-signal-bright/30` and bg to `bg-surface-strong`.
-- **Console panel:** `rounded-3xl border-hairline bg-surface-panel p-8 backdrop-blur` (Quick start).
-- **Signal panel:** `border-signal-bright/20 bg-signal/10` (success checkpoint).
-- **Caution panel:** `border-caution/25 bg-caution-panel/10`, `text-caution-bright` title (production warning).
+- **Plate:** a static engraved fact (Alpha, Apache 2.0, a version), with 2px corners, Big Shoulders 700 0.9375rem capitals and the plate bevel. Neutral is frame-high with enamel text, lamp is amber with frame text (Alpha only), and blue is lever-blue with enamel-bright text. It has no interactive states.
+- **StatusLamp:** a 10px round lamp plus its label in Overpass Mono 0.8125rem: verified (green), rolled back (amber), failed (red), pending (a hollow enamel-muted ring). The label always renders.
+
+### Cards / Containers: TrackSection and CautionPanel
+
+- **TrackSection:** the section container. A Big Shoulders headline, then the track rule (3px enamel set segment, 1px track-strong hairline, signal ring), an optional lede and the content. It has no background, border or padding.
+- **CautionPanel:** the one boxed region on the page, used for "before you apply, read this". A 1px amber border at 45%, a 6% amber tint, an 8px 45° amber hazard stripe on top and 24–40px padding. It is never nested and never repeated on a page.
+- **Rule:** nothing is nested inside a box. Columns are divided by track hairlines.
 
 ### Inputs / Fields
 
-Not present on the public site (single landing page, no forms).
+None. The site has no forms.
 
-### Navigation
+### Navigation: Lockup and footer
 
-None — single page; header badges act as status readouts. Footer link row (GitHub, Issues, API spec, Security) in text-muted, hover white.
+- **Lockup:** the mark (28px) plus "Mosquitto Control Manager" in Big Shoulders 600 1.125rem +0.1em capitals, in enamel-bright. It is a link on `/system` and plain text on the landing page.
+- **Footer:** a track hairline, then caption-size enamel-muted links that turn enamel-bright on hover. "Brand system" links to `/system`.
+- **Text link:** inherits its colour, with a track-bright underline 4px below the text. Hover brightens both the text and the underline.
 
-### Command block (signature)
+### CommandStep (signature)
 
-The quickstart's numbered command list is the signature element: mono circle numeral (`h-9 w-9`, cyan hairline ring, cyan tint) + uppercase micro-label + `rounded-2xl` dark command block with horizontal-scroll code in Signal Cyan Pale. It reads as a checklist an operator follows top to bottom.
+A numbered lever with its command. The number is a 44–48px enamel plate with the lever bevel and tabular numerals ("01"). A track-strong hairline connects it to the next step. The label is a Big Shoulders step label. The command sits in a frame-raised block with a track-strong border, scrolls sideways and takes keyboard focus. The Copy control (small control, 36px) appears only when JavaScript runs, and a polite live region announces "Copied", or tells you to copy manually when the clipboard is unavailable. The last step can carry a success checkpoint and recovery notes.
+
+### EvidenceFigure and CaptureViewer
+
+- **EvidenceFigure:** a real capture of the running app with a 1px track-strong border (enamel-muted on hover), lazy loading and intrinsic dimensions, so it causes no layout shift. A caption-size caption sits below with an "Open full-size file" link. Never fabricate or mock a capture.
+- **CaptureViewer:** a single full-screen `<dialog>` per page. Selecting a figure opens the capture at its natural size in a scroll box, which pans by scrolling, dragging or arrow keys. The page behind is inert and does not scroll. Escape or Close returns focus to the figure. Modified clicks keep their browser meaning. Without JavaScript, the links open the file.
+
+### SignalHero and RoutePoster (signature)
+
+The hero's route diagram. **RoutePoster** is the build-time SVG of the route at one story step (review, apply, verify, recover). Every part that changes between steps carries `data-on`, so CSS can relight it. **SignalHero** paints the poster at the verify step as its first paint, and labels it in the HTML. When the conditions below hold, it fades a WebGL scene in over the poster over 700ms. The scene draws the same geometry from `route-geometry.ts` and the same `.route-rail` box, so poster, labels and scene stay aligned at every width. The scene loops an 11.5s cycle that alternates a verified run with a failed probe that rolls back. The signal label reads "Failed" through the whole rollback.
+
+### RouteStory
+
+"How a change travels": four steps (Review, Apply, Verify, Recover) beside a sticky stage that shows a RoutePoster. An IntersectionObserver on the viewport's centre line picks the active step; there is no scroll listener and scrolling stays native. Lamps and the MFA lock fade up over 500ms, while track and points snap. A lighting label decodes in a 360ms glyph scramble on the aria-hidden copy, and the text stays in an `sr-only` twin. Inactive steps dim to enamel-muted. With reduced motion or without JavaScript, the stage is hidden and every step shows its own static diagram.
+
+### Motion contract
+
+Motion and 3D are allowed freely, under these conditions, all of which the site implements:
+
+- **It reports a state.** Every animation shows the route being set, proven, failing or rolling back. There is no ambient or decorative motion and no identical entrance on every section.
+- **Poster first paint.** Any animated scene paints a static, truthful frame first: the SVG poster at the verified step. The live scene fades in only after it has drawn.
+- **Lazy, gated 3D.** `three` and the scene are imported only after the page has loaded and gone idle, with the hero on screen, motion allowed and WebGL2 available. The first load carries a ~1 KB bootstrap; the ~133 KB gzipped scene is loaded on demand.
+- **Reduced motion.** With `prefers-reduced-motion: reduce`, the scene is never requested. Switching to reduced motion mid-visit disposes the scene and returns to the poster. The story keeps its static diagrams.
+- **No WebGL.** The poster stays, and the page is complete without the scene.
+- **Pause control.** A visible Pause/Play animation button appears once the scene is live.
+- **Off-screen pause.** The render loop stops when the hero leaves the viewport or the tab is hidden, and the scene is disposed on `pagehide`.
+- **DPR cap.** The pixel ratio is 1 on coarse pointers or viewports under 768px, otherwise at most 1.5.
+- **Easing.** Exponential ease-out (`cubic-bezier(0.16, 1, 0.3, 1)`) for fades and relights; a fast throw with a small overshoot for points and the lock; 150ms colour transitions on controls.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** keep every section under a cyan uppercase eyebrow — the console's readout rhythm.
-- **Do** set all commands, stack names and numerals in JetBrains Mono.
-- **Do** preserve the amber panel as the only place amber is allowed.
-- **Do** state status honestly where it is claimed (Alpha badge, "planned, not available" language).
-- **Do** separate surfaces with hairlines and tonal tints, never shadows.
+- **Do** use green only for verified, red only for failed, and amber for a set route, a caution or a rollback.
+- **Do** give every lamp colour a word next to it (StatusLamp label, diagram label).
+- **Do** draw any route diagram from `route-geometry.ts` inside a `.route-rail`, so the poster, labels and scene stay aligned.
+- **Do** give every animated or 3D surface a poster first paint, a reduced-motion frame, a no-WebGL fallback, a pause control, an off-screen pause and a DPR cap.
+- **Do** open sections with a TrackSection and keep running text at 68–72ch or narrower.
+- **Do** theme the browser surfaces from the palette: amber selection, amber caret, enamel-muted on frame scrollbar, 2px enamel-bright focus ring, 4px underline offset, tabular numerals for numbers that line up.
+- **Do** add every new component or state to `/system` in the same change.
+- **Do** use only real captures of the running app as imagery, with their alt text and intrinsic size.
 
 ### Don't:
 
-- **Don't** add a second accent color; cyan is the signal, amber is caution.
-- **Don't** use gradients other than the fixed body radial field.
-- **Don't** animate anything beyond hover color/border transitions.
-- **Don't** fill large areas with solid cyan; its largest legal field is a 10% tint.
-- **Don't** nest translucent cards inside translucent cards.
+- **Don't** put a kicker or eyebrow label above a heading.
+- **Don't** wrap sections or columns in cards, nest a box in a box, or use glass, blur or surface gradients.
+- **Don't** use green, red or amber as decoration, emphasis or a brand accent.
+- **Don't** set red text under 24px in `danger`; use `danger-text`. Never set text in `lever-blue`.
+- **Don't** animate anything that does not report a state, or ship an animation without its static twin.
+- **Don't** draw message traffic, packets or anything else MCM does not route. The scene shows the change route only.
+- **Don't** use mono for prose, or Big Shoulders capitals for running text.
+- **Don't** add drop shadows or hard offset shadows. Depth is the bevel on plates and the light of lamps.
+- **Don't** use the Eclipse or Mosquitto logos or their motifs. The mark is MCM's own.

@@ -56,6 +56,11 @@
     text-wrap: balance;
   }
 
+  /* No one-word last lines ("it.") in running text. */
+  p {
+    text-wrap: pretty;
+  }
+
   code {
     color: var(--color-enamel-bright);
   }
@@ -87,6 +92,15 @@
     color: var(--color-enamel-bright);
     text-decoration-color: currentColor;
   }
+}
+
+/* A route diagram drawn at --route-scale: the layout box is 1/scale of the
+   column and the transform scales it back, so the poster's % positions, px
+   radii and labels grow together (route-scene.ts reads the same rail). */
+.route-rail {
+  width: calc(100% / var(--route-scale, 1));
+  transform: scale(var(--route-scale, 1));
+  transform-origin: 0 0;
 }
 
 /* Route story stage: [data-route-step] relights the RoutePoster parts marked

@@ -25,6 +25,6 @@ To render, install `playwright` into a throwaway `mktemp -d` directory, not into
 3. Wait for `document.fonts.ready`.
 4. Take the screenshot with `page.screenshot`. For the favicon, pass `omitBackground: true`.
 
-The rasters were first rendered on 2026-11-12. If you change any source, render its PNG again.
+The rasters were first rendered on 2026-11-12. `og.png` was rendered again on 2026-11-13, after `og.html` changed its brand name to the binding "Mosquitto Control Manager (MCM)". If you change any source, render its PNG again.
 
 Status colours in the og diagram: the green lamp marks the verified outcome, and the amber ring marks the rolled-back outcome.
