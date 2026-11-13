@@ -163,7 +163,7 @@
       timeline-scope: --story-0, --story-1;
     }
 
-    [data-route-story][data-live] [data-route-light] {
+    [data-route-story][data-live] [data-route-stage] [data-route-light] {
       display: none;
     }
 
