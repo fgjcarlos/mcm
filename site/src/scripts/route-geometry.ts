@@ -2,12 +2,17 @@
 // x values are fractions of the content column; everything else is CSS px
 // from the track centre line.
 
+// `lit`: the story steps (STORY_STEPS indexes) in which the station lamp is on.
 export const STATIONS = [
-  { id: "review", label: "Review", x: 0.04 },
-  { id: "mfa", label: "MFA", x: 0.24 },
-  { id: "apply", label: "Apply", x: 0.44 },
-  { id: "probe", label: "Probe", x: 0.64 },
+  { id: "review", label: "Review", x: 0.04, lit: "0123" },
+  { id: "mfa", label: "MFA", x: 0.24, lit: "123" },
+  { id: "apply", label: "Apply", x: 0.44, lit: "123" },
+  { id: "probe", label: "Probe", x: 0.64, lit: "23" },
 ] as const;
+
+/** The scroll story, in order. The hero poster shows "verify" (index 2). */
+export const STORY_STEPS = ["review", "apply", "verify", "recover"] as const;
+export type StoryStep = (typeof STORY_STEPS)[number];
 
 /** Points: the main line (new revision) diverges here onto the branch (previous revision). */
 export const JUNCTION_X = 0.74;

@@ -1,0 +1,67 @@
+---
+// "How a change travels": four steps scroll past a sticky route stage that
+// lights station by station (desktop, motion allowed, JS). Everywhere else
+// each step carries its own static diagram strip.
+import RoutePoster from "./RoutePoster.astro";
+import { STORY_STEPS } from "../scripts/route-geometry";
+
+// Static copy authored here (rendered with set:html for inline <code>).
+const steps = [
+  {
+    title: "Review",
+    body: [
+      "MCM prepares a change as an immutable revision; preparing it changes no broker files.",
+      "Review the exact revision and its diff before you apply it.",
+    ],
+  },
+  {
+    title: "Apply",
+    body: ["Only an explicit apply changes broker files, and it requires a fresh multi-factor authentication (MFA) check."],
+  },
+  {
+    title: "Verify",
+    body: [
+      "After activation, a verification probe checks allowed and denied MQTT access.",
+      "Saved files and a reload signal are not proof on their own: an unverified activation is never shown as verified.",
+    ],
+  },
+  {
+    title: "Recover",
+    body: [
+      "If the activation fails, MCM restores the previous configuration, signals the broker again and verifies the recovery.",
+      "If that rollback fails too (<code>rollback_failed</code>), an operator has to intervene.",
+    ],
+  },
+];
+---
+
+<div data-route-story class="group lg:data-live:grid lg:data-live:grid-cols-12 lg:data-live:gap-x-12">
+  <p class="sr-only">
+    Each step has a matching route diagram. Review lights the first lamp. Apply lights the MFA lock and the Apply lamp. Verify lights the probe and clears the signal to green. Recover sets the signal to red and lights the branch back to the previous configuration.
+  </p>
+  <div aria-hidden="true" class="hidden lg:group-data-live:col-span-7 lg:group-data-live:col-start-6 lg:group-data-live:row-start-1 lg:group-data-live:block">
+    <div data-route-stage data-route-step="0" class="sticky top-[calc(50svh-4.5rem)] h-36 overflow-hidden border-y border-track px-8">
+      <div class="relative top-12 h-0">
+        <RoutePoster step="review" uid="route-stage" labels />
+      </div>
+    </div>
+  </div>
+  <ol class="max-w-3xl space-y-16 lg:group-data-live:col-span-5 lg:group-data-live:row-start-1 lg:group-data-live:space-y-0">
+    {steps.map((s, i) => (
+      <li data-story-step class="lg:group-data-live:flex lg:group-data-live:min-h-[75svh] lg:group-data-live:flex-col lg:group-data-live:justify-center">
+        <div aria-hidden="true" class="-mx-6 mb-6 h-36 overflow-hidden px-6 lg:group-data-live:hidden">
+          <div class="relative top-12 h-0">
+            <RoutePoster step={STORY_STEPS[i]} uid={`route-step-${i}`} labels />
+          </div>
+        </div>
+        <h3 class="text-4xl font-bold uppercase leading-none text-enamel-bright transition-colors duration-500">{s.title}</h3>
+        {s.body.map((p) => <p class="mt-4 max-w-[52ch] text-lg leading-relaxed text-enamel-soft transition-colors duration-500" set:html={p} />)}
+      </li>
+    ))}
+  </ol>
+</div>
+
+<script>
+  import { bootRouteStory } from "../scripts/route-story";
+  bootRouteStory();
+</script>

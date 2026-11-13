@@ -6,6 +6,7 @@ import EvidenceFigure from "../components/EvidenceFigure.astro";
 import LeverButton from "../components/LeverButton.astro";
 import Lockup from "../components/Lockup.astro";
 import Plate from "../components/Plate.astro";
+import RouteStory from "../components/RouteStory.astro";
 import SignalHero from "../components/SignalHero.astro";
 import StatusLamp from "../components/StatusLamp.astro";
 import TrackSection from "../components/TrackSection.astro";
@@ -60,6 +61,10 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
     </header>
 
     <div class="mx-auto w-full max-w-6xl px-6">
+      <TrackSection class="mt-28 sm:mt-36" titleId="route-story-title" title="How a change travels.">
+        <RouteStory />
+      </TrackSection>
+
       <TrackSection class="mt-28 sm:mt-36" titleId="availability-title" title="What you can change today—and what remains.">
         <p slot="lede">The current alpha manages one Mosquitto broker. The available controls are real; coverage and production readiness are not complete.</p>
         <div class="grid divide-y divide-track lg:grid-cols-3 lg:divide-x lg:divide-y-0">
