@@ -1976,6 +1976,78 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Confirm Apply' })).not.toBeInTheDocument()
   })
 
+  it('drops a pending confirmation when a new preview replaces the confirmed one', async () => {
+    await openDeployPreview('confirm-reset-token', { acl_diff: '+user plant' })
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Apply' }))
+    expect(await screen.findByRole('button', { name: 'Confirm Apply' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirm Apply' })).not.toBeInTheDocument())
+    // The new preview waits for a fresh confirmation.
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled()
+  })
+
+  it('keeps the access at risk of a listener visible outside the disclosure', async () => {
+    await openDeployPreview('listener-at-risk-token', {
+      acl_diff: '+user plant',
+      listener_acl_files: [{ listener_id: 'plant', path: '/mosquitto/config/acl.plant', diff: '+user plant', at_risk_entries: ['user alice|sensors/#|read'] }],
+    })
+
+    const atRisk = await screen.findByText('Listener access at risk')
+    expect(atRisk.closest('details')).toBeNull()
+    expect(screen.getByText(/at risk \(plant\): user alice\|sensors\/#\|read/)).toBeVisible()
+  })
+
+  it('shows the pending notice without an action on the panels that carry their own', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'notice-panels-token')
+    window.localStorage.setItem('mcm_deploy_pending', '1')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('notice-panels-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 9, username: 'notice-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+      'GET /api/v1/mqtt-users': () => envelope('users', []),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+
+    // The dashboard home offers the pending action in its own card.
+    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Pending changes' })).toBeInTheDocument()
+    const dashboardActions = screen.getAllByRole('button', { name: 'Review and apply' })
+    expect(dashboardActions).toHaveLength(1)
+
+    // The deploy panel carries its own preview and apply controls.
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    expect(screen.getByText('Pending deploy')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Review and apply' })).not.toBeInTheDocument()
+  })
+
+  it('raises the pending notice when an ACL source is adopted', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'adopt-pending-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('adopt-pending-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 9, username: 'adopt-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+      'GET /api/v1/acls': () => envelope('rules', []),
+      'GET /api/v1/acls/source': () => jsonResponse({ path: '/mosquitto/config/acl', adopted: false }),
+      'POST /api/v1/acls/source/adopt': () => jsonResponse({ path: '/mosquitto/config/acl', adopted: true, body: 'topic read sensors/#' }),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /acls/i }))
+    await screen.findByRole('heading', { name: 'ACL policy workspace' })
+    expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Adopt ACL file' }))
+    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+  })
+
   it('shows the blocking entries the API returns when it refuses an apply', async () => {
     window.localStorage.setItem('mcm_admin_token', 'apply-details-token')
     vi.stubGlobal('fetch', installFetchMock({
