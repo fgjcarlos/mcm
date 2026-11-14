@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
-type RouteHandler = (init?: RequestInit) => Response | Promise<Response>
+type RouteHandler = (init?: RequestInit, url?: string) => Response | Promise<Response>
 
 class LocalStorageMock implements Storage {
   private store = new Map<string, string>()
@@ -100,7 +100,8 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
     const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
     const key = `${method.toUpperCase()} ${requestUrl}`
-    const handler = routes[key] ?? (key === 'POST /api/v1/auth/mfa/step-up'
+    // A listing request carries its query (?limit=&offset=...); fall back to the bare path.
+    const handler = routes[key] ?? routes[key.split('?')[0]] ?? (key === 'POST /api/v1/auth/mfa/step-up'
       ? () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() })
       : undefined)
 
@@ -108,8 +109,29 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
       throw new Error(`Unhandled fetch: ${key}`)
     }
 
-    return await handler(init)
+    return await handler(init, requestUrl)
   })
+}
+
+// The paged listing envelope of issue #356 (S10) for a single page.
+function envelope(rowsKey: string, rows: unknown[]) {
+  return jsonResponse({ [rowsKey]: rows, total: rows.length, limit: 25, offset: 0 })
+}
+
+// Answers like a paged listing endpoint: keeps the rows that match the
+// request query, echoes limit/offset and counts the matches.
+function pagedRoute<T>(rowsKey: string, all: T[], matches: (row: T, params: URLSearchParams) => boolean = () => true): RouteHandler {
+  return (_init, url) => {
+    const params = new URL(url ?? '', 'http://localhost').searchParams
+    const found = all.filter((row) => matches(row, params))
+    const limit = Number(params.get('limit') ?? 50)
+    const offset = Number(params.get('offset') ?? 0)
+    return jsonResponse({ [rowsKey]: found.slice(offset, offset + limit), total: found.length, limit, offset })
+  }
+}
+
+function includesParam(value: string, params: URLSearchParams, name: string) {
+  return value.toLowerCase().includes((params.get(name) ?? '').toLowerCase())
 }
 
 function authenticatedRoutes(token: string): Record<string, RouteHandler> {
@@ -532,7 +554,7 @@ describe('App', () => {
       'GET /api/v1/mqtt-users': (init) => {
         expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer restored-token' }))
 
-        return jsonResponse([
+        return envelope('users', [
           {
             id: 42,
             username: 'device-sensor-01',
@@ -557,7 +579,7 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/v1/mqtt-users',
+        '/api/v1/mqtt-users?limit=25&offset=0',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer restored-token' }),
         }),
@@ -580,7 +602,7 @@ describe('App', () => {
         }),
       'GET /api/v1/status': () =>
         jsonResponse({ broker: { status: 'connected', metrics: { traffic: { window_seconds: 300, message_count: 0, message_rate_per_minute: 0, rate_points: [], top_topics: [], top_clients: [], top_clients_available: false, persistence: 'In-memory' } } } }),
-      'GET /api/v1/mqtt-users': () => jsonResponse([]),
+      'GET /api/v1/mqtt-users': () => envelope('users', []),
       'POST /api/v1/mqtt-users': () => jsonResponse({ id: 7, username: 'probe', password: 'generated-secret' }),
       'POST /api/v1/acls': () => jsonResponse({ id: 'rule-1', principal: 'probe' }),
       'POST /api/v1/deployments/preview': () =>
@@ -877,17 +899,15 @@ describe('App', () => {
       'GET /api/v1/acls': (init) => {
         expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer acl-token' }))
 
-        return jsonResponse({
-          rules: [
-            {
-              id: 'rule-1',
-              principal: 'device-writer',
-              topic_filter: 'factory/line-1/#',
-              permission: 'write',
-              description: 'Line 1 telemetry writer',
-            },
-          ],
-        })
+        return envelope('rules', [
+          {
+            id: 'rule-1',
+            principal: 'device-writer',
+            topic_filter: 'factory/line-1/#',
+            permission: 'write',
+            description: 'Line 1 telemetry writer',
+          },
+        ])
       },
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -905,7 +925,7 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/v1/acls',
+        '/api/v1/acls?limit=25&offset=0',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer acl-token' }),
         }),
@@ -1006,27 +1026,23 @@ describe('App', () => {
     const fetchMock = installFetchMock({
       ...authenticatedRoutes('multi-panel-token'),
       'GET /api/v1/acls': () =>
-        jsonResponse({
-          rules: [
-            {
-              id: 'rule-2',
-              principal: 'analytics-reader',
-              topic_filter: 'analytics/+/state',
-              permission: 'read',
-            },
-          ],
-        }),
+        envelope('rules', [
+          {
+            id: 'rule-2',
+            principal: 'analytics-reader',
+            topic_filter: 'analytics/+/state',
+            permission: 'read',
+          },
+        ]),
       'GET /api/v1/deployments': () =>
-        jsonResponse({
-          deployments: [
-            {
-              id: 'dep-2026-01-01',
-              status: 'applied',
-              message: 'Configuration applied successfully.',
-              created_at: '2026-01-01T00:00:00Z',
-            },
-          ],
-        }),
+        envelope('deployments', [
+          {
+            id: 'dep-2026-01-01',
+            status: 'applied',
+            message: 'Configuration applied successfully.',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -1044,17 +1060,150 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/v1/acls',
+        '/api/v1/acls?limit=25&offset=0',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer multi-panel-token' }),
         }),
       )
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/v1/deployments',
+        '/api/v1/deployments?limit=25&offset=0',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer multi-panel-token' }),
         }),
       )
+    })
+  })
+
+  describe('paged searchable listings (issue #356)', () => {
+    type Rule = { id: string; principal: string; topic_filter: string; permission: string }
+    type Dep = { id: string; status: string; message: string; created_at: string }
+
+    const rules: Rule[] = [
+      { id: 'r1', principal: 'sensor-a', topic_filter: 'plant/a/#', permission: 'read' },
+      { id: 'r2', principal: 'sensor-b', topic_filter: 'plant/b/#', permission: 'write' },
+      { id: 'r3', principal: 'gateway', topic_filter: 'plant/a/cmd', permission: 'readwrite' },
+    ]
+    const deployments: Dep[] = [
+      { id: 'dep-1', status: 'active_verified', message: 'Verified deploy', created_at: '2026-01-02T00:00:00Z' },
+      { id: 'dep-2', status: 'rolled_back', message: 'Rolled back deploy', created_at: '2026-01-01T00:00:00Z' },
+    ]
+    const users = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, username: `device-${String(i + 1).padStart(2, '0')}`, disabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }))
+
+    function listingRoutes(token: string, data: { rules?: Rule[]; deployments?: Dep[] } = {}) {
+      return {
+        ...authenticatedRoutes(token),
+        'GET /api/v1/mqtt-users': pagedRoute('users', users, (row, params) => includesParam(row.username, params, 'q')),
+        'GET /api/v1/acls': pagedRoute('rules', data.rules ?? rules, (row, params) => includesParam(row.principal, params, 'user') && includesParam(row.topic_filter, params, 'topic')),
+        'GET /api/v1/deployments': pagedRoute('deployments', data.deployments ?? deployments, (row, params) => !params.get('status') || row.status === params.get('status')),
+      } satisfies Record<string, RouteHandler>
+    }
+
+    function urls(fetchMock: ReturnType<typeof installFetchMock>, path: string) {
+      return fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith(`${path}?`))
+    }
+
+    async function openPanel(token: string, link: RegExp, data?: Parameters<typeof listingRoutes>[1]) {
+      window.localStorage.setItem('mcm_admin_token', token)
+      const fetchMock = installFetchMock(listingRoutes(token, data))
+      vi.stubGlobal('fetch', fetchMock)
+      render(<App />)
+      await screen.findByText('Signed in')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('link', { name: link }))
+      return { user, fetchMock }
+    }
+
+    it('filters the ACL rules by user and by topic through the server (S7)', async () => {
+      const { user, fetchMock } = await openPanel('acl-filter-token', /acls/i)
+      expect(await screen.findByText('gateway')).toBeInTheDocument()
+      expect(screen.getByText('3 rules')).toBeInTheDocument()
+
+      await user.type(screen.getByRole('textbox', { name: 'Filter by user' }), 'sensor')
+      await waitFor(() => expect(screen.queryByText('gateway')).not.toBeInTheDocument())
+      expect(screen.getByText('sensor-a')).toBeInTheDocument()
+      expect(screen.getByText('sensor-b')).toBeInTheDocument()
+      expect(urls(fetchMock, '/api/v1/acls')).toContain('/api/v1/acls?user=sensor&limit=25&offset=0')
+
+      await user.type(screen.getByRole('textbox', { name: 'Filter by topic' }), 'plant/a')
+      await waitFor(() => expect(screen.queryByText('sensor-b')).not.toBeInTheDocument())
+      expect(screen.getByText('sensor-a')).toBeInTheDocument()
+      expect(screen.getByText('1 rule')).toBeInTheDocument()
+      expect(urls(fetchMock, '/api/v1/acls')).toContain('/api/v1/acls?user=sensor&topic=plant%2Fa&limit=25&offset=0')
+    })
+
+    it('tells no ACL rules apart from no matching ACL rule (S16)', async () => {
+      const { user } = await openPanel('acl-empty-token', /acls/i, { rules: [] })
+      expect(await screen.findByText('No ACL rules configured yet.')).toBeInTheDocument()
+      expect(screen.queryByText('No ACL rules match the filters.')).not.toBeInTheDocument()
+
+      await user.type(screen.getByRole('textbox', { name: 'Filter by topic' }), 'x')
+      expect(await screen.findByText('No ACL rules match the filters.')).toBeInTheDocument()
+      expect(screen.queryByText('No ACL rules configured yet.')).not.toBeInTheDocument()
+    })
+
+    it('filters the deployment history by status through the server (S7)', async () => {
+      const { user, fetchMock } = await openPanel('deploy-filter-token', /deploy/i)
+      expect(await screen.findByText('Verified deploy')).toBeInTheDocument()
+      expect(screen.getByText('Rolled back deploy')).toBeInTheDocument()
+      expect(screen.getByText('2 deployments')).toBeInTheDocument()
+
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'rolled_back')
+      await waitFor(() => expect(screen.queryByText('Verified deploy')).not.toBeInTheDocument())
+      expect(screen.getByText('Rolled back deploy')).toBeInTheDocument()
+      expect(screen.getByText('1 deployment')).toBeInTheDocument()
+      expect(urls(fetchMock, '/api/v1/deployments')).toContain('/api/v1/deployments?status=rolled_back&limit=25&offset=0')
+
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'failed')
+      expect(await screen.findByText('No deployments match the filter.')).toBeInTheDocument()
+      expect(screen.queryByText('No deployments recorded yet.')).not.toBeInTheDocument()
+    })
+
+    it('tells no deployments apart from no matching deployment (S16)', async () => {
+      await openPanel('deploy-empty-token', /deploy/i, { deployments: [] })
+      expect(await screen.findByText('No deployments recorded yet.')).toBeInTheDocument()
+      expect(screen.queryByText('No deployments match the filter.')).not.toBeInTheDocument()
+    })
+
+    it('restores the search, filters and page of each listing when coming back to it (S14)', async () => {
+      const { user, fetchMock } = await openPanel('round-trip-token', /^MQTT users/)
+      expect(await screen.findByText('device-01')).toBeInTheDocument()
+      await user.type(screen.getByRole('searchbox', { name: 'Search users' }), 'device')
+      await waitFor(() => expect(window.location.search).toBe('?users.q=device'))
+      await user.click(screen.getByRole('button', { name: 'Next page' }))
+      expect(await screen.findByText('device-26')).toBeInTheDocument()
+      expect(window.location.search).toBe('?users.q=device&users.page=2')
+
+      await user.click(screen.getByRole('link', { name: /acls/i }))
+      expect(await screen.findByText('gateway')).toBeInTheDocument()
+      // The users context does not leak into another panel's URL.
+      expect(window.location.search).toBe('')
+      await user.type(screen.getByRole('textbox', { name: 'Filter by user' }), 'sensor')
+      await waitFor(() => expect(window.location.search).toBe('?acl.user=sensor'))
+
+      // Logs keeps opening unfiltered from the sidebar.
+      await user.click(screen.getByRole('link', { name: /^Logs/ }))
+      expect(window.location.pathname).toBe('/logs')
+      expect(window.location.search).toBe('')
+
+      await user.click(screen.getByRole('link', { name: /^MQTT users/ }))
+      expect(window.location.pathname).toBe('/users')
+      expect(window.location.search).toBe('?users.q=device&users.page=2')
+      expect(await screen.findByText('device-26')).toBeInTheDocument()
+      expect(screen.getByRole('searchbox', { name: 'Search users' })).toHaveValue('device')
+      expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+      expect(urls(fetchMock, '/api/v1/mqtt-users').at(-1)).toBe('/api/v1/mqtt-users?q=device&limit=25&offset=25')
+
+      await user.click(screen.getByRole('link', { name: /acls/i }))
+      expect(window.location.search).toBe('?acl.user=sensor')
+      expect(await screen.findByText('sensor-a')).toBeInTheDocument()
+      expect(screen.queryByText('gateway')).not.toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Filter by user' })).toHaveValue('sensor')
+
+      // The browser back button returns to the listing with its context too.
+      window.history.back()
+      await waitFor(() => expect(window.location.pathname).toBe('/users'))
+      expect(window.location.search).toBe('?users.q=device&users.page=2')
+      expect(await screen.findByText('device-26')).toBeInTheDocument()
     })
   })
 
@@ -1089,7 +1238,7 @@ describe('App', () => {
               },
             },
           }),
-        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+        'GET /api/v1/acls': () => envelope('rules', []),
       }
     }
 
@@ -1166,7 +1315,7 @@ describe('App', () => {
               },
             },
           }),
-        'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+        'GET /api/v1/deployments': () => envelope('deployments', []),
       }
     }
 
@@ -1258,7 +1407,7 @@ describe('App', () => {
               },
             },
           }),
-        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+        'GET /api/v1/acls': () => envelope('rules', []),
       }
     }
 
@@ -1309,7 +1458,7 @@ describe('App', () => {
               },
             },
           }),
-        'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+        'GET /api/v1/acls': () => envelope('rules', []),
         'POST /api/v1/acls': () => jsonResponse({ error: 'insufficient role' }, { status: 403 }),
       }
     }
@@ -1354,14 +1503,14 @@ describe('App', () => {
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       }),
-      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'GET /api/v1/acls': () => envelope('rules', []),
       'POST /api/v1/acls': () => jsonResponse({
         id: 'rule-new',
         principal: 'new-device',
         topic_filter: 'factory/#',
         permission: 'read',
       }, { status: 201 }),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-297',
         acl_diff: '-user retired-device\n+user new-device',
@@ -1451,14 +1600,14 @@ describe('App', () => {
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       }),
-      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'GET /api/v1/acls': () => envelope('rules', []),
       'POST /api/v1/acls': () => jsonResponse({
         id: 'rule-error',
         principal: 'new-device',
         topic_filter: 'factory/#',
         permission: 'read',
       }, { status: 201 }),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-error',
         acl_diff: '+user new-device',
@@ -1509,9 +1658,9 @@ describe('App', () => {
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       }),
-      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'GET /api/v1/acls': () => envelope('rules', []),
       'POST /api/v1/acls': () => pendingCreate,
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-ordered',
         acl_diff: '+user new-device',
@@ -1575,14 +1724,14 @@ describe('App', () => {
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       }),
-      'GET /api/v1/acls': () => jsonResponse({ rules: [] }),
+      'GET /api/v1/acls': () => envelope('rules', []),
       'POST /api/v1/acls': () => jsonResponse({
         id: 'rule-during-apply',
         principal: 'new-device',
         topic_filter: 'factory/#',
         permission: 'read',
       }, { status: 201 }),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-during-apply',
         acl_diff: '+user new-device',
@@ -1635,7 +1784,7 @@ describe('App', () => {
     window.localStorage.setItem('mcm_admin_token', 'scope-token')
     vi.stubGlobal('fetch', installFetchMock({
       ...authenticatedRoutes('scope-token'),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-scope',
         acl_diff: '+user plant\n+topic readwrite plant/#',
@@ -1663,7 +1812,7 @@ describe('App', () => {
     window.localStorage.setItem('mcm_admin_token', 'scope-broken-token')
     vi.stubGlobal('fetch', installFetchMock({
       ...authenticatedRoutes('scope-broken-token'),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-scope-broken',
         acl_diff: '+user plant',
@@ -1691,7 +1840,7 @@ describe('App', () => {
     window.localStorage.setItem('mcm_admin_token', 'impact-token')
     vi.stubGlobal('fetch', installFetchMock({
       ...authenticatedRoutes('impact-token'),
-      'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
       'POST /api/v1/deployments/preview': () => jsonResponse({
         revision_id: 'revision-impact',
         acl_diff: '-topic read sensors/#',
@@ -1759,7 +1908,7 @@ describe('App', () => {
               },
             },
           }),
-        'GET /api/v1/deployments': () => jsonResponse({ deployments: [] }),
+        'GET /api/v1/deployments': () => envelope('deployments', []),
         'POST /api/v1/deployments/preview': () =>
           jsonResponse({ error: 'insufficient role' }, { status: 403 }),
       }
@@ -1935,7 +2084,7 @@ describe('App', () => {
                   },
                 },
               }),
-        'GET /api/v1/mqtt-users': () => jsonResponse([]),
+        'GET /api/v1/mqtt-users': () => envelope('users', []),
       }
     }
 
