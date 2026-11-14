@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -166,6 +167,88 @@ func TestACLStoreValidatesOnCreateAndUpdate(t *testing.T) {
 		var validationErr *acl.ValidationError
 		if !errors.As(err, &validationErr) {
 			t.Fatalf("UpdateRule error = %v, want *acl.ValidationError", err)
+		}
+	}
+}
+
+// TestACLListRulesPaged runs the same cases against the SQL store and the
+// in-memory store so both implement identical filtering, ordering and paging.
+func TestACLListRulesPaged(t *testing.T) {
+	seed := []acl.Rule{
+		{Principal: "alice", TopicFilter: "sensors/temp", Permission: acl.PermissionRead},
+		{Principal: "bob", TopicFilter: "factory/#", Permission: acl.PermissionWrite},
+		{Principal: "Alice-Admin", TopicFilter: "sensors/+/humidity", Permission: acl.PermissionRead},
+		{Principal: "pct%user", TopicFilter: "sensors/x", Permission: acl.PermissionRead},
+		{Principal: "carol", TopicFilter: "factory/line1/#", Permission: acl.PermissionRead},
+		{Principal: "alice", TopicFilter: "factory/alice", Permission: acl.PermissionReadWrite},
+		{Principal: "under_score", TopicFilter: "a/b", Permission: acl.PermissionRead},
+		{Principal: "underXscore", TopicFilter: "a/c", Permission: acl.PermissionRead},
+		{Principal: "dev-0", TopicFilter: "d/0", Permission: acl.PermissionRead},
+		{Principal: "dev-1", TopicFilter: "d/1", Permission: acl.PermissionRead},
+		{Principal: "dev-2", TopicFilter: "d/2", Permission: acl.PermissionRead},
+		{Principal: "dev-3", TopicFilter: "d/3", Permission: acl.PermissionRead},
+	}
+	all := make([]string, 0, len(seed))
+	for _, r := range seed {
+		all = append(all, r.Principal+" "+r.TopicFilter)
+	}
+
+	tests := []struct {
+		name          string
+		user, topic   string
+		limit, offset int
+		want          []string
+		wantTotal     int
+	}{
+		{"empty filters match everything in id order", "", "", 50, 0, all, 12},
+		{"page past id 9 keeps numeric order", "", "", 5, 10, all[10:], 12},
+		{"user filter matches one rule", "bob", "", 50, 0, []string{"bob factory/#"}, 1},
+		{"user filter is case-insensitive substring", "ALICE", "", 50, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity", "alice factory/alice"}, 3},
+		{"total counts all matches beyond the page", "alice", "", 2, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity"}, 3},
+		{"offset returns the next slice", "alice", "", 2, 2, []string{"alice factory/alice"}, 3},
+		{"offset past the end returns no rows", "alice", "", 2, 9, []string{}, 3},
+		{"topic filter matches one rule", "", "humid", 50, 0, []string{"Alice-Admin sensors/+/humidity"}, 1},
+		{"topic filter matches several rules", "", "FACTORY", 50, 0, []string{"bob factory/#", "carol factory/line1/#", "alice factory/alice"}, 3},
+		{"user and topic combine with AND", "alice", "factory", 50, 0, []string{"alice factory/alice"}, 1},
+		{"percent in user matches literally", "%", "", 50, 0, []string{"pct%user sensors/x"}, 1},
+		{"underscore in user matches literally", "under_", "", 50, 0, []string{"under_score a/b"}, 1},
+		{"percent in topic is not a match-all", "", "%", 50, 0, []string{}, 0},
+		{"no match returns no rows", "nobody", "", 50, 0, []string{}, 0},
+	}
+
+	ctx := context.Background()
+	sqlStore := newTestStore(t)
+	defer sqlStore.Close()
+	stores := map[string]acl.Store{"sql": sqlStore.ACLStore(), "memory": acl.NewMemoryStore()}
+
+	for storeName, store := range stores {
+		for _, r := range seed {
+			if _, err := store.CreateRule(ctx, r); err != nil {
+				t.Fatalf("%s CreateRule(%q) returned error: %v", storeName, r.Principal, err)
+			}
+		}
+		for _, tt := range tests {
+			t.Run(storeName+"/"+tt.name, func(t *testing.T) {
+				rules, total, err := store.ListRulesPaged(ctx, tt.user, tt.topic, tt.limit, tt.offset)
+				if err != nil {
+					t.Fatalf("ListRulesPaged returned error: %v", err)
+				}
+				got := make([]string, 0, len(rules))
+				for _, r := range rules {
+					got = append(got, r.Principal+" "+r.TopicFilter)
+				}
+				if total != tt.wantTotal {
+					t.Errorf("total = %d, want %d", total, tt.wantTotal)
+				}
+				if !slices.Equal(got, tt.want) {
+					t.Errorf("rules = %q, want %q", got, tt.want)
+				}
+			})
+		}
+		// The full listing is unchanged by the paged one.
+		full, err := store.ListRules(ctx)
+		if err != nil || len(full) != len(seed) {
+			t.Fatalf("%s ListRules = %d rules, %v; want %d", storeName, len(full), err, len(seed))
 		}
 	}
 }

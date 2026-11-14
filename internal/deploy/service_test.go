@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -264,6 +265,30 @@ func (f *fakeDeploymentStore) ListDeployments(_ context.Context, limit, offset i
 	return result, nil
 }
 
+// ListDeploymentsPage filters by exact status (empty matches all), orders
+// newest first with id as the tie-breaker and returns the page plus the
+// total number of matches.
+func (f *fakeDeploymentStore) ListDeploymentsPage(_ context.Context, status string, limit, offset int) ([]storage.Deployment, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	matches := make([]storage.Deployment, 0, len(f.deployments))
+	for _, d := range f.deployments {
+		if status == "" || d.Status == status {
+			matches = append(matches, *d)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].CreatedAt.Equal(matches[j].CreatedAt) {
+			return matches[i].CreatedAt.After(matches[j].CreatedAt)
+		}
+		return matches[i].ID > matches[j].ID
+	})
+	total := len(matches)
+	start := min(offset, total)
+	end := min(start+limit, total)
+	return matches[start:end], total, nil
+}
+
 func (f *fakeDeploymentStore) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -277,6 +302,10 @@ type fakeACLStore struct {
 
 func (f *fakeACLStore) ListRules(_ context.Context) ([]acl.Rule, error) {
 	return f.rules, nil
+}
+
+func (f *fakeACLStore) ListRulesPaged(_ context.Context, _, _ string, _, _ int) ([]acl.Rule, int, error) {
+	return f.rules, len(f.rules), nil
 }
 
 func (f *fakeACLStore) CreateRule(_ context.Context, rule acl.Rule) (acl.Rule, error) {
@@ -1805,5 +1834,67 @@ func TestPreview_DiffTruncation(t *testing.T) {
 	}
 	if !strings.Contains(result.ACLDiff, "truncated") {
 		t.Error("expected truncation indicator in ACLDiff")
+	}
+}
+
+// TestList_Disabled pins that the deployments listing answers
+// ErrDeployDisabled when the deploy feature is off.
+func TestList_Disabled(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(
+		&fakeApplier{},
+		&fakeACLStore{},
+		&fakeMQTTUserLister{},
+		newFakeDeploymentStore(),
+		diagnostics.VerifierFunc(okVerifier),
+		&fakePasswordLookup{},
+		config.DeployConfig{Mode: ""},
+	)
+
+	got, total, err := svc.List(context.Background(), "", 50, 0)
+	if !errors.Is(err, ErrDeployDisabled) {
+		t.Errorf("error = %v, want ErrDeployDisabled", err)
+	}
+	if got != nil || total != 0 {
+		t.Errorf("got %d rows total %d, want nil and 0", len(got), total)
+	}
+}
+
+// TestList_FiltersAndPages pins that the service forwards the status filter,
+// limit and offset to the store and returns the page with the full total.
+func TestList_FiltersAndPages(t *testing.T) {
+	t.Parallel()
+	store := newFakeDeploymentStore()
+	ctx := context.Background()
+	for _, status := range []string{"failed", "saved", "failed", "failed"} {
+		if err := store.InsertDeployment(ctx, &storage.Deployment{Actor: "operator", Status: status}); err != nil {
+			t.Fatalf("InsertDeployment: %v", err)
+		}
+	}
+	deployCfg, _, _ := enabledDeployCfg(t)
+	svc := newTestService(
+		&fakeApplier{},
+		&fakeACLStore{},
+		&fakeMQTTUserLister{},
+		store,
+		diagnostics.VerifierFunc(okVerifier),
+		&fakePasswordLookup{},
+		deployCfg,
+	)
+
+	page, total, err := svc.List(ctx, "failed", 2, 1)
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	if len(page) != 2 {
+		t.Fatalf("page size = %d, want 2", len(page))
+	}
+	for _, d := range page {
+		if d.Status != "failed" {
+			t.Errorf("status filter leaked row %d with status %q", d.ID, d.Status)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,6 +29,10 @@ type fakeDeployACLStore struct {
 
 func (f *fakeDeployACLStore) ListRules(_ context.Context) ([]acl.Rule, error) {
 	return f.rules, nil
+}
+
+func (f *fakeDeployACLStore) ListRulesPaged(_ context.Context, _, _ string, _, _ int) ([]acl.Rule, int, error) {
+	return f.rules, len(f.rules), nil
 }
 
 func (f *fakeDeployACLStore) CreateRule(_ context.Context, rule acl.Rule) (acl.Rule, error) {
@@ -92,6 +97,18 @@ func (f *fakeDeployStore) ListDeployments(_ context.Context, _, _ int) ([]storag
 		result = append(result, *d)
 	}
 	return result, nil
+}
+
+func (f *fakeDeployStore) ListDeploymentsPage(_ context.Context, status string, limit, offset int) ([]storage.Deployment, int, error) {
+	matches := make([]storage.Deployment, 0, len(f.deployments))
+	for _, d := range f.deployments {
+		if status == "" || d.Status == status {
+			matches = append(matches, *d)
+		}
+	}
+	total := len(matches)
+	start := min(offset, total)
+	return matches[start:min(start+limit, total)], total, nil
 }
 
 type fakeDeployApplier struct {
@@ -228,13 +245,213 @@ func TestHandleDeployList(t *testing.T) {
 		token := loginAs(t, app, "admin", "secret")
 
 		rec := httptest.NewRecorder()
-		req := authedRequest(http.MethodGet, "/api/v1/deployments", "", token)
+		req := authedRequest(http.MethodGet, "/api/v1/deployments?status=failed&limit=5&offset=5", "", token)
 		app.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
 		}
+		var resp errorResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Error != "deploy is not configured" {
+			t.Errorf("error = %q, want %q", resp.Error, "deploy is not configured")
+		}
 	})
+}
+
+// recordingDeployService is a deployServicer that records the listing
+// arguments and answers with a fixed page and total.
+type recordingDeployService struct {
+	status        string
+	limit, offset int
+	page          []storage.Deployment
+	total         int
+}
+
+func (r *recordingDeployService) Preview(_ context.Context, _ string) (deploy.PreviewResult, error) {
+	return deploy.PreviewResult{}, nil
+}
+
+func (r *recordingDeployService) Apply(_ context.Context, _, _ string) (storage.Deployment, error) {
+	return storage.Deployment{}, nil
+}
+
+func (r *recordingDeployService) List(_ context.Context, status string, limit, offset int) ([]storage.Deployment, int, error) {
+	r.status, r.limit, r.offset = status, limit, offset
+	return r.page, r.total, nil
+}
+
+type deploymentsPage struct {
+	Deployments []storage.Deployment `json:"deployments"`
+	Total       int                  `json:"total"`
+	Limit       int                  `json:"limit"`
+	Offset      int                  `json:"offset"`
+}
+
+func getDeploymentsPage(t *testing.T, app *App, token, query string) deploymentsPage {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodGet, "/api/v1/deployments"+query, "", token))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want %d, body = %s", query, rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, key := range []string{"deployments", "total", "limit", "offset"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("GET %s response is missing key %q: %s", query, key, rec.Body.String())
+		}
+	}
+	var page deploymentsPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page: %v", err)
+	}
+	return page
+}
+
+// TestHandleDeployListPageParams pins the S10b/S10c query contract: status is
+// forwarded verbatim, limit defaults to 50 and is clamped to 100, offset
+// defaults to 0 and a negative one becomes 0, garbage never becomes 0 nor
+// fails the request, and the applied values are echoed.
+func TestHandleDeployListPageParams(t *testing.T) {
+	cases := []struct {
+		query      string
+		wantStatus string
+		wantLimit  int
+		wantOffset int
+	}{
+		{query: "", wantLimit: 50, wantOffset: 0},
+		{query: "?limit=500", wantLimit: 100, wantOffset: 0},
+		{query: "?limit=100", wantLimit: 100, wantOffset: 0},
+		{query: "?limit=7", wantLimit: 7, wantOffset: 0},
+		{query: "?limit=abc", wantLimit: 50, wantOffset: 0},
+		{query: "?limit=0", wantLimit: 50, wantOffset: 0},
+		{query: "?limit=-4", wantLimit: 50, wantOffset: 0},
+		{query: "?offset=20", wantLimit: 50, wantOffset: 20},
+		{query: "?offset=-3", wantLimit: 50, wantOffset: 0},
+		{query: "?offset=xyz", wantLimit: 50, wantOffset: 0},
+		{query: "?status=failed&limit=2&offset=4", wantStatus: "failed", wantLimit: 2, wantOffset: 4},
+	}
+	for _, tc := range cases {
+		t.Run("query "+tc.query, func(t *testing.T) {
+			app, store := newTestApp(t)
+			t.Cleanup(func() { _ = store.Close() })
+			svc := &recordingDeployService{page: []storage.Deployment{{ID: 9, Status: "failed"}}, total: 12}
+			app.deploySvc = svc
+			seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+			token := loginAs(t, app, "admin", "secret")
+
+			page := getDeploymentsPage(t, app, token, tc.query)
+
+			if svc.status != tc.wantStatus || svc.limit != tc.wantLimit || svc.offset != tc.wantOffset {
+				t.Errorf("service got status=%q limit=%d offset=%d, want status=%q limit=%d offset=%d",
+					svc.status, svc.limit, svc.offset, tc.wantStatus, tc.wantLimit, tc.wantOffset)
+			}
+			if page.Limit != tc.wantLimit || page.Offset != tc.wantOffset {
+				t.Errorf("echoed limit=%d offset=%d, want limit=%d offset=%d", page.Limit, page.Offset, tc.wantLimit, tc.wantOffset)
+			}
+			if page.Total != 12 || len(page.Deployments) != 1 || page.Deployments[0].ID != 9 {
+				t.Errorf("page = %+v, want the service page with total 12", page)
+			}
+		})
+	}
+}
+
+// TestHandleDeployListFiltersAndPagesStoredDeployments drives the endpoint
+// over the real SQLite store: the status filter, the full total, the next
+// slice for a non-zero offset and paging forward and back without skipping
+// or repeating a row (S7, S8, S10).
+func TestHandleDeployListFiltersAndPagesStoredDeployments(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	dir := t.TempDir()
+	app.deploySvc = deploy.NewService(
+		&fakeDeployApplier{},
+		&fakeDeployACLStore{},
+		&fakeDeployMQTTStore{},
+		store,
+		diagnostics.VerifierFunc(okDeployVerifier),
+		&fakeDeployPasswordLookup{},
+		config.MosquittoConfig{Host: "localhost", Port: 1883},
+		config.DeployConfig{Mode: "file", ACLPath: dir + "/acl", PasswdPath: dir + "/passwd"},
+		func(_ context.Context, _, _, _, _, _ string, _ []byte) {},
+	)
+	ctx := context.Background()
+	var failedIDs []int64
+	for i := 0; i < 7; i++ {
+		status := "failed"
+		if i%3 == 1 {
+			status = "active_verified"
+		}
+		d := &storage.Deployment{Actor: "operator", Status: status}
+		if err := store.InsertDeployment(ctx, d); err != nil {
+			t.Fatalf("InsertDeployment %d: %v", i, err)
+		}
+		if status == "failed" {
+			failedIDs = append(failedIDs, d.ID)
+		}
+	}
+	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+	token := loginAs(t, app, "admin", "secret")
+
+	all := getDeploymentsPage(t, app, token, "")
+	if all.Total != 7 || len(all.Deployments) != 7 {
+		t.Errorf("no filter: got %d rows total %d, want 7 and 7", len(all.Deployments), all.Total)
+	}
+
+	first := getDeploymentsPage(t, app, token, "?status=failed&limit=2")
+	if first.Total != len(failedIDs) {
+		t.Errorf("total = %d, want %d", first.Total, len(failedIDs))
+	}
+	if len(first.Deployments) != 2 || first.Total <= len(first.Deployments) {
+		t.Errorf("page size = %d with total %d, want 2 rows and a larger total", len(first.Deployments), first.Total)
+	}
+
+	ids := func(p deploymentsPage) []int64 {
+		out := make([]int64, 0, len(p.Deployments))
+		for _, d := range p.Deployments {
+			if d.Status != "failed" {
+				t.Errorf("status filter leaked row %d with status %q", d.ID, d.Status)
+			}
+			out = append(out, d.ID)
+		}
+		return out
+	}
+	var forward []int64
+	for offset := 0; offset < first.Total; offset += 2 {
+		forward = append(forward, ids(getDeploymentsPage(t, app, token, fmt.Sprintf("?status=failed&limit=2&offset=%d", offset)))...)
+	}
+	var backward []int64
+	for offset := ((first.Total - 1) / 2) * 2; offset >= 0; offset -= 2 {
+		backward = append(ids(getDeploymentsPage(t, app, token, fmt.Sprintf("?status=failed&limit=2&offset=%d", offset))), backward...)
+	}
+	if len(forward) != len(failedIDs) {
+		t.Errorf("forward pages returned %d rows, want %d: %v", len(forward), len(failedIDs), forward)
+	}
+	seen := make(map[int64]bool, len(forward))
+	for _, id := range forward {
+		if seen[id] {
+			t.Errorf("row %d repeated across pages: %v", id, forward)
+		}
+		seen[id] = true
+	}
+	for _, id := range failedIDs {
+		if !seen[id] {
+			t.Errorf("row %d skipped across pages: %v", id, forward)
+		}
+	}
+	if fmt.Sprint(backward) != fmt.Sprint(forward) {
+		t.Errorf("backward pages = %v, want %v", backward, forward)
+	}
+
+	negative := getDeploymentsPage(t, app, token, "?status=failed&limit=2&offset=-5")
+	if negative.Offset != 0 || fmt.Sprint(ids(negative)) != fmt.Sprint(ids(first)) {
+		t.Errorf("negative offset page = %+v, want the first page", negative)
+	}
 }
 
 // TestHandleDeployPreview covers POST /api/v1/deployments/preview.
@@ -488,8 +705,8 @@ func (u *unmanagedACLDeployService) Apply(_ context.Context, _, _ string) (stora
 	}
 }
 
-func (u *unmanagedACLDeployService) List(_ context.Context, _, _ int) ([]storage.Deployment, error) {
-	return nil, nil
+func (u *unmanagedACLDeployService) List(_ context.Context, _ string, _, _ int) ([]storage.Deployment, int, error) {
+	return nil, 0, nil
 }
 
 // lockedDeployService implements deployServicer and always returns ErrDeployInProgress.
@@ -503,8 +720,8 @@ func (l *lockedDeployService) Apply(_ context.Context, _, _ string) (storage.Dep
 	return storage.Deployment{}, deploy.ErrDeployInProgress
 }
 
-func (l *lockedDeployService) List(_ context.Context, _, _ int) ([]storage.Deployment, error) {
-	return nil, nil
+func (l *lockedDeployService) List(_ context.Context, _ string, _, _ int) ([]storage.Deployment, int, error) {
+	return nil, 0, nil
 }
 
 // shadowedMQTTStore serves a stored MQTT user that shares the configured

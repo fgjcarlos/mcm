@@ -86,14 +86,20 @@ func (api *aclAPI) syncScopes(r *http.Request) {
 	}
 }
 
+// handleListRules handles GET /api/v1/acls?user=&topic=&limit=&offset=.
 func (api *aclAPI) handleListRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := api.store.ListRules(r.Context())
+	limit, offset := parsePageParams(r)
+	query := r.URL.Query()
+	rules, total, err := api.store.ListRulesPaged(r.Context(), query.Get("user"), query.Get("topic"), limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, aclErrorResponse{Error: "failed to list acl rules"})
 		return
 	}
+	if rules == nil {
+		rules = []acl.Rule{}
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules, "total": total, "limit": limit, "offset": offset})
 }
 
 func (api *aclAPI) handleCreateRule(w http.ResponseWriter, r *http.Request) {

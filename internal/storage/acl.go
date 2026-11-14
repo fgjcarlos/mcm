@@ -26,6 +26,34 @@ func (s *aclSQLStore) ListRules(ctx context.Context) ([]acl.Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list acl rules: %w", err)
 	}
+	return collectACLRules(rows)
+}
+
+// ListRulesPaged implements acl.Store.ListRulesPaged. The total comes from
+// its own COUNT query, never from the page.
+func (s *aclSQLStore) ListRulesPaged(ctx context.Context, user, topic string, limit, offset int) ([]acl.Rule, int, error) {
+	const where = ` FROM acl_rules WHERE principal LIKE ? ESCAPE '\' AND topic_filter LIKE ? ESCAPE '\'`
+	userPattern := "%" + escapeLike(user) + "%"
+	topicPattern := "%" + escapeLike(topic) + "%"
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, userPattern, topicPattern).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count acl rules: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, principal, topic_filter, permission, description, selector, scope, listener_id`+where+` ORDER BY id ASC LIMIT ? OFFSET ?`,
+		userPattern, topicPattern, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list acl rules page: %w", err)
+	}
+	rules, err := collectACLRules(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rules, total, nil
+}
+
+// collectACLRules scans and closes rows; returns nil when there are none.
+func collectACLRules(rows *sql.Rows) ([]acl.Rule, error) {
 	defer rows.Close() //nolint:errcheck
 
 	var rules []acl.Rule
