@@ -436,10 +436,27 @@ paths:
     get:
       tags: [ACLs]
       summary: List ACL rules
-      description: Requires auditor or higher.
+      description: Requires auditor or higher. Returns one page of rules ordered by id, plus the total number of rules matching the filters.
+      parameters:
+        - in: query
+          name: user
+          description: Case-insensitive substring match on the rule principal. Empty matches every rule.
+          schema: { type: string }
+        - in: query
+          name: topic
+          description: Case-insensitive substring match on the rule topic filter. Empty matches every rule.
+          schema: { type: string }
+        - in: query
+          name: limit
+          description: Maximum rows in the page. Defaults to 50 and is clamped to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          description: Rows to skip. Defaults to 0.
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
-          description: ACL rule list.
+          description: ACL rule page.
           content:
             application/json:
               schema:
@@ -448,7 +465,10 @@ paths:
                   rules:
                     type: array
                     items: { $ref: "#/components/schemas/ACLRule" }
-                required: [rules]
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                required: [rules, total, limit, offset]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -763,15 +783,35 @@ paths:
     get:
       tags: [MQTT Users]
       summary: List MQTT broker users
-      description: Requires auditor or higher. Password material is never returned.
+      description: Requires auditor or higher. Password material is never returned. Returns one page of users ordered by username, plus the total number of users matching the search.
+      parameters:
+        - in: query
+          name: q
+          description: Case-insensitive substring match on the username. Empty matches every user.
+          schema: { type: string }
+        - in: query
+          name: limit
+          description: Maximum rows in the page. Defaults to 50 and is clamped to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          description: Rows to skip. Defaults to 0.
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
-          description: MQTT user list.
+          description: MQTT user page.
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/MQTTUser" }
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/MQTTUser" }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                required: [users, total, limit, offset]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
@@ -874,13 +914,19 @@ paths:
     get:
       tags: [Deployments]
       summary: List recent deployments
-      description: Requires auditor or higher.
+      description: Requires auditor or higher. Returns one page of deployments ordered newest first, plus the total number of deployments matching the status filter.
       parameters:
         - in: query
+          name: status
+          description: Exact match on the deployment status. Empty matches every deployment.
+          schema: { type: string }
+        - in: query
           name: limit
-          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum rows in the page. Defaults to 50 and is clamped to 100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
         - in: query
           name: offset
+          description: Rows to skip. Defaults to 0.
           schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
@@ -893,7 +939,10 @@ paths:
                   deployments:
                     type: array
                     items: { $ref: "#/components/schemas/Deployment" }
-                required: [deployments]
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                required: [deployments, total, limit, offset]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404":
