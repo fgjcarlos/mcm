@@ -1876,6 +1876,136 @@ describe('App', () => {
     expect(screen.getByText('/mosquitto/config/acl.retired')).toBeInTheDocument()
   })
 
+  async function openDeployPreview(token: string, preview: Record<string, unknown>) {
+    window.localStorage.setItem('mcm_admin_token', token)
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes(token),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'deploy-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
+      'POST /api/v1/deployments/preview': () => jsonResponse({ revision_id: 'revision-358', acl_diff: '', passwd_diff: '', has_changes: true, ...preview }),
+    }))
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+  }
+
+  it('states the real scope of the deploy and its counters before the operator confirms', async () => {
+    await openDeployPreview('scope-summary-token', {
+      acl_diff: '+user plant\n+topic readwrite plant/#',
+      passwd_diff: '+plant:hash',
+      summary: { users_added: 2, users_removed: 1, users_rotated: 3, has_passwd_changes: true, topics_added: 4, topics_removed: 5, has_acl_changes: true },
+    })
+
+    const scope = (await screen.findByText('What this deploy covers')).closest('section') as HTMLElement
+    expect(scope).not.toBeNull()
+    expect(within(scope).getByText(/every pending change saved in MCM, including changes saved outside this task/i)).toBeInTheDocument()
+    expect(within(scope).getByText(/cannot tell which task or person saved a pending change/i)).toBeInTheDocument()
+    expect(within(scope).getByText(/broker-wide password and ACL files/i)).toBeInTheDocument()
+    expect(within(scope).getByText(/listener files are listed separately/i)).toBeInTheDocument()
+    const counter = (label: string) => within(scope).getByText(label).parentElement as HTMLElement
+    expect(counter('MQTT users added')).toHaveTextContent('2')
+    expect(counter('MQTT users removed')).toHaveTextContent('1')
+    expect(counter('MQTT users rotated')).toHaveTextContent('3')
+    expect(counter('ACL topics added')).toHaveTextContent('4')
+    expect(counter('ACL topics removed')).toHaveTextContent('5')
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Confirm Apply' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the scope statement and omits the counters when the preview has no summary', async () => {
+    await openDeployPreview('scope-nosummary-token', { acl_diff: '+user plant' })
+
+    expect(await screen.findByText('What this deploy covers')).toBeInTheDocument()
+    expect(screen.getByText(/including changes saved outside this task/i)).toBeInTheDocument()
+    expect(screen.queryByText('MQTT users added')).not.toBeInTheDocument()
+  })
+
+  it('shows scope blockers expanded, above the warnings, and refuses the apply control', async () => {
+    await openDeployPreview('blocker-token', {
+      acl_diff: '+user plant',
+      orphan_rules: [{ id: 'orphan-1', principal: 'retired-device', topic_filter: 'factory/#', permission: 'read' }],
+      scope_issues: ['listener "plant" does not exist; its scoped rules would never apply'],
+    })
+
+    const heading = await screen.findByText('Listener scope problems')
+    expect(heading).toBeVisible()
+    expect(screen.getByText(/its scoped rules would never apply/)).toBeVisible()
+    expect(heading.closest('details')).toBeNull()
+    expect(within(heading.parentElement as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(heading.compareDocumentPosition(screen.getByText('Orphan ACL rules')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(heading.compareDocumentPosition(screen.getByText('ACL diff')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    expect(screen.getByText(/deploy is refused until the scope problems are resolved/i)).toBeInTheDocument()
+  })
+
+  it('keeps diffs and file bodies behind an on-demand disclosure but file deletions outside it', async () => {    await openDeployPreview('disclosure-token', {
+      acl_diff: '+user plant\n+topic readwrite plant/#',
+      passwd_diff: '+plant:hash',
+      preserved_entries: ['topic readwrite devices/%u/data'],
+      listener_acl_files: [{ listener_id: 'plant', path: '/mosquitto/config/acl.plant', diff: '+user plant' }],
+      removed_acl_files: ['/mosquitto/config/acl.retired'],
+    })
+
+    const summary = await screen.findByText(/diffs and file contents/i)
+    const disclosure = summary.closest('details') as HTMLDetailsElement
+    expect(disclosure).not.toBeNull()
+    expect(disclosure.open).toBe(false)
+    expect(within(disclosure).getByText('ACL diff')).toBeInTheDocument()
+    expect(within(disclosure).getByText('Password file diff')).toBeInTheDocument()
+    expect(within(disclosure).getByText('Preserved entries')).toBeInTheDocument()
+    expect(within(disclosure).getByText('Listener file — plant')).toBeInTheDocument()
+    expect(screen.getByText('Files the deploy would delete').closest('details')).toBeNull()
+    expect(screen.getByText('/mosquitto/config/acl.retired').closest('details')).toBeNull()
+  })
+
+  it('refuses the confirmed apply too while a scope blocker is open', async () => {
+    await openDeployPreview('blocked-confirm-token', {
+      acl_diff: '+user plant',
+      scope_issues: ['listener "plant" does not exist; its scoped rules would never apply'],
+    })
+
+    const apply = await screen.findByRole('button', { name: 'Apply' })
+    expect(apply).toBeDisabled()
+    // A confirmation left over from a previous preview must not survive it.
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await screen.findByText('Listener scope problems')
+    expect(screen.queryByRole('button', { name: 'Confirm Apply' })).not.toBeInTheDocument()
+  })
+
+  it('shows the blocking entries the API returns when it refuses an apply', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'apply-details-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('apply-details-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'details-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+      'GET /api/v1/deployments': () => envelope('deployments', []),
+      'POST /api/v1/deployments/preview': () => jsonResponse({ revision_id: 'revision-details', acl_diff: '-topic read sensors/#', passwd_diff: '', has_changes: true }),
+      'POST /api/v1/deployments/apply': () => jsonResponse({
+        error: 'the deploy would drop ACL access that is not managed by MCM',
+        details: ['user alice|sensors/#|read'],
+      }, { status: 409 }),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await screen.findByRole('button', { name: 'Apply' })
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    expect(await screen.findByText(/the deploy would drop ACL access that is not managed by MCM/)).toBeInTheDocument()
+    expect(screen.getByText(/user alice\|sensors\/#\|read/)).toBeInTheDocument()
+  })
+
   // FIX 2: Deploy panel shows friendly 403 message, does not log out
   describe('Deploy panel 403 forbidden handling', () => {
     function deployRoutesWithForbiddenPreview(): Record<string, RouteHandler> {
