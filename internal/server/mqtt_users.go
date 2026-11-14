@@ -123,17 +123,53 @@ func (a *App) handleCreateMQTTUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListMQTTUsers handles GET /api/v1/mqtt-users.
+// mqttUsersPageResponse is the paged envelope for GET /api/v1/mqtt-users.
+type mqttUsersPageResponse struct {
+	Users  []mqttUserResponse `json:"users"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+}
+
+const (
+	defaultPageLimit = 50
+	maxPageLimit     = 100
+)
+
+// parsePageParams reads limit/offset from the query string. A missing,
+// unparsable or non-positive limit becomes defaultPageLimit and a larger one
+// is clamped to maxPageLimit; a missing, unparsable or negative offset is 0.
+// Invalid values never fail the request.
+func parsePageParams(r *http.Request) (limit, offset int) {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 {
+		limit = defaultPageLimit
+	}
+	limit = min(limit, maxPageLimit)
+	offset, err = strconv.Atoi(r.URL.Query().Get("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+// handleListMQTTUsers handles GET /api/v1/mqtt-users?q=&limit=&offset=.
 func (a *App) handleListMQTTUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := a.store.ListMQTTUsers(r.Context())
+	limit, offset := parsePageParams(r)
+	users, total, err := a.store.ListMQTTUsersPage(r.Context(), r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 		return
 	}
 
-	response := make([]mqttUserResponse, 0, len(users))
+	response := mqttUsersPageResponse{
+		Users:  make([]mqttUserResponse, 0, len(users)),
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}
 	for _, u := range users {
-		response = append(response, toMQTTUserResponse(u))
+		response.Users = append(response.Users, toMQTTUserResponse(u))
 	}
 	writeJSON(w, http.StatusOK, response)
 }

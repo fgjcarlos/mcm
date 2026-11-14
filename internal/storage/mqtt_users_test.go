@@ -560,3 +560,54 @@ func TestUpdateMQTTUserRejectsDisablingConfiguredServiceUser(t *testing.T) {
 		t.Fatal("configured service user was disabled")
 	}
 }
+
+func TestListMQTTUsersPage(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	defer store.Close()
+	ctx := context.Background()
+
+	for _, name := range []string{"device-03", "device-01", "Sensor-Alpha", "device-02", "pct%user", "under_score", "underXscore"} {
+		if _, err := store.CreateMQTTUser(ctx, CreateMQTTUserParams{Username: name, PasswordHash: "h"}); err != nil {
+			t.Fatalf("CreateMQTTUser %q returned error: %v", name, err)
+		}
+	}
+	names := func(users []MQTTUser) []string {
+		out := make([]string, 0, len(users))
+		for _, u := range users {
+			out = append(out, u.Username)
+		}
+		return out
+	}
+
+	tests := []struct {
+		name          string
+		q             string
+		limit, offset int
+		wantNames     []string
+		wantTotal     int
+	}{
+		{"case-insensitive substring finds one", "alpha", 50, 0, []string{"Sensor-Alpha"}, 1},
+		{"total counts all matches beyond the page", "device", 2, 0, []string{"device-01", "device-02"}, 3},
+		{"offset returns the next slice", "device", 2, 2, []string{"device-03"}, 3},
+		{"percent matches literally", "%", 50, 0, []string{"pct%user"}, 1},
+		{"underscore matches literally", "under_", 50, 0, []string{"under_score"}, 1},
+		{"empty query lists all ordered by username", "", 3, 0, []string{"Sensor-Alpha", "device-01", "device-02"}, 7},
+		{"no match yields empty page and zero total", "nobody", 50, 0, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			users, total, err := store.ListMQTTUsersPage(ctx, tt.q, tt.limit, tt.offset)
+			if err != nil {
+				t.Fatalf("ListMQTTUsersPage returned error: %v", err)
+			}
+			if total != tt.wantTotal {
+				t.Errorf("total = %d, want %d", total, tt.wantTotal)
+			}
+			got := names(users)
+			if strings.Join(got, ",") != strings.Join(tt.wantNames, ",") {
+				t.Errorf("usernames = %v, want %v", got, tt.wantNames)
+			}
+		})
+	}
+}

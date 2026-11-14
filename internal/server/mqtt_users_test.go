@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -199,7 +200,7 @@ func TestHandleCreateMQTTUserRejectsControlCharacters(t *testing.T) {
 
 // TestHandleListMQTTUsers covers GET /api/v1/mqtt-users.
 func TestHandleListMQTTUsers(t *testing.T) {
-	t.Run("empty list returns [] not null", func(t *testing.T) {
+	t.Run("empty list returns envelope with users [] not null", func(t *testing.T) {
 		app, store := newTestApp(t)
 		t.Cleanup(func() { _ = store.Close() })
 
@@ -214,22 +215,12 @@ func TestHandleListMQTTUsers(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 		}
 		body := strings.TrimSpace(rec.Body.String())
-		if !strings.HasPrefix(body, "[") {
-			t.Errorf("empty list response must be JSON array, got: %s", body)
-		}
-		var list []mqttUserResponse
-		if err := json.Unmarshal([]byte(body), &list); err != nil {
-			t.Fatalf("decode empty list: %v", err)
-		}
-		if list == nil {
-			t.Error("decoded list must not be nil (want empty slice [])")
-		}
-		if len(list) != 0 {
-			t.Errorf("list length = %d, want 0", len(list))
+		if body != `{"users":[],"total":0,"limit":50,"offset":0}` {
+			t.Errorf("empty list body = %s", body)
 		}
 	})
 
-	t.Run("list with users returns array", func(t *testing.T) {
+	t.Run("list with users returns envelope", func(t *testing.T) {
 		app, store := newTestApp(t)
 		t.Cleanup(func() { _ = store.Close() })
 
@@ -238,24 +229,13 @@ func TestHandleListMQTTUsers(t *testing.T) {
 		seedMQTTUser(t, store, "device-a")
 		seedMQTTUser(t, store, "device-b")
 
-		rec := httptest.NewRecorder()
-		req := authedRequest(http.MethodGet, "/api/v1/mqtt-users", "", token)
-		app.Handler().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
-		}
-		var list []mqttUserResponse
-		if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-			t.Fatalf("decode list: %v", err)
-		}
-		if len(list) != 2 {
-			t.Errorf("list length = %d, want 2", len(list))
+		page := getMQTTUsersPage(t, app, token, "")
+		if len(page.Users) != 2 || page.Total != 2 || page.Limit != 50 || page.Offset != 0 {
+			t.Errorf("page = %+v, want 2 users, total 2, limit 50, offset 0", page)
 		}
 		// password_hash must never appear
-		raw := rec.Body.String()
-		if strings.Contains(raw, "password_hash") {
-			t.Errorf("list response must not contain password_hash: %s", raw)
+		if strings.Contains(page.raw, "password_hash") || strings.Contains(page.raw, "password") {
+			t.Errorf("list response must not contain password material: %s", page.raw)
 		}
 	})
 
@@ -726,6 +706,108 @@ func TestHandleResetMQTTUserPassword(t *testing.T) {
 		app.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "cannot be disabled, deleted, or reset") {
 			t.Fatalf("status/body = %d/%s, want 409 with service-user protection", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+type mqttUsersPage struct {
+	Users  []mqttUserResponse `json:"users"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
+	raw    string
+}
+
+func getMQTTUsersPage(t *testing.T, app *App, token, query string) mqttUsersPage {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, authedRequest(http.MethodGet, "/api/v1/mqtt-users"+query, "", token))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want 200, body = %s", query, rec.Code, rec.Body.String())
+	}
+	var page mqttUsersPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page for %q: %v (body prefix %.120s)", query, err, rec.Body.String())
+	}
+	page.raw = rec.Body.String()
+	return page
+}
+
+func TestHandleListMQTTUsersSearchAndPaging(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	seedAdminUserWithRole(t, store, "audit", "secret", auth.RoleAuditor)
+	token := loginAs(t, app, "audit", "secret")
+
+	// 200 users (S6) plus one distinctive name and one containing a LIKE wildcard.
+	// Binary username order puts "Kitchen-Sensor" before "device-000".
+	for i := range 200 {
+		seedMQTTUser(t, store, fmt.Sprintf("device-%03d", i))
+	}
+	seedMQTTUser(t, store, "Kitchen-Sensor")
+	seedMQTTUser(t, store, "pct%user")
+
+	names := func(p mqttUsersPage) []string {
+		out := make([]string, 0, len(p.Users))
+		for _, u := range p.Users {
+			out = append(out, u.Username)
+		}
+		return out
+	}
+
+	t.Run("search finds one user by name case-insensitively", func(t *testing.T) {
+		p := getMQTTUsersPage(t, app, token, "?q=kitchen")
+		if got := names(p); len(got) != 1 || got[0] != "Kitchen-Sensor" || p.Total != 1 {
+			t.Errorf("q=kitchen got %v total %d, want [Kitchen-Sensor] total 1", got, p.Total)
+		}
+	})
+
+	t.Run("total counts all matches while the page holds only the slice", func(t *testing.T) {
+		p := getMQTTUsersPage(t, app, token, "?q=device&limit=10")
+		if p.Total != 200 || len(p.Users) != 10 || p.Limit != 10 {
+			t.Errorf("got total %d, %d rows, limit %d; want total 200, 10 rows, limit 10", p.Total, len(p.Users), p.Limit)
+		}
+	})
+
+	t.Run("percent in search matches literally", func(t *testing.T) {
+		p := getMQTTUsersPage(t, app, token, "?q=%25")
+		if got := names(p); len(got) != 1 || got[0] != "pct%user" || p.Total != 1 {
+			t.Errorf("q=%% got %v total %d, want [pct%%user] total 1", got, p.Total)
+		}
+	})
+
+	t.Run("limit defaults, clamps and ignores garbage", func(t *testing.T) {
+		for _, tc := range []struct {
+			query     string
+			wantLimit int
+		}{
+			{"", 50},
+			{"?limit=500", 100},
+			{"?limit=abc", 50},
+			{"?limit=0", 50},
+			{"?limit=-5", 50},
+		} {
+			p := getMQTTUsersPage(t, app, token, tc.query)
+			if p.Limit != tc.wantLimit || len(p.Users) != tc.wantLimit || p.Total != 202 {
+				t.Errorf("%q: limit %d, %d rows, total %d; want limit %d, %d rows, total 202", tc.query, p.Limit, len(p.Users), p.Total, tc.wantLimit, tc.wantLimit)
+			}
+		}
+	})
+
+	t.Run("offset returns the next slice and negative or garbage offset is 0", func(t *testing.T) {
+		first := getMQTTUsersPage(t, app, token, "?limit=5")
+		second := getMQTTUsersPage(t, app, token, "?limit=5&offset=5")
+		if second.Offset != 5 || len(second.Users) != 5 || second.Users[0].Username == first.Users[0].Username {
+			t.Errorf("offset=5 page = %v, first page = %v", names(second), names(first))
+		}
+		if want := "device-004"; second.Users[0].Username != want {
+			t.Errorf("offset=5 first row = %q, want %q", second.Users[0].Username, want)
+		}
+		for _, q := range []string{"?limit=5&offset=-3", "?limit=5&offset=xyz"} {
+			p := getMQTTUsersPage(t, app, token, q)
+			if p.Offset != 0 || strings.Join(names(p), ",") != strings.Join(names(first), ",") {
+				t.Errorf("%s: offset %d rows %v, want offset 0 rows %v", q, p.Offset, names(p), names(first))
+			}
 		}
 	})
 }

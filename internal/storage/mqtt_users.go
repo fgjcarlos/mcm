@@ -96,6 +96,39 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list mqtt users: %w", err)
 	}
+	return collectMQTTUsers(rows)
+}
+
+// ListMQTTUsersPage returns one page of MQTT users whose username contains q
+// (case-insensitive for ASCII, LIKE wildcards in q matched literally), ordered
+// by username ascending, plus the total number of matching users.
+// Callers clamp limit and offset; an empty q matches every user.
+func (s *Store) ListMQTTUsersPage(ctx context.Context, q string, limit, offset int) ([]MQTTUser, int, error) {
+	pattern := "%" + escapeLike(q) + "%"
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mqtt_users WHERE username LIKE ? ESCAPE '\'`, pattern).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count mqtt users: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, username, password_hash, disabled, created_at, updated_at FROM mqtt_users WHERE username LIKE ? ESCAPE '\' ORDER BY username ASC LIMIT ? OFFSET ?`,
+		pattern, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list mqtt users page: %w", err)
+	}
+	users, err := collectMQTTUsers(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+// escapeLike escapes LIKE metacharacters so s matches literally under ESCAPE '\'.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// collectMQTTUsers scans and closes rows; returns nil when there are none.
+func collectMQTTUsers(rows *sql.Rows) ([]MQTTUser, error) {
 	defer rows.Close() //nolint:errcheck
 
 	var users []MQTTUser
@@ -108,6 +141,7 @@ func (s *Store) ListMQTTUsers(ctx context.Context) ([]MQTTUser, error) {
 			return nil, fmt.Errorf("scan mqtt user: %w", err)
 		}
 		user.Disabled = disabled == 1
+		var err error
 		user.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse mqtt user created_at: %w", err)
