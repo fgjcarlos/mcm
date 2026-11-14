@@ -69,6 +69,18 @@ function isVerified(status: string) {
   return status === 'active_verified' || status === 'applied'
 }
 
+// What each non-verified status honestly means for the broker configuration.
+// `failed` does not say the previous configuration was restored: the applier
+// may or may not have restored it.
+const NON_VERIFIED_EXPLANATION: Record<string, string> = {
+  pending_activation: 'The configuration was written to the broker, but the activation was not proven yet.',
+  rolled_back: 'MCM restored the previous configuration; nothing of this journey is live on the broker.',
+  rollback_failed:
+    'The restore of the previous configuration failed; the broker may be running a partial configuration and an operator has to intervene.',
+}
+const FAILED_EXPLANATION =
+  'The apply failed. MCM does not confirm the state of the broker configuration; check the deployment detail before retrying.'
+
 export default function UserOnboardingFlow({
   token,
   onLogout,
@@ -205,6 +217,9 @@ export default function UserOnboardingFlow({
       }
       const data = (await response.json()) as DeployPreview
       setPreview(data)
+      // A new revision replaces a consumed one: the previous apply outcome no longer applies.
+      setApplyError('')
+      setResult(null)
       setStage('apply')
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
@@ -241,7 +256,7 @@ export default function UserOnboardingFlow({
       }
       const deployment = (await response.json()) as Deployment
       setResult(deployment)
-      if (APPLIED_STATUSES.includes(deployment.status)) {
+      if (isVerified(deployment.status)) {
         onApplySuccess?.(mutationWatermark)
       }
     } catch (err) {
@@ -549,6 +564,13 @@ export default function UserOnboardingFlow({
             </div>
           ) : null}
 
+          {previewError ? (
+            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              <p className="font-semibold">Preview step failed</p>
+              <p className="mt-1">{previewError}</p>
+            </div>
+          ) : null}
+
           {result ? (
             <div
               role="status"
@@ -579,9 +601,7 @@ export default function UserOnboardingFlow({
               </p>
               {!isVerified(result.status) ? (
                 <p className="mt-2 text-sm text-slate-300">
-                  Failed stage: activation verification (apply). {APPLIED_STATUSES.includes(result.status)
-                    ? 'The configuration was written to the broker, but the activation was not proven.'
-                    : 'MCM restored the previous configuration; nothing of this journey is live on the broker.'}
+                  Failed stage: activation verification (apply). {NON_VERIFIED_EXPLANATION[result.status] ?? FAILED_EXPLANATION}
                 </p>
               ) : null}
               {result.message ? <p className="mt-2 text-sm text-slate-300">{result.message}</p> : null}
@@ -595,6 +615,18 @@ export default function UserOnboardingFlow({
               className="mr-3 rounded-xl border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70"
             >
               Test the connection
+            </button>
+          ) : null}
+
+          {applyError || previewError || (result && !APPLIED_STATUSES.includes(result.status)) ? (
+            <button
+              type="button"
+              onClick={() => { void handlePreview() }}
+              disabled={previewLoading || !canPreview}
+              title={!canPreview ? permissionTitle('deploy.preview') : undefined}
+              className="mr-3 rounded-xl border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70 disabled:opacity-50"
+            >
+              {previewLoading ? 'Generating…' : 'Generate a new preview'}
             </button>
           ) : null}
 
