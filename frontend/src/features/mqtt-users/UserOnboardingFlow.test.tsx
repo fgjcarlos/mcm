@@ -327,6 +327,8 @@ describe('UserOnboardingFlow journey', () => {
 
     expect(await screen.findByText('Apply failed (failed)')).toBeInTheDocument()
     expect(screen.queryByText(/MCM restored the previous configuration/)).not.toBeInTheDocument()
+    // The apply failed before the verification, so the stage says so.
+    expect(screen.getByText(/Failed stage: apply \(the broker files and the reload\)/)).toBeInTheDocument()
 
     vi.unstubAllGlobals()
   })

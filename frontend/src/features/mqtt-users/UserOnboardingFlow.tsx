@@ -69,17 +69,27 @@ function isVerified(status: string) {
   return status === 'active_verified' || status === 'applied'
 }
 
-// What each non-verified status honestly means for the broker configuration.
-// `failed` does not say the previous configuration was restored: the applier
-// may or may not have restored it.
-const NON_VERIFIED_EXPLANATION: Record<string, string> = {
-  pending_activation: 'The configuration was written to the broker, but the activation was not proven yet.',
-  rolled_back: 'MCM restored the previous configuration; nothing of this journey is live on the broker.',
-  rollback_failed:
-    'The restore of the previous configuration failed; the broker may be running a partial configuration and an operator has to intervene.',
+// What each non-verified status honestly means for the broker configuration,
+// and the stage it belongs to. `failed` does not say the previous
+// configuration was restored: the applier may or may not have restored it.
+const NON_VERIFIED_STATUS: Record<string, { stage: string; explanation: string }> = {
+  pending_activation: {
+    stage: 'Stage: activation verification (pending).',
+    explanation: 'The configuration was written to the broker, but the activation was not proven yet.',
+  },
+  rolled_back: {
+    stage: 'Failed stage: activation verification (apply).',
+    explanation: 'MCM restored the previous configuration; nothing of this journey is live on the broker.',
+  },
+  rollback_failed: {
+    stage: 'Failed stage: activation verification (apply).',
+    explanation: 'The restore of the previous configuration failed; the broker may be running a partial configuration and an operator has to intervene.',
+  },
+  failed: {
+    stage: 'Failed stage: apply (the broker files and the reload).',
+    explanation: 'The apply failed. MCM does not confirm the state of the broker configuration; check the deployment detail before retrying.',
+  },
 }
-const FAILED_EXPLANATION =
-  'The apply failed. MCM does not confirm the state of the broker configuration; check the deployment detail before retrying.'
 
 export default function UserOnboardingFlow({
   token,
@@ -601,7 +611,8 @@ export default function UserOnboardingFlow({
               </p>
               {!isVerified(result.status) ? (
                 <p className="mt-2 text-sm text-slate-300">
-                  Failed stage: activation verification (apply). {NON_VERIFIED_EXPLANATION[result.status] ?? FAILED_EXPLANATION}
+                  {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).stage}{' '}
+                  {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).explanation}
                 </p>
               ) : null}
               {result.message ? <p className="mt-2 text-sm text-slate-300">{result.message}</p> : null}
