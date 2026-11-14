@@ -57,13 +57,23 @@ operator instead of an opaque failure.
 | Outcome | What the journey shows |
 | --- | --- |
 | `active_verified` | **Applied and verified**, with the deployment message. |
-| `pending_activation` | **Applied — activation pending**: the configuration is on disk, the activation is not proven yet. |
+| `pending_activation` | **Applied — activation pending**: the configuration is on disk, the activation is not proven yet. It does not clear the pending deploy banner, and the deployment is not verified. |
 | `rolled_back` | **Rolled back**, the failed stage (activation verification) and the deployment message. MCM restored the previous configuration. |
 | `rollback_failed` | **Rollback failed**: the previous configuration was not restored and the operator has to intervene. |
+| `failed` | **Apply failed**: MCM does not confirm the state of the broker configuration, and the deployment message names the cause. |
 | a refused request | **Apply step failed** with the reason of the refusal, for example a preview revision that no longer matches the on-disk configuration. |
 
 A failure in an earlier step names its own stage: *User creation
 failed*, *Access rule step failed*, *Preview step failed*.
+
+### Retrying without repeating the alta
+
+A failed apply consumes the preview revision, so the same revision
+cannot be applied twice. The journey keeps the created user and the
+saved rule, and offers **Generate a new preview**: it asks the backend
+for a fresh revision and enables the apply again. It never creates the
+user or the rule a second time, so a corrected rule does not mean a
+duplicated identity.
 
 ## The connection test
 
@@ -132,8 +142,9 @@ late subscriber, so run the test once the step says *Watching*.
 
 The banner that says **Pending deploy** still covers every change that
 is saved but not applied to Mosquitto, whoever made it: a rule edited in
-the *ACLs* panel, a user toggled in the *Users* panel, a change made
-outside the journey. The journey does not replace it:
+the *ACLs* panel, a user toggled in the *Users* panel, an adopted ACL
+source, a change made outside the journey. The journey does not replace
+it:
 
 - the user of step 1 and the rule of step 2 raise the banner, because
   they are saved and not applied yet;
@@ -145,6 +156,20 @@ outside the journey. The journey does not replace it:
 The banner is cleared only when no other change was saved in the
 meantime. A change made elsewhere while the journey was open stays
 pending and keeps the banner visible.
+
+### The banner links to the next step
+
+The banner is not only a notice: it offers the action the current role
+may take, and nothing more:
+
+| Role | What the banner offers |
+| --- | --- |
+| `admin` | **Review and apply**, which opens the *Deploy* panel. |
+| `operator` | **Preview changes**, which opens the *Deploy* panel, plus the note that applying needs the `admin` role and MFA. |
+| `auditor`, `viewer` | An explanation of the roles that may preview and apply, with no action they could not take. |
+
+The dashboard home shows the same actions in its **Pending changes**
+card, and the *Deploy* panel shows its own preview and apply controls.
 
 ## Limits
 
