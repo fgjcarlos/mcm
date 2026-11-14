@@ -2053,6 +2053,87 @@ describe('App', () => {
     expect(toggle).toHaveFocus()
   })
 
+  describe('the pending deploy notice (issue #358)', () => {
+    function noticeRoutes(token: string, role: string): Record<string, RouteHandler> {
+      return {
+        ...authenticatedRoutes(token),
+        'GET /api/v1/auth/me': () => jsonResponse({
+          id: 9,
+          username: `notice-${role}`,
+          disabled: false,
+          role,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+        'GET /api/v1/acls': () => envelope('rules', []),
+        'POST /api/v1/acls': () => jsonResponse({
+          id: 'rule-notice',
+          principal: 'new-device',
+          topic_filter: 'factory/#',
+          permission: 'read',
+        }, { status: 201 }),
+        'GET /api/v1/mqtt-users': () => envelope('users', []),
+        'GET /api/v1/deployments': () => envelope('deployments', []),
+      }
+    }
+
+    it('offers an operator the review of the saved changes without an apply action', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'notice-operator-token')
+      vi.stubGlobal('fetch', installFetchMock(noticeRoutes('notice-operator-token', 'operator')))
+
+      render(<App />)
+      const user = userEvent.setup()
+      await screen.findByText('Signed in')
+      await user.click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+      await user.click(screen.getByRole('button', { name: 'Add Rule' }))
+      await user.type(screen.getByPlaceholderText('mqtt-username'), 'new-device')
+      await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'factory/#')
+      await user.click(screen.getByRole('button', { name: 'Create rule' }))
+
+      expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+      const review = screen.getByRole('button', { name: 'Preview changes' })
+      expect(screen.queryByRole('button', { name: 'Review and apply' })).not.toBeInTheDocument()
+      expect(screen.getByText('Applying them needs the admin role and MFA.')).toBeInTheDocument()
+
+      await user.click(review)
+      expect(window.location.pathname).toBe('/deploy')
+    })
+
+    it('offers an admin the review of the saved changes', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'notice-admin-token')
+      vi.stubGlobal('fetch', installFetchMock(noticeRoutes('notice-admin-token', 'admin')))
+
+      render(<App />)
+      const user = userEvent.setup()
+      await screen.findByText('Signed in')
+      await user.click(screen.getByRole('link', { name: /acls/i }))
+      await screen.findByRole('heading', { name: 'ACL policy workspace' })
+      await user.click(screen.getByRole('button', { name: 'Add Rule' }))
+      await user.type(screen.getByPlaceholderText('mqtt-username'), 'new-device')
+      await user.type(screen.getByPlaceholderText('sensors/# or device/+/status'), 'factory/#')
+      await user.click(screen.getByRole('button', { name: 'Create rule' }))
+
+      expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Review and apply' }))
+      expect(window.location.pathname).toBe('/deploy')
+    })
+
+    it('explains to a viewer without offering an action they cannot take', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'notice-viewer-token')
+      window.localStorage.setItem('mcm_deploy_pending', '1')
+      window.history.replaceState(null, '', '/users')
+      vi.stubGlobal('fetch', installFetchMock(noticeRoutes('notice-viewer-token', 'viewer')))
+
+      render(<App />)
+      await screen.findByText('Signed in')
+
+      expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+      expect(screen.getByText('Previewing them needs the operator role or higher; applying them needs the admin role and MFA.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /changes/ })).not.toBeInTheDocument()
+    })
+  })
+
   describe('operational dashboard home (#354)', () => {
     function homeRoutes(
       { role = 'operator', broker = 'connected', messageCount = 0, statusFails = false, observedAt, lastMessageAt }: { role?: string; broker?: 'connected' | 'disconnected'; messageCount?: number; statusFails?: boolean; observedAt?: string; lastMessageAt?: string } = {},

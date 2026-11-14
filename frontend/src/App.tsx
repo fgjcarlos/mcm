@@ -14,6 +14,7 @@ import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
+import { PendingChangesAction } from './features/deploy/PendingChangesAction'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
 import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
@@ -495,6 +496,10 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <div role="status" aria-live="polite" className="mt-8 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Pending deploy</p>
           <p className="mt-2 text-sm text-amber-50">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
+          {/* The dashboard home carries its own pending-changes card, and the
+              deploy panel carries its own preview and apply controls, so the
+              banner offers the action only on the panels that lack it. */}
+          {activeId === 'dashboard' || activeId === 'deploy' ? null : <PendingChangesAction role={currentUser.role} onReview={() => openPanel('deploy')} />}
         </div>
       ) : null}
 
@@ -1495,7 +1500,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
         )}
       </div>
 
-      <ACLSourcePanel token={token} onLogout={onLogout} canWrite={canWrite} />
+      <ACLSourcePanel token={token} onLogout={onLogout} canWrite={canWrite} onMutationStart={onMutationStart} onMutation={onMutation} />
 
       <EffectivePermissionsPanel token={token} onLogout={onLogout} />
     </section>
