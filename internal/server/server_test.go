@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -194,5 +195,99 @@ func TestACLAPI_DeleteRule(t *testing.T) {
 
 	if deleteResp.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d; body=%s", deleteResp.Code, http.StatusNoContent, deleteResp.Body.String())
+	}
+}
+
+func TestACLAPI_ListRulesPaged(t *testing.T) {
+	t.Parallel()
+
+	store := acl.NewMemoryStore()
+	ctx := context.Background()
+	for _, r := range []acl.Rule{
+		{Principal: "alice", TopicFilter: "sensors/temp", Permission: acl.PermissionRead},
+		{Principal: "bob", TopicFilter: "factory/#", Permission: acl.PermissionWrite},
+		{Principal: "alice", TopicFilter: "factory/alice", Permission: acl.PermissionRead},
+		{Principal: "pct%user", TopicFilter: "sensors/x", Permission: acl.PermissionRead},
+	} {
+		if _, err := store.CreateRule(ctx, r); err != nil {
+			t.Fatalf("CreateRule returned error: %v", err)
+		}
+	}
+	for i := 0; i < 120; i++ {
+		if _, err := store.CreateRule(ctx, acl.Rule{Principal: "bulk", TopicFilter: "bulk/x", Permission: acl.PermissionRead}); err != nil {
+			t.Fatalf("CreateRule bulk returned error: %v", err)
+		}
+	}
+	handler := NewHandler(store)
+
+	tests := []struct {
+		name       string
+		query      string
+		wantIDs    []string
+		wantCount  int
+		wantTotal  int
+		wantLimit  int
+		wantOffset int
+	}{
+		{"no params uses defaults", "", nil, 50, 124, 50, 0},
+		{"user filter", "?user=bob", []string{"2"}, 1, 1, 50, 0},
+		{"topic filter", "?topic=SENSORS", []string{"1", "4"}, 2, 2, 50, 0},
+		{"user and topic", "?user=alice&topic=factory", []string{"3"}, 1, 1, 50, 0},
+		{"empty filters match everything", "?user=&topic=", nil, 50, 124, 50, 0},
+		{"percent is literal", "?user=%25", []string{"4"}, 1, 1, 50, 0},
+		{"total exceeds the page", "?user=alice&limit=1&offset=1", []string{"3"}, 1, 2, 1, 1},
+		{"limit clamped to 100", "?limit=500", nil, 100, 124, 100, 0},
+		{"unparsable limit defaults", "?limit=abc", nil, 50, 124, 50, 0},
+		{"zero limit defaults", "?limit=0", nil, 50, 124, 50, 0},
+		{"negative limit defaults", "?limit=-3", nil, 50, 124, 50, 0},
+		{"negative offset clamped", "?offset=-5&limit=2", []string{"1", "2"}, 2, 124, 2, 0},
+		{"unparsable offset defaults", "?offset=xyz&limit=2", []string{"1", "2"}, 2, 124, 2, 0},
+		{"no match is an empty array", "?user=nobody", []string{}, 0, 0, 50, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/acls"+tt.query, nil))
+			if resp.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(resp.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("Unmarshal returned error: %v", err)
+			}
+			if len(raw) != 4 || raw["rules"] == nil || raw["total"] == nil || raw["limit"] == nil || raw["offset"] == nil {
+				keys := make([]string, 0, len(raw))
+				for k := range raw {
+					keys = append(keys, k)
+				}
+				t.Fatalf("envelope keys = %v, want rules/total/limit/offset", keys)
+			}
+			if string(raw["rules"]) == "null" {
+				t.Fatalf("rules is null, want an array")
+			}
+			var payload struct {
+				Rules  []acl.Rule `json:"rules"`
+				Total  int        `json:"total"`
+				Limit  int        `json:"limit"`
+				Offset int        `json:"offset"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("Unmarshal returned error: %v", err)
+			}
+			if len(payload.Rules) != tt.wantCount || payload.Total != tt.wantTotal || payload.Limit != tt.wantLimit || payload.Offset != tt.wantOffset {
+				t.Fatalf("got %d rules total=%d limit=%d offset=%d, want %d total=%d limit=%d offset=%d",
+					len(payload.Rules), payload.Total, payload.Limit, payload.Offset, tt.wantCount, tt.wantTotal, tt.wantLimit, tt.wantOffset)
+			}
+			if tt.wantIDs != nil {
+				ids := make([]string, 0, len(payload.Rules))
+				for _, r := range payload.Rules {
+					ids = append(ids, r.ID)
+				}
+				if !slices.Equal(ids, tt.wantIDs) {
+					t.Fatalf("ids = %v, want %v", ids, tt.wantIDs)
+				}
+			}
+		})
 	}
 }

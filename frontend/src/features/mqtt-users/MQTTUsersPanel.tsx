@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
+import { ListControls } from '../lists/ListControls'
+import { usePagedList } from '../lists/usePagedList'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
 import UserOnboardingFlow from './UserOnboardingFlow'
@@ -14,8 +16,9 @@ type MQTTUser = {
 function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, onMutationStart, onMutation, onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; startOnboarding?: boolean; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
   const canWrite = can(role, 'mqttUser.write')
   const canWriteRule = can(role, 'acl.write')
-  const [users, setUsers] = useState<MQTTUser[]>([])
-  const [loading, setLoading] = useState(true)
+  const list = usePagedList<MQTTUser>({ path: '/api/v1/mqtt-users', rowsKey: 'users', token, onUnauthorized: onLogout, namespace: 'users', searchParam: 'q' })
+  const users = list.rows
+  // Errors of the row actions; the load error is shown by ListControls.
   const [error, setError] = useState('')
   // The integrated onboarding journey of issue #341: the user, its access
   // rule, the preview and the apply in one place. It opens at the user
@@ -26,36 +29,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
   const [resetPassword, setResetPassword] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
   const [togglingId, setTogglingId] = useState<number | null>(null)
-  const [refreshTick, setRefreshTick] = useState(0)
-
-  const fetchUsers = useCallback(() => {
-    setRefreshTick((n) => n + 1)
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    authenticatedFetch('/api/v1/mqtt-users', { token, onUnauthorized: onLogout })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Failed to load MQTT users.')
-        return response.json() as Promise<MQTTUser[]>
-      })
-      .then((data) => {
-        if (cancelled) return
-        setUsers(data ?? [])
-        setError('')
-        setLoading(false)
-      })
-      .catch((err: Error) => {
-        if (cancelled) return
-        if (isUnauthorizedResponseError(err)) return
-        setError(err.message)
-        setLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [token, refreshTick, onLogout])
+  const fetchUsers = list.reload
 
   const handleToggle = async (user: MQTTUser) => {
     setTogglingId(user.id)
@@ -140,7 +114,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT users</p>
-          <p className="mt-1 text-sm text-slate-300">{users.length} user{users.length !== 1 ? 's' : ''} configured</p>
+          <p className="mt-1 text-sm text-slate-300">The MQTT identities Mosquitto authenticates.</p>
         </div>
         <button
           type="button"
@@ -193,11 +167,13 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
         </div>
       ) : null}
 
+      <ListControls list={list} noun={{ one: 'user', many: 'users' }} searchLabel="Search users" />
+
       <div className="rounded-2xl border border-white/10 bg-slate-900/60">
-        {loading ? (
+        {users.length === 0 && list.loading ? (
           <p className="p-6 text-sm text-slate-400">Loading users…</p>
         ) : users.length === 0 ? (
-          <p className="p-6 text-sm text-slate-400">No MQTT users configured yet.</p>
+          list.error ? null : <p className="p-6 text-sm text-slate-400">{list.hasFilters ? 'No MQTT users match the search.' : 'No MQTT users configured yet.'}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>

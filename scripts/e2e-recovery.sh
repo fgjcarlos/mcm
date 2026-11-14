@@ -358,9 +358,9 @@ echo "old admin login OK after restore"
 
 # (9) The user created in phase 1 must exist with the ORIGINAL password.
 echo "--- verifying ${RECOVERY_USER} still present with original password ---"
-USER_LIST="$(curl -sS -X GET "${HOST_URL}/api/v1/mqtt-users" \
+USER_LIST="$(curl -sS -X GET "${HOST_URL}/api/v1/mqtt-users?q=${RECOVERY_USER}" \
     -H "Authorization: Bearer ${RESTORED_TOKEN}")"
-if ! echo "$USER_LIST" | jq -r '.[] | select(.username=="'"$RECOVERY_USER"'") | .username' | grep -q "$RECOVERY_USER"; then
+if ! echo "$USER_LIST" | jq -r '.users[] | select(.username=="'"$RECOVERY_USER"'") | .username' | grep -q "$RECOVERY_USER"; then
     echo "FAIL: ${RECOVERY_USER} no longer exists after restore" >&2
     echo "list: $USER_LIST" >&2
     exit 1

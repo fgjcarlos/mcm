@@ -19,6 +19,8 @@ import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { LogsPanel } from './features/live-feed/LogsPanel'
+import { ListControls } from './features/lists/ListControls'
+import { usePagedList } from './features/lists/usePagedList'
 import { serializeLogFilterQuery } from './features/live-feed/logFilter'
 import { LiveFeedChrome } from './features/live-feed/LiveFeedChrome'
 import { emptyFeedText } from './features/live-feed/feedText'
@@ -313,6 +315,14 @@ const navItems: NavItem[] = [
   },
 ]
 
+// The namespaced listing keys (users.q, acl.user...) of a URL query, as a
+// query string; Logs and other unnamespaced keys are left out.
+function listingQuery(search: string) {
+  const params = new URLSearchParams(search)
+  for (const key of [...params.keys()]) if (!key.includes('.')) params.delete(key)
+  return params.size ? `?${params}` : ''
+}
+
 function navIdFromPath(pathname: string) {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/dashboard'
   return navItems.find((item) => item.path === normalizedPath)?.id ?? 'dashboard'
@@ -370,6 +380,10 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   // as the key of views that read their state from the URL query (Logs), so
   // they remount and start again from the URL they were opened with.
   const [navigationKey, setNavigationKey] = useState(0)
+  // The paged listings keep their search, filters and page in namespaced URL
+  // keys (users.q, acl.user, deploy.page...; issue #356). Remember them per
+  // panel when leaving it, so opening the panel again restores its context.
+  const listingQueries = useRef(new Map<string, string>())
 
   // search: an optional URL query for the target panel (for example a
   // filtered Logs link from the dashboard). The sidebar passes none, so its
@@ -379,7 +393,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     // Compare path and query together: opening the same view with another
     // filter (a different query) is a new history entry, while opening exactly
     // the current URL again adds none.
-    const target = `${item.path}${options?.search ?? ''}`
+    listingQueries.current.set(window.location.pathname, listingQuery(window.location.search))
+    const target = `${item.path}${options?.search ?? listingQueries.current.get(item.path) ?? ''}`
     const current = `${window.location.pathname}${window.location.search}`
     if (current !== target) {
       window.history.pushState(null, '', target)
@@ -1130,8 +1145,9 @@ function DiagnosticCheckDetail({ name, check }: { name: 'tcp' | 'tls' | 'mqtt'; 
 
 function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
   const canWrite = can(role, 'acl.write')
-  const [rules, setRules] = useState<ACLRule[]>([])
-  const [loading, setLoading] = useState(true)
+  const list = usePagedList<ACLRule>({ path: '/api/v1/acls', rowsKey: 'rules', token, onUnauthorized: onLogout, namespace: 'acl', filterParams: { user: 'user', topic: 'topic' } })
+  const rules = list.rows
+  // Errors of the row actions; the load error is shown by ListControls.
   const [error, setError] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [editRule, setEditRule] = useState<ACLRule | null>(null)
@@ -1145,31 +1161,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-  const [refreshTick, setRefreshTick] = useState(0)
-
-  const fetchRules = useCallback(() => { setRefreshTick((n) => n + 1) }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    authenticatedFetch('/api/v1/acls', { token, onUnauthorized: onLogout })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Failed to load ACL rules.')
-        return response.json() as Promise<{ rules: ACLRule[] }>
-      })
-      .then((body) => {
-        if (cancelled) return
-        setRules(body.rules ?? [])
-        setError('')
-        setLoading(false)
-      })
-      .catch((err: Error) => {
-        if (cancelled) return
-        if (isUnauthorizedResponseError(err)) return
-        setError(err.message)
-        setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [token, refreshTick, onLogout])
+  const fetchRules = list.reload
 
   const openCreate = () => {
     setEditRule(null)
@@ -1269,8 +1261,8 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT permissions</p>
           <p className="mt-1 text-sm text-slate-300">
-            {rules.length} rule{rules.length !== 1 ? 's' : ''} configured. These are the permissions Mosquitto grants on
-            a topic; the MCM administrative roles are managed in the admin panel.
+            These are the permissions Mosquitto grants on a topic; the MCM administrative roles are managed in the
+            admin panel.
           </p>
         </div>
         <button
@@ -1416,11 +1408,13 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
         </div>
       ) : null}
 
+      <ListControls list={list} noun={{ one: 'rule', many: 'rules' }} filterFields={[{ key: 'user', label: 'Filter by user' }, { key: 'topic', label: 'Filter by topic' }]} />
+
       <div className="rounded-2xl border border-white/10 bg-slate-900/60">
-        {loading ? (
+        {rules.length === 0 && list.loading ? (
           <p className="p-6 text-sm text-slate-400">Loading rules…</p>
         ) : rules.length === 0 ? (
-          <p className="p-6 text-sm text-slate-400">No ACL rules configured yet.</p>
+          list.error ? null : <p className="p-6 text-sm text-slate-400">{list.hasFilters ? 'No ACL rules match the filters.' : 'No ACL rules configured yet.'}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -1520,40 +1514,22 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   const [applyResult, setApplyResult] = useState<Deployment | null>(null)
   const [applyError, setApplyError] = useState('')
   const [confirmApply, setConfirmApply] = useState(false)
-  const [deployments, setDeployments] = useState<Deployment[]>([])
-  const [historyLoading, setHistoryLoading] = useState(true)
-  const [historyError, setHistoryError] = useState('')
-  const [historyTick, setHistoryTick] = useState(0)
+  const history = usePagedList<Deployment>({ path: '/api/v1/deployments', rowsKey: 'deployments', token, onUnauthorized: onLogout, namespace: 'deploy', filterParams: { status: 'status' } })
+  const deployments = history.rows
+  const fetchHistory = history.reload
 
-  const fetchHistory = useCallback(() => { setHistoryTick((n) => n + 1) }, [])
-
+  // usePagedList reports a failed load without its status, and a 404/422
+  // means deploy is not configured on this instance: ask once to tell them apart.
   useEffect(() => {
+    if (!history.error) return
     let cancelled = false
-    authenticatedFetch('/api/v1/deployments', { token, onUnauthorized: onLogout })
-      .then(async (response) => {
-        if (response.status === 404 || response.status === 422) {
-          if (!cancelled) setUnavailable(true)
-          return null
-        }
-        if (!response.ok) throw new Error('Failed to load deployment history.')
-        return response.json() as Promise<{ deployments: Deployment[] }>
+    authenticatedFetch('/api/v1/deployments?limit=1', { token, onUnauthorized: onLogout })
+      .then((response) => {
+        if (!cancelled && (response.status === 404 || response.status === 422)) setUnavailable(true)
       })
-      .then((body) => {
-        if (cancelled) return
-        if (body) {
-          setDeployments(body.deployments ?? [])
-          setHistoryError('')
-        }
-        setHistoryLoading(false)
-      })
-      .catch((err: Error) => {
-        if (cancelled) return
-        if (isUnauthorizedResponseError(err)) return
-        setHistoryError(err.message)
-        setHistoryLoading(false)
-      })
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [token, historyTick, onLogout])
+  }, [history.error, token, onLogout])
 
   const handlePreview = async () => {
     setPreviewLoading(true)
@@ -1868,12 +1844,14 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Deployment history</p>
 
-        {historyError ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{historyError}</div>
-        ) : historyLoading ? (
+        <div className="mt-4">
+          <ListControls list={history} noun={{ one: 'deployment', many: 'deployments' }} filterFields={[{ key: 'status', label: 'Filter by status', options: deploymentStatusOptions }]} />
+        </div>
+
+        {history.error ? null : deployments.length === 0 && history.loading ? (
           <p className="mt-4 text-sm text-slate-400">Loading history…</p>
         ) : deployments.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-400">No deployments recorded yet.</p>
+          <p className="mt-4 text-sm text-slate-400">{history.hasFilters ? 'No deployments match the filter.' : 'No deployments recorded yet.'}</p>
         ) : (
           <table className="mt-4 w-full text-sm">
             <thead>
@@ -1904,6 +1882,12 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
     </section>
   )
 }
+
+// Deployment statuses the history can be filtered by (S10b: exact match).
+const deploymentStatusOptions = [
+  { value: '', label: 'All statuses' },
+  ...['active_verified', 'applied', 'pending_activation', 'failed', 'rolled_back', 'rollback_failed'].map((status) => ({ value: status, label: status.replaceAll('_', ' ') })),
+]
 
 function isSuccessfulDeployment(status: string) {
   return status === 'active_verified' || status === 'applied'

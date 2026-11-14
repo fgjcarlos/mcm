@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -281,6 +282,215 @@ func TestListDeployments(t *testing.T) {
 		// Should return all 3 since 3 < 20.
 		if len(deployments) != 3 {
 			t.Errorf("got %d deployments, want 3", len(deployments))
+		}
+	})
+}
+
+// seedDeployments inserts one deployment per status, in order, and returns
+// the stored rows.
+func seedDeployments(t *testing.T, store *Store, statuses []string) []Deployment {
+	t.Helper()
+	ctx := context.Background()
+	out := make([]Deployment, 0, len(statuses))
+	for i, status := range statuses {
+		d := &Deployment{Actor: "operator", Status: status}
+		if err := store.InsertDeployment(ctx, d); err != nil {
+			t.Fatalf("InsertDeployment %d returned error: %v", i, err)
+		}
+		out = append(out, *d)
+	}
+	return out
+}
+
+func setDeploymentCreatedAt(t *testing.T, store *Store, id int64, at time.Time) {
+	t.Helper()
+	if _, err := store.db.Exec(`UPDATE deployments SET created_at = ? WHERE id = ?`, at.UTC().Format(time.RFC3339Nano), id); err != nil {
+		t.Fatalf("set created_at for %d: %v", id, err)
+	}
+}
+
+func deploymentIDs(ds []Deployment) []int64 {
+	ids := make([]int64, 0, len(ds))
+	for _, d := range ds {
+		ids = append(ids, d.ID)
+	}
+	return ids
+}
+
+func TestListDeploymentsPage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty store returns empty slice and zero total", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+
+		got, total, err := store.ListDeploymentsPage(context.Background(), "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage returned error: %v", err)
+		}
+		if got == nil {
+			t.Error("want empty slice, got nil")
+		}
+		if len(got) != 0 || total != 0 {
+			t.Errorf("got %d rows total %d, want 0 rows total 0", len(got), total)
+		}
+	})
+
+	t.Run("status filter matches exactly and empty status matches all", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+		ctx := context.Background()
+		seedDeployments(t, store, []string{"failed", "active_verified", "failed", "rolled_back", "failed"})
+
+		all, total, err := store.ListDeploymentsPage(ctx, "", 50, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage all returned error: %v", err)
+		}
+		if len(all) != 5 || total != 5 {
+			t.Errorf("empty status: got %d rows total %d, want 5 and 5", len(all), total)
+		}
+
+		failed, total, err := store.ListDeploymentsPage(ctx, "failed", 50, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage failed returned error: %v", err)
+		}
+		if len(failed) != 3 || total != 3 {
+			t.Errorf("status failed: got %d rows total %d, want 3 and 3", len(failed), total)
+		}
+		for _, d := range failed {
+			if d.Status != "failed" {
+				t.Errorf("status filter leaked row %d with status %q", d.ID, d.Status)
+			}
+		}
+
+		// Exact match: a prefix of a status matches nothing.
+		none, total, err := store.ListDeploymentsPage(ctx, "fail", 50, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage prefix returned error: %v", err)
+		}
+		if len(none) != 0 || total != 0 {
+			t.Errorf("status prefix: got %d rows total %d, want 0 and 0", len(none), total)
+		}
+	})
+
+	t.Run("total counts every match while the page holds only the slice", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+		seedDeployments(t, store, []string{"failed", "failed", "saved", "failed", "failed", "failed"})
+
+		page, total, err := store.ListDeploymentsPage(context.Background(), "failed", 2, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage returned error: %v", err)
+		}
+		if len(page) != 2 {
+			t.Errorf("page size = %d, want 2", len(page))
+		}
+		if total != 5 {
+			t.Errorf("total = %d, want 5", total)
+		}
+		if total <= len(page) {
+			t.Errorf("total %d must exceed the page size %d", total, len(page))
+		}
+	})
+
+	t.Run("orders newest first with id as the tie-breaker", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+		rows := seedDeployments(t, store, []string{"saved", "saved", "saved", "saved", "saved"})
+		base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		// Timestamps deliberately disagree with insert order; rows[1] and
+		// rows[3] share a timestamp so id DESC must break the tie.
+		setDeploymentCreatedAt(t, store, rows[0].ID, base.Add(2*time.Second))
+		setDeploymentCreatedAt(t, store, rows[1].ID, base.Add(4*time.Second))
+		setDeploymentCreatedAt(t, store, rows[2].ID, base.Add(1*time.Second))
+		setDeploymentCreatedAt(t, store, rows[3].ID, base.Add(4*time.Second))
+		setDeploymentCreatedAt(t, store, rows[4].ID, base.Add(3*time.Second))
+		want := []int64{rows[3].ID, rows[1].ID, rows[4].ID, rows[0].ID, rows[2].ID}
+
+		var got []int64
+		for offset := 0; offset < 5; offset += 2 {
+			page, total, err := store.ListDeploymentsPage(context.Background(), "", 2, offset)
+			if err != nil {
+				t.Fatalf("ListDeploymentsPage offset %d returned error: %v", offset, err)
+			}
+			if total != 5 {
+				t.Errorf("offset %d: total = %d, want 5", offset, total)
+			}
+			got = append(got, deploymentIDs(page)...)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("order = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("paging forward and back neither skips nor repeats rows", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+		ctx := context.Background()
+		statuses := make([]string, 0, 11)
+		for i := 0; i < 11; i++ {
+			if i%3 == 0 {
+				statuses = append(statuses, "saved")
+			} else {
+				statuses = append(statuses, "failed")
+			}
+		}
+		rows := seedDeployments(t, store, statuses)
+		// Every row shares one created_at so only id DESC orders them.
+		same := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+		for _, d := range rows {
+			setDeploymentCreatedAt(t, store, d.ID, same)
+		}
+
+		full, total, err := store.ListDeploymentsPage(ctx, "failed", 100, 0)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage full returned error: %v", err)
+		}
+		if total != len(full) {
+			t.Fatalf("total = %d, want %d", total, len(full))
+		}
+
+		pageAt := func(offset int) []int64 {
+			page, _, err := store.ListDeploymentsPage(ctx, "failed", 3, offset)
+			if err != nil {
+				t.Fatalf("ListDeploymentsPage offset %d returned error: %v", offset, err)
+			}
+			return deploymentIDs(page)
+		}
+		var forward []int64
+		for offset := 0; offset < total; offset += 3 {
+			forward = append(forward, pageAt(offset)...)
+		}
+		var backward []int64
+		for offset := ((total - 1) / 3) * 3; offset >= 0; offset -= 3 {
+			backward = append(pageAt(offset), backward...)
+		}
+		want := fmt.Sprint(deploymentIDs(full))
+		if fmt.Sprint(forward) != want {
+			t.Errorf("forward pages = %v, want %v", forward, want)
+		}
+		if fmt.Sprint(backward) != want {
+			t.Errorf("backward pages = %v, want %v", backward, want)
+		}
+	})
+
+	t.Run("offset past the end returns no rows but keeps the total", func(t *testing.T) {
+		t.Parallel()
+		store := newTestStore(t)
+		defer store.Close()
+		seedDeployments(t, store, []string{"saved", "saved"})
+
+		page, total, err := store.ListDeploymentsPage(context.Background(), "", 50, 10)
+		if err != nil {
+			t.Fatalf("ListDeploymentsPage returned error: %v", err)
+		}
+		if len(page) != 0 || total != 2 {
+			t.Errorf("got %d rows total %d, want 0 rows total 2", len(page), total)
 		}
 	})
 }

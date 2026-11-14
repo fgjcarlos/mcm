@@ -194,6 +194,7 @@ type DeploymentStore interface {
 	GetDeployment(ctx context.Context, id int64) (storage.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id int64, status string, message string) error
 	ListDeployments(ctx context.Context, limit, offset int) ([]storage.Deployment, error)
+	ListDeploymentsPage(ctx context.Context, status string, limit, offset int) ([]storage.Deployment, int, error)
 }
 
 // previewRevisionStore is kept separate from DeploymentStore because preview
@@ -2311,13 +2312,14 @@ func (s *Service) recordApplyFailure(ctx context.Context, actor string, d *stora
 	return deployment, fmt.Errorf("apply config: %w", applyErr)
 }
 
-// List returns deployment records ordered newest first.
+// List returns one page of deployment records whose status equals status
+// (empty matches all), ordered newest first, plus the total number of matches.
 // Returns ErrDeployDisabled when the deploy mode is not configured.
-func (s *Service) List(ctx context.Context, limit, offset int) ([]storage.Deployment, error) {
+func (s *Service) List(ctx context.Context, status string, limit, offset int) ([]storage.Deployment, int, error) {
 	if s.deployCfg.Mode == "" {
-		return nil, ErrDeployDisabled
+		return nil, 0, ErrDeployDisabled
 	}
-	return s.deployStore.ListDeployments(ctx, limit, offset)
+	return s.deployStore.ListDeploymentsPage(ctx, status, limit, offset)
 }
 
 // emitAudit records an audit event for a deployment outcome if auditFn is set.

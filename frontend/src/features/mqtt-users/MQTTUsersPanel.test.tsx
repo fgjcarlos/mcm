@@ -1,9 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MQTTUsersPanel from './MQTTUsersPanel'
 
-type RouteHandler = (init?: RequestInit) => Response | Promise<Response>
+type RouteHandler = (init?: RequestInit, url?: string) => Response | Promise<Response>
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), {
@@ -18,24 +18,137 @@ function installFetchMock(routes: Record<string, RouteHandler>) {
     const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
     const key = `${method.toUpperCase()} ${requestUrl}`
-    const handler = routes[key]
+    // A listing request carries its query (?limit=&offset=...); fall back to the bare path.
+    const handler = routes[key] ?? routes[key.split('?')[0]]
     if (!handler) throw new Error(`Unhandled fetch: ${key}`)
-    return await handler(init)
+    return await handler(init, requestUrl)
   })
 }
 
-const baseRoutes: Record<string, RouteHandler> = {
-  'GET /api/v1/mqtt-users': () =>
-    jsonResponse([
-      {
-        id: 1,
-        username: 'sensor-01',
-        disabled: false,
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
-      },
-    ]),
+type UserRow = { id: number; username: string; disabled: boolean; created_at: string; updated_at: string }
+
+function userRow(id: number, username: string): UserRow {
+  return { id, username, disabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
 }
+
+// Answers like the paged endpoint of S10/S10b: filters by `q` (case-insensitive
+// substring of the username), echoes limit/offset and counts the matches.
+function pagedUsers(all: UserRow[]): RouteHandler {
+  return (_init, url) => {
+    const params = new URL(url ?? '', 'http://localhost').searchParams
+    const q = (params.get('q') ?? '').toLowerCase()
+    const matches = all.filter((user) => user.username.toLowerCase().includes(q))
+    const limit = Number(params.get('limit') ?? 50)
+    const offset = Number(params.get('offset') ?? 0)
+    return jsonResponse({ users: matches.slice(offset, offset + limit), total: matches.length, limit, offset })
+  }
+}
+
+function requestedUrls(fetchMock: ReturnType<typeof installFetchMock>) {
+  return fetchMock.mock.calls.map(([input]) => String(input))
+}
+
+beforeEach(() => {
+  window.history.replaceState(null, '', '/users')
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+const baseRoutes: Record<string, RouteHandler> = {
+  'GET /api/v1/mqtt-users': pagedUsers([userRow(1, 'sensor-01')]),
+}
+
+describe('MQTTUsersPanel search, paging and empty states', () => {
+  it('finds a user by name through the server search instead of paging (S6)', async () => {
+    const all = Array.from({ length: 200 }, (_, i) => userRow(i + 1, `device-${String(i + 1).padStart(3, '0')}`))
+    const fetchMock = installFetchMock({ 'GET /api/v1/mqtt-users': pagedUsers(all) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+
+    expect(await screen.findByText('device-001')).toBeInTheDocument()
+    expect(screen.getByText('200 users')).toBeInTheDocument()
+    expect(screen.queryByText('device-187')).not.toBeInTheDocument()
+
+    await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search users' }), 'DEVICE-187')
+
+    expect(await screen.findByText('device-187')).toBeInTheDocument()
+    expect(screen.queryByText('device-001')).not.toBeInTheDocument()
+    expect(screen.getByText('1 user')).toBeInTheDocument()
+    expect(requestedUrls(fetchMock)).toContain('/api/v1/mqtt-users?q=DEVICE-187&limit=25&offset=0')
+    // No request downloads the full listing.
+    expect(requestedUrls(fetchMock).every((url) => url.includes('limit=25'))).toBe(true)
+  })
+
+  it('shows the page position and total, and moves between pages by offset (S8)', async () => {
+    const all = Array.from({ length: 60 }, (_, i) => userRow(i + 1, `user-${String(i + 1).padStart(2, '0')}`))
+    const fetchMock = installFetchMock({ 'GET /api/v1/mqtt-users': pagedUsers(all) })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+
+    expect(await screen.findByText('user-01')).toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
+    expect(screen.getByText('60 users')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    expect(await screen.findByText('user-26')).toBeInTheDocument()
+    expect(screen.queryByText('user-25')).not.toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+    expect(requestedUrls(fetchMock)).toContain('/api/v1/mqtt-users?limit=25&offset=25')
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    expect(await screen.findByText('user-60')).toBeInTheDocument()
+    expect(screen.getByText('Page 3 of 3')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Previous page' }))
+    expect(await screen.findByText('user-26')).toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+  })
+
+  it('tells an empty installation apart from a search without matches (S16)', async () => {
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/mqtt-users': pagedUsers([]) }))
+    const first = render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+    expect(await screen.findByText('No MQTT users configured yet.')).toBeInTheDocument()
+    expect(screen.queryByText('No MQTT users match the search.')).not.toBeInTheDocument()
+    first.unmount()
+
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/mqtt-users': pagedUsers([userRow(1, 'sensor-01')]) }))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+    await screen.findByText('sensor-01')
+    await userEvent.setup().type(screen.getByRole('searchbox', { name: 'Search users' }), 'zzz')
+    expect(await screen.findByText('No MQTT users match the search.')).toBeInTheDocument()
+    expect(screen.queryByText('No MQTT users configured yet.')).not.toBeInTheDocument()
+  })
+
+  it('opens with the search and page kept in the URL (S14)', async () => {
+    window.history.replaceState(null, '', '/users?users.q=user&users.page=2')
+    const all = Array.from({ length: 30 }, (_, i) => userRow(i + 1, `user-${String(i + 1).padStart(2, '0')}`))
+    const fetchMock = installFetchMock({ 'GET /api/v1/mqtt-users': pagedUsers(all) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+
+    expect(await screen.findByText('user-26')).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search users' })).toHaveValue('user')
+    expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+    expect(requestedUrls(fetchMock)).toEqual(['/api/v1/mqtt-users?q=user&limit=25&offset=25'])
+  })
+
+  it('shows the load error of the listing', async () => {
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/mqtt-users': () => jsonResponse({ error: 'storage unavailable' }, { status: 500 }) }))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('storage unavailable')
+    expect(screen.queryByText('No MQTT users configured yet.')).not.toBeInTheDocument()
+  })
+})
 
 describe('MQTTUsersPanel role-aware controls', () => {
   it('viewer: Add User button is disabled with a requires-role title', async () => {

@@ -172,6 +172,36 @@ func (s *Store) ListDeployments(ctx context.Context, limit, offset int) ([]Deplo
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
+	return collectDeployments(rows)
+}
+
+// ListDeploymentsPage returns one page of deployments whose status equals
+// status (an empty status matches every deployment), newest first with id
+// as the tie-breaker so paging is a deterministic total order, plus the total
+// number of matching deployments. The caller applies the limit contract.
+func (s *Store) ListDeploymentsPage(ctx context.Context, status string, limit, offset int) ([]Deployment, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deployments WHERE (? = '' OR status = ?)`, status, status).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count deployments: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, revision_id, actor, status, kind, reload_kind, acl_snapshot, passwd_snapshot, acl_rendered, passwd_rendered, listener_acl_snapshot, listener_acl_rendered, conf_rendered, base_conf_hash, message, created_at, updated_at
+		 FROM deployments WHERE (? = '' OR status = ?) ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+		status, status, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list deployments page: %w", err)
+	}
+	deployments, err := collectDeployments(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return deployments, total, nil
+}
+
+// collectDeployments scans and closes rows; returns an empty slice (not nil)
+// when there are none.
+func collectDeployments(rows *sql.Rows) ([]Deployment, error) {
 	defer rows.Close() //nolint:errcheck
 
 	deployments := make([]Deployment, 0)

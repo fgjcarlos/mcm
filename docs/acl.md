@@ -207,7 +207,11 @@ for pattern entries.
 
 ## REST endpoints
 
-- `GET /api/v1/acls`: list all ACL rules.
+- `GET /api/v1/acls`: list ACL rules. Accepts `user` and `topic` (case-insensitive
+  substring filters on the principal and the topic filter), plus `limit`
+  (default 50, max 100) and `offset`. Returns
+  `{"rules": [...], "total": N, "limit": L, "offset": O}`, where `total` counts
+  the rules matching the filters.
 - `POST /api/v1/acls`: create a rule.
 - `PUT /api/v1/acls/{id}`: update a rule.
 - `DELETE /api/v1/acls/{id}`: delete a rule.

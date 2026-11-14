@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/fgjcarlos/mcm/internal/deploy"
 	"github.com/fgjcarlos/mcm/internal/storage"
@@ -18,7 +17,7 @@ import (
 type deployServicer interface {
 	Preview(ctx context.Context, actor string) (deploy.PreviewResult, error)
 	Apply(ctx context.Context, actor, revisionID string) (storage.Deployment, error)
-	List(ctx context.Context, limit, offset int) ([]storage.Deployment, error)
+	List(ctx context.Context, status string, limit, offset int) ([]storage.Deployment, int, error)
 }
 
 type applyRequest struct {
@@ -31,12 +30,10 @@ type deployAPI struct {
 	svc deployServicer
 }
 
-// handleList handles GET /api/v1/deployments.
+// handleList handles GET /api/v1/deployments?status=&limit=&offset=.
 func (d *deployAPI) handleList(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-
-	deployments, err := d.svc.List(r.Context(), limit, offset)
+	limit, offset := parsePageParams(r)
+	deployments, total, err := d.svc.List(r.Context(), r.URL.Query().Get("status"), limit, offset)
 	if errors.Is(err, deploy.ErrDeployDisabled) {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "deploy is not configured"})
 		return
@@ -46,7 +43,7 @@ func (d *deployAPI) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
+	writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments, "total": total, "limit": limit, "offset": offset})
 }
 
 // handlePreview handles POST /api/v1/deployments/preview.
