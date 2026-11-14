@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { can, requiredRoleFor } from '../auth/permissions'
+import { PendingChangesAction } from '../deploy/PendingChangesAction'
 import type { BrokerConnectionStatus, BrokerLog, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
 import { logsPath, matchesLogFilter, type LogFilter } from '../live-feed/logFilter'
 import { plural } from '../live-feed/feedText'
@@ -109,16 +110,7 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
           <>
             <p className="mt-4 inline-flex rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-sm font-semibold text-amber-100">Saved, not applied</p>
             <p className="mt-3 text-sm leading-6 text-slate-300">User or ACL changes are saved in MCM, but Mosquitto does not use them yet.</p>
-            {can(role, 'deploy.apply') ? (
-              <HomeAction onClick={() => onOpenPanel('deploy')}>Review and apply</HomeAction>
-            ) : can(role, 'deploy.preview') ? (
-              <>
-                <p className="mt-2 text-sm leading-6 text-slate-300">Applying them needs the {requiredRoleFor('deploy.apply')} role and MFA.</p>
-                <HomeAction onClick={() => onOpenPanel('deploy')}>Preview changes</HomeAction>
-              </>
-            ) : (
-              <p className="mt-2 text-sm leading-6 text-slate-300">Previewing them needs the {requiredRoleFor('deploy.preview')} role or higher; applying them needs the {requiredRoleFor('deploy.apply')} role and MFA.</p>
-            )}
+            <PendingChangesAction role={role} onReview={() => onOpenPanel('deploy')} />
           </>
         ) : (
           <>

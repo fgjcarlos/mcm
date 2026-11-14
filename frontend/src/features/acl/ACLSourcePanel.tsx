@@ -11,7 +11,7 @@ import type { ACLSource } from './types'
 // The preview of the deploy reports the access the composition would drop,
 // and an apply that would drop access MCM can neither reproduce nor
 // attribute to a managed MQTT user is refused.
-function ACLSourcePanel({ token, onLogout, canWrite }: { token: string; onLogout: () => void; canWrite: boolean }) {
+function ACLSourcePanel({ token, onLogout, canWrite, onMutationStart, onMutation }: { token: string; onLogout: () => void; canWrite: boolean; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
   const [source, setSource] = useState<ACLSource | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -48,6 +48,7 @@ function ACLSourcePanel({ token, onLogout, canWrite }: { token: string; onLogout
     if (submitting || !canWrite) return
     setSubmitting(true)
     setFormError('')
+    const mutationID = onMutationStart?.() ?? 0
     try {
       const result = await adoptACLSource(token, onLogout, {
         path: formPath.trim() || undefined,
@@ -56,6 +57,9 @@ function ACLSourcePanel({ token, onLogout, canWrite }: { token: string; onLogout
       setSource(result)
       setFormBody('')
       setFormPath('')
+      // The adopted source changes what the deploy renders, so the change
+      // stays pending until an apply writes it to the broker.
+      onMutation?.(mutationID)
       reload()
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return

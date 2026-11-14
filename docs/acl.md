@@ -347,6 +347,32 @@ at risk, the lines that survive, the file of every listener that owns
 scoped rules (`listener_acl_files`) and the files the deploy would delete
 (`removed_acl_files`).
 
+## What the deploy preview shows first
+
+The preview answers three questions in this order, so the operator reads
+the impact before the technical detail:
+
+1. **The scope.** The preview opens with what the deploy covers: every
+   change saved in MCM, including the changes saved outside the task at
+   hand. MCM does not attribute a pending change to the task or the
+   person who saved it, so the preview does not claim one either. The
+   counters of the response (`summary`) describe the broker-wide password
+   and ACL files; the file of every listener is reported separately.
+2. **The blockers.** A configuration problem that leaves the
+   listener-scoped rules without effect (`scope_issues`) blocks the
+   apply, so the preview shows it expanded and the apply control stays
+   unavailable until the problem is resolved. A blocker is never folded
+   away from the operator.
+3. **The detail on demand.** The ACL diff, the password-file diff, the
+   preserved entries and the contents of the listener files stay behind a
+   disclosure, so the preview does not stack several technical blocks at
+   once. The files the deploy would delete (`removed_acl_files`) stay
+   visible: a deletion is an impact the operator has to see.
+
+The warnings — the orphan rules, the access at risk, the composition
+warnings and the listener scopes that await the listener configuration —
+are not blockers. They are visible, and they do not prevent the apply.
+
 ## Validation
 
 MCM rejects a rule with HTTP `400` and a top-level `error` plus detailed

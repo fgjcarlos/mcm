@@ -14,6 +14,7 @@ import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
+import { PendingChangesAction } from './features/deploy/PendingChangesAction'
 import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
 import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
@@ -94,6 +95,16 @@ type DeployPreview = {
   removed_acl_files?: string[]
   scope_issues?: string[]
   scope_pending_activation?: string[]
+  // Counters cover the broker-wide passwd/ACL files only; listener files are listed apart.
+  summary?: {
+    users_added: number
+    users_removed: number
+    users_rotated: number
+    has_passwd_changes: boolean
+    topics_added: number
+    topics_removed: number
+    has_acl_changes: boolean
+  }
   has_changes: boolean
 }
 
@@ -495,6 +506,10 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
         <div role="status" aria-live="polite" className="mt-8 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Pending deploy</p>
           <p className="mt-2 text-sm text-amber-50">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
+          {/* The dashboard home carries its own pending-changes card, and the
+              deploy panel carries its own preview and apply controls, so the
+              banner offers the action only on the panels that lack it. */}
+          {activeId === 'dashboard' || activeId === 'deploy' ? null : <PendingChangesAction role={currentUser.role} onReview={() => openPanel('deploy')} />}
         </div>
       ) : null}
 
@@ -1495,7 +1510,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
         )}
       </div>
 
-      <ACLSourcePanel token={token} onLogout={onLogout} canWrite={canWrite} />
+      <ACLSourcePanel token={token} onLogout={onLogout} canWrite={canWrite} onMutationStart={onMutationStart} onMutation={onMutation} />
 
       <EffectivePermissionsPanel token={token} onLogout={onLogout} />
     </section>
@@ -1516,6 +1531,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   const [confirmApply, setConfirmApply] = useState(false)
   const history = usePagedList<Deployment>({ path: '/api/v1/deployments', rowsKey: 'deployments', token, onUnauthorized: onLogout, namespace: 'deploy', filterParams: { status: 'status' } })
   const deployments = history.rows
+  const scopeBlocked = Boolean(preview?.scope_issues?.length)
+  const listenerAtRisk = (preview?.listener_acl_files ?? []).flatMap((file) => (file.at_risk_entries ?? []).map((entry) => ({ listener: file.listener_id, entry })))
   const fetchHistory = history.reload
 
   // usePagedList reports a failed load without its status, and a 404/422
@@ -1535,6 +1552,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
     setPreviewLoading(true)
     setPreviewError('')
     setPreview(null)
+    // A new revision invalidates the confirmation of the previous one.
+    setConfirmApply(false)
     try {
       const response = await authenticatedFetch('/api/v1/deployments/preview', {
         token,
@@ -1586,8 +1605,9 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         return
       }
       if (!response.ok) {
-        const errBody = (await response.json().catch(() => null)) as { error?: string } | null
-        setApplyError(errBody?.error ?? 'Apply failed.')
+        const errBody = (await response.json().catch(() => null)) as { error?: string; details?: string[] } | null
+        const details = errBody?.details?.join('; ')
+        setApplyError(details ? `${errBody?.error ?? 'Apply failed.'} ${details}` : errBody?.error ?? 'Apply failed.')
         return
       }
       const result = (await response.json()) as Deployment
@@ -1634,8 +1654,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                   <button
                     type="button"
                     onClick={() => { void handleApply() }}
-                    disabled={applying || !canApply || !mfa.proof}
-                    title={!canApply ? permissionTitle('deploy.apply') : undefined}
+                    disabled={applying || !canApply || !mfa.proof || scopeBlocked}
+                    title={!canApply ? permissionTitle('deploy.apply') : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}
                     className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                   >
                     {applying ? 'Applying…' : 'Confirm Apply'}
@@ -1652,8 +1672,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 <button
                   type="button"
                   onClick={() => setConfirmApply(true)}
-                  disabled={!canApply}
-                  title={!canApply ? permissionTitle('deploy.apply') : undefined}
+                  disabled={!canApply || scopeBlocked}
+                  title={!canApply ? permissionTitle('deploy.apply') : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}
                   className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                 >
                   Apply
@@ -1693,6 +1713,46 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
           <div className="mt-5 space-y-4">
             {!preview.has_changes && !(preview.orphan_rules?.length) ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No pending changes — configuration is up to date.</div>
+            ) : (
+              <section className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">What this deploy covers</p>
+                <p className="mt-2 text-sm leading-6 text-cyan-50">Apply deploys every pending change saved in MCM, including changes saved outside this task.</p>
+                <p className="mt-1 text-sm leading-6 text-cyan-50/80">MCM cannot tell which task or person saved a pending change, so review the whole preview before you confirm.</p>
+                {preview.summary ? (
+                  <>
+                    <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                      {([
+                        ['MQTT users added', preview.summary.users_added],
+                        ['MQTT users removed', preview.summary.users_removed],
+                        ['MQTT users rotated', preview.summary.users_rotated],
+                        ['ACL topics added', preview.summary.topics_added],
+                        ['ACL topics removed', preview.summary.topics_removed],
+                      ] as const).map(([label, count]) => (
+                        <div key={label} className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2">
+                          <dt className="text-xs text-cyan-100/80">{label}</dt>
+                          <dd className="mt-1 text-lg font-semibold text-white">{count}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <p className="mt-3 text-xs leading-5 text-cyan-100/70">These counts cover the broker-wide password and ACL files. The listener files are listed separately below.</p>
+                  </>
+                ) : null}
+              </section>
+            )}
+            {preview.scope_issues?.length ? (
+              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
+                  <span className="rounded-full bg-rose-300/15 px-2.5 py-1 text-xs font-semibold text-rose-100">{preview.scope_issues.length}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-rose-50">The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
+                <ul className="mt-4 space-y-2 text-sm text-rose-50">
+                  {preview.scope_issues.map((issue) => (
+                    <li key={issue} className="break-words">{issue}</li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-sm font-semibold text-rose-100">Apply is disabled: the deploy is refused until the scope problems are resolved.</p>
+              </div>
             ) : null}
             {preview.orphan_rules?.length ? (
               <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
@@ -1737,16 +1797,12 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 </ul>
               </div>
             ) : null}
-            {preview.preserved_entries?.length ? (
-              <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Preserved entries</p>
-                  <span className="rounded-full bg-emerald-300/15 px-2.5 py-1 text-xs font-semibold text-emerald-100">{preview.preserved_entries.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-emerald-50">These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
-                <ul className="mt-4 space-y-2 font-mono text-xs text-emerald-50">
-                  {preview.preserved_entries.map((entry) => (
-                    <li key={entry} className="break-all">{entry}</li>
+            {listenerAtRisk.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Listener access at risk</p>
+                <ul className="mt-3 space-y-1 font-mono text-xs text-amber-50">
+                  {listenerAtRisk.map(({ listener, entry }) => (
+                    <li key={`${listener}|${entry}`} className="break-all">at risk ({listener}): {entry}</li>
                   ))}
                 </ul>
               </div>
@@ -1757,56 +1813,6 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 <ul className="mt-3 space-y-2 text-sm text-amber-50">
                   {preview.composition_warnings.map((warning) => (
                     <li key={warning} className="break-words">{warning}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {preview.listener_acl_files?.length ? (
-              <div className="space-y-4">
-                {preview.listener_acl_files.map((file) => (
-                  <div key={file.path} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
-                        Listener file — {file.listener_id}
-                      </p>
-                      <span className="break-all font-mono text-xs text-slate-400">{file.path}</span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-slate-300">
-                      This listener reads only this file, so its rules apply to that listener alone.
-                    </p>
-                    {file.at_risk_entries?.length ? (
-                      <ul className="mt-3 space-y-1 font-mono text-xs text-amber-100">
-                        {file.at_risk_entries.map((entry) => (
-                          <li key={entry} className="break-all">at risk: {entry}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {file.diff ? <div className="mt-4"><DiffBlock content={file.diff} /></div> : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {preview.removed_acl_files?.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Files the deploy would delete</p>
-                <p className="mt-2 text-sm leading-6 text-amber-50">These listener files lose their last scoped rule, so the deploy removes them.</p>
-                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
-                  {preview.removed_acl_files.map((path) => (
-                    <li key={path} className="break-all">{path}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {preview.scope_issues?.length ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
-                  <span className="rounded-full bg-rose-300/15 px-2.5 py-1 text-xs font-semibold text-rose-100">{preview.scope_issues.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-rose-50">The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
-                <ul className="mt-4 space-y-2 text-sm text-rose-50">
-                  {preview.scope_issues.map((issue) => (
-                    <li key={issue} className="break-words">{issue}</li>
                   ))}
                 </ul>
               </div>
@@ -1825,17 +1831,63 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 </ul>
               </div>
             ) : null}
-            {preview.acl_diff ? (
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">ACL diff</p>
-                <DiffBlock content={preview.acl_diff} />
+            {preview.removed_acl_files?.length ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Files the deploy would delete</p>
+                <p className="mt-2 text-sm leading-6 text-amber-50">These listener files lose their last scoped rule, so the deploy removes them.</p>
+                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+                  {preview.removed_acl_files.map((path) => (
+                    <li key={path} className="break-all">{path}</li>
+                  ))}
+                </ul>
               </div>
             ) : null}
-            {preview.passwd_diff ? (
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Password file diff</p>
-                <DiffBlock content={preview.passwd_diff} />
-              </div>
+            {preview.acl_diff || preview.passwd_diff || preview.preserved_entries?.length || preview.listener_acl_files?.length ? (
+              <details className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-200">Show diffs and file contents</summary>
+                <div className="mt-4 space-y-4">
+                  {preview.preserved_entries?.length ? (
+                    <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Preserved entries</p>
+                        <span className="rounded-full bg-emerald-300/15 px-2.5 py-1 text-xs font-semibold text-emerald-100">{preview.preserved_entries.length}</span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-emerald-50">These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
+                      <ul className="mt-4 space-y-2 font-mono text-xs text-emerald-50">
+                        {preview.preserved_entries.map((entry) => (
+                          <li key={entry} className="break-all">{entry}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {preview.listener_acl_files?.map((file) => (
+                    <div key={file.path} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+                          Listener file — {file.listener_id}
+                        </p>
+                        <span className="break-all font-mono text-xs text-slate-400">{file.path}</span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-300">
+                        This listener reads only this file, so its rules apply to that listener alone.
+                      </p>
+                      {file.diff ? <div className="mt-4"><DiffBlock content={file.diff} /></div> : null}
+                    </div>
+                  ))}
+                  {preview.acl_diff ? (
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">ACL diff</p>
+                      <DiffBlock content={preview.acl_diff} />
+                    </div>
+                  ) : null}
+                  {preview.passwd_diff ? (
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Password file diff</p>
+                      <DiffBlock content={preview.passwd_diff} />
+                    </div>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
         ) : null}

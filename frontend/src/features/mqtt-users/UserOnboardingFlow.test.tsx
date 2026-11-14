@@ -260,6 +260,123 @@ describe('UserOnboardingFlow journey', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not present a pending activation as applied and verified', async () => {
+    const pendingRoutes: Record<string, RouteHandler> = {
+      ...baseRoutes,
+      'POST /api/v1/deployments/apply': () =>
+        jsonResponse({ id: 14, status: 'pending_activation', message: 'waiting for the broker', created_at: '2026-01-01T00:00:00Z' }),
+    }
+    vi.stubGlobal('fetch', installFetchMock(pendingRoutes))
+    const onApplySuccess = vi.fn()
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" onApplySuccess={onApplySuccess} />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    expect(await screen.findByText(/the activation was not proven yet/)).toBeInTheDocument()
+    expect(screen.queryByText('Applied and verified')).not.toBeInTheDocument()
+    expect(onApplySuccess).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Test the connection' })).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not claim the previous configuration was restored when the rollback failed', async () => {
+    const rollbackFailedRoutes: Record<string, RouteHandler> = {
+      ...baseRoutes,
+      'POST /api/v1/deployments/apply': () =>
+        jsonResponse({ id: 15, status: 'rollback_failed', message: 'restore error', created_at: '2026-01-01T00:00:00Z' }),
+    }
+    vi.stubGlobal('fetch', installFetchMock(rollbackFailedRoutes))
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    expect(await screen.findByText('Rollback failed')).toBeInTheDocument()
+    expect(screen.getByText(/restore of the previous configuration failed/)).toBeInTheDocument()
+    expect(screen.queryByText(/MCM restored the previous configuration/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Test the connection' })).not.toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not claim a restore for a failed apply', async () => {
+    const failedRoutes: Record<string, RouteHandler> = {
+      ...baseRoutes,
+      'POST /api/v1/deployments/apply': () =>
+        jsonResponse({ id: 16, status: 'failed', message: 'apply error', created_at: '2026-01-01T00:00:00Z' }),
+    }
+    vi.stubGlobal('fetch', installFetchMock(failedRoutes))
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    expect(await screen.findByText('Apply failed (failed)')).toBeInTheDocument()
+    expect(screen.queryByText(/MCM restored the previous configuration/)).not.toBeInTheDocument()
+    // The apply failed before the verification, so the stage says so.
+    expect(screen.getByText(/Failed stage: apply \(the broker files and the reload\)/)).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('retries after a failed apply with a new preview without creating the user or the rule again', async () => {
+    let previewCalls = 0
+    let applyCalls = 0
+    const userHandler = vi.fn(baseRoutes['POST /api/v1/mqtt-users'])
+    const aclHandler = vi.fn(baseRoutes['POST /api/v1/acls'])
+    const retryRoutes: Record<string, RouteHandler> = {
+      ...baseRoutes,
+      'POST /api/v1/mqtt-users': userHandler,
+      'POST /api/v1/acls': aclHandler,
+      'POST /api/v1/deployments/preview': () => {
+        previewCalls += 1
+        return jsonResponse({ revision_id: `rev-${previewCalls}`, acl_diff: '+user probe\n', passwd_diff: '', has_changes: true })
+      },
+      'POST /api/v1/deployments/apply': (init) => {
+        applyCalls += 1
+        if (applyCalls === 1) return jsonResponse({ error: 'apply failed' }, { status: 500 })
+        expect(String(init?.body)).toContain('rev-2')
+        return jsonResponse({ id: 17, status: 'active_verified', message: 'ok', created_at: '2026-01-01T00:00:00Z' })
+      },
+    }
+    vi.stubGlobal('fetch', installFetchMock(retryRoutes))
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+    expect(await screen.findByText('Apply step failed')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Generate a new preview' }))
+    await waitFor(() => expect(previewCalls).toBe(2))
+    await waitFor(() => expect(screen.queryByText('Apply step failed')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply and verify' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    expect(await screen.findByText('Applied and verified')).toBeInTheDocument()
+    expect(userHandler).toHaveBeenCalledTimes(1)
+    expect(aclHandler).toHaveBeenCalledTimes(1)
+
+    vi.unstubAllGlobals()
+  })
+
   it('keeps the write controls disabled for a viewer', async () => {
     vi.stubGlobal('fetch', installFetchMock(baseRoutes))
 
