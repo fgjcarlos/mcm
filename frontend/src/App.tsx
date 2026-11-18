@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
 import ChangeRoute from './features/change-route/ChangeRoute'
@@ -10,14 +10,16 @@ import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import SettingsPanel from './features/broker-config/SettingsPanel'
 import BridgesPanel from './features/broker-config/BridgesPanel'
-import { deploymentLamp, lampBox, lampText } from './features/status/deploymentLamp'
+import { deploymentLamp } from './features/status/deploymentLamp'
+import { DiffBlock, Fact, Lamp, Plate, Section } from './features/ui/primitives'
+import { bodyText, codeBlock, fieldHint, fieldLabel, input, lampDot, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow, textLink, type LampTone } from './features/ui/styles'
 import PluginsPanel from './features/broker-config/PluginsPanel'
 import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
 import { PendingChangesAction } from './features/deploy/PendingChangesAction'
-import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
+import { DashboardFrame, Mark, type NavItem } from './features/dashboard/DashboardFrame'
 import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
@@ -147,7 +149,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Configuration',
     path: '/broker-config',
-    eyebrow: 'Operations',
     title: 'Broker configuration manager',
     description: 'Import, edit, validate and version mosquitto.conf with explicit adoption before any apply.',
     minRole: 'auditor',
@@ -157,7 +158,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Broker settings',
     path: '/broker-settings',
-    eyebrow: 'Operations',
     title: 'Persistence, queues, sessions and logging',
     description: 'Edit the general broker settings with the catalog ranges and preview the change before any apply.',
     minRole: 'auditor',
@@ -167,7 +167,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Bridges',
     path: '/broker-bridges',
-    eyebrow: 'Operations',
     title: 'Bridges to remote brokers',
     description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
     minRole: 'auditor',
@@ -177,7 +176,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Plugins',
     path: '/broker-plugins',
-    eyebrow: 'Operations',
     title: 'Mosquitto plugins',
     description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
     minRole: 'auditor',
@@ -188,7 +186,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'MQTT users',
     path: '/users',
-    eyebrow: 'Broker clients',
     title: 'MQTT user directory',
     description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
   },
@@ -197,7 +194,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'ACLs',
     path: '/acls',
-    eyebrow: 'Authorization',
     title: 'ACL policy workspace',
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
   },
@@ -206,7 +202,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Listeners',
     path: '/listeners',
-    eyebrow: 'MQTT access',
     title: 'MQTT listeners',
     description: 'Manage the broker listener set (TCP and WebSockets).',
   },
@@ -215,7 +210,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Certificates',
     path: '/certificates',
-    eyebrow: 'MQTT access',
     title: 'Broker TLS certificates',
     description: 'Upload, rotate and activate the TLS material the broker serves.',
     minRole: 'auditor',
@@ -225,7 +219,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Dynamic security',
     path: '/broker-dynsec',
-    eyebrow: 'Authorization',
     title: 'Dynamic security database',
     description: 'Manage the clients, groups and roles the dynamic security plugin enforces, and watch the management channel of the plugin.',
     minRole: 'auditor',
@@ -236,7 +229,6 @@ const navItems: NavItem[] = [
     group: 'Changes',
     label: 'Deploy',
     path: '/deploy',
-    eyebrow: 'Operations',
     title: 'Mosquitto configuration deploy',
     description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
   },
@@ -245,7 +237,6 @@ const navItems: NavItem[] = [
     group: 'Changes',
     label: 'Configuration revisions',
     path: '/changes',
-    eyebrow: 'Review and recovery',
     title: 'Configuration changes',
     description: 'Review exact configuration revisions, activation results and recoverable copies.',
     minRole: 'auditor',
@@ -256,7 +247,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Dashboard',
     path: '/dashboard',
-    eyebrow: 'Broker overview',
     title: 'Live broker snapshot',
     description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
   },
@@ -265,7 +255,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Topics',
     path: '/topics',
-    eyebrow: 'Observation',
     title: 'Topic explorer',
     description: 'Inspect incoming topic names and safe payload previews as messages arrive; optional Sparkplug B and JSON Schema diagnostics inspect messages only and never enforce broker traffic.',
   },
@@ -274,7 +263,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Broker diagnostics',
     path: '/broker-diagnostics',
-    eyebrow: 'Diagnostics',
     title: 'Broker diagnostics workspace',
     description: 'Separate MCM observations, broker logs, internal metrics and broker-published system metrics.',
     minRole: 'auditor',
@@ -284,7 +272,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Logs',
     path: '/logs',
-    eyebrow: 'Operations',
     title: 'Realtime broker and MCM events',
     description: 'Monitor broker-log entries, connection transitions and MCM operational events as they are ingested.',
   },
@@ -294,7 +281,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Security',
     path: '/security',
-    eyebrow: 'Audit',
     title: 'Recent security events',
     description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
   },
@@ -303,7 +289,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Audit',
     path: '/audit',
-    eyebrow: 'Security',
     title: 'Administrative audit log',
     description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
   },
@@ -312,7 +297,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Account',
     path: '/account',
-    eyebrow: 'Security',
     title: 'Account security',
     description: 'Manage two-factor authentication and account security settings.',
   },
@@ -321,7 +305,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Panel operators',
     path: '/admin-users',
-    eyebrow: 'Console accounts',
     title: 'Panel operator directory',
     description: 'Manage dashboard operators: provision accounts, assign roles, reset credentials, and deactivate stale users.',
     minRole: 'admin',
@@ -350,8 +333,8 @@ function App() {
 
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Restoring session…</p>
+      <div className="flex min-h-screen items-center justify-center bg-frame text-enamel">
+        <p className="text-sm text-enamel-muted">Restoring session…</p>
       </div>
     )
   }
@@ -505,9 +488,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       onLogout={onLogout}
     >
       {deployPending ? (
-        <div role="status" aria-live="polite" className="mt-8 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Pending deploy</p>
-          <p className="mt-2 text-sm text-amber-50">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
+        <div role="status" aria-live="polite" className={`mt-8 ${notice.caution}`}>
+          <p className="flex items-center gap-2 text-sm font-semibold text-lamp"><span aria-hidden="true" className="size-2.5 rounded-full bg-lamp" />Pending deploy</p>
+          <p className="mt-2 text-sm text-enamel">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
           {/* The dashboard home carries its own pending-changes card, and the
               deploy panel carries its own preview and apply controls, so the
               banner offers the action only on the panels that lack it. */}
@@ -574,111 +557,104 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   )
 }
 
+// Recent traffic on the dashboard home: hairline sections, columns divided by track hairlines.
+const trafficColumn = 'lg:border-t-0 lg:px-8 lg:pt-0 lg:first:pl-0 lg:last:pr-0'
+
 function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTrafficMetrics; topics: TopicMessage[]; latestTopic?: TopicMessage }) {
   const hasRateSamples = metrics.rate_points.some((point) => point.count > 0)
 
   return (
-    <section className="mt-8 space-y-4">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <article className="rounded-[1.75rem] border border-cyan-300/20 bg-cyan-400/10 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">Message rate</p>
-          <div className="mt-3 flex items-end gap-2">
-            <span className="font-mono text-4xl font-semibold text-white">{metrics.message_rate_per_minute.toFixed(1)}</span>
-            <span className="pb-1 text-sm text-cyan-100">msg/min</span>
-          </div>
-          <p className="mt-2 text-sm text-slate-300">{metrics.message_count} messages in the last {Math.round(metrics.window_seconds / 60)} minutes.</p>
+    <section className="mt-10 space-y-8 border-t border-track-strong pt-8">
+      <div className="grid gap-y-6 lg:grid-cols-3 lg:divide-x lg:divide-track">
+        <Section title="Message rate" className={trafficColumn}>
+          <p className="mt-3 flex items-baseline gap-2">
+            <span className="font-mono text-3xl font-semibold tabular-nums text-enamel-bright">{metrics.message_rate_per_minute.toFixed(1)}</span>
+            <span className="font-mono text-sm text-enamel-soft">msg/min</span>
+          </p>
+          <p className={`mt-1 ${bodyText}`}>{metrics.message_count} messages in the last {Math.round(metrics.window_seconds / 60)} minutes.</p>
           <RateChart points={metrics.rate_points} />
-          {!hasRateSamples ? <p className="mt-3 text-xs uppercase tracking-[0.18em] text-cyan-100/70">Waiting for the first rate sample</p> : null}
-        </article>
+          {!hasRateSamples ? <p className={`mt-3 ${fieldHint}`}>Waiting for the first rate sample</p> : null}
+        </Section>
 
-        <HotspotCard title="Top topics" empty="No topic activity in the recent window." items={metrics.top_topics} />
+        <HotspotCard title="Top topics" empty="No topic activity in the recent window." items={metrics.top_topics} className={trafficColumn} />
 
-        <article className="rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Top clients</p>
+        <Section title="Top clients" className={trafficColumn}>
           {metrics.top_clients_available && metrics.top_clients.length > 0 ? (
             <TrafficBars items={metrics.top_clients} />
           ) : (
-            <div className="mt-4 space-y-3 rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50">
-              <p className="font-semibold">Client IDs unavailable</p>
-              <p className="text-amber-50/80">{metrics.top_clients_note || defaultClientNote}</p>
-              <div className="grid gap-2 sm:grid-cols-2">
+            <div className={`mt-3 space-y-3 ${notice.neutral}`}>
+              <p className="font-semibold text-enamel">Client IDs unavailable</p>
+              <p>{metrics.top_clients_note || defaultClientNote}</p>
+              <dl className="grid gap-3 sm:grid-cols-2">
                 <WidgetFact label="Observed messages" value={String(metrics.message_count)} />
                 <WidgetFact label="Topic hotspots" value={String(metrics.top_topics.length)} />
-              </div>
+              </dl>
             </div>
           )}
-        </article>
+        </Section>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-        <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Metric source</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-y-6 border-t border-track pt-6 lg:grid-cols-[0.85fr_1.15fr] lg:divide-x lg:divide-track">
+        <Section title="Metric source" className={trafficColumn}>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-3">
             <WidgetFact label="Source" value={metrics.persistence || 'Browser memory'} />
             <WidgetFact label="Window" value={`${Math.round(metrics.window_seconds / 60)} min`} />
             <WidgetFact label="Samples" value={String(metrics.rate_points.length)} />
-          </div>
-        </article>
-        <article className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Latest activity</p>
+          </dl>
+        </Section>
+        <Section title="Latest activity" className={trafficColumn}>
           {latestTopic ? (
-            <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4">
+            <div className="mt-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <p className="break-all font-mono text-sm text-cyan-50">{latestTopic.topic}</p>
-                <span className="shrink-0 text-xs text-cyan-100/70">{new Date(latestTopic.observed_at).toLocaleTimeString()}</span>
+                <p className="break-all font-mono text-sm text-enamel-bright">{latestTopic.topic}</p>
+                <span className="shrink-0 font-mono text-xs tabular-nums text-enamel-muted">{new Date(latestTopic.observed_at).toLocaleTimeString()}</span>
               </div>
-              <p className="mt-3 line-clamp-2 break-all text-sm text-slate-200">{latestTopic.payload_preview || 'Payload preview unavailable.'}</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <p className="mt-2 line-clamp-2 break-all font-mono text-xs text-enamel">{latestTopic.payload_preview || 'Payload preview unavailable.'}</p>
+              <dl className="mt-3 grid gap-3 sm:grid-cols-3">
                 <WidgetFact label="Format" value={latestTopic.payload_format ?? 'unknown'} />
                 <WidgetFact label="Bytes" value={String(latestTopic.payload_bytes ?? 0)} />
                 <WidgetFact label="Recent list" value={`${topics.length} messages`} />
-              </div>
+              </dl>
               {latestTopic.sparkplug ? <SparkplugDetails metadata={latestTopic.sparkplug} sparkplugMetrics={latestTopic.sparkplug_metrics} compact /> : null}
             </div>
           ) : (
-            <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-slate-950/30 p-4 text-sm text-slate-300">
-              Waiting for topic traffic from the broker stream.
-            </div>
+            <p className={`mt-3 ${bodyText}`}>Waiting for topic traffic from the broker stream.</p>
           )}
-        </article>
+        </Section>
       </div>
     </section>
   )
 }
 
+// A fact of a widget; place it inside a <dl>.
 function WidgetFact({ label, value }: { label: string; value: string }) {
+  return <Fact label={label} value={value} />
+}
+
+function HotspotCard({ title, empty, items, level = 3, ruled, className }: { title: string; empty: string; items: BrokerTrafficItem[]; level?: 3 | 4; ruled?: boolean; className?: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
-      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <p className="mt-1 break-words font-mono text-sm text-white">{value}</p>
-    </div>
+    <Section title={title} level={level} ruled={ruled} className={className}>
+      {items.length === 0 ? <p className={`mt-3 ${bodyText}`}>{empty}</p> : <TrafficBars items={items} />}
+    </Section>
   )
 }
 
-function HotspotCard({ title, empty, items }: { title: string; empty: string; items: BrokerTrafficItem[] }) {
-  return (
-    <article className="rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{title}</p>
-      {items.length === 0 ? <p className="mt-4 text-sm text-slate-300">{empty}</p> : <TrafficBars items={items} />}
-    </article>
-  )
-}
-
+// Share bars: an enamel fill on a raised track, square ends (circles belong to lamps).
 function TrafficBars({ items }: { items: BrokerTrafficItem[] }) {
   const maxCount = Math.max(...items.map((item) => item.count), 1)
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="mt-3 space-y-4">
       {items.map((item) => (
         <div key={item.name}>
           <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="break-all font-mono text-cyan-100">{item.name}</span>
-            <span className="text-slate-300">{item.count}</span>
+            <span className="break-all font-mono text-enamel-bright">{item.name}</span>
+            <span className="font-mono tabular-nums text-enamel">{item.count}</span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800">
-            <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.max(6, (item.count / maxCount) * 100)}%` }} />
+          <div className="mt-2 h-1.5 bg-frame-high">
+            <div className="h-full bg-enamel" style={{ width: `${Math.max(6, (item.count / maxCount) * 100)}%` }} />
           </div>
-          <p className="mt-1 text-xs text-slate-400">{item.percentage.toFixed(0)}% of recent messages</p>
+          <p className={`mt-1 ${fieldHint}`}>{item.percentage.toFixed(0)}% of recent messages</p>
         </div>
       ))}
     </div>
@@ -690,16 +666,19 @@ function RateChart({ points }: { points: BrokerRatePoint[] }) {
   const maxCount = Math.max(...visiblePoints.map((point) => point.count), 1)
 
   return (
-    <div className="mt-5 flex h-24 items-end gap-1.5 rounded-2xl border border-white/10 bg-slate-950/40 p-3" aria-label="Recent message rate chart">
+    <div className="mt-4 flex h-24 items-end gap-1.5 border-b border-track-strong pb-1" aria-label="Recent message rate chart">
       {visiblePoints.length === 0 ? (
-        <span className="self-center text-sm text-slate-300">No rate samples yet.</span>
+        <span className={`self-center ${bodyText}`}>No rate samples yet.</span>
       ) : (
         visiblePoints.map((point) => {
           const label = `${point.count} messages at ${new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}`
           return (
-            <div key={point.timestamp} className="flex flex-1 flex-col items-center justify-end gap-1">
-              <div className="w-full rounded-t bg-cyan-300/80" style={{ height: `${Math.max(8, (point.count / maxCount) * 100)}%` }} title={label} aria-label={label} />
-              <span className="text-[0.6rem] text-slate-400">{new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}</span>
+            <div key={point.timestamp} className="flex h-full min-w-0 flex-1 flex-col items-center gap-1">
+              {/* A flex-1 well gives the bar's percentage height a definite base. */}
+              <div className="flex w-full flex-1 items-end">
+                <div className="w-full bg-enamel-soft" style={{ height: `${Math.max(8, (point.count / maxCount) * 100)}%` }} title={label} aria-label={label} />
+              </div>
+              <span className="font-mono text-[0.625rem] tabular-nums text-enamel-muted">{new Date(point.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}</span>
             </div>
           )
         })
@@ -730,26 +709,26 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
   const invalidPattern = isTopicFilterActive(filterText) && !isTopicPatternValid(filterText)
 
   return (
-    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+    <section className="mt-8">
       <LiveFeedChrome feed={feed} streamState={streamState} windowSize={liveTopicWindow} noun={messageNoun} label="Topic feed" />
 
-      <div className="mt-4 flex flex-wrap items-end gap-4">
-        <label className="text-sm text-slate-300">Filter topics{' '}
-          <input type="search" aria-label="Filter topics" aria-describedby="topic-filter-help" value={filterText} onChange={(event) => setFilterText(event.target.value)} className="ml-2 rounded-lg bg-slate-900 p-2 font-mono" />
+      <div className="mt-6 flex flex-wrap items-end gap-4 border-t border-track pt-4">
+        <label className="flex flex-col gap-2"><span className={fieldLabel}>Filter topics</span>
+          <input type="search" aria-label="Filter topics" aria-describedby="topic-filter-help" value={filterText} onChange={(event) => setFilterText(event.target.value)} className={`${input} w-72 max-w-full font-mono`} />
         </label>
-        {isTopicFilterActive(filterText) ? <button type="button" onClick={() => setFilterText('')} className="text-sm font-semibold text-cyan-200 underline">Clear filter</button> : null}
-        <p id="topic-filter-help" className="w-full text-xs text-slate-400">Text matches part of a topic, ignoring case. With + (one level) or # (the remaining levels, last only) it matches as an MQTT topic filter, such as factory/+/temperature.</p>
-        {invalidPattern ? <p className="w-full text-sm text-amber-200">Not a valid MQTT topic filter: + and # must fill a whole level, and # must be the last level.</p> : null}
+        {isTopicFilterActive(filterText) ? <button type="button" onClick={() => setFilterText('')} className={`h-9 text-sm ${textLink}`}>Clear filter</button> : null}
+        <p id="topic-filter-help" className={`w-full max-w-[68ch] ${fieldHint}`}>Text matches part of a topic, ignoring case. With + (one level) or # (the remaining levels, last only) it matches as an MQTT topic filter, such as factory/+/temperature.</p>
+        {invalidPattern ? <p className="w-full text-sm text-lamp">Not a valid MQTT topic filter: + and # must fill a whole level, and # must be the last level.</p> : null}
       </div>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr]">
-        <section aria-label="Topic messages">
+      <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-2">
+        <section aria-label="Topic messages" className="min-w-0">
           {shown.length > 0 ? (
-            <ol className="divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
+            <ol className="divide-y divide-track border-y border-track">
               {shown.map((topic) => <TopicRow key={topic.id} topic={topic} chosen={topic.id === selected?.id} inDetail={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
             </ol>
           ) : (
-            <p className="text-sm text-slate-300">{emptyFeedText({
+            <p className={bodyText}>{emptyFeedText({
               noun: messageNoun,
               filterLabel: 'filter',
               receivedAny: feed.visible.length > 0,
@@ -759,20 +738,20 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
           )}
         </section>
 
-        <section aria-label="Message detail" className="rounded-[1.75rem] border border-white/10 bg-[linear-gradient(135deg,rgba(34,211,238,0.16),rgba(15,23,42,0.08)_55%,rgba(249,115,22,0.18))] p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100/80">{selected ? 'Selected message' : 'Newest message'}</p>
-          {fallbackNotice ? <p className="mt-3 text-sm text-amber-200">{fallbackNotice}</p> : null}
+        <section aria-label="Message detail" className="min-w-0 border-t border-track pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+          <h3 className="text-sm font-semibold text-enamel-soft">{selected ? 'Selected message' : 'Newest message'}</h3>
+          {fallbackNotice ? <p className="mt-3 text-sm text-lamp">{fallbackNotice}</p> : null}
           {detail ? (
             <>
-              <h3 className="mt-3 break-all font-mono text-2xl font-semibold text-white">{detail.topic}</h3>
-              <p className="mt-1 font-mono text-xs text-slate-300">Received {detail.observed_at} ({new Date(detail.observed_at).toLocaleString()})</p>
+              <p className="mt-2 break-all font-mono text-xl font-semibold text-enamel-bright">{detail.topic}</p>
+              <p className="mt-1 font-mono text-xs text-enamel-muted">Received {detail.observed_at} ({new Date(detail.observed_at).toLocaleString()})</p>
               {detail.schema_validation ? <SchemaValidationDetails validation={detail.schema_validation} /> : null}
               {detail.sparkplug ? <SparkplugDetails metadata={detail.sparkplug} sparkplugMetrics={detail.sparkplug_metrics} /> : null}
               <PayloadMetadata event={detail} />
-              <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm text-slate-100">{detail.payload_preview}</pre>
+              <pre className={`mt-4 max-h-64 ${codeBlock}`}>{detail.payload_preview}</pre>
             </>
           ) : (
-            <p className="mt-3 text-sm leading-7 text-slate-200/90">Choose a message to see its payload here.</p>
+            <p className={`mt-3 ${bodyText}`}>Choose a message to see its payload here.</p>
           )}
         </section>
       </div>
@@ -786,38 +765,36 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
 function TopicRow({ topic, chosen, inDetail, onSelect }: { topic: LiveTopicMessage; chosen: boolean; inDetail: boolean; onSelect: () => void }) {
   return (
     <li>
-      <button type="button" aria-pressed={chosen} onClick={onSelect} className={`block w-full px-3 py-2 text-left hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${inDetail ? 'bg-cyan-400/10' : ''}`}>
+      <button type="button" aria-pressed={chosen} onClick={onSelect} className={`block w-full px-2 py-2 text-left transition-colors duration-150 hover:bg-frame-raised ${inDetail ? 'bg-frame-high' : ''}`}>
         <span className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 break-all font-mono text-sm text-cyan-100">{topic.topic}</span>
+          {/* The row in the detail is lit like the current nav item; the lamp sits inside the topic so a long topic never wraps away from it. */}
+          <span className="min-w-0 break-all font-mono text-sm text-enamel-bright"><span aria-hidden="true" className={`mr-2 inline-block size-1.5 rounded-full align-middle ${inDetail ? 'bg-enamel-bright' : ''}`} />{topic.topic}</span>
           {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}
           {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
-          <time dateTime={topic.observed_at} className="ml-auto shrink-0 font-mono text-xs text-slate-400">{new Date(topic.observed_at).toLocaleTimeString()}</time>
+          <time dateTime={topic.observed_at} className="ml-auto shrink-0 font-mono text-xs tabular-nums text-enamel-muted">{new Date(topic.observed_at).toLocaleTimeString()}</time>
         </span>
-        <span className="mt-1 block truncate font-mono text-xs text-slate-300">{topic.payload_preview || 'Payload preview unavailable.'}</span>
+        <span className="mt-1 block truncate font-mono text-xs text-enamel-soft">{topic.payload_preview || 'Payload preview unavailable.'}</span>
         <PayloadSummary event={topic} />
       </button>
     </li>
   )
 }
 
+// A schema result is a check, not an activation: valid stays enamel, invalid is a caution.
 function SchemaValidationBadge({ validation }: { validation: SchemaValidation }) {
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${validation.valid ? 'bg-emerald-400/10 text-emerald-200' : 'bg-red-400/10 text-red-200'}`}>
-      Schema {validation.valid ? 'valid' : 'invalid'}
-    </span>
-  )
+  return <Lamp tone={validation.valid ? 'neutral' : 'caution'}>Schema {validation.valid ? 'valid' : 'invalid'}</Lamp>
 }
 
 function SchemaValidationDetails({ validation }: { validation: SchemaValidation }) {
   return (
-    <div className={`mt-4 rounded-2xl border p-3 ${validation.valid ? 'border-emerald-300/20 bg-emerald-400/10' : 'border-red-300/20 bg-red-400/10'}`}>
+    <div className={`mt-4 ${validation.valid ? 'border-t border-track pt-3' : notice.caution}`}>
       <div className="flex flex-wrap items-center gap-2">
         <SchemaValidationBadge validation={validation} />
-        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-100">{validation.schema_name}</span>
-        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-slate-100">{validation.topic_filter}</span>
+        <Plate>{validation.schema_name}</Plate>
+        <Plate>{validation.topic_filter}</Plate>
       </div>
       {!validation.valid && validation.errors?.length ? (
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-red-100">
+        <ul className="mt-3 list-disc space-y-1 pl-5 font-mono text-xs text-enamel">
           {validation.errors.map((error) => (
             <li key={error} className="break-all">{error}</li>
           ))}
@@ -832,23 +809,23 @@ function PayloadMetadata({ event }: { event: TopicMessage }) {
   const chips = payloadChips(event)
 
   return (
-    <div className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="mt-4 space-y-3 border-t border-track pt-3">
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => (
-          <span key={chip} className="rounded-full bg-cyan-400/10 px-3 py-1 font-mono text-xs text-cyan-100">{chip}</span>
+          <Plate key={chip}>{chip}</Plate>
         ))}
       </div>
       {inspection?.json_valid ? (
-        <div className="grid gap-3 text-sm text-slate-200 sm:grid-cols-2">
+        <div className="grid gap-3 text-sm text-enamel sm:grid-cols-2">
           {inspection.detected_type === 'json_object' ? (
             <div className="sm:col-span-2">
-              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Top-level keys</p>
+              <p className={fieldHint}>Top-level keys</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {(inspection.json_top_level_keys ?? []).length === 0 ? (
-                  <span className="text-slate-300">No keys.</span>
+                  <span className="text-enamel-soft">No keys.</span>
                 ) : (
                   inspection.json_top_level_keys?.map((key) => (
-                    <span key={key} className="rounded-lg bg-white/[0.06] px-2 py-1 font-mono text-xs text-slate-100">{key}</span>
+                    <Plate key={key}>{key}</Plate>
                   ))
                 )}
               </div>
@@ -858,18 +835,14 @@ function PayloadMetadata({ event }: { event: TopicMessage }) {
           {inspection.detected_type === 'json_scalar' && inspection.json_scalar_summary ? <PayloadFact label="Scalar" value={inspection.json_scalar_summary} /> : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-300">Preview remains bounded and escaped by the UI; raw payloads are not persisted.</p>
+        <p className={bodyText}>Preview remains bounded and escaped by the UI; raw payloads are not persisted.</p>
       )}
     </div>
   )
 }
 
 function SparkplugBadge({ metadata }: { metadata: SparkplugMetadata }) {
-  return (
-    <span className="rounded-full bg-orange-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-orange-200">
-      Sparkplug {metadata.message_type}
-    </span>
-  )
+  return <Plate>Sparkplug {metadata.message_type}</Plate>
 }
 
 function SparkplugDetails({
@@ -889,42 +862,39 @@ function SparkplugDetails({
   ].filter(([, value]) => Boolean(value))
 
   return (
-    <div className={`${compact ? 'mt-2' : 'mt-4'} rounded-2xl border border-orange-300/20 bg-orange-400/10 p-3`}>
+    <div className={`${compact ? 'mt-3' : 'mt-4'} border-t border-track pt-3`}>
       <div className="flex flex-wrap items-center gap-2">
         <SparkplugBadge metadata={metadata} />
-        <span className="rounded-full bg-slate-950/60 px-2.5 py-1 font-mono text-xs text-orange-100">{metadata.namespace}</span>
+        <Plate>{metadata.namespace}</Plate>
       </div>
-      <dl className="mt-3 grid gap-2 text-xs text-slate-200 sm:grid-cols-2">
+      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
         {items.map(([label, value]) => (
-          <div key={label}>
-            <dt className="uppercase tracking-[0.18em] text-orange-100/70">{label}</dt>
-            <dd className="mt-1 break-all font-mono text-orange-50">{value}</dd>
-          </div>
+          <Fact key={label} label={label} value={<span className="break-all">{value}</span>} />
         ))}
       </dl>
       {sparkplugMetrics && sparkplugMetrics.metrics.length > 0 ? (
         <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-100/70">
+          <p className="text-xs font-semibold text-enamel-soft">
             Decoded metrics
             {sparkplugMetrics.truncated ? ` (showing ${sparkplugMetrics.metrics.length} of more)` : ` (${sparkplugMetrics.metrics.length})`}
           </p>
-          <div className="mt-2 overflow-x-auto rounded-xl border border-orange-300/20 bg-slate-950/40">
+          <div className="mt-2 table-scroll">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-orange-300/20">
-                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Name</th>
-                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Type</th>
-                  <th className="px-3 py-2 text-left font-semibold uppercase tracking-[0.15em] text-orange-100/60">Value</th>
+                <tr className="border-b border-track-strong">
+                  <th className={`${tableHead} text-left`}>Name</th>
+                  <th className={`${tableHead} text-left`}>Type</th>
+                  <th className={`${tableHead} text-left`}>Value</th>
                 </tr>
               </thead>
               <tbody>
                 {sparkplugMetrics.metrics.map((metric, index) => (
-                  <tr key={`${metric.name}-${index}`} className="border-b border-orange-300/10 last:border-0">
-                    <td className="break-all px-3 py-2 font-mono text-orange-50">{metric.name || <span className="text-slate-400 italic">unnamed</span>}</td>
-                    <td className="px-3 py-2 text-orange-100/80">{metric.datatype}</td>
-                    <td className="break-all px-3 py-2 font-mono text-slate-200">
+                  <tr key={`${metric.name}-${index}`} className={tableRow}>
+                    <td className="break-all py-2 pr-4 font-mono text-enamel-bright">{metric.name || <span className="italic text-enamel-muted">unnamed</span>}</td>
+                    <td className="py-2 pr-4 font-mono text-enamel-soft">{metric.datatype}</td>
+                    <td className="break-all py-2 pr-4 font-mono text-enamel">
                       {metric.is_null ? (
-                        <span className="text-slate-400 italic">null</span>
+                        <span className="italic text-enamel-muted">null</span>
                       ) : (
                         String(metric.value ?? '')
                       )}
@@ -935,7 +905,7 @@ function SparkplugDetails({
             </table>
           </div>
           {sparkplugMetrics.truncated ? (
-            <p className="mt-1.5 text-xs text-orange-100/50">
+            <p className={`mt-1.5 ${fieldHint}`}>
               Showing {sparkplugMetrics.metrics.length} metric{sparkplugMetrics.metrics.length !== 1 ? 's' : ''}. More were received but omitted to stay within the configured limit.
             </p>
           ) : null}
@@ -948,9 +918,9 @@ function SparkplugDetails({
 function PayloadSummary({ event }: { event: TopicMessage }) {
   // A span so it can sit inside a row button.
   return (
-    <span className="mt-2 flex flex-wrap gap-2">
+    <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
       {payloadChips(event).map((chip) => (
-        <span key={chip} className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-[0.7rem] text-slate-300">{chip}</span>
+        <span key={chip} className="font-mono text-[0.6875rem] text-enamel-muted">{chip}</span>
       ))}
     </span>
   )
@@ -959,8 +929,8 @@ function PayloadSummary({ event }: { event: TopicMessage }) {
 function PayloadFact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <p className="mt-1 break-all font-mono text-slate-100">{value}</p>
+      <p className={fieldHint}>{label}</p>
+      <p className="mt-1 break-all font-mono text-enamel-bright">{value}</p>
     </div>
   )
 }
@@ -980,81 +950,79 @@ function payloadChips(event: TopicMessage) {
 
 function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: string }) {
   return (
-    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Audit feed</p>
-          <p className="mt-2 text-sm text-slate-300">Sanitized security events only; passwords, JWTs, and request bodies are never displayed.</p>
-        </div>
-        <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Recent</span>
-      </div>
-
-      {error ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
-      ) : events.length === 0 ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No security events recorded yet.</div>
-      ) : (
-        <div className="mt-5 space-y-3">
-          {events.map((event) => (
-            <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-rose-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">{event.category}</span>
-                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{event.reason}</span>
+    <section className="mt-8">
+      <Section
+        title="Audit feed"
+        description="Sanitized security events only; passwords, JWTs, and request bodies are never displayed."
+        aside={<Plate>Recent</Plate>}
+      >
+        {error ? (
+          <div className={`mt-5 ${notice.failed}`}>{error}</div>
+        ) : events.length === 0 ? (
+          <p className={`mt-5 ${notice.neutral}`}>No security events recorded yet.</p>
+        ) : (
+          <ol className="mt-5 divide-y divide-track border-y border-track">
+            {events.map((event) => (
+              <li key={event.id} className="py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-enamel-bright">{event.category}</span>
+                    <Plate>{event.reason}</Plate>
+                  </div>
+                  <time className="font-mono text-xs tabular-nums text-enamel-muted" dateTime={event.observed_at}>{new Date(event.observed_at).toLocaleString()}</time>
                 </div>
-                <time className="text-xs text-slate-400" dateTime={event.observed_at}>{new Date(event.observed_at).toLocaleString()}</time>
-              </div>
-              <dl className="mt-3 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
-                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">User</dt><dd className="mt-1 font-mono">{event.username || 'n/a'}</dd></div>
-                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">Source IP</dt><dd className="mt-1 font-mono">{event.source_ip || 'unknown'}</dd></div>
-                <div><dt className="text-xs uppercase tracking-[0.18em] text-slate-400">Endpoint</dt><dd className="mt-1 break-all font-mono">{event.method} {event.path}</dd></div>
-              </dl>
-            </article>
-          ))}
-        </div>
-      )}
+                <dl className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <Fact label="User" value={event.username || 'n/a'} />
+                  <Fact label="Source IP" value={event.source_ip || 'unknown'} />
+                  <Fact label="Endpoint" value={<span className="break-all">{event.method} {event.path}</span>} />
+                </dl>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Section>
     </section>
   )
 }
 
+// An audit result: a failed request lights red; a success is a recorded fact, not a verification, so it stays enamel.
+const auditTone = (result: string): LampTone => (result === 'success' ? 'neutral' : 'failed')
 
 function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) {
   return (
-    <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Audit history</p>
-          <p className="mt-2 text-sm text-slate-300">Recent administrative user and ACL mutations.</p>
-        </div>
-        <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Read only</span>
-      </div>
-
-      <div className="mt-5 space-y-3">
+    <section className="mt-8">
+      <Section
+        title="Audit history"
+        description="Recent administrative user and ACL mutations."
+        aside={<Plate>Read only</Plate>}
+      >
         {error ? (
-          <div className="rounded-2xl border border-dashed border-amber-300/20 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+          <div className={`mt-5 ${notice.failed}`}>{error}</div>
         ) : events.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No audit events recorded yet.</div>
+          <p className={`mt-5 ${notice.neutral}`}>No audit events recorded yet.</p>
         ) : (
-          events.map((event) => (
-            <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${event.result === 'success' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-rose-400/10 text-rose-200'}`}>{event.result}</span>
-                  <span className="rounded-full bg-slate-950/70 px-2.5 py-1 font-mono text-xs text-cyan-100">{event.actor}</span>
-                  <span className="rounded-full bg-white/[0.06] px-2.5 py-1 font-mono text-xs text-slate-200">{event.action}</span>
+          <ol className="mt-5 divide-y divide-track border-y border-track">
+            {events.map((event) => (
+              <li key={event.id} className="py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Lamp tone={auditTone(event.result)}>{event.result}</Lamp>
+                    <span className="font-mono text-sm text-enamel-bright">{event.actor}</span>
+                    <Plate>{event.action}</Plate>
+                  </div>
+                  <time className="font-mono text-xs tabular-nums text-enamel-muted" dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time>
                 </div>
-                <time className="text-xs text-slate-400" dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleString()}</time>
-              </div>
-              <p className="mt-3 break-all text-sm text-slate-100">
-                {event.resource_type}{event.resource_id ? ` #${event.resource_id}` : ''}
-              </p>
-              {event.metadata && Object.keys(event.metadata).length > 0 ? (
-                <pre className="mt-3 max-h-32 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-xs text-slate-200">{JSON.stringify(event.metadata, null, 2)}</pre>
-              ) : null}
-            </article>
-          ))
+                <p className="mt-2 break-all font-mono text-sm text-enamel">
+                  {event.resource_type}{event.resource_id ? ` #${event.resource_id}` : ''}
+                </p>
+                {event.metadata && Object.keys(event.metadata).length > 0 ? (
+                  <pre className={`mt-3 max-h-32 ${codeBlock}`}>{JSON.stringify(event.metadata, null, 2)}</pre>
+                ) : null}
+              </li>
+            ))}
+          </ol>
         )}
-      </div>
+      </Section>
     </section>
   )
 }
@@ -1099,65 +1067,64 @@ function BrokerDiagnosticsPanel({ token, onLogout }: { token: string; onLogout: 
   const logs = sources?.broker_logs
   const internal = sources?.internal_metrics
   const sys = data?.broker_sys
-  return <section className="mt-8 space-y-5">
-    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
-      <h2 className="text-lg font-semibold text-white">Broker diagnostics</h2>
-      <div className="mt-4 flex flex-wrap gap-4"><label className="text-sm text-slate-300">Minimum severity <select aria-label="Minimum severity" value={severity} onChange={(e) => setSeverity(e.target.value)} className="ml-2 rounded-lg bg-slate-900 p-2"><option value="">Server default</option>{['debug','info','warning','error'].map((v) => <option key={v}>{v}</option>)}</select></label>
-      <label className="text-sm text-slate-300">Entry limit <input aria-label="Entry limit" type="number" min="1" max="200" value={limit} onChange={(e) => setLimit(e.target.value === '' ? '' : String(Math.min(200, Math.max(1, Number(e.target.value)))))} className="ml-2 w-24 rounded-lg bg-slate-900 p-2" placeholder="Default" /></label></div>
-    </article>
-    {error ? <p role="alert" className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-amber-100">{error}</p> : null}
-    <div className="grid gap-4 lg:grid-cols-2">
-      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Observed traffic</h3>
+  const loading = <p className={`mt-3 ${bodyText}`}>Loading…</p>
+  return <section className="mt-8 space-y-8">
+    <Section title="Broker diagnostics">
+      <div className="mt-3 flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-2"><span className={fieldLabel}>Minimum severity</span><select aria-label="Minimum severity" value={severity} onChange={(e) => setSeverity(e.target.value)} className={select}><option value="">Server default</option>{['debug','info','warning','error'].map((v) => <option key={v}>{v}</option>)}</select></label>
+        <label className="flex flex-col gap-2"><span className={fieldLabel}>Entry limit</span><input aria-label="Entry limit" type="number" min="1" max="200" value={limit} onChange={(e) => setLimit(e.target.value === '' ? '' : String(Math.min(200, Math.max(1, Number(e.target.value)))))} className={`${input} w-28 font-mono`} placeholder="Default" /></label>
+      </div>
+      {error ? <p role="alert" className={`mt-4 ${notice.failed}`}>{error}</p> : null}
+    </Section>
+    <div className="grid gap-x-8 gap-y-8 border-t border-track pt-6 lg:grid-cols-2">
+      <Section title="Observed traffic" ruled={false}>
         {traffic ? <>
-          <p className="mt-2 text-xs text-slate-400">Observed sample, not a complete broker inventory.</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3"><WidgetFact label="Messages in window" value={String(traffic.message_count)} /><WidgetFact label="Window" value={`${traffic.window_seconds} seconds`} /><WidgetFact label="Rate" value={`${traffic.message_rate_per_minute.toFixed(1)} msg/min`} /></div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-2"><HotspotCard title="Top topics" empty="No topic activity in the observed window." items={traffic.top_topics} />
-            <div className="rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50"><p className="font-semibold">Client identity is not part of observed traffic</p><p className="mt-1 text-amber-50/80">{traffic.top_clients_note || defaultClientNote}</p></div>
+          <p className={`mt-1 ${fieldHint}`}>Observed sample, not a complete broker inventory.</p>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-3"><WidgetFact label="Messages in window" value={String(traffic.message_count)} /><WidgetFact label="Window" value={`${traffic.window_seconds} seconds`} /><WidgetFact label="Rate" value={`${traffic.message_rate_per_minute.toFixed(1)} msg/min`} /></dl>
+          <div className="mt-4 grid gap-6 xl:grid-cols-2"><HotspotCard title="Top topics" level={4} ruled={false} empty="No topic activity in the observed window." items={traffic.top_topics} />
+            <div className={notice.neutral}><p className="font-semibold text-enamel">Client identity is not part of observed traffic</p><p className="mt-1">{traffic.top_clients_note || defaultClientNote}</p></div>
           </div>
-        </> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
-      </article>
-      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">MCM events</h3>
-        {mcm ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Status events" value={String(mcm.status_events)} /><WidgetFact label="Topic messages" value={String(mcm.topic_messages)} /><WidgetFact label="Event subscribers" value={String(mcm.event_subscribers)} /><WidgetFact label="Last message at" value={mcm.last_message_at ? new Date(mcm.last_message_at).toLocaleString() : 'None yet'} /></dl><p className="mt-3 text-xs text-slate-400">{mcm.note}</p></> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
-      </article>
-      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Broker logs</h3>
+        </> : loading}
+      </Section>
+      <Section title="MCM events" ruled={false}>
+        {mcm ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Status events" value={String(mcm.status_events)} /><WidgetFact label="Topic messages" value={String(mcm.topic_messages)} /><WidgetFact label="Event subscribers" value={String(mcm.event_subscribers)} /><WidgetFact label="Last message at" value={mcm.last_message_at ? new Date(mcm.last_message_at).toLocaleString() : 'None yet'} /></dl><p className={`mt-3 ${fieldHint}`}>{mcm.note}</p></> : loading}
+      </Section>
+      <Section title="Broker logs" ruled={false}>
         {logs ? <>
           <dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Availability" value={logs.available ? 'Available' : 'Unavailable'} />{logs.available ? null : <WidgetFact label="Reason" value={logs.reason || 'No reason provided.'} />}{Object.entries(logs.severity_counts).map(([name, count]) => <WidgetFact key={name} label={`${name} entries`} value={String(count)} />)}</dl>
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">Effective limits</p>
+          <h5 className="mt-4 text-xs font-semibold text-enamel-soft">Effective limits</h5>
           <dl className="mt-2 grid gap-3 sm:grid-cols-2"><WidgetFact label="Max entries" value={String(logs.limits.max_entries)} /><WidgetFact label="Max entries per read" value={String(logs.limits.max_entries_per_read)} /><WidgetFact label="Max message bytes" value={String(logs.limits.max_message_bytes)} /><WidgetFact label="Max age" value={`${logs.limits.max_age_seconds} seconds`} /></dl>
-          <p className="mt-3 text-xs text-slate-400">{logs.note}</p>
-          {logs.available ? <div className="mt-4 space-y-3">{logs.entries.length ? logs.entries.map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex flex-wrap items-center gap-2"><time dateTime={entry.observed_at} className="text-xs text-slate-400">{new Date(entry.observed_at).toLocaleString()}</time><SeverityBadge severity={entry.severity} /><span className="font-mono text-xs text-cyan-100">{entry.kind}</span></div>
-            {entry.client_id ? <p className="mt-2 text-xs text-slate-300">Client ID (broker-sourced): <span className="font-mono text-cyan-100">{entry.client_id}</span></p> : null}
-            {entry.topic ? <p className="mt-1 break-all text-xs text-slate-300">Topic: <span className="font-mono text-cyan-100">{entry.topic}</span></p> : null}
-            <p className="mt-3 whitespace-pre-wrap break-words text-sm text-slate-100">{entry.message}</p>
-          </article>) : <p className="text-sm text-slate-300">No broker log entries in this window.</p>}</div> : null}
-        </> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
-      </article>
-      <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Internal metrics</h3>
-        {internal ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Endpoint" value={internal.endpoint} /><WidgetFact label="Format" value={internal.format} /></dl><p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">Counters</p><ul className="mt-2 space-y-2">{Object.entries(internal.counters).map(([name, value]) => <li key={name} className="flex justify-between gap-3 rounded-xl bg-white/[0.04] px-3 py-2 text-sm"><span className="break-all font-mono text-cyan-100">{name}</span><span className="font-mono text-white">{value}</span></li>)}</ul>{Object.keys(internal.counters).length === 0 ? <p className="mt-2 text-sm text-slate-300">No counters reported.</p> : null}<p className="mt-3 text-xs text-slate-400">{internal.note}</p></> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
-      </article>
+          <p className={`mt-3 ${fieldHint}`}>{logs.note}</p>
+          {logs.available ? <div className="mt-4">{logs.entries.length ? <div className="divide-y divide-track border-y border-track">{logs.entries.map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="py-3">
+            <div className="flex flex-wrap items-center gap-3"><time dateTime={entry.observed_at} className="font-mono text-xs tabular-nums text-enamel-muted">{new Date(entry.observed_at).toLocaleString()}</time><SeverityBadge severity={entry.severity} /><span className="font-mono text-xs text-enamel">{entry.kind}</span></div>
+            {entry.client_id ? <p className="mt-2 text-xs text-enamel-soft">Client ID (broker-sourced): <span className="font-mono text-enamel-bright">{entry.client_id}</span></p> : null}
+            {entry.topic ? <p className="mt-1 break-all text-xs text-enamel-soft">Topic: <span className="font-mono text-enamel-bright">{entry.topic}</span></p> : null}
+            <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-enamel-bright">{entry.message}</p>
+          </article>)}</div> : <p className={bodyText}>No broker log entries in this window.</p>}</div> : null}
+        </> : loading}
+      </Section>
+      <Section title="Internal metrics" ruled={false}>
+        {internal ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Endpoint" value={internal.endpoint} /><WidgetFact label="Format" value={internal.format} /></dl><h5 className="mt-4 text-xs font-semibold text-enamel-soft">Counters</h5><ul className="mt-2 divide-y divide-track border-y border-track">{Object.entries(internal.counters).map(([name, value]) => <li key={name} className="flex justify-between gap-3 py-2 text-sm"><span className="break-all font-mono text-enamel">{name}</span><span className="font-mono tabular-nums text-enamel-bright">{value}</span></li>)}</ul>{Object.keys(internal.counters).length === 0 ? <p className={`mt-2 ${bodyText}`}>No counters reported.</p> : null}<p className={`mt-3 ${fieldHint}`}>{internal.note}</p></> : loading}
+      </Section>
     </div>
-    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5"><h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Broker-published $SYS metrics</h3>
-      {sys ? sys.available ? <><p className="mt-2 text-xs text-slate-400">{sys.note}</p><div className="mt-3 space-y-2">{Object.entries(sys.metrics).map(([topic, metric]) => <div key={topic} className="grid gap-2 rounded-xl bg-white/[0.04] p-3 sm:grid-cols-3"><span className="break-all font-mono text-cyan-100">{topic}</span><span className="font-mono text-white">{metric.value}</span><time dateTime={metric.observed_at} className="text-xs text-slate-400">{new Date(metric.observed_at).toLocaleString()}</time></div>)}</div>{Object.keys(sys.metrics).length === 0 ? <p className="mt-3 text-sm text-slate-300">No $SYS metrics observed yet.</p> : null}</> : <p className="mt-3 text-sm text-amber-100">Unavailable: {sys.reason || 'No reason provided.'}</p> : <p className="mt-3 text-sm text-slate-300">Loading…</p>}
-    </article>
-    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-5"><h3 className="text-sm font-semibold uppercase tracking-wider text-cyan-300">Diagnostic checks</h3><div className="mt-3 grid gap-3 sm:grid-cols-3">{(['tcp','tls','mqtt'] as const).map((name) => { const check = data?.diagnostics?.[name]; return <div key={name} className="rounded-xl border border-white/10 bg-white/[0.04] p-3"><div className="flex items-center justify-between gap-2"><strong className="uppercase text-cyan-100">{name}</strong><SeverityStatusBadge status={check?.status ?? 'not run'} /></div>
-      {check ? <DiagnosticCheckDetail name={name} check={check} /> : <p className="mt-2 text-xs text-slate-300">Check not run.</p>}
-    </div> })}</div></article>
+    <Section title="Broker-published $SYS metrics">
+      {sys ? sys.available ? <><p className={`mt-1 ${fieldHint}`}>{sys.note}</p><ul className="mt-3 divide-y divide-track border-y border-track">{Object.entries(sys.metrics).map(([topic, metric]) => <li key={topic} className="grid gap-2 py-2 sm:grid-cols-3"><span className="break-all font-mono text-sm text-enamel">{topic}</span><span className="font-mono text-sm tabular-nums text-enamel-bright">{metric.value}</span><time dateTime={metric.observed_at} className="font-mono text-xs tabular-nums text-enamel-muted">{new Date(metric.observed_at).toLocaleString()}</time></li>)}</ul>{Object.keys(sys.metrics).length === 0 ? <p className={`mt-3 ${bodyText}`}>No $SYS metrics observed yet.</p> : null}</> : <p className="mt-3 text-sm text-lamp">Unavailable: {sys.reason || 'No reason provided.'}</p> : loading}
+    </Section>
+    <Section title="Diagnostic checks"><div className="mt-3 grid gap-x-8 gap-y-4 sm:grid-cols-3 sm:divide-x sm:divide-track">{(['tcp','tls','mqtt'] as const).map((name) => { const check = data?.diagnostics?.[name]; return <div key={name} className="sm:px-6 sm:first:pl-0 sm:last:pr-0"><div className="flex items-center justify-between gap-2"><strong className="font-mono text-sm uppercase text-enamel-bright">{name}</strong><SeverityStatusBadge status={check?.status ?? 'not run'} /></div>
+      {check ? <DiagnosticCheckDetail name={name} check={check} /> : <p className={`mt-2 ${fieldHint}`}>Check not run.</p>}
+    </div> })}</div></Section>
   </section>
 }
 
 type DiagnosticCheck = NonNullable<NonNullable<DiagnosticsPayload['diagnostics']>[keyof NonNullable<DiagnosticsPayload['diagnostics']>]>
+// Reachable is not verified: enamel when up, unlit when disabled or not run, amber otherwise.
 function SeverityStatusBadge({ status }: { status: string }) {
-  const style = status === 'connected' || status === 'reachable' ? 'bg-emerald-400/10 text-emerald-200' : status === 'disabled' ? 'bg-slate-400/10 text-slate-200' : 'bg-amber-400/10 text-amber-200'
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${style}`}>{status}</span>
+  const tone: LampTone = status === 'connected' || status === 'reachable' ? 'neutral' : status === 'disabled' || status === 'not run' ? 'off' : 'caution'
+  return <Lamp tone={tone}>{status}</Lamp>
 }
 function DiagnosticCheckDetail({ name, check }: { name: 'tcp' | 'tls' | 'mqtt'; check: DiagnosticCheck }) {
   const facts = name === 'tcp' && 'latency_ms' in check ? [['Latency', `${check.latency_ms} ms`], ['Address', check.address]] : name === 'tls' && 'version' in check ? [['TLS version', check.version || 'n/a'], ['Cipher', check.cipher || 'n/a']] : name === 'mqtt' && 'client_id' in check ? [['Client ID', check.client_id || 'n/a'], ['Subscriptions', check.subscriptions.join(', ') || 'None']] : []
-  return <><dl className="mt-2 space-y-2 text-xs">{facts.map(([label, value]) => <div key={label}><dt className="text-slate-400">{label}</dt><dd className="break-all font-mono text-slate-200">{value}</dd></div>)}</dl><p className="mt-2 text-xs text-slate-300">{check.error || 'No error reported.'}</p></>
+  return <><dl className="mt-2 space-y-2">{facts.map(([label, value]) => <Fact key={label} label={label} value={<span className="break-all">{value}</span>} />)}</dl><p className={`mt-2 ${fieldHint}`}>{check.error || 'No error reported.'}</p></>
 }
 
 function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: { token: string; onLogout: () => void; role?: string; onMutationStart?: () => number; onMutation?: (mutationID: number) => void }) {
@@ -1274,10 +1241,10 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
 
   return (
     <section className="mt-8 space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT permissions</p>
-          <p className="mt-1 text-sm text-slate-300">
+          <h3 className="text-lg font-semibold text-enamel-bright">MQTT permissions</h3>
+          <p className={`mt-1 max-w-[68ch] ${bodyText}`}>
             These are the permissions Mosquitto grants on a topic; the MCM administrative roles are managed in the
             admin panel.
           </p>
@@ -1287,136 +1254,136 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
           onClick={openCreate}
           disabled={!canWrite}
           title={!canWrite ? permissionTitle('acl.write') : undefined}
-          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+          className={leverSecondary}
         >
           Add Rule
         </button>
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+        <div className={notice.failed}>{error}</div>
       ) : null}
 
       {showForm ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{editRule ? 'Edit rule' : 'New rule'}</p>
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <div className="max-w-2xl border-y border-track-strong py-6">
+          <h4 className="text-base font-semibold text-enamel-bright">{editRule ? 'Edit rule' : 'New rule'}</h4>
+          <form onSubmit={handleSubmit} className="mt-4 space-y-5">
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Source</span>
+              <span className={fieldLabel}>Source</span>
               <select
                 value={formSelector}
                 onChange={(e) => setFormSelector(e.target.value as ACLSelector)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full ${input}`}
               >
                 <option value="user">User &mdash; the rule applies to one MQTT user</option>
                 <option value="anonymous">Anonymous &mdash; the rule applies to unauthenticated clients</option>
                 <option value="pattern">Pattern &mdash; the rule applies to every client</option>
               </select>
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className={`mt-1 block ${fieldHint}`}>
                 The native scope of the ACL entry in Mosquitto. A pattern rule may use the <code>%u</code> (username) and
                 <code> %c</code> (client id) placeholders, each one on a whole topic level.
               </span>
             </label>
             {formSelector === 'user' ? (
               <label className="block">
-                <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Principal</span>
+                <span className={fieldLabel}>Principal</span>
                 <input
                   type="text"
                   required
                   value={formPrincipal}
                   onChange={(e) => setFormPrincipal(e.target.value)}
                   placeholder="mqtt-username"
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                  className={`mt-2 w-full ${input}`}
                 />
-                <span className="mt-1 block text-xs text-slate-400">Use an MQTT username from the Users panel. MCM renders this as Mosquitto&apos;s <code>user &lt;username&gt;</code> directive.</span>
+                <span className={`mt-1 block ${fieldHint}`}>Use an MQTT username from the Users panel. MCM renders this as Mosquitto&apos;s <code>user &lt;username&gt;</code> directive.</span>
               </label>
             ) : null}
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Topic filter</span>
+              <span className={fieldLabel}>Topic filter</span>
               <input
                 type="text"
                 required
                 value={formTopicFilter}
                 onChange={(e) => setFormTopicFilter(e.target.value)}
                 placeholder="sensors/# or device/+/status"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full ${input}`}
               />
-              <span className="mt-1 block text-xs text-slate-400">MQTT wildcards: + (single level), # (multi-level, must be last)</span>
+              <span className={`mt-1 block ${fieldHint}`}>MQTT wildcards: + (single level), # (multi-level, must be last)</span>
             </label>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Permission</span>
+              <span className={fieldLabel}>Permission</span>
               <select
                 value={formPermission}
                 onChange={(e) => setFormPermission(e.target.value as ACLRule['permission'])}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full ${input}`}
               >
                 <option value="read">read</option>
                 <option value="write">write</option>
                 <option value="readwrite">readwrite</option>
                 <option value="deny">deny</option>
               </select>
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className={`mt-1 block ${fieldHint}`}>
                 Mosquitto handles a deny before any grant, so a deny that matches a topic removes the access a broader
                 rule would grant.
               </span>
             </label>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">ACL file</span>
+              <span className={fieldLabel}>ACL file</span>
               <select
                 value={formScope}
                 onChange={(e) => setFormScope(e.target.value as ACLScope)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full ${input}`}
               >
                 <option value="global">Broker-wide &mdash; the rule applies to every listener</option>
                 <option value="listener">One listener &mdash; the rule applies to that listener only</option>
               </select>
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className={`mt-1 block ${fieldHint}`}>
                 A listener with its own ACL file uses only that file, so the other listeners keep the broker-wide rules.
               </span>
             </label>
             {formScope === 'listener' ? (
               <label className="block">
-                <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener</span>
+                <span className={fieldLabel}>Listener</span>
                 <input
                   type="text"
                   required
                   value={formListenerID}
                   onChange={(e) => setFormListenerID(e.target.value)}
                   placeholder="tls"
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                  className={`mt-2 w-full ${input}`}
                 />
-                <span className="mt-1 block text-xs text-slate-400">
+                <span className={`mt-1 block ${fieldHint}`}>
                   The id of the listener that owns the rule. The listener must declare the ACL file MCM writes for it,
                   otherwise the deploy refuses the scope.
                 </span>
               </label>
             ) : null}
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Description (optional)</span>
+              <span className={fieldLabel}>Description (optional)</span>
               <input
                 type="text"
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
                 placeholder="Short description for audit purposes"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full ${input}`}
               />
             </label>
             {formError ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{formError}</div>
+              <div className={notice.failed}>{formError}</div>
             ) : null}
-            <div className="flex gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="submit"
                 disabled={submitting || !canWrite}
                 title={!canWrite ? permissionTitle('acl.write') : undefined}
-                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+                className={leverPrimary}
               >
                 {submitting ? 'Saving…' : editRule ? 'Update rule' : 'Create rule'}
               </button>
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+                className={leverSecondary}
               >
                 Cancel
               </button>
@@ -1427,57 +1394,51 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
 
       <ListControls list={list} noun={{ one: 'rule', many: 'rules' }} filterFields={[{ key: 'user', label: 'Filter by user' }, { key: 'topic', label: 'Filter by topic' }]} />
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60">
+      <div className="table-scroll border-y border-track-strong">
         {rules.length === 0 && list.loading ? (
-          <p className="p-6 text-sm text-slate-400">Loading rules…</p>
+          <p className={`py-6 ${bodyText}`}>Loading rules…</p>
         ) : rules.length === 0 ? (
-          list.error ? null : <p className="p-6 text-sm text-slate-400">{list.hasFilters ? 'No ACL rules match the filters.' : 'No ACL rules configured yet.'}</p>
+          list.error ? null : <p className={`py-6 ${bodyText}`}>{list.hasFilters ? 'No ACL rules match the filters.' : 'No ACL rules configured yet.'}</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[44rem] text-sm">
             <thead>
-              <tr className="border-b border-white/10">
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Source</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">ACL file</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Topic filter</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Permission</th>
-                <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+              <tr className="border-b border-track-strong">
+                <th className={`${tableHead} text-left`}>Source</th>
+                <th className={`${tableHead} text-left`}>ACL file</th>
+                <th className={`${tableHead} text-left`}>Topic filter</th>
+                <th className={`${tableHead} text-left`}>Permission</th>
+                <th className={`${tableHead} pr-0 text-right`}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {rules.map((rule) => (
-                <tr key={rule.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-3 text-sm text-slate-200">
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">{SELECTOR_LABELS[rule.selector ?? 'user']}</span>
-                    {rule.principal ? <span className="ml-2 font-mono text-sm text-slate-200">{rule.principal}</span> : null}
+                <tr key={rule.id} className={tableRow}>
+                  <td className="py-3 pr-4 text-sm text-enamel">
+                    <span className="text-xs text-enamel-muted">{SELECTOR_LABELS[rule.selector ?? 'user']}</span>
+                    {rule.principal ? <span className="ml-2 font-mono text-sm text-enamel-bright">{rule.principal}</span> : null}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-400">
+                  <td className="py-3 pr-4 font-mono text-xs text-enamel-soft">
                     {rule.scope === 'listener' ? rule.listener_id : 'broker-wide'}
                   </td>
-                  <td className="px-4 py-3 font-mono text-sm text-cyan-100">{rule.topic_filter}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-1 font-mono text-xs ${
-                        rule.permission === 'deny' ? 'bg-rose-400/10 text-rose-200' : 'bg-cyan-400/10 text-cyan-200'
-                      }`}
-                    >
-                      {PERMISSION_LABELS[rule.permission]}
-                    </span>
+                  <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{rule.topic_filter}</td>
+                  <td className="py-3 pr-4">
+                    <Plate>{PERMISSION_LABELS[rule.permission]}</Plate>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="py-3 text-right">
                     {deleteConfirmId === rule.id ? (
                       <span className="inline-flex items-center gap-2">
-                        <span className="text-xs text-slate-300">Delete?</span>
+                        <span className="text-xs text-enamel-soft">Delete?</span>
                         <button
                           type="button"
                           onClick={() => { void handleDelete(rule.id) }}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                          className={leverDanger}
                         >
                           Confirm
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeleteConfirmId(null)}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+                          className={leverSecondary}
                         >
                           Cancel
                         </button>
@@ -1489,7 +1450,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
                           onClick={() => openEdit(rule)}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('acl.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                          className={leverSecondary}
                         >
                           Edit
                         </button>
@@ -1498,7 +1459,7 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
                           onClick={() => setDeleteConfirmId(rule.id)}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('acl.write') : undefined}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30 disabled:opacity-50"
+                          className={leverDanger}
                         >
                           Delete
                         </button>
@@ -1625,57 +1586,52 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   if (unavailable) {
     return (
       <section className="mt-8">
-        <div className="rounded-2xl border border-dashed border-amber-300/25 bg-amber-400/10 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-amber-200">Not configured</p>
-          <p className="mt-2 text-sm text-slate-300">Deploy functionality is not configured on this MCM instance.</p>
+        <div className={notice.caution}>
+          <h3 className="font-semibold text-lamp">Not configured</h3>
+          <p className="mt-1">Deploy functionality is not configured on this MCM instance.</p>
         </div>
       </section>
     )
   }
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Configuration preview</p>
-            <p className="mt-1 text-sm text-slate-300">Generate a diff of pending ACL and password file changes before applying.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => { void handlePreview() }}
-              disabled={previewLoading || !canPreview}
-              title={!canPreview ? permissionTitle('deploy.preview') : undefined}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-            >
-              {previewLoading ? 'Generating…' : 'Preview Changes'}
-            </button>
-          </div>
-        </div>
-
+    <section className="mt-8 space-y-10">
+      <Section
+        title="Configuration preview"
+        description="Generate a diff of pending ACL and password file changes before applying."
+        aside={
+          <button
+            type="button"
+            onClick={() => { void handlePreview() }}
+            disabled={previewLoading || !canPreview}
+            title={!canPreview ? permissionTitle('deploy.preview') : undefined}
+            className={leverSecondary}
+          >
+            {previewLoading ? 'Generating…' : 'Preview Changes'}
+          </button>
+        }
+      >
         {previewError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{previewError}</div>
+          <div className={`mt-5 ${notice.failed}`}>{previewError}</div>
         ) : null}
 
         {applyError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div>
+          <div className={`mt-5 ${notice.failed}`}>{applyError}</div>
         ) : null}
 
         <div className="mt-5">
         <ChangeRoute hasChanges={Boolean(preview?.has_changes)} mfa={mfa} onApply={handleApply} applyLabel="Apply" disabledReason={!canApply ? `${permissionTitle('deploy.apply')} to apply.` : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}>
         {preview ? (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {!preview.has_changes && !(preview.orphan_rules?.length) ? (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No pending changes — configuration is up to date.</div>
+              <p className={notice.neutral}>No pending changes — configuration is up to date.</p>
             ) : (
-              <section className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">What this deploy covers</p>
-                <p className="mt-2 text-sm leading-6 text-cyan-50">Apply deploys every pending change saved in MCM, including changes saved outside this task.</p>
-                <p className="mt-1 text-sm leading-6 text-cyan-50/80">MCM cannot tell which task or person saved a pending change, so review the whole preview before you confirm.</p>
+              <Section level={4} ruled={false} title="What this deploy covers">
+                <p className={`mt-1 max-w-[68ch] ${bodyText}`}>Apply deploys every pending change saved in MCM, including changes saved outside this task.</p>
+                <p className={`mt-1 max-w-[68ch] ${bodyText}`}>MCM cannot tell which task or person saved a pending change, so review the whole preview before you confirm.</p>
                 {preview.summary ? (
                   <>
-                    <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-y border-track py-3 sm:grid-cols-5">
                       {([
                         ['MQTT users added', preview.summary.users_added],
                         ['MQTT users removed', preview.summary.users_removed],
@@ -1683,161 +1639,133 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                         ['ACL topics added', preview.summary.topics_added],
                         ['ACL topics removed', preview.summary.topics_removed],
                       ] as const).map(([label, count]) => (
-                        <div key={label} className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2">
-                          <dt className="text-xs text-cyan-100/80">{label}</dt>
-                          <dd className="mt-1 text-lg font-semibold text-white">{count}</dd>
-                        </div>
+                        <Fact key={label} label={label} value={<span className="text-lg tabular-nums">{count}</span>} />
                       ))}
                     </dl>
-                    <p className="mt-3 text-xs leading-5 text-cyan-100/70">These counts cover the broker-wide password and ACL files. The listener files are listed separately below.</p>
+                    <p className={`mt-2 ${fieldHint}`}>These counts cover the broker-wide password and ACL files. The listener files are listed separately below.</p>
                   </>
                 ) : null}
-              </section>
+              </Section>
             )}
             {preview.scope_issues?.length ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
-                  <span className="rounded-full bg-rose-300/15 px-2.5 py-1 text-xs font-semibold text-rose-100">{preview.scope_issues.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-rose-50">The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
-                <ul className="mt-4 space-y-2 text-sm text-rose-50">
+              <PreviewBlock tone="failed" title="Listener scope problems" count={preview.scope_issues.length}>
+                <p className={`mt-2 ${bodyText}`}>The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
+                <ul className="mt-3 space-y-2 font-mono text-xs text-enamel-bright">
                   {preview.scope_issues.map((issue) => (
                     <li key={issue} className="break-words">{issue}</li>
                   ))}
                 </ul>
-                <p className="mt-4 text-sm font-semibold text-rose-100">Apply is disabled: the deploy is refused until the scope problems are resolved.</p>
-              </div>
+                <p className="mt-3 text-sm font-semibold text-danger-text">Apply is disabled: the deploy is refused until the scope problems are resolved.</p>
+              </PreviewBlock>
             ) : null}
             {preview.orphan_rules?.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Orphan ACL rules</p>
-                  <span className="rounded-full bg-amber-300/15 px-2.5 py-1 text-xs font-semibold text-amber-100">{preview.orphan_rules.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-amber-50">These rules reference missing or disabled MQTT users and will be excluded from the rendered Mosquitto ACL file. Delete or reassign them before applying.</p>
-                <div className="mt-4 overflow-x-auto rounded-xl border border-amber-300/20 bg-slate-950/40">
+              <PreviewBlock tone="caution" title="Orphan ACL rules" count={preview.orphan_rules.length}>
+                <p className={`mt-2 ${bodyText}`}>These rules reference missing or disabled MQTT users and will be excluded from the rendered Mosquitto ACL file. Delete or reassign them before applying.</p>
+                <div className="mt-3 table-scroll">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-amber-300/20">
-                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Principal</th>
-                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Topic filter</th>
-                        <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] text-amber-100/70">Permission</th>
+                      <tr className="border-b border-track-strong">
+                        <th className={`${tableHead} text-left`}>Principal</th>
+                        <th className={`${tableHead} text-left`}>Topic filter</th>
+                        <th className={`${tableHead} text-left`}>Permission</th>
                       </tr>
                     </thead>
                     <tbody>
                       {preview.orphan_rules.map((rule) => (
-                        <tr key={rule.id} className="border-b border-amber-300/10 last:border-0">
-                          <td className="break-all px-3 py-2 font-mono text-amber-50">{rule.principal}</td>
-                          <td className="break-all px-3 py-2 font-mono text-amber-100">{rule.topic_filter}</td>
-                          <td className="px-3 py-2 text-amber-100/80">{rule.permission}</td>
+                        <tr key={rule.id} className={tableRow}>
+                          <td className="break-all py-2 pr-4 font-mono text-enamel-bright">{rule.principal}</td>
+                          <td className="break-all py-2 pr-4 font-mono text-enamel">{rule.topic_filter}</td>
+                          <td className="py-2 pr-4 font-mono text-enamel-soft">{rule.permission}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </PreviewBlock>
             ) : null}
             {preview.at_risk_entries?.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Access at risk</p>
-                  <span className="rounded-full bg-amber-300/15 px-2.5 py-1 text-xs font-semibold text-amber-100">{preview.at_risk_entries.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-amber-50">The current file grants these entries and the rendered one does not. The deploy would drop that access.</p>
-                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+              <PreviewBlock tone="caution" title="Access at risk" count={preview.at_risk_entries.length}>
+                <p className={`mt-2 ${bodyText}`}>The current file grants these entries and the rendered one does not. The deploy would drop that access.</p>
+                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
                   {preview.at_risk_entries.map((entry) => (
                     <li key={entry} className="break-all">{entry}</li>
                   ))}
                 </ul>
-              </div>
+              </PreviewBlock>
             ) : null}
             {listenerAtRisk.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Listener access at risk</p>
-                <ul className="mt-3 space-y-1 font-mono text-xs text-amber-50">
+              <PreviewBlock tone="caution" title="Listener access at risk">
+                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
                   {listenerAtRisk.map(({ listener, entry }) => (
                     <li key={`${listener}|${entry}`} className="break-all">at risk ({listener}): {entry}</li>
                   ))}
                 </ul>
-              </div>
+              </PreviewBlock>
             ) : null}
             {preview.composition_warnings?.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Composition warnings</p>
-                <ul className="mt-3 space-y-2 text-sm text-amber-50">
+              <PreviewBlock tone="caution" title="Composition warnings">
+                <ul className="mt-3 space-y-2 text-sm text-enamel">
                   {preview.composition_warnings.map((warning) => (
                     <li key={warning} className="break-words">{warning}</li>
                   ))}
                 </ul>
-              </div>
+              </PreviewBlock>
             ) : null}
             {preview.scope_pending_activation?.length ? (
-              <div className="rounded-2xl border border-cyan-300/25 bg-cyan-400/10 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">Pending listener activation</p>
-                  <span className="rounded-full bg-cyan-300/15 px-2.5 py-1 text-xs font-semibold text-cyan-50">{preview.scope_pending_activation.length}</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-cyan-50">The files of these listeners are written by this deployment. Their rules become active once the listener configuration declares them.</p>
-                <ul className="mt-4 space-y-2 text-sm text-cyan-50">
-                  {preview.scope_pending_activation.map((notice) => (
-                    <li key={notice} className="break-words">{notice}</li>
+              <PreviewBlock tone="neutral" title="Pending listener activation" count={preview.scope_pending_activation.length}>
+                <p className={`mt-2 ${bodyText}`}>The files of these listeners are written by this deployment. Their rules become active once the listener configuration declares them.</p>
+                <ul className="mt-3 space-y-2 text-sm text-enamel">
+                  {preview.scope_pending_activation.map((item) => (
+                    <li key={item} className="break-words">{item}</li>
                   ))}
                 </ul>
-              </div>
+              </PreviewBlock>
             ) : null}
             {preview.removed_acl_files?.length ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Files the deploy would delete</p>
-                <p className="mt-2 text-sm leading-6 text-amber-50">These listener files lose their last scoped rule, so the deploy removes them.</p>
-                <ul className="mt-4 space-y-2 font-mono text-xs text-amber-50">
+              <PreviewBlock tone="caution" title="Files the deploy would delete">
+                <p className={`mt-2 ${bodyText}`}>These listener files lose their last scoped rule, so the deploy removes them.</p>
+                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
                   {preview.removed_acl_files.map((path) => (
                     <li key={path} className="break-all">{path}</li>
                   ))}
                 </ul>
-              </div>
+              </PreviewBlock>
             ) : null}
             {preview.acl_diff || preview.passwd_diff || preview.preserved_entries?.length || preview.listener_acl_files?.length ? (
-              <details className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-200">Show diffs and file contents</summary>
-                <div className="mt-4 space-y-4">
+              <details className="border-t border-track pt-4">
+                <summary className="cursor-pointer text-sm font-semibold text-enamel-bright transition-colors duration-150 hover:text-enamel">Show diffs and file contents</summary>
+                <div className="mt-4 space-y-6">
                   {preview.preserved_entries?.length ? (
-                    <div className="rounded-2xl border border-emerald-300/25 bg-emerald-400/10 p-5">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Preserved entries</p>
-                        <span className="rounded-full bg-emerald-300/15 px-2.5 py-1 text-xs font-semibold text-emerald-100">{preview.preserved_entries.length}</span>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-emerald-50">These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
-                      <ul className="mt-4 space-y-2 font-mono text-xs text-emerald-50">
+                    <PreviewBlock tone="neutral" title="Preserved entries" count={preview.preserved_entries.length}>
+                      <p className={`mt-2 ${bodyText}`}>These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
+                      <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
                         {preview.preserved_entries.map((entry) => (
                           <li key={entry} className="break-all">{entry}</li>
                         ))}
                       </ul>
-                    </div>
+                    </PreviewBlock>
                   ) : null}
                   {preview.listener_acl_files?.map((file) => (
-                    <div key={file.path} className="rounded-2xl border border-white/10 bg-slate-950/40 p-5">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
-                          Listener file — {file.listener_id}
-                        </p>
-                        <span className="break-all font-mono text-xs text-slate-400">{file.path}</span>
+                    <div key={file.path}>
+                      <div className="flex flex-wrap items-baseline justify-between gap-3">
+                        <h5 className="text-sm font-semibold text-enamel-bright">Listener file — {file.listener_id}</h5>
+                        <span className="break-all font-mono text-xs text-enamel-muted">{file.path}</span>
                       </div>
-                      <p className="mt-2 text-sm leading-6 text-slate-300">
+                      <p className={`mt-1 ${bodyText}`}>
                         This listener reads only this file, so its rules apply to that listener alone.
                       </p>
-                      {file.diff ? <div className="mt-4"><DiffBlock content={file.diff} /></div> : null}
+                      {file.diff ? <div className="mt-3"><DiffBlock content={file.diff} /></div> : null}
                     </div>
                   ))}
                   {preview.acl_diff ? (
                     <div>
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">ACL diff</p>
+                      <h5 className="mb-2 text-sm font-semibold text-enamel-bright">ACL diff</h5>
                       <DiffBlock content={preview.acl_diff} />
                     </div>
                   ) : null}
                   {preview.passwd_diff ? (
                     <div>
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Password file diff</p>
+                      <h5 className="mb-2 text-sm font-semibold text-enamel-bright">Password file diff</h5>
                       <DiffBlock content={preview.passwd_diff} />
                     </div>
                   ) : null}
@@ -1848,46 +1776,57 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         ) : null}
         </ChangeRoute>
         </div>
-      </div>
+      </Section>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Deployment history</p>
-
+      <Section title="Deployment history">
         <div className="mt-4">
           <ListControls list={history} noun={{ one: 'deployment', many: 'deployments' }} filterFields={[{ key: 'status', label: 'Filter by status', options: deploymentStatusOptions }]} />
         </div>
 
         {history.error ? null : deployments.length === 0 && history.loading ? (
-          <p className="mt-4 text-sm text-slate-400">Loading history…</p>
+          <p className={`mt-4 ${bodyText}`}>Loading history…</p>
         ) : deployments.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-400">{history.hasFilters ? 'No deployments match the filter.' : 'No deployments recorded yet.'}</p>
+          <p className={`mt-4 ${bodyText}`}>{history.hasFilters ? 'No deployments match the filter.' : 'No deployments recorded yet.'}</p>
         ) : (
-          <table className="mt-4 w-full text-sm">
+          <div className="mt-4 table-scroll">
+          <table className="w-full min-w-[40rem] text-sm">
             <thead>
-              <tr className="border-b border-white/10">
-                <th className="px-0 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">ID</th>
-                <th className="px-4 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Status</th>
-                <th className="px-4 py-2 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Message</th>
-                <th className="px-0 py-2 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Time</th>
+              <tr className="border-b border-track-strong">
+                <th className={`${tableHead} text-left`}>ID</th>
+                <th className={`${tableHead} text-left`}>Status</th>
+                <th className={`${tableHead} text-left`}>Message</th>
+                <th className={`${tableHead} pr-0 text-right`}>Time</th>
               </tr>
             </thead>
             <tbody>
               {deployments.map((dep) => (
-                <tr key={dep.id} className="border-b border-white/5 last:border-0">
-                  <td className="py-3 pr-4 font-mono text-xs text-slate-400">{String(dep.id).slice(0, 8)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${lampBox[deploymentLamp(dep.status)]} ${lampText[deploymentLamp(dep.status)]}`}>
-                      {dep.status}
-                    </span>
+                <tr key={dep.id} className={tableRow}>
+                  <td className="py-3 pr-4 font-mono text-xs text-enamel-muted">{String(dep.id).slice(0, 8)}</td>
+                  <td className="py-3 pr-4">
+                    <Lamp tone={deploymentLamp(dep.status)}>{dep.status}</Lamp>
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-300">{dep.message ?? '—'}</td>
-                  <td className="py-3 pl-4 text-right text-xs text-slate-400">{new Date(dep.created_at).toLocaleString()}</td>
+                  <td className="py-3 pr-4 text-sm text-enamel-soft">{dep.message ?? '—'}</td>
+                  <td className="whitespace-nowrap py-3 text-right font-mono text-xs tabular-nums text-enamel-muted">{new Date(dep.created_at).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
+      </Section>
+    </section>
+  )
+}
+
+// One block of the deploy preview: a lamp-lit heading with its count on a hairline, no box.
+function PreviewBlock({ tone, title, count, children }: { tone: LampTone; title: string; count?: number; children: ReactNode }) {
+  return (
+    <section className="border-t border-track pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="flex items-center gap-2 text-sm font-semibold text-enamel-bright"><span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${lampDot[tone]}`} />{title}</h4>
+        {count !== undefined ? <Plate tone={tone === 'caution' ? 'caution' : 'neutral'}>{count}</Plate> : null}
       </div>
+      {children}
     </section>
   )
 }
@@ -1897,21 +1836,6 @@ const deploymentStatusOptions = [
   { value: '', label: 'All statuses' },
   ...['active_verified', 'applied', 'pending_activation', 'failed', 'rolled_back', 'rollback_failed'].map((status) => ({ value: status, label: status.replaceAll('_', ' ') })),
 ]
-
-function DiffBlock({ content }: { content: string }) {
-  return (
-    <pre className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-      {content.split('\n').map((line, idx) => (
-        <span
-          key={idx}
-          className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-red-500/10 text-red-200' : 'text-slate-300'}`}
-        >
-          {line || ' '}
-        </span>
-      ))}
-    </pre>
-  )
-}
 
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {
   const [username, setUsername] = useState<string>('')
@@ -1996,14 +1920,20 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 shadow-2xl shadow-slate-950/40 backdrop-blur">
-        <div className="border-b border-white/10 pb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+    <div className="flex min-h-screen items-center justify-center bg-frame px-4 py-12 text-enamel">
+      <div className="w-full max-w-sm">
+        <p className="flex items-center gap-2.5 font-display text-base font-semibold uppercase leading-none tracking-[0.1em] text-enamel-bright">
+          <Mark />
+          Mosquitto Control Manager
+        </p>
+        <div className="mt-10">
+          <h1 className="font-display text-4xl font-bold uppercase leading-none text-enamel-bright">
             {mfaChallenge ? 'Verify MFA' : 'Sign in'}
           </h1>
-          <p className="mt-2 text-sm text-slate-400">
+          <div aria-hidden="true" className="relative mt-4 h-px bg-track-strong">
+            <span className="absolute -top-px left-0 h-[3px] w-12 bg-enamel" />
+          </div>
+          <p className="mt-4 text-sm leading-relaxed text-enamel-soft">
             {mfaChallenge
               ? 'Enter the 6-digit code from your authenticator app, or one of your recovery codes.'
               : 'Authenticate with an admin user to access the Mosquitto Control Manager dashboard.'}
@@ -2013,7 +1943,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         {mfaChallenge ? (
           <form onSubmit={handleMFASubmit} className="mt-6 space-y-4">
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Code</span>
+              <span className="text-sm font-semibold text-enamel">Code</span>
               <input
                 type="text"
                 inputMode="text"
@@ -2022,12 +1952,12 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
                 autoFocus
                 value={mfaCode}
                 onChange={(event) => setMfaCode(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm tracking-[0.3em] text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm tracking-[0.3em] text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             {error ? (
-              <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              <div role="alert" className="border border-danger/60 px-4 py-3 text-sm text-danger-text">
                 {error}
               </div>
             ) : null}
@@ -2035,7 +1965,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
             <button
               type="submit"
               disabled={submitting}
-              className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-400/50"
+              className={`w-full ${leverPrimary}`}
             >
               {submitting ? 'Verifying…' : 'Verify and sign in'}
             </button>
@@ -2046,7 +1976,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
                 setMfaCode('')
                 setError('')
               }}
-              className="w-full text-xs uppercase tracking-[0.22em] text-slate-400 hover:text-white"
+              className="w-full py-2 text-sm text-enamel-soft underline decoration-track-bright underline-offset-4 transition-colors duration-150 hover:text-enamel-bright"
             >
               ← Back to sign in
             </button>
@@ -2054,31 +1984,31 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         ) : (
           <form onSubmit={handlePasswordSubmit} className="mt-6 space-y-4">
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Username</span>
+              <span className="text-sm font-semibold text-enamel">Username</span>
               <input
                 type="text"
                 autoComplete="username"
                 required
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Password</span>
+              <span className="text-sm font-semibold text-enamel">Password</span>
               <input
                 type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             {error ? (
-              <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              <div role="alert" className="border border-danger/60 px-4 py-3 text-sm text-danger-text">
                 {error}
               </div>
             ) : null}
@@ -2086,7 +2016,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
             <button
               type="submit"
               disabled={submitting}
-              className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-400/50"
+              className={`w-full ${leverPrimary}`}
             >
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>

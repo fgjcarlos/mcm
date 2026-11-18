@@ -4,6 +4,8 @@ import type { AdminUser } from '../auth/useAuthSession'
 import { setupMFA, verifyMFA, disableMFA, isUnauthorizedResponseError } from './api'
 import RecentMFAConfirmation from './RecentMFAConfirmation'
 import { useRecentMFA } from './useRecentMFA'
+import { Section } from '../ui/primitives'
+import { bodyText, fieldLabel, input, lampDot, leverDanger, leverPrimary, leverSecondary, notice } from '../ui/styles'
 
 type Props = {
   token: string
@@ -48,7 +50,7 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
   if (!currentUser) {
     return (
       <section className="mt-8 space-y-4">
-        <p className="text-sm text-slate-400">Loading account information…</p>
+        <p className={bodyText}>Loading account information…</p>
       </section>
     )
   }
@@ -142,179 +144,172 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
   // --- State A: MFA disabled, no active setup ---
   if (!currentUser.mfa_enabled && !setupData && !enableSuccess) {
     return (
-      <section className="mt-8 space-y-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Two-factor authentication</p>
-          <p className="mt-1 text-sm text-slate-300">MFA is not enabled on your account.</p>
-        </div>
-
+      <Section title="Two-factor authentication" description="MFA is not enabled on your account." ruled={false} className="mt-8">
         {disableSuccess ? (
-          <div role="alert" className="rounded-2xl border border-cyan-300/30 bg-cyan-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">MFA removed</p>
-            <p className="mt-2 text-sm text-slate-300">Two-factor authentication has been removed from your account.</p>
+          <div role="alert" className={`mt-4 ${notice.neutral}`}>
+            <p className="font-semibold text-enamel-bright">MFA removed</p>
+            <p className="mt-1">Two-factor authentication has been removed from your account.</p>
           </div>
         ) : null}
 
         {setupError ? (
-          <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+          <div role="alert" className={`mt-4 ${notice.failed}`}>
             {setupError}
           </div>
         ) : null}
 
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-sm text-slate-300">
-            Protect your account with a time-based one-time password (TOTP) authenticator app.
-            You will need an app such as Google Authenticator, Authy, or 1Password.
-          </p>
-          <button
-            type="button"
-            onClick={() => { setDisableSuccess(false); void handleStartSetup() }}
-            disabled={setupLoading}
-            className="mt-4 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-          >
-            {setupLoading ? 'Setting up…' : 'Enable MFA'}
-          </button>
-        </div>
-      </section>
+        <p className={`mt-4 max-w-[68ch] ${bodyText}`}>
+          Protect your account with a time-based one-time password (TOTP) authenticator app.
+          You will need an app such as Google Authenticator, Authy, or 1Password.
+        </p>
+        <button
+          type="button"
+          onClick={() => { setDisableSuccess(false); void handleStartSetup() }}
+          disabled={setupLoading}
+          className={`mt-4 ${leverPrimary}`}
+        >
+          {setupLoading ? 'Setting up…' : 'Enable MFA'}
+        </button>
+      </Section>
     )
   }
 
   // --- State A2: setup in progress (QR + codes + verify) ---
   if (!currentUser.mfa_enabled && setupData) {
     return (
-      <section className="mt-8 space-y-6">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Set up two-factor authentication</p>
-          <p className="mt-1 text-sm text-slate-300">Scan the QR code or enter the secret manually in your authenticator app.</p>
-        </div>
-
-        {/* QR code */}
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6 flex flex-col items-start gap-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Step 1 — Scan with your authenticator app</p>
-          <div className="rounded-xl bg-white p-3" role="img" aria-label="MFA QR code">
-            <QRCodeSVG value={setupData.otpauth_url} size={180} />
-          </div>
-
-          <div className="w-full">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Or enter the secret manually</p>
-            <div className="mt-2 flex items-center gap-2 flex-wrap">
-              <pre className="rounded-xl bg-slate-950/60 px-4 py-2 font-mono text-sm text-cyan-100 select-all">
-                {formatSecret(setupData.secret)}
-              </pre>
-              <button
-                type="button"
-                onClick={() => { void handleCopySecret() }}
-                className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-              >
-                Copy
-              </button>
+      <Section
+        title="Set up two-factor authentication"
+        description="Scan the QR code or enter the secret manually in your authenticator app."
+        ruled={false}
+        className="mt-8"
+      >
+        <div className="mt-6 space-y-8">
+          {/* QR code */}
+          <Section level={4} title="Step 1 — Scan with your authenticator app">
+            <div className="mt-4 inline-block rounded-plate bg-white p-3" role="img" aria-label="MFA QR code">
+              <QRCodeSVG value={setupData.otpauth_url} size={180} />
             </div>
-          </div>
-        </div>
 
-        {/* Recovery codes */}
-        <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">
-            Step 2 — Save your recovery codes
-          </p>
-          <p className="mt-2 text-sm text-slate-300">
-            These 10 codes can each be used once if you lose access to your authenticator.
-            They will <strong className="text-white">not</strong> be shown again after you complete setup.
-          </p>
-          <div
-            aria-label="Recovery codes"
-            className="mt-4 grid grid-cols-2 gap-2"
-          >
-            {setupData.recovery_codes.map((code) => (
-              <pre key={code} className="rounded-xl bg-slate-950/60 px-3 py-2 font-mono text-xs text-amber-100">
-                {code}
-              </pre>
-            ))}
-          </div>
-          <div className="mt-4 flex gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => { void handleCopyCodes() }}
-              className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-            >
-              Copy all
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadCodes}
-              className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
-            >
-              Download
-            </button>
-          </div>
-          <label className="mt-4 flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={savedCodesChecked}
-              onChange={(e) => setSavedCodesChecked(e.target.checked)}
-              className="h-4 w-4 rounded border-white/20 bg-slate-950/60 accent-cyan-500"
-            />
-            <span className="text-sm text-slate-300">I have saved my recovery codes in a safe place</span>
-          </label>
-        </div>
-
-        {/* Verify step */}
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Step 3 — Confirm with a code</p>
-          <p className="mt-2 text-sm text-slate-300">
-            Enter the 6-digit code from your authenticator app to verify setup.
-          </p>
-          <form onSubmit={(e) => { void handleVerify(e) }} className="mt-4 space-y-4">
-            <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Authentication code</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                required
-                maxLength={6}
-                value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
-                placeholder="000000"
-                className="mt-2 w-full max-w-xs rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 font-mono text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
-              />
-            </label>
-
-            {verifyError ? (
-              <div role="alert" aria-live="polite" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-                {verifyError}
+            <div className="mt-4">
+              <p className={fieldLabel}>Or enter the secret manually</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <pre className="select-all rounded-plate border border-track-strong bg-frame-raised px-4 py-2 font-mono text-sm text-enamel-bright">
+                  {formatSecret(setupData.secret)}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => { void handleCopySecret() }}
+                  className={leverSecondary}
+                >
+                  Copy
+                </button>
               </div>
-            ) : null}
-
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={verifySubmitting || !savedCodesChecked || verifyCode.length < 6}
-                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-              >
-                {verifySubmitting ? 'Verifying…' : 'Confirm & enable'}
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelSetup}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
-              >
-                Cancel
-              </button>
             </div>
-          </form>
+          </Section>
+
+          {/* Recovery codes */}
+          <Section level={4} title="Step 2 — Save your recovery codes">
+            <div className={`mt-3 ${notice.caution}`}>
+              <p>
+                These 10 codes can each be used once if you lose access to your authenticator.
+                They will <strong className="text-enamel-bright">not</strong> be shown again after you complete setup.
+              </p>
+              <div
+                aria-label="Recovery codes"
+                className="mt-4 grid max-w-md grid-cols-2 gap-2"
+              >
+                {setupData.recovery_codes.map((code) => (
+                  <pre key={code} className="rounded-plate border border-track-strong bg-frame-raised px-3 py-2 font-mono text-xs text-enamel-bright">
+                    {code}
+                  </pre>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void handleCopyCodes() }}
+                  className={leverSecondary}
+                >
+                  Copy all
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadCodes}
+                  className={leverSecondary}
+                >
+                  Download
+                </button>
+              </div>
+              <label className="mt-4 flex cursor-pointer select-none items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={savedCodesChecked}
+                  onChange={(e) => setSavedCodesChecked(e.target.checked)}
+                  className="size-4 accent-lamp"
+                />
+                <span className="text-sm text-enamel">I have saved my recovery codes in a safe place</span>
+              </label>
+            </div>
+          </Section>
+
+          {/* Verify step */}
+          <Section
+            level={4}
+            title="Step 3 — Confirm with a code"
+            description="Enter the 6-digit code from your authenticator app to verify setup."
+          >
+            <form onSubmit={(e) => { void handleVerify(e) }} className="mt-4 space-y-5">
+              <label className="block">
+                <span className={fieldLabel}>Authentication code</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  maxLength={6}
+                  value={verifyCode}
+                  onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  className={`mt-2 w-full max-w-xs font-mono tracking-[0.2em] ${input}`}
+                />
+              </label>
+
+              {verifyError ? (
+                <div role="alert" aria-live="polite" className={notice.failed}>
+                  {verifyError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={verifySubmitting || !savedCodesChecked || verifyCode.length < 6}
+                  className={leverPrimary}
+                >
+                  {verifySubmitting ? 'Verifying…' : 'Confirm & enable'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelSetup}
+                  className={leverSecondary}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </Section>
         </div>
-      </section>
+      </Section>
     )
   }
 
   // --- State A3: just enabled successfully (mfa_enabled not yet reflected) ---
   if (!currentUser.mfa_enabled && enableSuccess) {
     return (
-      <section className="mt-8 space-y-4">
-        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">MFA enabled</p>
-          <p className="mt-2 text-sm text-slate-300">
+      <section className="mt-8">
+        <div className={notice.neutral}>
+          <p className="font-semibold text-enamel-bright">MFA enabled</p>
+          <p className="mt-1">
             Two-factor authentication has been enabled on your account.
             You will need your authenticator app on your next login.
           </p>
@@ -325,93 +320,95 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
 
   // --- State B: MFA enabled ---
   return (
-    <section className="mt-8 space-y-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Two-factor authentication</p>
-        <p className="mt-1 text-sm text-slate-300">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" />
-            MFA is enabled on your account.
-          </span>
-        </p>
-      </div>
+    <Section
+      title="Two-factor authentication"
+      description={
+        <span className="inline-flex items-center gap-2">
+          <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${lampDot.neutral}`} />
+          MFA is enabled on your account.
+        </span>
+      }
+      ruled={false}
+      className="mt-8"
+    >
+      <div className="mt-4 space-y-6">
+        {disableSuccess ? (
+          <div role="alert" className={notice.neutral}>
+            <p className="font-semibold text-enamel-bright">MFA disabled</p>
+            <p className="mt-1">Two-factor authentication has been removed from your account.</p>
+          </div>
+        ) : null}
 
-      {disableSuccess ? (
-        <div role="alert" className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">MFA disabled</p>
-          <p className="mt-2 text-sm text-slate-300">Two-factor authentication has been removed from your account.</p>
-        </div>
-      ) : null}
+        <RecentMFAConfirmation state={recentMFA} />
 
-      <RecentMFAConfirmation state={recentMFA} />
-
-      {!showDisableForm ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-sm text-slate-300">
-            Your account is protected with a TOTP authenticator app.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setShowDisableForm(true)
-              setDisableError('')
-              setDisablePassword('')
-            }}
-            className="mt-4 rounded-xl border border-rose-300/20 bg-rose-400/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-400/20"
+        {!showDisableForm ? (
+          <div className="border-t border-track pt-4">
+            <p className={bodyText}>
+              Your account is protected with a TOTP authenticator app.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDisableForm(true)
+                setDisableError('')
+                setDisablePassword('')
+              }}
+              className={`mt-4 ${leverDanger}`}
+            >
+              Disable MFA
+            </button>
+          </div>
+        ) : (
+          <Section
+            level={4}
+            title="Disable two-factor authentication"
+            description="Enter your account password to confirm you want to remove MFA protection."
           >
-            Disable MFA
-          </button>
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-300">Disable two-factor authentication</p>
-          <p className="mt-2 text-sm text-slate-300">
-            Enter your account password to confirm you want to remove MFA protection.
-          </p>
-          <form onSubmit={(e) => { void handleDisable(e) }} className="mt-4 space-y-4">
-            <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Account password</span>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={disablePassword}
-                onChange={(e) => setDisablePassword(e.target.value)}
-                placeholder="Enter your password"
-                className="mt-2 w-full max-w-xs rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
-              />
-            </label>
+            <form onSubmit={(e) => { void handleDisable(e) }} className="mt-4 space-y-5">
+              <label className="block">
+                <span className={fieldLabel}>Account password</span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                  placeholder="Enter your password"
+                  className={`mt-2 w-full max-w-xs ${input}`}
+                />
+              </label>
 
-            {disableError ? (
-              <div role="alert" aria-live="polite" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-                {disableError}
+              {disableError ? (
+                <div role="alert" aria-live="polite" className={notice.failed}>
+                  {disableError}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={disableSubmitting}
+                  className={leverDanger}
+                >
+                  {disableSubmitting ? 'Disabling…' : 'Confirm disable'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDisableForm(false)
+                    setDisableError('')
+                    setDisablePassword('')
+                  }}
+                  className={leverSecondary}
+                >
+                  Cancel
+                </button>
               </div>
-            ) : null}
-
-            <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={disableSubmitting}
-                className="rounded-xl border border-rose-300/20 bg-rose-400/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-400/20 disabled:opacity-50"
-              >
-                {disableSubmitting ? 'Disabling…' : 'Confirm disable'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDisableForm(false)
-                  setDisableError('')
-                  setDisablePassword('')
-                }}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </section>
+            </form>
+          </Section>
+        )}
+      </div>
+    </Section>
   )
 }
 

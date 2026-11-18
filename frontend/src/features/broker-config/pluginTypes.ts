@@ -9,13 +9,13 @@ export const pluginBackendLabels: Record<string, string> = {
   'dynamic-security': 'dynamic security plugin',
 }
 
-// pluginBackendTones gives every backend its own colour: a broker without
-// any access control is worth a warning, the two others are states the
+// pluginBackendTones gives the backend plate its tone: a broker without
+// any access control is worth a caution, the two others are states the
 // operator chose.
-export const pluginBackendTones: Record<string, string> = {
-  none: 'bg-amber-400/10 text-amber-200',
-  file: 'bg-cyan-400/10 text-cyan-200',
-  'dynamic-security': 'bg-emerald-400/10 text-emerald-200',
+export const pluginBackendTones: Record<string, 'neutral' | 'caution'> = {
+  none: 'caution',
+  file: 'neutral',
+  'dynamic-security': 'neutral',
 }
 
 // PluginOptionSpec describes one option MCM writes for a plugin. The name

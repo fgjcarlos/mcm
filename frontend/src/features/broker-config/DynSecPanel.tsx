@@ -13,6 +13,10 @@ import type {
   DynSecGuard,
   DynSecRole,
 } from './dynsecTypes'
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Plate, Section } from '../ui/primitives'
+import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
+import { DraftState, Findings } from './panelParts'
 
 // emptyDocument is the security database of a broker that has none yet.
 const emptyDocument: DynSecDocument = {
@@ -212,7 +216,7 @@ export default function DynSecPanel({
   if (isLoading && !state) {
     return (
       <section className="mt-8">
-        <p className="text-sm text-slate-400">Loading the dynamic security state…</p>
+        <p className={bodyText}>Loading the dynamic security state…</p>
       </section>
     )
   }
@@ -220,7 +224,7 @@ export default function DynSecPanel({
   if (!state) {
     return (
       <section className="mt-8">
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+        <div className={notice.neutral}>
           Dynamic security management is not configured on this MCM instance.
         </div>
       </section>
@@ -230,101 +234,83 @@ export default function DynSecPanel({
   const adopted = state.backend === 'dynamic-security'
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Dynamic security</p>
-            <p className="mt-1 text-sm text-slate-300">
-              The clients, groups and roles the broker enforces, and the report of the management channel.
-            </p>
-            {state.management_client ? (
-              <p className="mt-1 text-xs text-slate-400">
-                Management account: <span className="font-mono">{state.management_client}</span>
-              </p>
-            ) : null}
-            <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
-          </div>
+    <section className="mt-8 space-y-10">
+      <Section
+        title="Dynamic security"
+        description="The clients, groups and roles the broker enforces, and the report of the management channel."
+        aside={
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${dynSecBackendTones[state.backend] ?? dynSecBackendTones.none}`}>
+            <Plate tone={dynSecBackendTones[state.backend] ?? dynSecBackendTones.none}>
               {dynSecBackendLabels[state.backend] ?? state.backend}
-            </span>
+            </Plate>
             {adopted ? (
               <button
                 type="button"
                 onClick={handlePreview}
                 disabled={!canPreview || isLoading || isPreviewing || isApplying}
                 title={!canPreview ? 'Requires operator role' : undefined}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                className={leverSecondary}
               >
                 {isPreviewing ? 'Generating…' : 'Preview'}
               </button>
             ) : null}
           </div>
-        </div>
+        }
+      >
+        {state.management_client ? (
+          <p className={`mt-1 ${fieldHint}`}>
+            Management account: <span className="font-mono">{state.management_client}</span>
+          </p>
+        ) : null}
+        <DraftState dirty={dirty} />
 
         {previewError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {previewError}
           </div>
         ) : null}
         {applyError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {applyError}
           </div>
         ) : null}
         {applied ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100" role="status">
+          // The apply reports no activation status, so the lamp stays amber: never verified green.
+          <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[deploymentLamp(undefined)]}`} role="status">
             The security database was updated and the broker enforces it.
           </div>
         ) : null}
         {state.warnings?.length ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {state.warnings.map((warning, index) => (
-                <li key={`${index}-${warning}`}>{warning}</li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Warnings">
+            {state.warnings.map((warning, index) => (
+              <li key={`${index}-${warning}`}>{warning}</li>
+            ))}
+          </Findings>
         ) : null}
         {issues.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Issues</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-100">
-              {issues.map((issue, index) => (
-                <li key={`${issue.kind}-${issue.object}-${index}`}>
-                  {issue.object ? <span className="font-mono text-xs">{issue.object}</span> : null}
-                  {issue.object ? ' · ' : null}
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="failed" title="Issues">
+            {issues.map((issue, index) => (
+              <li key={`${issue.kind}-${issue.object}-${index}`}>
+                {issue.object ? <span className="font-mono text-xs">{issue.object}</span> : null}
+                {issue.object ? ' · ' : null}
+                {issue.message}
+              </li>
+            ))}
+          </Findings>
         ) : null}
         {guard && !preview ? <GuardReport guard={guard} /> : null}
-      </div>
+      </Section>
 
       {adopted ? (
         <>
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Clients</p>
-                <p className="mt-1 text-sm text-slate-400">The clients the plugin authenticates.</p>
-              </div>
-              <button
-                type="button"
-                onClick={addClient}
-                disabled={isApplying || isPreviewing}
-                className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-              >
-                Add client
-              </button>
-            </div>
-            <div className="mt-5 space-y-4">
+          <Section
+            title="Clients"
+            description="The clients the plugin authenticates."
+            aside={<button type="button" onClick={addClient} disabled={isApplying || isPreviewing} className={leverSecondary}>Add client</button>}
+          >
+            <div className="mt-4">
               {document.clients.length === 0 ? (
-                <p className="text-sm text-slate-400">No client is configured.</p>
+                <p className={bodyText}>No client is configured.</p>
               ) : null}
               {document.clients.map((client, index) => (
                 <ClientCard
@@ -342,26 +328,16 @@ export default function DynSecPanel({
                 />
               ))}
             </div>
-          </div>
+          </Section>
 
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Groups</p>
-                <p className="mt-1 text-sm text-slate-400">The groups of clients that share the same roles.</p>
-              </div>
-              <button
-                type="button"
-                onClick={addGroup}
-                disabled={isApplying || isPreviewing}
-                className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-              >
-                Add group
-              </button>
-            </div>
-            <div className="mt-5 space-y-4">
+          <Section
+            title="Groups"
+            description="The groups of clients that share the same roles."
+            aside={<button type="button" onClick={addGroup} disabled={isApplying || isPreviewing} className={leverSecondary}>Add group</button>}
+          >
+            <div className="mt-4">
               {document.groups.length === 0 ? (
-                <p className="text-sm text-slate-400">No group is configured.</p>
+                <p className={bodyText}>No group is configured.</p>
               ) : null}
               {document.groups.map((group, index) => (
                 <GroupCard
@@ -379,26 +355,16 @@ export default function DynSecPanel({
                 />
               ))}
             </div>
-          </div>
+          </Section>
 
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Roles</p>
-                <p className="mt-1 text-sm text-slate-400">The roles that carry the topic permissions.</p>
-              </div>
-              <button
-                type="button"
-                onClick={addRole}
-                disabled={isApplying || isPreviewing}
-                className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-              >
-                Add role
-              </button>
-            </div>
-            <div className="mt-5 space-y-4">
+          <Section
+            title="Roles"
+            description="The roles that carry the topic permissions."
+            aside={<button type="button" onClick={addRole} disabled={isApplying || isPreviewing} className={leverSecondary}>Add role</button>}
+          >
+            <div className="mt-4">
               {document.roles.length === 0 ? (
-                <p className="text-sm text-slate-400">No role is configured.</p>
+                <p className={bodyText}>No role is configured.</p>
               ) : null}
               {document.roles.map((role, index) => (
                 <RoleCard
@@ -413,11 +379,9 @@ export default function DynSecPanel({
                 />
               ))}
             </div>
-          </div>
+          </Section>
 
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Default access</p>
-            <p className="mt-1 text-sm text-slate-400">The access the plugin grants when no rule of a role matches.</p>
+          <Section title="Default access" description="The access the plugin grants when no rule of a role matches.">
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <Toggle
                 label="Publish (client send)"
@@ -456,32 +420,26 @@ export default function DynSecPanel({
                   disabled={isApplying || isPreviewing}
                   value={document.anonymous_group ?? ''}
                   onChange={(event) => mutate((doc) => ({ ...doc, anonymous_group: event.target.value }))}
-                  className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+                  className={`w-full font-mono ${input}`}
                 />
               </Field>
             </div>
-          </div>
+          </Section>
 
           {preview ? (
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Plan</p>
-                <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">
-                  {preview.kind}
-                </span>
-              </div>
-              <p className="mt-2 break-all font-mono text-xs text-slate-400">plan {preview.plan_id}</p>
+            <Section title="Plan" aside={<Plate>{preview.kind}</Plate>}>
+              <p className="mt-2 break-all font-mono text-xs text-enamel-muted">plan {preview.plan_id}</p>
 
               {preview.plan?.changes?.length ? (
-                <ul className="mt-4 space-y-2">
+                <ul className="mt-4 border-y border-track">
                   {preview.plan.changes.map((change, index) => (
-                    <li key={`${change.kind}-${change.name}-${index}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    <li key={`${change.kind}-${change.name}-${index}`} className="border-b border-track py-3 last:border-0">
+                      <p className="font-mono text-xs text-enamel-muted">
                         {change.kind} · {change.action}
                       </p>
-                      <p className="mt-1 text-sm text-slate-200">{change.summary}</p>
+                      <p className="mt-1 text-sm text-enamel">{change.summary}</p>
                       {change.commands?.length ? (
-                        <ul className="mt-2 space-y-1 font-mono text-xs text-slate-400">
+                        <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-soft">
                           {change.commands.map((command, commandIndex) => (
                             <li key={`${command.command}-${commandIndex}`}>{command.command}</li>
                           ))}
@@ -491,18 +449,15 @@ export default function DynSecPanel({
                   ))}
                 </ul>
               ) : (
-                <p className="mt-4 text-sm text-slate-300">No changes — the security database already matches.</p>
+                <p className={`mt-4 ${bodyText}`}>No changes — the security database already matches.</p>
               )}
 
               {preview.warnings?.length ? (
-                <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-100">
-                    {preview.warnings.map((warning, index) => (
-                      <li key={`${index}-${warning}`}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
+                <Findings tone="caution" title="Warnings" className="mt-4">
+                  {preview.warnings.map((warning, index) => (
+                    <li key={`${index}-${warning}`}>{warning}</li>
+                  ))}
+                </Findings>
               ) : null}
 
               {guard ? <GuardReport guard={guard} /> : null}
@@ -515,28 +470,27 @@ export default function DynSecPanel({
                   onClick={() => { void handleApply() }}
                   disabled={!applyEnabled}
                   title={!isAdmin ? 'Requires admin role' : undefined}
-                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+                  className={leverPrimary}
                 >
                   {isApplying ? 'Applying…' : 'Apply'}
                 </button>
-                {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+                {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
               </div>
-            </div>
+            </Section>
           ) : null}
         </>
       ) : (
         <>
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Adopt the dynamic security backend</p>
-            <p className="mt-2 text-sm text-slate-300">
-              The dynamic security plugin takes the authentication and the authorization of the broker over. The migration:
-            </p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-300">
+          <Section
+            title="Adopt the dynamic security backend"
+            description="The dynamic security plugin takes the authentication and the authorization of the broker over. The migration:"
+          >
+            <ul className={`mt-3 list-disc space-y-1 pl-5 ${bodyText}`}>
               <li>the users of the password file become the clients of the plugin, and the rules of the ACL file become the roles of the plugin;</li>
               <li>the plugin is loaded in the broker configuration;</li>
               <li>the password file and the ACL file are dropped from the configuration.</li>
             </ul>
-            <p className="mt-3 text-xs text-amber-200">
+            <p className="mt-3 text-xs text-lamp">
               The broker is restarted by the migration: Mosquitto loads a plugin at start-up.
             </p>
             {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
@@ -546,31 +500,30 @@ export default function DynSecPanel({
                 onClick={() => { void handleAdopt() }}
                 disabled={!isAdmin || !mfa.proof || isAdopting || isApplying}
                 title={!isAdmin ? 'Requires admin role' : undefined}
-                className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+                className={leverPrimary}
               >
                 {isAdopting ? 'Preparing…' : 'Adopt the dynamic security backend'}
               </button>
-              {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before adopting.</p> : null}
+              {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before adopting.</p> : null}
             </div>
-          </div>
+          </Section>
 
           {adoption ? (
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Adoption plan</p>
-              <p className="mt-2 break-all font-mono text-xs text-slate-400">plan {adoption.plan_id}</p>
+            <Section title="Adoption plan">
+              <p className="mt-2 break-all font-mono text-xs text-enamel-muted">plan {adoption.plan_id}</p>
 
               {adoption.credentials?.length ? (
-                <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">
+                <div className={`mt-4 ${notice.caution}`}>
+                  <h4 className="font-semibold text-lamp">
                     Copy these now, they are shown once
-                  </p>
+                  </h4>
                   <ul className="mt-3 space-y-2">
                     {adoption.credentials.map((credential) => (
                       <li key={credential.username}>
-                        <p className="font-mono text-sm text-amber-50">
+                        <p className="font-mono text-sm text-enamel-bright">
                           {credential.username} · {credential.password}
                         </p>
-                        {credential.reason ? <p className="mt-0.5 text-xs text-amber-200/80">{credential.reason}</p> : null}
+                        {credential.reason ? <p className={`mt-0.5 ${fieldHint}`}>{credential.reason}</p> : null}
                       </li>
                     ))}
                   </ul>
@@ -578,27 +531,15 @@ export default function DynSecPanel({
               ) : null}
 
               {adoption.config_diff ? (
-                <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-                  {adoption.config_diff.split('\n').map((line, index) => (
-                    <span
-                      key={index}
-                      className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-rose-500/10 text-rose-200' : 'text-slate-300'}`}
-                    >
-                      {line || ' '}
-                    </span>
-                  ))}
-                </pre>
+                <div className="mt-4"><DiffBlock content={adoption.config_diff} /></div>
               ) : null}
 
               {adoption.warnings?.length ? (
-                <div className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-100">
-                    {adoption.warnings.map((warning, index) => (
-                      <li key={`${index}-${warning}`}>{warning}</li>
-                    ))}
-                  </ul>
-                </div>
+                <Findings tone="caution" title="Warnings" className="mt-4">
+                  {adoption.warnings.map((warning, index) => (
+                    <li key={`${index}-${warning}`}>{warning}</li>
+                  ))}
+                </Findings>
               ) : null}
 
               <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -607,13 +548,13 @@ export default function DynSecPanel({
                   onClick={() => { void handleAdoptApply() }}
                   disabled={!isAdmin || !mfa.proof || isApplying}
                   title={!isAdmin ? 'Requires admin role' : undefined}
-                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+                  className={leverPrimary}
                 >
                   {isApplying ? 'Applying…' : 'Apply'}
                 </button>
-                {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+                {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
               </div>
-            </div>
+            </Section>
           ) : null}
         </>
       )}
@@ -628,30 +569,27 @@ function GuardReport({ guard }: { guard: DynSecGuard }) {
   const failed = !guard.ok || violations.length > 0
 
   return (
-    <div
-      className={`mt-5 rounded-2xl border p-5 ${failed ? 'border-rose-300/30 bg-rose-400/10' : 'border-emerald-300/30 bg-emerald-400/10'}`}
-      role={failed ? 'alert' : undefined}
-    >
-      <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${failed ? 'text-rose-200' : 'text-emerald-200'}`}>
+    <div className={`mt-5 ${failed ? notice.failed : notice.neutral}`} role={failed ? 'alert' : undefined}>
+      <h4 className={`font-semibold ${failed ? '' : 'text-enamel-bright'}`}>
         Management channel {violations.length > 0 ? 'is open' : failed ? 'is at risk' : 'is closed'}
-      </p>
-      <p className="mt-2 text-sm text-slate-200">
+      </h4>
+      <p className="mt-2">
         Only the management account may reach <span className="font-mono">$CONTROL/dynamic-security/#</span>.
       </p>
       {guard.management_client ? (
-        <p className="mt-1 text-xs text-slate-300">
+        <p className="mt-1 text-xs">
           Management account: <span className="font-mono">{guard.management_client}</span>
         </p>
       ) : null}
       {guard.allowed?.length ? (
-        <p className="mt-1 text-xs text-slate-300">
+        <p className="mt-1 text-xs">
           Allowed: <span className="font-mono">{guard.allowed.join(', ')}</span>
         </p>
       ) : null}
       {violations.length > 0 ? (
         <>
-          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Must not reach the channel</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-rose-100">
+          <h5 className="mt-3 text-xs font-semibold">Must not reach the channel</h5>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
             {violations.map((violation) => (
               <li key={violation} className="font-mono text-xs">{violation}</li>
             ))}
@@ -659,7 +597,7 @@ function GuardReport({ guard }: { guard: DynSecGuard }) {
         </>
       ) : null}
       {guard.reasons?.length ? (
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-200">
+        <ul className="mt-3 list-disc space-y-1 pl-5">
           {guard.reasons.map((reason) => (
             <li key={reason}>{reason}</li>
           ))}
@@ -696,18 +634,18 @@ function ClientCard({
   const label = `client ${index + 1}`
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="border-t border-track py-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-cyan-100">{client.username || '(unnamed client)'}</p>
-          <p className="mt-1 text-xs text-slate-500">{client.password_set ? 'A password is set.' : 'No password is set.'}</p>
+          <h4 className="text-sm font-semibold text-enamel-bright">{client.username || '(unnamed client)'}</h4>
+          <p className={`mt-1 ${fieldHint}`}>{client.password_set ? 'A password is set.' : 'No password is set.'}</p>
         </div>
         <button
           type="button"
           aria-label={`Remove client ${label}`}
           disabled={disabled}
           onClick={onRemove}
-          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-50"
+          className={leverDanger}
         >
           Remove
         </button>
@@ -721,7 +659,7 @@ function ClientCard({
             disabled={disabled}
             value={client.username}
             onChange={(event) => onRename(event.target.value)}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Text name">
@@ -731,7 +669,7 @@ function ClientCard({
             disabled={disabled}
             value={client.textname ?? ''}
             onChange={(event) => onChange({ textname: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
         <Field label="Description">
@@ -741,7 +679,7 @@ function ClientCard({
             disabled={disabled}
             value={client.textdescription ?? ''}
             onChange={(event) => onChange({ textdescription: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
         <Field label="Client id" hint="Pins the MQTT client id of the client.">
@@ -751,7 +689,7 @@ function ClientCard({
             disabled={disabled}
             value={client.clientid ?? ''}
             onChange={(event) => onChange({ clientid: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field
@@ -765,7 +703,7 @@ function ClientCard({
             placeholder={client.password_set ? 'stored' : 'set a new password'}
             value={client.password ?? ''}
             onChange={(event) => onChange({ password: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <div className="flex items-end pb-1">
@@ -826,15 +764,15 @@ function GroupCard({
   const label = `group ${index + 1}`
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="border-t border-track py-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-semibold text-cyan-100">{group.groupname || '(unnamed group)'}</p>
+        <h4 className="text-sm font-semibold text-enamel-bright">{group.groupname || '(unnamed group)'}</h4>
         <button
           type="button"
           aria-label={`Remove group ${label}`}
           disabled={disabled}
           onClick={onRemove}
-          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-50"
+          className={leverDanger}
         >
           Remove
         </button>
@@ -848,7 +786,7 @@ function GroupCard({
             disabled={disabled}
             value={group.groupname}
             onChange={(event) => onRename(event.target.value)}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Text name">
@@ -858,7 +796,7 @@ function GroupCard({
             disabled={disabled}
             value={group.textname ?? ''}
             onChange={(event) => onChange({ textname: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
         <Field label="Description">
@@ -868,7 +806,7 @@ function GroupCard({
             disabled={disabled}
             value={group.textdescription ?? ''}
             onChange={(event) => onChange({ textdescription: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
       </div>
@@ -914,15 +852,15 @@ function RoleCard({
   const label = `role ${index + 1}`
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="border-t border-track py-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm font-semibold text-cyan-100">{role.rolename || '(unnamed role)'}</p>
+        <h4 className="text-sm font-semibold text-enamel-bright">{role.rolename || '(unnamed role)'}</h4>
         <button
           type="button"
           aria-label={`Remove role ${label}`}
           disabled={disabled}
           onClick={onRemove}
-          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-50"
+          className={leverDanger}
         >
           Remove
         </button>
@@ -936,7 +874,7 @@ function RoleCard({
             disabled={disabled}
             value={role.rolename}
             onChange={(event) => onRename(event.target.value)}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Text name">
@@ -946,7 +884,7 @@ function RoleCard({
             disabled={disabled}
             value={role.textname ?? ''}
             onChange={(event) => onChange({ textname: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
         <Field label="Description">
@@ -956,7 +894,7 @@ function RoleCard({
             disabled={disabled}
             value={role.textdescription ?? ''}
             onChange={(event) => onChange({ textdescription: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${input}`}
           />
         </Field>
       </div>
@@ -981,45 +919,45 @@ function ACLEditor({
   return (
     <div className="mt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Access rules</p>
+        <h5 className="text-xs font-semibold text-enamel">Access rules</h5>
         <button
           type="button"
           aria-label={`Add rule ${roleName}`}
           disabled={disabled}
           onClick={() => onChange([...acls, { acltype: 'subscribePattern', topic: '', allow: true, priority: 0 }])}
-          className="rounded-xl border border-white/10 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+          className={leverSecondary}
         >
           Add rule
         </button>
       </div>
-      <div className="mt-3 overflow-x-auto">
+      <div className="mt-3 table-scroll">
         <table className="w-full min-w-[42rem] text-left text-sm">
           <thead>
-            <tr className="text-xs uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-3 py-2">Access</th>
-              <th className="px-3 py-2">Topic</th>
-              <th className="px-3 py-2">Allow</th>
-              <th className="px-3 py-2">Priority</th>
-              <th className="px-3 py-2" />
+            <tr className="border-b border-track-strong">
+              <th className={`${tableHead} text-left`}>Access</th>
+              <th className={`${tableHead} text-left`}>Topic</th>
+              <th className={`${tableHead} text-left`}>Allow</th>
+              <th className={`${tableHead} text-left`}>Priority</th>
+              <th className={tableHead} />
             </tr>
           </thead>
           <tbody>
             {acls.map((acl, index) => (
-              <tr key={index} className="border-b border-white/5 last:border-0 align-top">
-                <td className="px-3 py-2">
+              <tr key={index} className={`${tableRow} align-top`}>
+                <td className="py-2 pr-3">
                   <select
                     aria-label={`Access type ${roleName} ${index + 1}`}
                     disabled={disabled}
                     value={acl.acltype}
                     onChange={(event) => onChange(acls.map((entry, i) => (i === index ? { ...entry, acltype: event.target.value as DynSecACL['acltype'] } : entry)))}
-                    className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                    className={select}
                   >
                     {dynSecACLTypes.map((type) => (
                       <option key={type} value={type}>{type}</option>
                     ))}
                   </select>
                 </td>
-                <td className="px-3 py-2">
+                <td className="py-2 pr-3">
                   <input
                     aria-label={`Topic ${roleName} ${index + 1}`}
                     type="text"
@@ -1027,38 +965,38 @@ function ACLEditor({
                     placeholder="sensors/#"
                     value={acl.topic}
                     onChange={(event) => onChange(acls.map((entry, i) => (i === index ? { ...entry, topic: event.target.value } : entry)))}
-                    className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                    className={`w-full font-mono ${input}`}
                   />
                 </td>
-                <td className="px-3 py-2">
+                <td className="py-2 pr-3">
                   <select
                     aria-label={`Allow ${roleName} ${index + 1}`}
                     disabled={disabled}
                     value={acl.allow ? 'true' : 'false'}
                     onChange={(event) => onChange(acls.map((entry, i) => (i === index ? { ...entry, allow: event.target.value === 'true' } : entry)))}
-                    className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                    className={select}
                   >
                     <option value="true">allow</option>
                     <option value="false">deny</option>
                   </select>
                 </td>
-                <td className="px-3 py-2">
+                <td className="py-2 pr-3">
                   <input
                     aria-label={`Priority ${roleName} ${index + 1}`}
                     type="number"
                     disabled={disabled}
                     value={acl.priority}
                     onChange={(event) => onChange(acls.map((entry, i) => (i === index ? { ...entry, priority: Number(event.target.value) } : entry)))}
-                    className="w-24 rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                    className={`w-24 font-mono ${input}`}
                   />
                 </td>
-                <td className="px-3 py-2">
+                <td className="py-2 pr-3">
                   <button
                     type="button"
                     aria-label={`Remove rule ${roleName} ${index + 1}`}
                     disabled={disabled}
                     onClick={() => onChange(acls.filter((_, i) => i !== index))}
-                    className="text-xs text-rose-200 disabled:opacity-50"
+                    className={leverDanger}
                   >
                     Remove
                   </button>
@@ -1067,7 +1005,7 @@ function ACLEditor({
             ))}
             {acls.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-sm text-slate-400">This role grants nothing.</td>
+                <td colSpan={5} className={`py-4 ${bodyText}`}>This role grants nothing.</td>
               </tr>
             ) : null}
           </tbody>
@@ -1096,18 +1034,18 @@ function RefEditor({
   return (
     <div className="mt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+        <h5 className="text-xs font-semibold text-enamel">{label}</h5>
         <button
           type="button"
           aria-label={`Add ${label.toLowerCase()} reference`}
           disabled={disabled}
           onClick={() => onChange([...items, { name: options[0] ?? '', priority: 0 }])}
-          className="rounded-xl border border-white/10 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+          className={leverSecondary}
         >
           Add {label.toLowerCase().replace(/s$/, '')}
         </button>
       </div>
-      {items.length === 0 ? <p className="mt-2 text-xs text-slate-500">No {label.toLowerCase()}.</p> : null}
+      {items.length === 0 ? <p className={`mt-2 ${fieldHint}`}>No {label.toLowerCase()}.</p> : null}
       <div className="mt-2 space-y-2">
         {items.map((item, index) => {
           const names = item.name && !options.includes(item.name) ? [item.name, ...options] : options
@@ -1118,7 +1056,7 @@ function RefEditor({
                 disabled={disabled}
                 value={item.name}
                 onChange={(event) => onChange(items.map((entry, i) => (i === index ? { ...entry, name: event.target.value } : entry)))}
-                className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                className={select}
               >
                 {names.length === 0 ? <option value="">none</option> : null}
                 {names.map((name) => (
@@ -1131,14 +1069,14 @@ function RefEditor({
                 disabled={disabled}
                 value={item.priority}
                 onChange={(event) => onChange(items.map((entry, i) => (i === index ? { ...entry, priority: Number(event.target.value) } : entry)))}
-                className="w-24 rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                className={`w-24 font-mono ${input}`}
               />
               <button
                 type="button"
                 aria-label={`Remove ${ariaPrefix} ${index + 1}`}
                 disabled={disabled}
                 onClick={() => onChange(items.filter((_, i) => i !== index))}
-                className="text-xs text-rose-200 disabled:opacity-50"
+                className={leverDanger}
               >
                 Remove
               </button>
@@ -1162,9 +1100,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</span>
-      <span className="mt-1 block">{children}</span>
-      {hint ? <span className="mt-1 block text-xs text-slate-500">{hint}</span> : null}
+      <span className={fieldLabel}>{label}</span>
+      <span className="mt-2 block">{children}</span>
+      {hint ? <span className={`mt-1 block ${fieldHint}`}>{hint}</span> : null}
     </label>
   )
 }
@@ -1184,7 +1122,7 @@ function Toggle({
   onChange: (checked: boolean) => void
 }) {
   return (
-    <label className="flex items-center gap-2 text-xs text-slate-300">
+    <label className="flex items-center gap-2 text-sm text-enamel">
       <input
         type="checkbox"
         aria-label={ariaLabel}

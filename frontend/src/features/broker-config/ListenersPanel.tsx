@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react'
 import { useListeners } from './useListeners'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
-import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Section } from '../ui/primitives'
+import { bodyText, codeBlock, fieldHint, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
+import { DraftState, Findings } from './panelParts'
 import { useCertificateProfiles } from './useCertificates'
 import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerIssue, ListenerSpec } from './types'
@@ -112,43 +115,42 @@ export default function ListenersPanel({
   const listenerIssues = (id: string): ListenerIssue[] => blockingIssues.filter((issue) => issue.listener_id === id)
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT listeners</p>
-            <p className="mt-1 text-sm text-slate-300">Preview listener configuration before applying the broker restart.</p>
-            <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
-          </div>
-          <div className="flex gap-2">
-            <button type="button" onClick={addListener} disabled={isLoading || isApplying} className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 disabled:opacity-50">Add listener</button>
+    <section className="mt-8 space-y-10">
+      <Section
+        title="MQTT listeners"
+        description="Preview listener configuration before applying the broker restart."
+        aside={
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={addListener} disabled={isLoading || isApplying} className={leverSecondary}>Add listener</button>
             <button
               type="button"
               onClick={handlePreview}
               disabled={isLoading || isApplying || validation.issues.length > 0}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+              className={leverSecondary}
             >
               Preview
             </button>
           </div>
-        </div>
+        }
+      >
+        <DraftState dirty={dirty} />
 
-        {previewError ? <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{previewError}</div> : null}
-        {applyError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div> : null}
-        {applyResult?.applied ? <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[deploymentLamp('applied')]} ${lampText[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
+        {previewError ? <div className={`mt-5 ${notice.failed}`}>{previewError}</div> : null}
+        {applyError ? <div className={`mt-5 ${notice.failed}`}>{applyError}</div> : null}
+        {applyResult?.applied ? <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
 
-        <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/40">
+        <div className="mt-5 table-scroll border-y border-track-strong">
           {isLoading ? (
-            <p className="p-5 text-sm text-slate-400">Loading listeners…</p>
+            <p className={`py-6 ${bodyText}`}>Loading listeners…</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/10">
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Port</th>
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Bind</th>
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Protocols</th>
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">TLS</th>
-                  <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+                <tr className="border-b border-track-strong">
+                  <th className={`${tableHead} text-left`}>Port</th>
+                  <th className={`${tableHead} text-left`}>Bind</th>
+                  <th className={`${tableHead} text-left`}>Protocols</th>
+                  <th className={`${tableHead} text-left`}>TLS</th>
+                  <th className={`${tableHead} text-left`}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -156,26 +158,26 @@ export default function ListenersPanel({
                   const rowIssues = listenerIssues(listener.ID)
                   const conflicts = composeConflicts[listener.ID] ?? []
                   return (
-                    <tr key={listener.ID} className="border-b border-white/5 last:border-0 align-top">
-                      <td className="px-4 py-3 font-mono text-slate-200">
-                        <input aria-label={`Port ${listener.ID}`} disabled={isApplying} type="text" inputMode="numeric" value={listener.Port} onChange={(event) => updateListener(listener.ID, { Port: event.target.value === '' ? 0 : Number(event.target.value) })} className="w-24 rounded bg-slate-800 px-2 py-1" />
+                    <tr key={listener.ID} className={`${tableRow} align-top`}>
+                      <td className="py-3 pr-4">
+                        <input aria-label={`Port ${listener.ID}`} disabled={isApplying} type="text" inputMode="numeric" value={listener.Port} onChange={(event) => updateListener(listener.ID, { Port: event.target.value === '' ? 0 : Number(event.target.value) })} className={`w-24 font-mono ${input}`} />
                         <span className="sr-only">{listener.Port}</span>
-                        {rowIssues.filter((issue) => issue.kind === 'port_range').map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
-                        {conflicts.map((port) => <span key={port} className="mt-1 block text-xs font-sans text-amber-200">Port {port} conflicts with a Compose host port</span>)}
+                        {rowIssues.filter((issue) => issue.kind === 'port_range').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
+                        {conflicts.map((port) => <span key={port} className="mt-1 block text-xs text-lamp">Port {port} conflicts with a Compose host port</span>)}
                       </td>
-                      <td className="px-4 py-3 font-mono text-cyan-100">
-                        <input aria-label={`Bind ${listener.ID}`} disabled={isApplying} value={listener.Bind} onChange={(event) => updateListener(listener.ID, { Bind: event.target.value })} className="w-36 rounded bg-slate-800 px-2 py-1" />
+                      <td className="py-3 pr-4">
+                        <input aria-label={`Bind ${listener.ID}`} disabled={isApplying} value={listener.Bind} onChange={(event) => updateListener(listener.ID, { Bind: event.target.value })} className={`w-36 font-mono ${input}`} />
                         <span className="sr-only">{listener.Bind}</span>
-                        {rowIssues.filter((issue) => issue.kind === 'bind').map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
+                        {rowIssues.filter((issue) => issue.kind === 'bind').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
                       </td>
-                      <td className="px-4 py-3 text-slate-300">
-                        <input aria-label={`Protocols ${listener.ID}`} disabled={isApplying} value={listener.Protocols.join(', ')} onChange={(event) => updateListener(listener.ID, { Protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className="w-36 rounded bg-slate-800 px-2 py-1" />
+                      <td className="py-3 pr-4">
+                        <input aria-label={`Protocols ${listener.ID}`} disabled={isApplying} value={listener.Protocols.join(', ')} onChange={(event) => updateListener(listener.ID, { Protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className={`w-36 font-mono ${input}`} />
                         <span className="sr-only">{listener.Protocols.join(', ')}</span>
-                        {rowIssues.filter((issue) => issue.kind.startsWith('protocols')).map((issue) => <p key={issue.message} className="mt-1 text-xs text-rose-200">{issue.message}</p>)}
+                        {rowIssues.filter((issue) => issue.kind.startsWith('protocols')).map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
                       </td>
-                      <td className="px-4 py-3 text-slate-300">
+                      <td className="py-3 pr-4">
                         {certificatesDisabled ? (
-                          <p className="text-xs text-slate-400">Certificate profiles are unavailable.</p>
+                          <p className={fieldHint}>Certificate profiles are unavailable.</p>
                         ) : (
                           <>
                             <select
@@ -183,13 +185,13 @@ export default function ListenersPanel({
                               disabled={isApplying}
                               value={listener.tls_profile ?? ''}
                               onChange={(event) => updateListenerProfile(listener.ID, event.target.value)}
-                              className="w-40 rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                              className={`w-44 ${select}`}
                             >
                               <option value="">None (plain MQTT)</option>
                               {certificateProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}
                             </select>
                             {listener.tls_profile ? (
-                              <label className="mt-2 flex items-center gap-2 text-xs text-slate-300">
+                              <label className="mt-2 flex items-center gap-2 text-xs text-enamel">
                                 <input
                                   aria-label={`Require client certificate ${listener.ID}`}
                                   type="checkbox"
@@ -203,40 +205,34 @@ export default function ListenersPanel({
                           </>
                         )}
                       </td>
-                      <td className="px-4 py-3"><button type="button" aria-label={`Remove listener ${listener.ID}`} disabled={isApplying} onClick={() => removeListener(listener.ID)} className="text-rose-200">Remove</button></td>
+                      <td className="py-3"><button type="button" aria-label={`Remove listener ${listener.ID}`} disabled={isApplying} onClick={() => removeListener(listener.ID)} className={leverDanger}>Remove</button></td>
                     </tr>
                   )
                 })}
-                {specs.length === 0 ? <tr><td colSpan={5} className="p-5 text-sm text-slate-400">No listeners configured.</td></tr> : null}
+                {specs.length === 0 ? <tr><td colSpan={5} className={`py-6 ${bodyText}`}>No listeners configured.</td></tr> : null}
               </tbody>
             </table>
           )}
         </div>
 
         {blockingIssues.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Issues</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-100">
-              {blockingIssues.map((issue, index) => <li key={`${issue.kind}-${issue.listener_id ?? index}`}>{issue.message}</li>)}
-            </ul>
-          </div>
+          <Findings tone="failed" title="Issues">
+            {blockingIssues.map((issue, index) => <li key={`${issue.kind}-${issue.listener_id ?? index}`}>{issue.message}</li>)}
+          </Findings>
         ) : null}
         {warnings.length > 0 || Object.keys(composeConflicts).length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {warnings.map((warning, index) => <li key={`${warning.kind}-${warning.listener_id ?? index}`}>{warning.message}</li>)}
-              {Object.entries(composeConflicts).flatMap(([id, ports]) => ports.map((port) => <li key={`${id}-${port}`}>Listener {id} port {port} conflicts with a Compose host port</li>))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Warnings">
+            {warnings.map((warning, index) => <li key={`${warning.kind}-${warning.listener_id ?? index}`}>{warning.message}</li>)}
+            {Object.entries(composeConflicts).flatMap(([id, ports]) => ports.map((port) => <li key={`${id}-${port}`}>Listener {id} port {port} conflicts with a Compose host port</li>))}
+          </Findings>
         ) : null}
 
         <div className="mt-5 space-y-4">
           {preview ? (
             <>
-              <p className="font-mono text-sm text-cyan-100">{preview.revision_id}</p>
+              <p className="font-mono text-sm text-enamel-bright">{preview.revision_id}</p>
               {preview.needs_restart ? (
-                <label className="flex items-center gap-2 text-sm text-slate-200">
+                <label className="flex items-center gap-2 text-sm text-enamel">
                   <input type="checkbox" disabled={isApplying} checked={confirmRestart} onChange={(event) => setConfirmRestart(event.target.checked)} />
                   Confirm restart
                 </label>
@@ -248,25 +244,25 @@ export default function ListenersPanel({
             type="button"
             onClick={() => { void handleApply() }}
             disabled={!applyEnabled}
-            className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+            className={leverPrimary}
           >
             Apply (restart required)
           </button>
-          {preview && canApply && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+          {preview && canApply && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
           {preview ? (
             <>
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Diff</p>
-                <pre className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5 text-slate-200">{preview.diff.split('\n').map((line, index) => <span key={index} className="block">{line || ' '}</span>)}</pre>
+                <h4 className="mb-2 text-sm font-semibold text-enamel-bright">Diff</h4>
+                <DiffBlock content={preview.diff} />
               </div>
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Rendered configuration</p>
-                <pre className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5 text-slate-200">{preview.rendered.split('\n').map((line, index) => <span key={index} className="block">{line || ' '}</span>)}</pre>
+                <h4 className="mb-2 text-sm font-semibold text-enamel-bright">Rendered configuration</h4>
+                <pre className={`max-h-64 ${codeBlock}`}>{preview.rendered.split('\n').map((line, index) => <span key={index} className="block">{line || ' '}</span>)}</pre>
               </div>
             </>
           ) : null}
         </div>
-      </div>
+      </Section>
     </section>
   )
 }

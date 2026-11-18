@@ -1,14 +1,86 @@
 @import "tailwindcss";
 
+/* Operate surface of the signal box (DESIGN.md "Operate surface (app)").
+   Values are the site's (site/src/styles/global.css). Contrast (WCAG 2.x)
+   on frame / frame-raised / frame-high: enamel 12.4/11.6/10.4, enamel-soft
+   9.0/8.3/7.5, enamel-muted 6.2/5.8/5.2, lamp 8.6/7.9/7.2, proceed
+   5.5/5.1/4.6, danger-text 6.1/5.6/5.1. danger (3.5) and lever-blue (2.9)
+   are lamp/fill colours, never text. track-bright (3.9) is the only
+   hairline that meets 3:1 for a control's boundary. */
 @theme {
-  --font-sans: "Manrope Variable", ui-sans-serif, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --color-frame: #111214;
+  --color-frame-raised: #191a1d;
+  --color-frame-high: #212327;
+  --color-enamel-bright: #f2ede2;
+  --color-enamel: #d8d2c4;
+  --color-enamel-soft: #b9b3a6;
+  --color-enamel-muted: #9a9488;
+  /* lamp = in progress, caution, rolled back; proceed = verified only;
+     danger = failed only (danger-text for text). */
+  --color-lamp: #e0a526;
+  --color-proceed: #2f9e5b;
+  --color-danger: #c8341f;
+  --color-danger-text: #ec6b55;
+  --color-lever-blue: #1f5fa8;
+  --color-track: rgb(216 210 196 / 0.14);
+  --color-track-strong: rgb(216 210 196 / 0.28);
+  --color-track-bright: rgb(216 210 196 / 0.5);
+  --color-status-verified: var(--color-proceed);
+  --color-status-rolled-back: var(--color-lamp);
+  --color-status-failed: var(--color-danger);
+  --color-status-failed-text: var(--color-danger-text);
+
+  --font-display: "Big Shoulders Variable", "Arial Narrow", ui-sans-serif,
+    sans-serif;
+  --font-sans: "Overpass Middle Dot", "Overpass Variable", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: "Overpass Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
+    Monaco, Consolas, monospace;
+
+  --radius-plate: 2px;
+  --radius-lever: 3px;
+}
+
+/* Overpass draws the middle dot (U+00B7) with no advance width, so the
+   " · " separator collapses onto the next word ("clients ·devices"). The
+   sans stack takes that one glyph from Overpass Mono, which spaces it. */
+@font-face {
+  font-family: "Overpass Middle Dot";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/overpass-mono/files/overpass-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+00B7;
+}
+
+/* A wide table scrolls inside its own frame. Frame-coloured covers travel
+   with the content (local) and hide the track-strong edge shades (scroll)
+   at the ends, so a shade shows only on a side that holds more columns.
+   Relative so absolute cells content (sr-only labels) scrolls with it. */
+@utility table-scroll {
+  position: relative;
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--color-frame) 40%, transparent) left / 2rem
+      100% no-repeat local,
+    linear-gradient(to left, var(--color-frame) 40%, transparent) right / 2rem
+      100% no-repeat local,
+    linear-gradient(to right, var(--color-track-strong), transparent) left /
+      1rem 100% no-repeat scroll,
+    linear-gradient(to left, var(--color-track-strong), transparent) right /
+      1rem 100% no-repeat scroll;
 }
 
 @layer base {
   :root {
-    color: #e2e8f0;
-    background-color: #020617;
+    color: var(--color-enamel);
+    background-color: var(--color-frame);
+    caret-color: var(--color-lamp);
+    /* Native controls (checkboxes, select menus, file pickers) on the dark frame. */
+    color-scheme: dark;
+    accent-color: var(--color-enamel);
+    scrollbar-color: var(--color-enamel-muted) var(--color-frame);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -17,6 +89,13 @@
 
   * {
     box-sizing: border-box;
+  }
+
+  /* Hairline by default: a bare `border` draws the track, not currentColor. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-track);
   }
 
   html {
@@ -32,6 +111,35 @@
 
   button {
     font: inherit;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-enamel-bright);
+    outline-offset: 3px;
+  }
+
+  /* Mono is for data: no "ffi"/"fl" ligatures squeezing topics and IDs. */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-variant-ligatures: none;
+  }
+
+  ::selection {
+    background: var(--color-lamp);
+    color: var(--color-frame);
   }
 
   #root {

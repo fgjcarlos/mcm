@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
+import { Lamp, Plate } from '../ui/primitives'
+import { bodyText, codeBlock, fieldHint, fieldLabel, leverDanger, leverPrimary, leverSecondary, input, notice, select, tableHead, tableRow } from '../ui/styles'
 
 type AdminUser = {
   id: number
@@ -14,22 +16,6 @@ type AdminUser = {
 
 type RoleOption = 'viewer' | 'auditor' | 'operator' | 'admin'
 const ROLES: RoleOption[] = ['viewer', 'auditor', 'operator', 'admin']
-
-const ROLE_COLORS: Record<string, string> = {
-  admin:    'bg-violet-400/10 text-violet-200',
-  operator: 'bg-cyan-400/10 text-cyan-200',
-  auditor:  'bg-amber-400/10 text-amber-200',
-  viewer:   'bg-slate-400/10 text-slate-300',
-}
-
-function roleBadge(role: string) {
-  const cls = ROLE_COLORS[role] ?? 'bg-slate-400/10 text-slate-300'
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${cls}`}>
-      {role}
-    </span>
-  )
-}
 
 function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogout: () => void; role?: string }) {
   const canWrite = can(role, 'adminUser.write')
@@ -216,83 +202,65 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
 
   return (
     <section className="mt-8 space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-violet-300">Admin users</p>
-          <p className="mt-1 text-sm text-slate-300">{users.length} operator{users.length !== 1 ? 's' : ''} configured</p>
+          <h3 className="text-lg font-semibold text-enamel-bright">Admin users</h3>
+          <p className={`mt-1 ${bodyText}`}>{users.length} operator{users.length !== 1 ? 's' : ''} configured</p>
         </div>
         <button
           type="button"
           onClick={() => { setShowCreate(true); setCreateError(''); setCreateUsername(''); setCreateRole('operator') }}
           disabled={!canWrite}
           title={!canWrite ? permissionTitle('adminUser.write') : undefined}
-          className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-400 disabled:opacity-50"
+          className={leverSecondary}
         >
           Add User
         </button>
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+        <div className={notice.failed}>{error}</div>
       ) : null}
 
       {createdPassword ? (
-        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">User created — save this password</p>
-          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
-          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{createdPassword.password}</pre>
-          <button type="button" onClick={() => setCreatedPassword(null)}
-            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">
-            Dismiss
-          </button>
-        </div>
+        <PasswordNotice title="User created — save this password" password={createdPassword.password} onDismiss={() => setCreatedPassword(null)} />
       ) : null}
 
       {resetUserId !== null && resetPassword !== null ? (
-        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Password reset — save this password</p>
-          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
-          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{resetPassword}</pre>
-          <button type="button" onClick={() => { setResetUserId(null); setResetPassword(null) }}
-            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white">
-            Dismiss
-          </button>
-        </div>
+        <PasswordNotice title="Password reset — save this password" password={resetPassword} onDismiss={() => { setResetUserId(null); setResetPassword(null) }} />
       ) : null}
 
       {showCreate ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-violet-300">New admin user</p>
-          <form onSubmit={(e) => { void handleCreate(e) }} className="mt-4 space-y-4">
+        <div className="max-w-2xl border-y border-track-strong py-6">
+          <h4 className="text-base font-semibold text-enamel-bright">New admin user</h4>
+          <form onSubmit={(e) => { void handleCreate(e) }} className="mt-4 space-y-5">
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-violet-300">Username</span>
+              <span className={fieldLabel}>Username</span>
               <input
                 type="text" required
                 value={createUsername} onChange={(e) => setCreateUsername(e.target.value)}
                 placeholder="alice"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-violet-300/60 focus:ring-2 focus:ring-violet-300/30"
+                className={`mt-2 w-full font-mono ${input}`}
               />
-              <span className="mt-1 block text-xs text-slate-400">A secure password will be generated automatically.</span>
+              <span className={`mt-1 block ${fieldHint}`}>A secure password will be generated automatically.</span>
             </label>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-violet-300">Role</span>
+              <span className={fieldLabel}>Role</span>
               <select
                 value={createRole} onChange={(e) => setCreateRole(e.target.value as RoleOption)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-violet-300/60 focus:ring-2 focus:ring-violet-300/30"
+                className={`mt-2 w-full ${select}`}
               >
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
             {createError ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{createError}</div>
+              <div className={notice.failed}>{createError}</div>
             ) : null}
-            <div className="flex gap-3">
-              <button type="submit" disabled={createSubmitting}
-                className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-400 disabled:opacity-50">
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="submit" disabled={createSubmitting} className={leverPrimary}>
                 {createSubmitting ? 'Creating…' : 'Create user'}
               </button>
-              <button type="button" onClick={() => setShowCreate(false)}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white">
+              <button type="button" onClick={() => setShowCreate(false)} className={leverSecondary}>
                 Cancel
               </button>
             </div>
@@ -301,28 +269,26 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
       ) : null}
 
       {editUserId !== null ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-violet-300">Edit role</p>
-          <form onSubmit={(e) => { void handleEditRole(e) }} className="mt-4 space-y-4">
+        <div className="max-w-2xl border-y border-track-strong py-6">
+          <h4 className="text-base font-semibold text-enamel-bright">Edit role</h4>
+          <form onSubmit={(e) => { void handleEditRole(e) }} className="mt-4 space-y-5">
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-violet-300">Role</span>
+              <span className={fieldLabel}>Role</span>
               <select
                 value={editRole} onChange={(e) => setEditRole(e.target.value as RoleOption)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-violet-300/60 focus:ring-2 focus:ring-violet-300/30"
+                className={`mt-2 w-full ${select}`}
               >
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </label>
             {editError ? (
-              <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{editError}</div>
+              <div className={notice.failed}>{editError}</div>
             ) : null}
-            <div className="flex gap-3">
-              <button type="submit" disabled={editSubmitting}
-                className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-400 disabled:opacity-50">
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="submit" disabled={editSubmitting} className={leverPrimary}>
                 {editSubmitting ? 'Saving…' : 'Save role'}
               </button>
-              <button type="button" onClick={() => setEditUserId(null)}
-                className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white">
+              <button type="button" onClick={() => setEditUserId(null)} className={leverSecondary}>
                 Cancel
               </button>
             </div>
@@ -330,74 +296,70 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60">
+      <div className="table-scroll border-y border-track-strong">
         {loading ? (
-          <p className="p-6 text-sm text-slate-400">Loading users…</p>
+          <p className={`py-6 ${bodyText}`}>Loading users…</p>
         ) : users.length === 0 ? (
-          <p className="p-6 text-sm text-slate-400">No admin users found.</p>
+          <p className={`py-6 ${bodyText}`}>No admin users found.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[48rem] text-sm">
             <thead>
-              <tr className="border-b border-white/10">
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Username</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Role</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Status</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">MFA</th>
-                <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+              <tr className="border-b border-track-strong">
+                <th className={`${tableHead} text-left`}>Username</th>
+                <th className={`${tableHead} text-left`}>Role</th>
+                <th className={`${tableHead} text-left`}>Status</th>
+                <th className={`${tableHead} text-left`}>MFA</th>
+                <th className={`${tableHead} pr-0 text-right`}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-sm text-slate-200">{user.username}</td>
-                  <td className="px-4 py-3">{roleBadge(user.role)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${user.disabled ? 'bg-rose-400/10 text-rose-200' : 'bg-emerald-400/10 text-emerald-200'}`}>
-                      {user.disabled ? 'disabled' : 'active'}
-                    </span>
+                <tr key={user.id} className={tableRow}>
+                  <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{user.username}</td>
+                  <td className="py-3 pr-4"><Plate>{user.role}</Plate></td>
+                  <td className="py-3 pr-4">
+                    <Lamp tone={user.disabled ? 'off' : 'neutral'}>{user.disabled ? 'disabled' : 'active'}</Lamp>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs ${user.mfa_enabled ? 'text-emerald-300' : 'text-slate-500'}`}>
+                  <td className="py-3 pr-4">
+                    <span className={`font-mono text-xs ${user.mfa_enabled ? 'text-enamel-bright' : 'text-enamel-muted'}`}>
                       {user.mfa_enabled ? '✓ on' : '—'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="py-3 text-right">
                     {deleteConfirmId === user.id ? (
                       <span className="inline-flex items-center gap-2">
-                        <span className="text-xs text-slate-300">Delete?</span>
-                        <button type="button" onClick={() => { void handleDelete(user.id) }}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30">
+                        <span className="text-xs text-enamel-soft">Delete?</span>
+                        <button type="button" onClick={() => { void handleDelete(user.id) }} className={leverDanger}>
                           Confirm
                         </button>
-                        <button type="button" onClick={() => setDeleteConfirmId(null)}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20">
+                        <button type="button" onClick={() => setDeleteConfirmId(null)} className={leverSecondary}>
                           Cancel
                         </button>
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex flex-wrap items-center justify-end gap-2">
                         <button type="button" onClick={() => openEdit(user)}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('adminUser.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50">
+                          className={leverSecondary}>
                           Edit role
                         </button>
                         <button type="button" onClick={() => { void handleToggle(user) }}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('adminUser.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50">
+                          className={leverSecondary}>
                           {user.disabled ? 'Enable' : 'Disable'}
                         </button>
                         <button type="button" onClick={() => { void handleResetPassword(user.id) }}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('adminUser.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50">
+                          className={leverSecondary}>
                           Reset password
                         </button>
                         <button type="button" onClick={() => setDeleteConfirmId(user.id)}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('adminUser.write') : undefined}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30 disabled:opacity-50">
+                          className={leverDanger}>
                           Delete
                         </button>
                       </span>
@@ -410,6 +372,20 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         )}
       </div>
     </section>
+  )
+}
+
+// A one-time password: the caution notice that asks the operator to save it (never green: nothing was verified).
+function PasswordNotice({ title, password, onDismiss }: { title: string; password: string; onDismiss: () => void }) {
+  return (
+    <div className={notice.caution}>
+      <p className="font-semibold text-lamp">{title}</p>
+      <p className="mt-1">This password will not be shown again.</p>
+      <pre className={`mt-3 ${codeBlock}`}>{password}</pre>
+      <button type="button" onClick={onDismiss} className={`mt-3 ${leverSecondary}`}>
+        Dismiss
+      </button>
+    </div>
   )
 }
 

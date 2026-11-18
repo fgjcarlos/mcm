@@ -385,3 +385,29 @@ Motion and 3D are allowed freely, under these conditions, all of which the site 
 - **Don't** use mono for prose, or Big Shoulders capitals for running text.
 - **Don't** add drop shadows or hard offset shadows. Depth is the bevel on plates and the light of lamps.
 - **Don't** use the Eclipse or Mosquitto logos or their motifs. The mark is MCM's own.
+
+## Operate surface (app)
+
+The app (`frontend/src`) is the same signal box seen from the operator's chair: the site's palette, faces and rules, set for a task instead of a pitch. Source of truth: the `@theme` block in `frontend/src/index.css`, which repeats the site's values (`site/src/styles/global.css`) and adds two radius tokens.
+
+### What carries over
+
+- **Ground and text.** `frame` is the page ground, `frame-raised` and `frame-high` are the two raised steps (side panels, the current nav item, plates, inputs). Text is `enamel` (body), `enamel-bright` (headings, values, the current item), `enamel-soft` (descriptions), `enamel-muted` (labels, notes). All of them pass AA on all three grounds; the lowest pair is `enamel-muted` on `frame-high` at 5.2:1.
+- **Lamps.** `lamp` (route amber) for in progress, caution, pending and rolled back. `proceed` green only for a verified activation. `danger` red only for a failed apply, probe or request, with `danger-text` for any red text. `lever-blue` only as a plate fill, never text.
+- **Hairlines, not cards.** `track` separates regions (a bare `border` draws it), `track-strong` underlines a page title, `track-bright` is the boundary of a control (3.9:1, the only hairline that meets 3:1). No glass, blur, gradients, drop shadows or card-in-card.
+- **Faces.** Overpass for everything that reads, labels included. Overpass Mono for topics, client IDs, usernames, hashes, revisions, diffs, code, counts and small controls. Big Shoulders only for the page title (at most 2.25rem), the primary lever and plates.
+- **Shapes.** `rounded-plate` (2px) for plates, inputs and small controls; `rounded-lever` (3px) for levers; circles only for lamps.
+
+### What changes for Operate
+
+- **Page title.** One Big Shoulders 700 uppercase title per view (1.875rem, 2.25rem from 40rem), a one-line description in `enamel-soft`, then the section rule: a 3px enamel set segment on a 1px `track-strong` hairline. Nothing sits above the title.
+- **Shell.** A left rail (18rem, `track` hairline on its right) holds the lockup, the Alpha plate, the broker lamp, at most five nav groups and the signed-in operator. Below 64rem it folds behind a Menu control so the page title comes first. The current item is lit: a small enamel lamp, semibold `enamel-bright` text on `frame-high`.
+- **Live counts.** The Status / Topics / Logs strip belongs to the dashboard home only.
+- **Primary lever.** Enamel face, frame text, Big Shoulders 700 1rem +0.14em capitals, 48px, lever bevel that drops when pressed. One per view. Secondary controls are small controls: `track-bright` outline, Overpass Mono 0.75rem capitals, 36px.
+- **Disabled controls stay.** Unlike the site, the app shows controls that cannot act, and says why in visible text next to them, not only in a tooltip.
+- **Every lamp has its word.** Broker connected is an enamel lamp plus "connected", disconnected an amber lamp plus "disconnected"; connected is never green, because nothing was verified.
+- **Focus.** The global 2px `enamel-bright` ring, offset 3px, on every control. Selection and caret are amber.
+
+### What stays on the site
+
+The Three.js scene and route story, display type above 2.25rem, marketing spacing (7–9rem sections), hero layouts, eyebrow labels, and Big Shoulders on running text, labels or data.

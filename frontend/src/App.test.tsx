@@ -354,7 +354,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('link', { name: /LogsOperations/i }))
+    await user.click(screen.getByRole('link', { name: /^Logs$/ }))
     MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'broker_log', source: 'mcm', severity: 'info', message: 'MCM line', observed_at: '2026-01-01T00:00:00Z' }) }))
     MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'broker_log_entry', source: 'mosquitto_log', severity: 'warning', message: 'Broker line', observed_at: '2026-01-01T00:00:01Z' }) }))
     expect(await screen.findByText('MCM line')).toBeInTheDocument()
@@ -370,7 +370,7 @@ describe('App', () => {
       render(<App />)
       await screen.findByText('Signed in')
       const user = userEvent.setup()
-      await user.click(screen.getByRole('link', { name: /LogsOperations/i }))
+      await user.click(screen.getByRole('link', { name: /^Logs$/ }))
       return user
     }
 
@@ -1018,6 +1018,21 @@ describe('App', () => {
     expect(window.location.pathname).toBe('/topics')
     expect(screen.getByRole('link', { name: /topics/i })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: /dashboard/i })).toHaveAttribute('href', '/dashboard')
+  })
+
+  it('shows the Status, Topics and Logs counts on the dashboard home only', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'metrics-token')
+    window.history.replaceState(null, '', '/dashboard')
+    vi.stubGlobal('fetch', installFetchMock({ ...authenticatedRoutes('metrics-token') }))
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Live broker snapshot' })
+    for (const label of ['Status', 'Topics', 'Logs']) expect(screen.getByText(label, { selector: 'dt' })).toBeInTheDocument()
+
+    await userEvent.setup().click(screen.getByRole('link', { name: /topics/i }))
+    await screen.findByRole('heading', { name: 'Topic explorer' })
+    for (const label of ['Status', 'Topics', 'Logs']) expect(screen.queryByText(label, { selector: 'dt' })).not.toBeInTheDocument()
   })
 
   it('navigates across ACL and deploy panels in an authenticated session', async () => {
@@ -1749,9 +1764,10 @@ describe('App', () => {
     const result = await screen.findByRole('status', { name: 'Apply result' })
     await waitFor(() => expect(result).toHaveTextContent('Applied — activation not proven'))
     expect(screen.getByRole('listitem', { name: 'Result: caution' })).toBeInTheDocument()
+    // Both carry the route-amber token, never the verified green one.
     for (const label of [result, within(screen.getByRole('table')).getByText('applied')]) {
-      expect(label.className).toMatch(/amber/)
-      expect(label.className).not.toMatch(/emerald/)
+      expect(label).toHaveClass('text-lamp')
+      expect(label.className).not.toMatch(/proceed/)
     }
   })
 

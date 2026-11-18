@@ -156,10 +156,11 @@ describe('UserOnboardingFlow journey', () => {
     await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
 
     const label = await screen.findByText('Applied — no activation proof recorded')
-    expect(label.className).toMatch(/amber/)
-    expect(label.className).not.toMatch(/emerald/)
-    expect(label.closest('[role="status"]')?.className).toMatch(/amber/)
-    expect(label.closest('[role="status"]')?.className).not.toMatch(/emerald/)
+    // The lamp of the label is the amber lamp token (bg-lamp), never the verified green (bg-proceed).
+    expect(label.querySelector('[aria-hidden="true"]')?.className).toMatch(/\bbg-lamp\b/)
+    expect(label.querySelector('[aria-hidden="true"]')?.className).not.toMatch(/bg-proceed/)
+    expect(label.closest('[role="status"]')?.className).toMatch(/border-lamp/)
+    expect(label.closest('[role="status"]')?.className).not.toMatch(/proceed/)
     expect(screen.queryByText('Applied and verified')).not.toBeInTheDocument()
     // Written but unproven, not a failed apply.
     expect(screen.getByText(/the activation was not proven\./)).toBeInTheDocument()

@@ -5,7 +5,9 @@ import { isMFARejection, useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { ACLPermission, ACLScope } from '../acl/types'
 import ConnectionTestStep from './ConnectionTestStep'
-import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Lamp } from '../ui/primitives'
+import { bodyText, codeBlock, fieldHint, fieldLabel, input, leverPrimary, leverSecondary, notice, select, type LampTone } from '../ui/styles'
 
 // The integrated onboarding journey of issue #341: the MQTT user, its
 // access rule, the preview and the apply in one place.
@@ -61,6 +63,23 @@ const STEPS: { id: Stage; label: string }[] = [
   { id: 'apply', label: 'Apply' },
   { id: 'test', label: 'Test connection' },
 ]
+
+// A finished step is done, not verified: enamel, never green. The step in progress is the amber route.
+const STEP_LAMP: Record<'done' | 'current' | 'todo', { tone: LampTone; word: string }> = {
+  done: { tone: 'neutral', word: 'done' },
+  current: { tone: 'caution', word: 'in progress' },
+  todo: { tone: 'off', word: 'to do' },
+}
+
+// A failed step of the journey: a failed request, so the one red notice.
+function StepFailure({ title, message }: { title: string; message: string }) {
+  return (
+    <div role="alert" className={notice.failed}>
+      <p className="font-semibold">{title}</p>
+      <p className="mt-1">{message}</p>
+    </div>
+  )
+}
 
 // A deployment that left the configuration on disk. The activation
 // verification may still be pending for it.
@@ -284,12 +303,14 @@ export default function UserOnboardingFlow({
 
   const stepIndex = STEPS.findIndex((step) => step.id === stage)
 
+  const resultLamp = result ? deploymentLamp(result.status) : null
+
   return (
-    <section aria-label="MQTT user onboarding" className="rounded-2xl border border-cyan-300/25 bg-cyan-400/[0.04] p-6">
+    <section aria-label="MQTT user onboarding" className="border-y border-track-strong py-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT user onboarding</p>
-          <p className="mt-1 text-sm text-slate-300">
+        <div className="min-w-0">
+          <h4 className="text-base font-semibold text-enamel-bright">MQTT user onboarding</h4>
+          <p className={`mt-1 max-w-[68ch] ${bodyText}`}>
             User, access rule, preview, apply and a test with your own MQTT client in one journey. The apply still needs a recent MFA confirmation and
             verifies the activation against the live broker.
           </p>
@@ -297,41 +318,33 @@ export default function UserOnboardingFlow({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+          className={leverSecondary}
         >
           Close journey
         </button>
       </div>
 
-      <ol className="mt-5 flex flex-wrap items-center gap-2 text-xs">
+      <ol className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2">
         {STEPS.map((step, index) => {
           const state = index < stepIndex ? 'done' : index === stepIndex ? 'current' : 'todo'
+          const lamp = STEP_LAMP[state]
           return (
-            <li key={step.id} className="flex items-center gap-2">
-              <span
-                aria-current={state === 'current' ? 'step' : undefined}
-                className={`rounded-full px-3 py-1 font-semibold uppercase tracking-[0.18em] ${
-                  state === 'done'
-                    ? 'bg-emerald-400/10 text-emerald-200'
-                    : state === 'current'
-                      ? 'bg-cyan-400/15 text-cyan-100'
-                      : 'bg-white/5 text-slate-400'
-                }`}
-              >
-                {index + 1}. {step.label}
+            <li key={step.id}>
+              <span aria-current={state === 'current' ? 'step' : undefined} className="inline-flex items-baseline gap-2">
+                <Lamp tone={lamp.tone}>{index + 1}. {step.label}</Lamp>
+                <span className={`font-mono text-xs ${state === 'current' ? 'text-lamp' : 'text-enamel-muted'}`}>{lamp.word}</span>
               </span>
-              {index < STEPS.length - 1 ? <span className="text-slate-600">→</span> : null}
             </li>
           )
         })}
       </ol>
 
       {createdPassword ? (
-        <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">User created — save this password</p>
-          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
-          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{createdPassword}</pre>
-          <div className="mt-3 flex gap-2">
+        <div className={`mt-5 ${notice.caution}`}>
+          <p className="font-semibold text-lamp">User created — save this password</p>
+          <p className="mt-1">This password will not be shown again.</p>
+          <pre className={`mt-3 ${codeBlock}`}>{createdPassword}</pre>
+          <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
@@ -345,20 +358,20 @@ export default function UserOnboardingFlow({
                   .then(() => { setPasswordCopyFailed(false); setPasswordCopied(true) })
                   .catch(copyFailed)
               }}
-              className="rounded-xl border border-emerald-300/30 px-3 py-1.5 text-xs text-emerald-100 transition hover:border-emerald-300/60"
+              className={leverSecondary}
             >
               {passwordCopied ? 'Copied' : 'Copy password'}
             </button>
             <button
               type="button"
               onClick={() => { setCreatedPassword(''); setPasswordCopied(false); setPasswordCopyFailed(false) }}
-              className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+              className={leverSecondary}
             >
               Dismiss
             </button>
           </div>
           {passwordCopyFailed ? (
-            <p role="status" className="mt-2 text-xs text-amber-200">
+            <p role="status" className="mt-2 text-xs text-lamp">
               Copy failed: select the password and copy it by hand.
             </p>
           ) : null}
@@ -366,38 +379,33 @@ export default function UserOnboardingFlow({
       ) : null}
 
       {stage === 'user' ? (
-        <form onSubmit={handleCreateUser} className="mt-6 space-y-4">
+        <form onSubmit={handleCreateUser} className="mt-6 max-w-2xl space-y-5">
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Username</span>
+            <span className={fieldLabel}>Username</span>
             <input
               type="text"
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="device-sensor-01"
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full font-mono ${input}`}
             />
-            <span className="mt-1 block text-xs text-slate-400">A secure password will be generated automatically.</span>
+            <span className={`mt-1 block ${fieldHint}`}>A secure password will be generated automatically.</span>
           </label>
-          {userError ? (
-            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              <p className="font-semibold">User creation failed</p>
-              <p className="mt-1">{userError}</p>
-            </div>
-          ) : null}
-          <div className="flex gap-3">
+          {userError ? <StepFailure title="User creation failed" message={userError} /> : null}
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
               disabled={creatingUser || !canWriteUser}
               title={!canWriteUser ? permissionTitle('mqttUser.write') : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverPrimary}
             >
               {creatingUser ? 'Creating…' : 'Create user'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+              className={leverSecondary}
             >
               Cancel
             </button>
@@ -406,48 +414,48 @@ export default function UserOnboardingFlow({
       ) : null}
 
       {stage === 'rule' ? (
-        <form onSubmit={handleSaveRule} className="mt-6 space-y-4">
-          <p className="text-sm text-slate-300">
-            The access rule for <span className="font-mono text-cyan-100">{username}</span>. It is a normal MCM rule: the
+        <form onSubmit={handleSaveRule} className="mt-6 max-w-2xl space-y-5">
+          <p className={bodyText}>
+            The access rule for <span className="font-mono text-enamel-bright">{username}</span>. It is a normal MCM rule: the
             ACL panel lists it and the apply renders it into the Mosquitto ACL file.
           </p>
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Topic filter</span>
+            <span className={fieldLabel}>Topic filter</span>
             <input
               type="text"
               required
               value={topicFilter}
               onChange={(e) => setTopicFilter(e.target.value)}
               placeholder="sensors/# or device/+/status"
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full font-mono ${input}`}
             />
-            <span className="mt-1 block text-xs text-slate-400">MQTT wildcards: + (single level), # (multi-level, must be last)</span>
+            <span className={`mt-1 block ${fieldHint}`}>MQTT wildcards: + (single level), # (multi-level, must be last)</span>
           </label>
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Permission</span>
+            <span className={fieldLabel}>Permission</span>
             <select
               aria-label="Permission"
               value={permission}
               onChange={(e) => setPermission(e.target.value as ACLPermission)}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full ${select}`}
             >
               <option value="read">read</option>
               <option value="write">write</option>
               <option value="readwrite">readwrite</option>
               <option value="deny">deny</option>
             </select>
-            <span className="mt-1 block text-xs text-slate-400">
+            <span className={`mt-1 block ${fieldHint}`}>
               A readwrite grant on this identity is what lets the activation verification prove the new user against the
               live broker. A narrower grant is still applied, but the activation is then verified through the labelled
               managed service account.
             </span>
           </label>
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">ACL file</span>
+            <span className={fieldLabel}>ACL file</span>
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value as ACLScope)}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full ${select}`}
             >
               <option value="global">Broker-wide &mdash; the rule applies to every listener</option>
               <option value="listener">One listener &mdash; the rule applies to that listener only</option>
@@ -455,46 +463,41 @@ export default function UserOnboardingFlow({
           </label>
           {scope === 'listener' ? (
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener</span>
+              <span className={fieldLabel}>Listener</span>
               <input
                 type="text"
                 required
                 value={listenerID}
                 onChange={(e) => setListenerID(e.target.value)}
                 placeholder="tls"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className={`mt-2 w-full font-mono ${input}`}
               />
             </label>
           ) : null}
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Description (optional)</span>
+            <span className={fieldLabel}>Description (optional)</span>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Short description for audit purposes"
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full ${input}`}
             />
           </label>
-          {ruleError ? (
-            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              <p className="font-semibold">Access rule step failed</p>
-              <p className="mt-1">{ruleError}</p>
-            </div>
-          ) : null}
-          <div className="flex gap-3">
+          {ruleError ? <StepFailure title="Access rule step failed" message={ruleError} /> : null}
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
               disabled={savingRule || !canWriteRule}
               title={!canWriteRule ? permissionTitle('acl.write') : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverPrimary}
             >
               {savingRule ? 'Saving…' : 'Save access rule'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+              className={leverSecondary}
             >
               Cancel
             </button>
@@ -504,22 +507,17 @@ export default function UserOnboardingFlow({
 
       {stage === 'preview' ? (
         <div className="mt-6 space-y-4">
-          <p className="text-sm text-slate-300">
+          <p className={`max-w-[68ch] ${bodyText}`}>
             The preview shows the exact ACL and password file changes this journey would apply. Nothing is written to the
             broker until the apply.
           </p>
-          {previewError ? (
-            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              <p className="font-semibold">Preview step failed</p>
-              <p className="mt-1">{previewError}</p>
-            </div>
-          ) : null}
+          {previewError ? <StepFailure title="Preview step failed" message={previewError} /> : null}
           <button
             type="button"
             onClick={() => { void handlePreview() }}
             disabled={previewLoading || !canPreview}
             title={!canPreview ? permissionTitle('deploy.preview') : undefined}
-            className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+            className={leverPrimary}
           >
             {previewLoading ? 'Generating…' : 'Preview changes'}
           </button>
@@ -529,121 +527,116 @@ export default function UserOnboardingFlow({
       {stage === 'apply' ? (
         <div className="mt-6 space-y-5">
           {preview && !preview.has_changes ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+            <p className={notice.neutral}>
               No pending changes — the configuration is already up to date.
-            </div>
+            </p>
           ) : null}
 
           {preview?.acl_diff ? (
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">ACL diff</p>
-              <pre className="max-h-48 overflow-auto rounded-xl border border-white/10 bg-slate-950/70 p-4 text-xs text-slate-100">{preview.acl_diff}</pre>
+              <h5 className="mb-2 text-sm font-semibold text-enamel-bright">ACL diff</h5>
+              <DiffBlock content={preview.acl_diff} />
             </div>
           ) : null}
 
           {preview?.passwd_diff ? (
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Password file diff</p>
-              <pre className="max-h-48 overflow-auto rounded-xl border border-white/10 bg-slate-950/70 p-4 text-xs text-slate-100">{preview.passwd_diff}</pre>
+              <h5 className="mb-2 text-sm font-semibold text-enamel-bright">Password file diff</h5>
+              <DiffBlock content={preview.passwd_diff} />
             </div>
           ) : null}
 
           {preview?.scope_issues?.length ? (
-            <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-50">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Listener scope problems</p>
-              <ul className="mt-2 space-y-1">
-                {preview.scope_issues.map((issue) => <li key={issue}>{issue}</li>)}
+            <div className={notice.failed}>
+              <h5 className="font-semibold">Listener scope problems</h5>
+              <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-bright">
+                {preview.scope_issues.map((issue) => <li key={issue} className="break-words">{issue}</li>)}
               </ul>
             </div>
           ) : null}
 
           {preview?.composition_warnings?.length ? (
-            <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-50">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Composition warnings</p>
+            <div className={notice.caution}>
+              <h5 className="font-semibold text-lamp">Composition warnings</h5>
               <ul className="mt-2 space-y-1">
-                {preview.composition_warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                {preview.composition_warnings.map((warning) => <li key={warning} className="break-words">{warning}</li>)}
               </ul>
             </div>
           ) : null}
 
           {canApply ? <RecentMFAConfirmation state={mfa} /> : null}
           {!canApply ? (
-            <p className="text-sm text-slate-400">Applying a deployment requires the admin role. {permissionTitle('deploy.apply')}.</p>
+            <p className={fieldHint}>Applying a deployment requires the admin role. {permissionTitle('deploy.apply')}.</p>
           ) : null}
 
-          {applyError ? (
-            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              <p className="font-semibold">Apply step failed</p>
-              <p className="mt-1">{applyError}</p>
-            </div>
-          ) : null}
+          {applyError ? <StepFailure title="Apply step failed" message={applyError} /> : null}
 
-          {previewError ? (
-            <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-              <p className="font-semibold">Preview step failed</p>
-              <p className="mt-1">{previewError}</p>
-            </div>
-          ) : null}
+          {previewError ? <StepFailure title="Preview step failed" message={previewError} /> : null}
 
-          {result ? (
+          {result && resultLamp ? (
             <div
               role="status"
-              className={`rounded-2xl border p-5 ${lampBox[deploymentLamp(result.status)]}`}
+              className={`px-4 py-3 text-sm leading-6 ${lampPanel[resultLamp]}`}
             >
-              <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${lampText[deploymentLamp(result.status)]}`}>
-                {result.status === 'applied'
-                  ? 'Applied — no activation proof recorded'
-                  : deploymentLamp(result.status) === 'verified'
-                  ? 'Applied and verified'
-                  : result.status === 'pending_activation'
-                    ? 'Applied — activation pending'
-                    : result.status === 'rollback_failed'
-                      ? 'Rollback failed'
-                      : result.status === 'rolled_back'
-                        ? 'Rolled back'
-                        : `Apply failed (${result.status})`}
+              <p className="font-semibold">
+                <Lamp tone={resultLamp}>
+                  {result.status === 'applied'
+                    ? 'Applied — no activation proof recorded'
+                    : resultLamp === 'verified'
+                    ? 'Applied and verified'
+                    : result.status === 'pending_activation'
+                      ? 'Applied — activation pending'
+                      : result.status === 'rollback_failed'
+                        ? 'Rollback failed'
+                        : result.status === 'rolled_back'
+                          ? 'Rolled back'
+                          : `Apply failed (${result.status})`}
+                </Lamp>
               </p>
-              {deploymentLamp(result.status) !== 'verified' ? (
-                <p className="mt-2 text-sm text-slate-300">
+              {resultLamp !== 'verified' ? (
+                <p className="mt-2 text-enamel">
                   {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).stage}{' '}
                   {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).explanation}
                 </p>
               ) : null}
-              {result.message ? <p className="mt-2 text-sm text-slate-300">{result.message}</p> : null}
+              {result.message ? <p className="mt-2 text-enamel-soft">{result.message}</p> : null}
             </div>
           ) : null}
 
-          {result && APPLIED_STATUSES.includes(result.status) ? (
+          <div className="flex flex-wrap items-center gap-3">
+            {result && APPLIED_STATUSES.includes(result.status) ? (
+              <button
+                type="button"
+                onClick={() => setStage('test')}
+                className={leverPrimary}
+              >
+                Test the connection
+              </button>
+            ) : null}
+
+            {applyError || previewError || (result && !APPLIED_STATUSES.includes(result.status)) ? (
+              <button
+                type="button"
+                onClick={() => { void handlePreview() }}
+                disabled={previewLoading || !canPreview}
+                title={!canPreview ? permissionTitle('deploy.preview') : undefined}
+                className={leverSecondary}
+              >
+                {previewLoading ? 'Generating…' : 'Generate a new preview'}
+              </button>
+            ) : null}
+
+            {/* One primary lever: Apply until there is a result, then the next step. */}
             <button
               type="button"
-              onClick={() => setStage('test')}
-              className="mr-3 rounded-xl border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70"
+              onClick={() => { void handleApply() }}
+              disabled={applying || !canApply || !mfa.proof || !preview?.revision_id || !preview?.has_changes}
+              title={!canApply ? permissionTitle('deploy.apply') : undefined}
+              className={result ? leverSecondary : leverPrimary}
             >
-              Test the connection
+              {applying ? 'Applying…' : 'Apply and verify'}
             </button>
-          ) : null}
-
-          {applyError || previewError || (result && !APPLIED_STATUSES.includes(result.status)) ? (
-            <button
-              type="button"
-              onClick={() => { void handlePreview() }}
-              disabled={previewLoading || !canPreview}
-              title={!canPreview ? permissionTitle('deploy.preview') : undefined}
-              className="mr-3 rounded-xl border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70 disabled:opacity-50"
-            >
-              {previewLoading ? 'Generating…' : 'Generate a new preview'}
-            </button>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={() => { void handleApply() }}
-            disabled={applying || !canApply || !mfa.proof || !preview?.revision_id || !preview?.has_changes}
-            title={!canApply ? permissionTitle('deploy.apply') : undefined}
-            className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-          >
-            {applying ? 'Applying…' : 'Apply and verify'}
-          </button>
+          </div>
         </div>
       ) : null}
 

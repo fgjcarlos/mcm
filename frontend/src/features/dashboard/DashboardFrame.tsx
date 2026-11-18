@@ -6,7 +6,6 @@ export type NavItem = {
   id: string
   group?: string
   label: string
-  eyebrow: string
   title: string
   description: string
   path: string
@@ -51,89 +50,91 @@ export function DashboardFrame({
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:flex-row lg:px-8 lg:py-8">
-        <aside
-          className="mb-4 w-full rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur lg:mb-0 lg:w-80 lg:p-6"
-          onKeyDown={({ key }) => {
-            if (key === 'Escape' && menuOpen) closeMenu()
-          }}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white">Control Manager</h1>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-100">Alpha</div>
-              <button
-                ref={menuButtonRef}
-                type="button"
-                aria-expanded={menuOpen}
-                aria-controls="primary-menu"
-                onClick={() => setMenuOpen((open) => !open)}
-                className="flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 lg:hidden"
-              >
-                <span aria-hidden="true">{menuOpen ? '×' : '≡'}</span>
-                Menu
-              </button>
-            </div>
+    <div className="min-h-screen bg-frame text-enamel lg:flex">
+      <aside
+        className="border-b border-track lg:sticky lg:top-0 lg:h-screen lg:w-72 lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-b-0"
+        onKeyDown={({ key }) => {
+          if (key === 'Escape' && menuOpen) closeMenu()
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 px-4 py-3 lg:px-5 lg:pt-6">
+          <h1 className="flex min-w-0 items-center gap-2.5 font-display text-base font-semibold uppercase leading-none tracking-[0.1em] text-enamel-bright">
+            <Mark />
+            <span className="sm:hidden">MCM</span>
+            <span className="hidden sm:inline">Mosquitto Control Manager</span>
+          </h1>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* The site's amber plate: alpha is a caution that holds for the whole product. */}
+            <span className="rounded-plate bg-lamp px-2 pb-[0.2rem] pt-[0.3rem] font-display text-sm font-bold uppercase leading-none tracking-[0.12em] text-frame">Alpha</span>
+            <button
+              ref={menuButtonRef}
+              type="button"
+              aria-expanded={menuOpen}
+              aria-controls="primary-menu"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="flex h-10 items-center gap-2 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright lg:hidden"
+            >
+              <Glyph shape={menuOpen ? 'close' : 'menu'} />
+              Menu
+            </button>
+          </div>
+        </div>
+
+        <div id="primary-menu" className={`${menuOpen ? 'block' : 'hidden'} border-t border-track px-4 pb-6 lg:block lg:border-t-0 lg:px-5`}>
+          <div className="border-b border-track py-4">
+            <p className="text-xs text-enamel-muted">Broker</p>
+            {/* Connected is not verified, so no green: an enamel lamp when up, amber when not, always with the word. */}
+            <p className="mt-1 flex items-center gap-2 font-mono text-sm text-enamel-bright">
+              <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${brokerStatus === 'connected' ? 'bg-enamel' : 'bg-lamp'}`} />
+              <span className="capitalize">{brokerStatus}</span>
+            </p>
+            <p className="mt-1 text-xs text-enamel-muted">Event stream: {streamState}</p>
           </div>
 
-          <div id="primary-menu" className={`${menuOpen ? 'block' : 'hidden'} mt-5 border-t border-white/10 pt-1 lg:block`}>
-          <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Broker</span>
-              <span className={`h-3 w-3 rounded-full ${brokerStatus === 'connected' ? 'bg-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.9)]' : 'bg-rose-400'}`} />
-            </div>
-            <p className="mt-2 text-lg font-semibold capitalize text-white">{brokerStatus}</p>
-            <p className="mt-1 text-xs text-slate-400">Event stream: {streamState}</p>
-          </div>
-
-          <nav className="mt-8 space-y-2" aria-label="Primary navigation">
+          <nav className="mt-2 divide-y divide-track" aria-label="Primary navigation">
             {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration'].map((group) => {
               const items = navItems.filter((item) => (item.group ?? 'Diagnostics') === group)
               if (!items.length) return null
               const groupId = `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
               const hasActiveItem = items.some((item) => item.id === activeId)
               const expanded = hasActiveItem || expandedGroups.has(group)
-              const observationGroup = group === 'Diagnostics'
+              const hint = group === 'Diagnostics' ? 'Observation · read-only' : groupHints[group]
               return (
-                <section key={group} className={`space-y-2 rounded-2xl border p-2 ${observationGroup ? 'border-emerald-300/25 bg-emerald-400/[0.06]' : 'border-transparent'}`}>
-                  <div className="flex items-center justify-between gap-2 pt-2">
-                    <h2 id={`${groupId}-heading`} className={`text-xs font-semibold uppercase tracking-widest ${observationGroup ? 'text-emerald-200' : 'text-cyan-200'}`}>{group}</h2>
-                    <button
-                      type="button"
-                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group}`}
-                      aria-expanded={expanded}
-                      aria-controls={groupId}
-                      disabled={hasActiveItem}
-                      title={hasActiveItem ? `The ${group} group holds the current view and stays open` : undefined}
-                      onClick={() => setExpandedGroups((current) => {
-                        const next = new Set(current)
-                        if (expanded) next.delete(group)
-                        else next.add(group)
-                        return next
-                      })}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/[0.04] text-base leading-none text-slate-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:border-white/20 disabled:hover:bg-white/[0.04]"
-                    >
-                      <span aria-hidden="true">{expanded ? '−' : '+'}</span>
-                    </button>
+                <section key={group} className="py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 id={`${groupId}-heading`} className="text-sm font-semibold text-enamel-bright">{group}</h2>
+                    <div className="flex items-center gap-2">
+                      {/* The disabled toggle says why it cannot close. */}
+                      {hasActiveItem ? <span id={`${groupId}-pinned`} className="text-xs text-enamel-muted">Current view</span> : null}
+                      <button
+                        type="button"
+                        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group}`}
+                        aria-expanded={expanded}
+                        aria-controls={groupId}
+                        aria-describedby={hasActiveItem ? `${groupId}-pinned` : undefined}
+                        disabled={hasActiveItem}
+                        title={hasActiveItem ? `The ${group} group holds the current view and stays open` : undefined}
+                        onClick={() => setExpandedGroups((current) => {
+                          const next = new Set(current)
+                          if (expanded) next.delete(group)
+                          else next.add(group)
+                          return next
+                        })}
+                        className="flex size-10 lg:size-8 shrink-0 items-center justify-center rounded-plate border border-track-bright text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent"
+                      >
+                        <Glyph shape={expanded ? 'minus' : 'plus'} />
+                      </button>
+                    </div>
                   </div>
-                  {observationGroup ? (
-                    <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/90">Observation · read-only</p>
-                  ) : null}
-                  {groupHints[group] ? (
-                    <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{groupHints[group]}</p>
-                  ) : null}
+                  {hint ? <p className="mt-1 text-xs text-enamel-muted">{hint}</p> : null}
                   <div
                     id={groupId}
                     role="region"
                     aria-labelledby={`${groupId}-heading`}
                     inert={!expanded}
-                    className={`space-y-2 overflow-hidden transition-[max-height,opacity] duration-200 ${expanded ? 'max-h-[40rem] opacity-100' : 'max-h-0 opacity-0'}`}
+                    className={`overflow-hidden transition-[max-height,opacity] duration-200 ${expanded ? 'mt-2 max-h-[40rem] opacity-100' : 'max-h-0 opacity-0'}`}
                   >
-                    {items.map((item, index) => {
+                    {items.map((item) => {
                       const isActive = item.id === activeId
                       return (
                         <a
@@ -145,17 +146,15 @@ export function DashboardFrame({
                             onSelectNav(item)
                             if (menuOpen) closeMenu()
                           }}
-                          className={`group flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${
+                          className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 ${
                             isActive
-                              ? 'border-cyan-300/40 bg-cyan-300/12 text-white shadow-lg shadow-cyan-950/30'
-                              : 'border-white/5 bg-white/[0.03] text-slate-300 hover:border-white/15 hover:bg-white/[0.06] hover:text-white'
+                              ? 'bg-frame-high font-semibold text-enamel-bright'
+                              : 'text-enamel-soft hover:bg-frame-raised hover:text-enamel-bright'
                           }`}
                         >
-                          <span>
-                            <span className="block text-sm font-semibold">{item.label}</span>
-                            <span className="block text-xs uppercase tracking-[0.22em] text-slate-400 group-hover:text-slate-300">{item.eyebrow}</span>
-                          </span>
-                          <span className="font-mono text-xs text-slate-400">{String(index + 1).padStart(2, '0')}</span>
+                          {/* The current view is lit: lamp, weight and fill, not colour alone. */}
+                          <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${isActive ? 'bg-enamel-bright' : ''}`} />
+                          {item.label}
                         </a>
                       )
                     })}
@@ -165,45 +164,48 @@ export function DashboardFrame({
             })}
           </nav>
 
-          <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Signed in</p>
-                <p className="mt-1 truncate text-sm font-semibold text-white">{currentUser.username}</p>
-                <p className="mt-1 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100">{currentUser.role}</p>
-              </div>
-              <button
-                type="button"
-                onClick={onLogout}
-                className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-rose-100 transition hover:border-rose-300/60 hover:bg-rose-400/20"
-              >
-                Logout
-              </button>
+          <div className="flex items-center justify-between gap-3 border-t border-track pt-4">
+            <div className="min-w-0">
+              <p className="text-xs text-enamel-muted">Signed in</p>
+              <p className="mt-1 truncate text-sm font-semibold text-enamel-bright">{currentUser.username}</p>
+              <p className="mt-1.5 inline-flex rounded-plate bg-frame-high px-2 pb-[0.15rem] pt-[0.25rem] font-mono text-xs text-enamel ring-1 ring-inset ring-track-strong">{currentUser.role}</p>
             </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="h-10 lg:h-9 shrink-0 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright"
+            >
+              Logout
+            </button>
           </div>
-          </div>
-        </aside>
+        </div>
+      </aside>
 
-        <main className="flex-1 lg:pl-6">
-          <div className="rounded-[2rem] border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-slate-950/40 backdrop-blur sm:p-8">
-            <div className="flex flex-col gap-6 border-b border-white/10 pb-8 xl:flex-row xl:items-end xl:justify-between">
-              <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.35em] text-cyan-300">{activeItem.eyebrow}</p>
-                <h2 className="mt-3 text-4xl font-semibold tracking-tight text-white sm:text-5xl">{activeItem.title}</h2>
-                <p className="mt-4 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">{activeItem.description}</p>
-              </div>
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
+        <div className="mx-auto max-w-6xl">
+          <header className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-3xl">
+              <h2 className="font-display text-3xl font-bold uppercase leading-none tracking-[0.01em] text-enamel-bright sm:text-4xl">{activeItem.title}</h2>
+              <p className="mt-3 max-w-[68ch] text-base leading-relaxed text-enamel-soft">{activeItem.description}</p>
+            </div>
 
-              <div className="grid grid-cols-3 gap-3 sm:min-w-[24rem]">
+            {/* The live counts belong to the dashboard home, not to every page. */}
+            {activeId === 'dashboard' ? (
+              <dl className="flex divide-x divide-track border-y border-track">
                 <Metric label="Status" value={brokerStatus} />
-                <Metric label="Topics" value={String(uniqueTopicCount).padStart(2, '0')} />
-                <Metric label="Logs" value={String(logCount).padStart(2, '0')} />
-              </div>
-            </div>
-
-            {children}
+                <Metric label="Topics" value={String(uniqueTopicCount)} />
+                <Metric label="Logs" value={String(logCount)} />
+              </dl>
+            ) : null}
+          </header>
+          {/* The section rule: a set segment on the track hairline. */}
+          <div aria-hidden="true" className="relative mt-6 h-px bg-track-strong">
+            <span className="absolute -top-px left-0 h-[3px] w-12 bg-enamel" />
           </div>
-        </main>
-      </div>
+
+          {children}
+        </div>
+      </main>
     </div>
   )
 }
@@ -216,9 +218,36 @@ const groupHints: Record<string, string> = {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
-      <div className="font-mono text-2xl font-semibold capitalize text-white">{value}</div>
-      <div className="mt-2 text-xs uppercase tracking-[0.22em] text-slate-400">{label}</div>
+    <div className="flex min-w-20 flex-col px-4 py-3 first:pl-0 xl:first:pl-4">
+      <dt className="order-2 mt-1 text-xs text-enamel-muted">{label}</dt>
+      <dd className="font-mono text-xl capitalize tabular-nums text-enamel-bright">{value}</dd>
     </div>
+  )
+}
+
+// The MCM mark: a route set through the points onto the diverging line, cleared by a lit lamp.
+export function Mark() {
+  return (
+    <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" className="shrink-0">
+      <g fill="none" strokeWidth="3">
+        <path d="M9 25H30" className="stroke-enamel" />
+        <path d="M2 25H9L18 16" className="stroke-lamp" />
+      </g>
+      <circle cx="24" cy="10" r="5.5" className="fill-lamp" />
+    </svg>
+  )
+}
+
+function Glyph({ shape }: { shape: 'menu' | 'close' | 'plus' | 'minus' }) {
+  const paths = {
+    menu: 'M2 4h12M2 8h12M2 12h12',
+    close: 'M3.5 3.5l9 9M12.5 3.5l-9 9',
+    plus: 'M8 3v10M3 8h10',
+    minus: 'M3 8h10',
+  }
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" className="shrink-0">
+      <path d={paths[shape]} fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
   )
 }
