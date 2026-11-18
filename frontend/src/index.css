@@ -54,11 +54,32 @@
   unicode-range: U+00B7;
 }
 
+/* A wide table scrolls inside its own frame. Frame-coloured covers travel
+   with the content (local) and hide the track-strong edge shades (scroll)
+   at the ends, so a shade shows only on a side that holds more columns.
+   Relative so absolute cells content (sr-only labels) scrolls with it. */
+@utility table-scroll {
+  position: relative;
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--color-frame) 40%, transparent) left / 2rem
+      100% no-repeat local,
+    linear-gradient(to left, var(--color-frame) 40%, transparent) right / 2rem
+      100% no-repeat local,
+    linear-gradient(to right, var(--color-track-strong), transparent) left /
+      1rem 100% no-repeat scroll,
+    linear-gradient(to left, var(--color-track-strong), transparent) right /
+      1rem 100% no-repeat scroll;
+}
+
 @layer base {
   :root {
     color: var(--color-enamel);
     background-color: var(--color-frame);
     caret-color: var(--color-lamp);
+    /* Native controls (checkboxes, select menus, file pickers) on the dark frame. */
+    color-scheme: dark;
+    accent-color: var(--color-enamel);
     scrollbar-color: var(--color-enamel-muted) var(--color-frame);
     font-synthesis: none;
     text-rendering: optimizeLegibility;

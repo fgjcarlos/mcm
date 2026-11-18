@@ -126,7 +126,7 @@ function EffectivePermissionsPanel({ token, onLogout }: { token: string; onLogou
               {scope.identities.length === 0 ? (
                 <p className={`mt-2 border-y border-track py-3 ${bodyText}`}>No identity has a rule in this file.</p>
               ) : (
-                <div className="mt-2 overflow-x-auto border-y border-track-strong">
+                <div className="mt-2 table-scroll border-y border-track-strong">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-track-strong">

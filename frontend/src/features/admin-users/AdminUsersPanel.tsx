@@ -296,13 +296,13 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         </div>
       ) : null}
 
-      <div className="overflow-x-auto border-y border-track-strong">
+      <div className="table-scroll border-y border-track-strong">
         {loading ? (
           <p className={`py-6 ${bodyText}`}>Loading users…</p>
         ) : users.length === 0 ? (
           <p className={`py-6 ${bodyText}`}>No admin users found.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[48rem] text-sm">
             <thead>
               <tr className="border-b border-track-strong">
                 <th className={`${tableHead} text-left`}>Username</th>

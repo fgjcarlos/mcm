@@ -69,7 +69,8 @@ export function DiffBlock({ content }: { content: string }) {
       {content.split('\n').map((line, idx) => (
         <span
           key={idx}
-          className={`block px-4 ${line.startsWith('+') ? 'bg-frame-high text-enamel-bright' : line.startsWith('-') ? 'text-enamel-muted line-through decoration-enamel-muted/70' : 'text-enamel-soft'}`}
+          // The ---/+++ file headers name the two sides; they are not a removal or an addition.
+          className={`block px-4 ${/^(---|\+\+\+)( |$)/.test(line) ? 'text-enamel-muted' : line.startsWith('+') ? 'bg-frame-high text-enamel-bright' : line.startsWith('-') ? 'text-enamel-muted line-through decoration-enamel-muted/70' : 'text-enamel-soft'}`}
         >
           {line || ' '}
         </span>

@@ -144,7 +144,7 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
   // --- State A: MFA disabled, no active setup ---
   if (!currentUser.mfa_enabled && !setupData && !enableSuccess) {
     return (
-      <Section title="Two-factor authentication" description="MFA is not enabled on your account." className="mt-8">
+      <Section title="Two-factor authentication" description="MFA is not enabled on your account." ruled={false} className="mt-8">
         {disableSuccess ? (
           <div role="alert" className={`mt-4 ${notice.neutral}`}>
             <p className="font-semibold text-enamel-bright">MFA removed</p>
@@ -180,6 +180,7 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
       <Section
         title="Set up two-factor authentication"
         description="Scan the QR code or enter the secret manually in your authenticator app."
+        ruled={false}
         className="mt-8"
       >
         <div className="mt-6 space-y-8">
@@ -327,6 +328,7 @@ function AccountSecurityPanel({ token, currentUser, onLogout, onMFAChange }: Pro
           MFA is enabled on your account.
         </span>
       }
+      ruled={false}
       className="mt-8"
     >
       <div className="mt-4 space-y-6">

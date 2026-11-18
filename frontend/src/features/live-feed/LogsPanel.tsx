@@ -69,7 +69,7 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
       {logSources.filter((source) => filter.source === 'all' || filter.source === source).map((source) => {
         const received = feed.visible.filter((log) => log.source === source)
         const shown = received.filter((log) => matchesLogFilter(log, filter))
-        return <section key={source} aria-label={sourceLabels[source].title}>
+        return <section key={source} aria-label={sourceLabels[source].title} className="min-w-0">
           <h4 className="border-b border-track-strong pb-2 text-sm font-semibold text-enamel-bright">{sourceLabels[source].title}</h4>
           {shown.length > 0 ? <ol className="divide-y divide-track">
             {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}

@@ -139,7 +139,7 @@ export default function ListenersPanel({
         {applyError ? <div className={`mt-5 ${notice.failed}`}>{applyError}</div> : null}
         {applyResult?.applied ? <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
 
-        <div className="mt-5 overflow-x-auto border-y border-track-strong">
+        <div className="mt-5 table-scroll border-y border-track-strong">
           {isLoading ? (
             <p className={`py-6 ${bodyText}`}>Loading listeners…</p>
           ) : (

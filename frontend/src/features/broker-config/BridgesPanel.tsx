@@ -638,7 +638,7 @@ function BridgeCard({
           Add topic rule
         </button>
       </div>
-      <div className="mt-3 overflow-x-auto">
+      <div className="mt-3 table-scroll">
         <table className="w-full min-w-[46rem] text-left text-sm">
           <thead>
             <tr className="border-b border-track-strong">

@@ -72,7 +72,7 @@ export function DashboardFrame({
               aria-expanded={menuOpen}
               aria-controls="primary-menu"
               onClick={() => setMenuOpen((open) => !open)}
-              className="flex h-9 items-center gap-2 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright lg:hidden"
+              className="flex h-10 items-center gap-2 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright lg:hidden"
             >
               <Glyph shape={menuOpen ? 'close' : 'menu'} />
               Menu
@@ -120,7 +120,7 @@ export function DashboardFrame({
                           else next.add(group)
                           return next
                         })}
-                        className="flex size-8 shrink-0 items-center justify-center rounded-plate border border-track-bright text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent"
+                        className="flex size-10 lg:size-8 shrink-0 items-center justify-center rounded-plate border border-track-bright text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent"
                       >
                         <Glyph shape={expanded ? 'minus' : 'plus'} />
                       </button>
@@ -146,7 +146,7 @@ export function DashboardFrame({
                             onSelectNav(item)
                             if (menuOpen) closeMenu()
                           }}
-                          className={`flex items-center gap-2.5 rounded-plate px-2 py-2 text-sm transition-colors duration-150 ${
+                          className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 ${
                             isActive
                               ? 'bg-frame-high font-semibold text-enamel-bright'
                               : 'text-enamel-soft hover:bg-frame-raised hover:text-enamel-bright'
@@ -173,7 +173,7 @@ export function DashboardFrame({
             <button
               type="button"
               onClick={onLogout}
-              className="h-9 shrink-0 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright"
+              className="h-10 lg:h-9 shrink-0 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright"
             >
               Logout
             </button>

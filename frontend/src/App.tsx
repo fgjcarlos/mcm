@@ -721,8 +721,8 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
         {invalidPattern ? <p className="w-full text-sm text-lamp">Not a valid MQTT topic filter: + and # must fill a whole level, and # must be the last level.</p> : null}
       </div>
 
-      <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-[1fr_1fr]">
-        <section aria-label="Topic messages">
+      <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-2">
+        <section aria-label="Topic messages" className="min-w-0">
           {shown.length > 0 ? (
             <ol className="divide-y divide-track border-y border-track">
               {shown.map((topic) => <TopicRow key={topic.id} topic={topic} chosen={topic.id === selected?.id} inDetail={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
@@ -738,7 +738,7 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
           )}
         </section>
 
-        <section aria-label="Message detail" className="border-t border-track pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+        <section aria-label="Message detail" className="min-w-0 border-t border-track pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
           <h3 className="text-sm font-semibold text-enamel-soft">{selected ? 'Selected message' : 'Newest message'}</h3>
           {fallbackNotice ? <p className="mt-3 text-sm text-lamp">{fallbackNotice}</p> : null}
           {detail ? (
@@ -767,9 +767,8 @@ function TopicRow({ topic, chosen, inDetail, onSelect }: { topic: LiveTopicMessa
     <li>
       <button type="button" aria-pressed={chosen} onClick={onSelect} className={`block w-full px-2 py-2 text-left transition-colors duration-150 hover:bg-frame-raised ${inDetail ? 'bg-frame-high' : ''}`}>
         <span className="flex flex-wrap items-center gap-2">
-          {/* The row in the detail is lit like the current nav item. */}
-          <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${inDetail ? 'bg-enamel-bright' : ''}`} />
-          <span className="min-w-0 break-all font-mono text-sm text-enamel-bright">{topic.topic}</span>
+          {/* The row in the detail is lit like the current nav item; the lamp sits inside the topic so a long topic never wraps away from it. */}
+          <span className="min-w-0 break-all font-mono text-sm text-enamel-bright"><span aria-hidden="true" className={`mr-2 inline-block size-1.5 rounded-full align-middle ${inDetail ? 'bg-enamel-bright' : ''}`} />{topic.topic}</span>
           {topic.schema_validation ? <SchemaValidationBadge validation={topic.schema_validation} /> : null}
           {topic.sparkplug ? <SparkplugBadge metadata={topic.sparkplug} /> : null}
           <time dateTime={topic.observed_at} className="ml-auto shrink-0 font-mono text-xs tabular-nums text-enamel-muted">{new Date(topic.observed_at).toLocaleTimeString()}</time>
@@ -879,7 +878,7 @@ function SparkplugDetails({
             Decoded metrics
             {sparkplugMetrics.truncated ? ` (showing ${sparkplugMetrics.metrics.length} of more)` : ` (${sparkplugMetrics.metrics.length})`}
           </p>
-          <div className="mt-2 overflow-x-auto">
+          <div className="mt-2 table-scroll">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-track-strong">
@@ -1395,13 +1394,13 @@ function ACLPanel({ token, onLogout, role = '', onMutationStart, onMutation }: {
 
       <ListControls list={list} noun={{ one: 'rule', many: 'rules' }} filterFields={[{ key: 'user', label: 'Filter by user' }, { key: 'topic', label: 'Filter by topic' }]} />
 
-      <div className="overflow-x-auto border-y border-track-strong">
+      <div className="table-scroll border-y border-track-strong">
         {rules.length === 0 && list.loading ? (
           <p className={`py-6 ${bodyText}`}>Loading rules…</p>
         ) : rules.length === 0 ? (
           list.error ? null : <p className={`py-6 ${bodyText}`}>{list.hasFilters ? 'No ACL rules match the filters.' : 'No ACL rules configured yet.'}</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[44rem] text-sm">
             <thead>
               <tr className="border-b border-track-strong">
                 <th className={`${tableHead} text-left`}>Source</th>
@@ -1662,7 +1661,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.orphan_rules?.length ? (
               <PreviewBlock tone="caution" title="Orphan ACL rules" count={preview.orphan_rules.length}>
                 <p className={`mt-2 ${bodyText}`}>These rules reference missing or disabled MQTT users and will be excluded from the rendered Mosquitto ACL file. Delete or reassign them before applying.</p>
-                <div className="mt-3 overflow-x-auto">
+                <div className="mt-3 table-scroll">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-track-strong">
@@ -1789,7 +1788,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         ) : deployments.length === 0 ? (
           <p className={`mt-4 ${bodyText}`}>{history.hasFilters ? 'No deployments match the filter.' : 'No deployments recorded yet.'}</p>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 table-scroll">
           <table className="w-full min-w-[40rem] text-sm">
             <thead>
               <tr className="border-b border-track-strong">

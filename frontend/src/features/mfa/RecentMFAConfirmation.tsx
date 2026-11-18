@@ -14,9 +14,9 @@ export default function RecentMFAConfirmation({ state }: { state: ReturnType<typ
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-2">
           <span className={fieldLabel}>MFA code</span>
-          <input value={state.code} onChange={(event) => state.setCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required placeholder="Authenticator code" className={`${input} w-48 font-mono tracking-[0.2em]`} />
+          <input value={state.code} onChange={(event) => state.setCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required placeholder="Authenticator code" className={`${input} h-10 w-48 font-mono tracking-[0.2em] placeholder:tracking-normal lg:h-auto`} />
         </label>
-        <button type="submit" disabled={state.busy || !state.code} className={`${leverSecondary} h-[2.375rem]`}>{state.busy ? 'Verifying…' : 'Verify MFA'}</button>
+        <button type="submit" disabled={state.busy || !state.code} className={`${leverSecondary} lg:h-[2.375rem]`}>{state.busy ? 'Verifying…' : 'Verify MFA'}</button>
       </div>
       {state.error ? <p role="alert" className="text-sm text-danger-text">{state.error}</p> : null}
     </form>

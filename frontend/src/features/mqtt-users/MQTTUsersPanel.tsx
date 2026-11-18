@@ -171,13 +171,13 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
 
       <ListControls list={list} noun={{ one: 'user', many: 'users' }} searchLabel="Search users" />
 
-      <div className="overflow-x-auto border-y border-track-strong">
+      <div className="table-scroll border-y border-track-strong">
         {users.length === 0 && list.loading ? (
           <p className={`py-6 ${bodyText}`}>Loading users…</p>
         ) : users.length === 0 ? (
           list.error ? null : <p className={`py-6 ${bodyText}`}>{list.hasFilters ? 'No MQTT users match the search.' : 'No MQTT users configured yet.'}</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[48rem] text-sm">
             <thead>
               <tr className="border-b border-track-strong">
                 <th className={`${tableHead} text-left`}>Username</th>

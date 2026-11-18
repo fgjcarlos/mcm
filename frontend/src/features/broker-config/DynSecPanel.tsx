@@ -930,7 +930,7 @@ function ACLEditor({
           Add rule
         </button>
       </div>
-      <div className="mt-3 overflow-x-auto">
+      <div className="mt-3 table-scroll">
         <table className="w-full min-w-[42rem] text-left text-sm">
           <thead>
             <tr className="border-b border-track-strong">

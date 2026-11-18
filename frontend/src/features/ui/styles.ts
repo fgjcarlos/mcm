@@ -26,10 +26,10 @@ export const lampWord: Record<LampTone, string> = {
 export const leverPrimary = 'inline-flex h-12 items-center justify-center rounded-lever bg-enamel px-6 font-display text-base font-bold uppercase tracking-[0.14em] text-frame shadow-[inset_0_1px_0_rgb(255_255_255/0.4),inset_0_-2px_0_rgb(0_0_0/0.22)] transition-colors duration-150 hover:bg-enamel-bright active:translate-y-px active:bg-enamel-soft active:shadow-none disabled:cursor-not-allowed disabled:bg-enamel-muted disabled:shadow-none'
 
 /** A secondary (small) control: track-bright outline, Overpass Mono capitals, 36px. */
-export const leverSecondary = 'inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent'
+export const leverSecondary = 'inline-flex h-10 lg:h-9 shrink-0 items-center justify-center gap-2 rounded-plate border border-track-bright px-3 font-mono text-xs uppercase tracking-[0.12em] text-enamel transition-colors duration-150 hover:bg-frame-raised hover:text-enamel-bright disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent'
 
 /** A small control for destructive actions only (delete, revoke): danger outline and danger-text. */
-export const leverDanger = 'inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-plate border border-danger px-3 font-mono text-xs uppercase tracking-[0.12em] text-danger-text transition-colors duration-150 hover:bg-danger/15 disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent'
+export const leverDanger = 'inline-flex h-10 lg:h-9 shrink-0 items-center justify-center gap-2 rounded-plate border border-danger px-3 font-mono text-xs uppercase tracking-[0.12em] text-danger-text transition-colors duration-150 hover:bg-danger/15 disabled:cursor-not-allowed disabled:border-track disabled:text-enamel-muted disabled:hover:bg-transparent'
 
 /** A pressed-state toggle on top of leverSecondary (aria-pressed lights it). */
 export const leverToggle = `${leverSecondary} aria-pressed:border-enamel aria-pressed:bg-frame-high aria-pressed:text-enamel-bright`
