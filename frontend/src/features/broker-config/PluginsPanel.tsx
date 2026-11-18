@@ -5,12 +5,10 @@ import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import { pluginBackendLabels, pluginBackendTones } from './pluginTypes'
 import type { Plugin, PluginSpec } from './pluginTypes'
-
-const reloadKindTone: Record<string, string> = {
-  reload: 'bg-cyan-400/10 text-cyan-200',
-  restart: 'bg-amber-400/10 text-amber-200',
-  both: 'bg-violet-400/10 text-violet-200',
-}
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Plate, Section } from '../ui/primitives'
+import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice } from '../ui/styles'
+import { DraftState, Findings, ReloadKind } from './panelParts'
 
 // defaultOptions returns the options a plugin starts with when the
 // operator enables it: the defaults of the catalog.
@@ -104,7 +102,7 @@ export default function PluginsPanel({
   if (isLoading && !plugins) {
     return (
       <section className="mt-8">
-        <p className="text-sm text-slate-400">Loading plugins…</p>
+        <p className={bodyText}>Loading plugins…</p>
       </section>
     )
   }
@@ -112,7 +110,7 @@ export default function PluginsPanel({
   if (!plugins) {
     return (
       <section className="mt-8">
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+        <div className={notice.neutral}>
           Plugin management is not configured on this MCM instance.
         </div>
       </section>
@@ -120,47 +118,44 @@ export default function PluginsPanel({
   }
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Plugins</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Load the plugins this broker needs and preview the change before it reaches the broker.
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Mosquitto {plugins.version} · <span className="font-mono break-all">{plugins.path}</span>
-            </p>
-            <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
-          </div>
+    <section className="mt-8 space-y-10">
+      <Section
+        title="Plugins"
+        description="Load the plugins this broker needs and preview the change before it reaches the broker."
+        aside={
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${pluginBackendTones[plugins.backend] ?? pluginBackendTones.none}`}>
+            <Plate tone={pluginBackendTones[plugins.backend] ?? pluginBackendTones.none}>
               {pluginBackendLabels[plugins.backend] ?? plugins.backend}
-            </span>
+            </Plate>
             <button
               type="button"
               onClick={handlePreview}
               disabled={!canPreview || isLoading || isPreviewing || isApplying}
               title={!canPreview ? 'Requires operator role' : undefined}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+              className={leverSecondary}
             >
               {isPreviewing ? 'Generating…' : 'Preview'}
             </button>
           </div>
-        </div>
+        }
+      >
+        <p className={`mt-1 ${fieldHint}`}>
+          Mosquitto {plugins.version} · <span className="font-mono break-all">{plugins.path}</span>
+        </p>
+        <DraftState dirty={dirty} />
 
         {previewError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {previewError}
           </div>
         ) : null}
         {applyError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {applyError}
           </div>
         ) : null}
         {applied ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100" role="status">
+          <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[deploymentLamp(appliedStatus)]}`} role="status">
             {appliedStatus === 'pending_activation' ? (
               <p>
                 The plugin is written to the configuration, but the broker was only reloaded. Restart it to activate the
@@ -172,78 +167,67 @@ export default function PluginsPanel({
           </div>
         ) : null}
         {plugins.warnings?.length ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {plugins.warnings.map((warning, index) => (
-                <li key={`${index}-${warning}`}>{warning}</li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Warnings">
+            {plugins.warnings.map((warning, index) => (
+              <li key={`${index}-${warning}`}>{warning}</li>
+            ))}
+          </Findings>
         ) : null}
         {issues.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Issues</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-100">
-              {issues.map((issue, index) => (
-                <li key={`${issue.kind}-${issue.plugin}-${index}`}>
-                  {issue.plugin ? <span className="font-mono text-xs">{issue.plugin}</span> : null}
-                  {issue.plugin ? ' · ' : null}
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="failed" title="Issues">
+            {issues.map((issue, index) => (
+              <li key={`${issue.kind}-${issue.plugin}-${index}`}>
+                {issue.plugin ? <span className="font-mono text-xs">{issue.plugin}</span> : null}
+                {issue.plugin ? ' · ' : null}
+                {issue.message}
+              </li>
+            ))}
+          </Findings>
         ) : null}
-      </div>
+      </Section>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Supported plugins</p>
-        <p className="mt-1 text-sm text-slate-400">
-          The plugins MCM supports for Mosquitto {plugins.version}. A plugin is loaded at start-up, so every change needs a
-          restart.
-        </p>
-
-        <div className="mt-5 space-y-4">
+      <Section
+        title="Supported plugins"
+        description={`The plugins MCM supports for Mosquitto ${plugins.version}. A plugin is loaded at start-up, so every change needs a restart.`}
+      >
+        <div className="mt-4">
           {catalog.length === 0 ? (
-            <p className="text-sm text-slate-400">MCM knows no plugin for Mosquitto {plugins.version}.</p>
+            <p className={bodyText}>MCM knows no plugin for Mosquitto {plugins.version}.</p>
           ) : null}
           {catalog.map((spec) => {
             const enabled = specs.some((plugin) => plugin.id === spec.id)
             return (
-              <div key={spec.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <div key={spec.id} className="border-t border-track py-4 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-cyan-100">{spec.title}</p>
-                    {spec.description ? <p className="mt-1 max-w-2xl text-xs text-slate-400">{spec.description}</p> : null}
-                    <p className="mt-2 break-all font-mono text-xs text-slate-500">{spec.module}</p>
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-semibold text-enamel-bright">{spec.title}</h4>
+                    {spec.description ? <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>{spec.description}</p> : null}
+                    <p className="mt-2 break-all font-mono text-xs text-enamel-soft">{spec.module}</p>
                     {spec.modules?.length ? (
-                      <p className="mt-1 break-all font-mono text-xs text-slate-600">{spec.modules.join(' · ')}</p>
+                      <p className="mt-1 break-all font-mono text-xs text-enamel-muted">{spec.modules.join(' · ')}</p>
                     ) : null}
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className={`mt-1 ${fieldHint}`}>
                       {spec.since_version ? <>since Mosquitto {spec.since_version} · </> : null}
                       <span className="font-mono">{spec.id}</span>
                     </p>
                   </div>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindTone[spec.reload_kind ?? ''] ?? reloadKindTone.restart}`}>
-                    {spec.reload_kind || 'restart'}
-                  </span>
+                  <ReloadKind kind={spec.reload_kind || 'restart'} />
                 </div>
 
                 {spec.options?.length ? (
                   <div className="mt-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Options</p>
+                    <h5 className="text-xs font-semibold text-enamel">Options</h5>
                     <ul className="mt-2 space-y-2">
                       {spec.options.map((option) => (
-                        <li key={option.name} className="text-sm text-slate-300">
-                          <span className="font-mono text-cyan-200">plugin_opt_{option.name}</span>
-                          {option.required ? <span className="ml-2 text-xs text-amber-200">required</span> : null}
+                        <li key={option.name} className="text-sm text-enamel-soft">
+                          <span className="font-mono text-enamel-bright">plugin_opt_{option.name}</span>
+                          {option.required ? <span className="ml-2 text-xs text-lamp">required</span> : null}
                           {option.default ? (
-                            <span className="ml-2 text-xs text-slate-500">
+                            <span className="ml-2 text-xs text-enamel-muted">
                               default <span className="font-mono">{option.default}</span>
                             </span>
                           ) : null}
-                          {option.description ? <span className="mt-0.5 block text-xs text-slate-500">{option.description}</span> : null}
+                          {option.description ? <span className={`mt-0.5 block ${fieldHint}`}>{option.description}</span> : null}
                         </li>
                       ))}
                     </ul>
@@ -260,7 +244,7 @@ export default function PluginsPanel({
                         const index = specs.findIndex((plugin) => plugin.id === spec.id)
                         if (index >= 0) removePlugin(index)
                       }}
-                      className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                      className={leverSecondary}
                     >
                       Disable
                     </button>
@@ -270,7 +254,7 @@ export default function PluginsPanel({
                       aria-label={`Enable ${spec.title}`}
                       disabled={isApplying || isPreviewing}
                       onClick={() => enablePlugin(spec)}
-                      className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                      className={leverSecondary}
                     >
                       Enable
                     </button>
@@ -280,15 +264,12 @@ export default function PluginsPanel({
             )
           })}
         </div>
-      </div>
+      </Section>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Configured plugins</p>
-        <p className="mt-1 text-sm text-slate-400">The plugins the broker loads. The plugin MCM does not know is preserved untouched.</p>
-
-        <div className="mt-5 space-y-4">
+      <Section title="Configured plugins" description="The plugins the broker loads. The plugin MCM does not know is preserved untouched.">
+        <div className="mt-4">
           {specs.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+            <div className={notice.neutral}>
               No plugin is configured. Enable one from the catalog to load it in the broker.
             </div>
           ) : null}
@@ -305,39 +286,24 @@ export default function PluginsPanel({
             />
           ))}
         </div>
-      </div>
+      </Section>
 
       {preview ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Preview</p>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindTone[preview.reload_kind ?? ''] ?? reloadKindTone.reload}`}>
-              {preview.reload_kind || 'reload'}
-            </span>
-          </div>
-          <p className="mt-2 break-all font-mono text-xs text-slate-400">revision {preview.revision_id}</p>
+        <Section title="Preview" aside={<ReloadKind kind={preview.reload_kind || 'reload'} />}>
+          <p className="mt-2 break-all font-mono text-xs text-enamel-muted">revision {preview.revision_id}</p>
           {preview.changed_directives?.length ? (
-            <p className="mt-2 text-xs text-slate-300">
-              Changed: <span className="font-mono text-cyan-200">{preview.changed_directives.join(', ')}</span>
+            <p className={`mt-2 ${fieldHint}`}>
+              Changed: <span className="font-mono text-enamel-bright">{preview.changed_directives.join(', ')}</span>
             </p>
           ) : null}
           {preview.conf_diff ? (
-            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-              {preview.conf_diff.split('\n').map((line, index) => (
-                <span
-                  key={index}
-                  className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-rose-500/10 text-rose-200' : 'text-slate-300'}`}
-                >
-                  {line || ' '}
-                </span>
-              ))}
-            </pre>
+            <div className="mt-4"><DiffBlock content={preview.conf_diff} /></div>
           ) : (
-            <p className="mt-4 text-sm text-slate-300">No changes — the configuration already matches.</p>
+            <p className={`mt-4 ${bodyText}`}>No changes — the configuration already matches.</p>
           )}
 
           {preview.requires_restart ? (
-            <p className="mt-4 text-xs text-amber-200">
+            <p className="mt-4 text-xs text-lamp">
               Mosquitto loads a plugin at start-up, so this change needs a broker restart.
             </p>
           ) : null}
@@ -346,7 +312,7 @@ export default function PluginsPanel({
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {preview.requires_restart ? (
-              <label className="flex items-center gap-2 text-sm text-slate-200">
+              <label className="flex items-center gap-2 text-sm text-enamel">
                 <input
                   type="checkbox"
                   aria-label="Confirm broker restart"
@@ -362,13 +328,13 @@ export default function PluginsPanel({
               onClick={() => { void handleApply() }}
               disabled={!applyEnabled}
               title={!isAdmin ? 'Requires admin role' : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverPrimary}
             >
               {isApplying ? 'Applying…' : 'Apply'}
             </button>
-            {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+            {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
           </div>
-        </div>
+        </Section>
       ) : null}
     </section>
   )
@@ -397,15 +363,15 @@ function PluginCard({
   const preserved = Object.entries(plugin.unknown_options ?? {})
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+    <div className="border-t border-track py-4 first:border-t-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-enamel-bright">
             {known ? spec?.title ?? plugin.id : 'Unknown plugin'}
-          </p>
-          {known && spec?.description ? <p className="mt-1 max-w-2xl text-xs text-slate-400">{spec.description}</p> : null}
+          </h4>
+          {known && spec?.description ? <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>{spec.description}</p> : null}
           {!known ? (
-            <p className="mt-1 max-w-2xl text-xs text-slate-400">
+            <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>
               MCM does not know this plugin. Its directives are preserved exactly as they are and are never edited here.
             </p>
           ) : null}
@@ -416,7 +382,7 @@ function PluginCard({
             aria-label={`Remove plugin ${label}`}
             disabled={disabled}
             onClick={onRemove}
-            className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-50"
+            className={leverDanger}
           >
             Remove
           </button>
@@ -432,7 +398,7 @@ function PluginCard({
               disabled={disabled}
               value={plugin.module}
               onChange={(event) => onChange({ module: event.target.value })}
-              className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+              className={`w-full font-mono ${input}`}
             />
           </Field>
           {(spec?.options ?? []).map((option) => (
@@ -448,23 +414,23 @@ function PluginCard({
                 placeholder={option.default || (option.placeholder ? '/path/to/file' : '')}
                 value={plugin.options?.[option.name] ?? ''}
                 onChange={(event) => onOptionChange(option.name, event.target.value)}
-                className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+                className={`w-full font-mono ${input}`}
               />
             </Field>
           ))}
         </div>
       ) : (
-        <p className="mt-4 break-all font-mono text-xs text-slate-400">{plugin.module}</p>
+        <p className="mt-4 break-all font-mono text-xs text-enamel-soft">{plugin.module}</p>
       )}
 
       {preserved.length > 0 ? (
-        <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/60 p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Preserved options</p>
-          <p className="mt-1 text-xs text-slate-500">MCM does not manage these options and writes them back untouched.</p>
-          <ul className="mt-2 space-y-1 font-mono text-xs text-slate-300">
+        <div className="mt-4 border-t border-track pt-3">
+          <h5 className="text-xs font-semibold text-enamel">Preserved options</h5>
+          <p className={`mt-1 ${fieldHint}`}>MCM does not manage these options and writes them back untouched.</p>
+          <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-soft">
             {preserved.map(([name, value]) => (
               <li key={name}>
-                <span className="text-cyan-200">plugin_opt_{name}</span> = {value}
+                <span className="text-enamel-bright">plugin_opt_{name}</span> = {value}
               </li>
             ))}
           </ul>
@@ -486,9 +452,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</span>
-      <span className="mt-1 block">{children}</span>
-      {hint ? <span className="mt-1 block text-xs text-slate-500">{hint}</span> : null}
+      <span className={fieldLabel}>{label}</span>
+      <span className="mt-2 block">{children}</span>
+      {hint ? <span className={`mt-1 block ${fieldHint}`}>{hint}</span> : null}
     </label>
   )
 }

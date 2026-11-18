@@ -4,6 +4,9 @@ import { useCertificates } from './useCertificates'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { CertificateProfile, CertificateRevision } from './certificateTypes'
+import { Section } from '../ui/primitives'
+import { bodyText, fieldHint, fieldLabel, input, leverPrimary, leverSecondary, notice } from '../ui/styles'
+import { fileInput } from './panelParts'
 
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,31 +41,27 @@ function ProfileRow({
 }) {
   const revisions = profile.revisions ?? []
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="font-mono text-sm text-cyan-100">{profile.name}</p>
-          <p className="text-xs text-slate-400">
-            active revision: {profile.active_revision || 'none'} · expiry: {profile.expiry_status || 'unknown'}
-          </p>
-          {profile.description ? <p className="mt-1 text-xs text-slate-400">{profile.description}</p> : null}
-        </div>
-      </div>
-      {revisions.length === 0 ? <p className="mt-3 text-sm text-slate-400">No revisions uploaded.</p> : null}
-      <ul className="mt-3 space-y-2">
+    <div className="border-t border-track pt-4 first:border-t-0 first:pt-0">
+      <h4 className="font-mono text-sm font-semibold text-enamel-bright">{profile.name}</h4>
+      <p className={`mt-1 ${fieldHint}`}>
+        active revision: {profile.active_revision || 'none'} · expiry: {profile.expiry_status || 'unknown'}
+      </p>
+      {profile.description ? <p className={`mt-1 ${fieldHint}`}>{profile.description}</p> : null}
+      {revisions.length === 0 ? <p className={`mt-3 ${bodyText}`}>No revisions uploaded.</p> : null}
+      <ul className="mt-3 border-y border-track">
         {revisions.map((revision) => (
-          <li key={revision.revision_id} className="rounded-xl border border-white/5 bg-slate-900/60 p-3">
+          <li key={revision.revision_id} className="border-b border-track py-3 last:border-0">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="font-mono text-xs text-slate-200">{revision.revision_id}</p>
-                <p className="mt-1 text-xs text-slate-400">
+              <div className="min-w-0">
+                <p className="font-mono text-xs text-enamel-bright">{revision.revision_id}</p>
+                <p className={`mt-1 ${fieldHint}`}>
                   state: {revision.state} · {expiryLabel(revision)}
                   {revision.subject ? ` · ${revision.subject}` : ''}
                 </p>
                 {revision.fingerprint_sha256 ? (
-                  <p className="mt-1 break-all font-mono text-[11px] text-slate-500">sha256:{revision.fingerprint_sha256}</p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-enamel-muted">sha256:{revision.fingerprint_sha256}</p>
                 ) : null}
-                {revision.failure_reason ? <p className="mt-1 text-xs text-rose-200">{revision.failure_reason}</p> : null}
+                {revision.failure_reason ? <p className="mt-1 text-xs text-danger-text">{revision.failure_reason}</p> : null}
               </div>
               <div className="flex gap-2">
                 <button
@@ -70,7 +69,7 @@ function ProfileRow({
                   onClick={() => onPreview(profile.name, revision.revision_id)}
                   disabled={!canWrite || isBusy}
                   title={canWrite ? undefined : permissionTitle('certificate.write')}
-                  className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 disabled:opacity-50"
+                  className={leverSecondary}
                 >
                   Preview
                 </button>
@@ -79,7 +78,7 @@ function ProfileRow({
                   onClick={() => onActivate(profile.name, revision.revision_id)}
                   disabled={!canApply || !hasProof || isBusy || revision.state === 'active'}
                   title={canApply ? undefined : permissionTitle('certificate.apply')}
-                  className="rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                  className={leverSecondary}
                 >
                   Activate
                 </button>
@@ -162,26 +161,17 @@ export default function CertificatesPanel({
   const uploadDisabled = busy || !canWrite || !profileName.trim() || !certFile || !keyFile
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Broker TLS certificates</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Upload certificate material, activate a revision and bind it to a listener.
-            </p>
-          </div>
-        </div>
-
+    <section className="mt-8 space-y-10">
+      <Section title="Broker TLS certificates" description="Upload certificate material, activate a revision and bind it to a listener.">
         {isDisabled ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">
+          <div className={`mt-5 ${notice.caution}`}>
             The certificate surface is disabled. Configure a broker config directory to manage certificates.
           </div>
         ) : null}
-        {listError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{listError}</div> : null}
+        {listError ? <div className={`mt-5 ${notice.failed}`}>{listError}</div> : null}
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Profile name
             <input
               aria-label="Profile name"
@@ -190,10 +180,10 @@ export default function CertificatesPanel({
               disabled={!canWrite || busy}
               onChange={(event) => setProfileName(event.target.value)}
               placeholder="production"
-              className="rounded bg-slate-800 px-3 py-2 font-mono text-sm normal-case text-slate-100"
+              className={`font-mono font-normal ${input}`}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Description
             <input
               aria-label="Description"
@@ -201,10 +191,10 @@ export default function CertificatesPanel({
               value={description}
               disabled={!canWrite || busy}
               onChange={(event) => setDescription(event.target.value)}
-              className="rounded bg-slate-800 px-3 py-2 text-sm normal-case text-slate-100"
+              className={`font-normal ${input}`}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             CA certificate (PEM)
             <input
               aria-label="CA certificate"
@@ -212,10 +202,10 @@ export default function CertificatesPanel({
               accept=".pem,.crt,.cer"
               disabled={!canWrite || busy}
               onChange={(event) => setCaFile(event.target.files?.[0] ?? null)}
-              className="text-xs normal-case text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+              className={fileInput}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Server certificate (PEM)
             <input
               aria-label="Server certificate"
@@ -223,10 +213,10 @@ export default function CertificatesPanel({
               accept=".pem,.crt,.cer"
               disabled={!canWrite || busy}
               onChange={(event) => setCertFile(event.target.files?.[0] ?? null)}
-              className="text-xs normal-case text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+              className={fileInput}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Server private key (PEM)
             <input
               aria-label="Server private key"
@@ -234,10 +224,10 @@ export default function CertificatesPanel({
               accept=".pem,.key"
               disabled={!canWrite || busy}
               onChange={(event) => setKeyFile(event.target.files?.[0] ?? null)}
-              className="text-xs normal-case text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+              className={fileInput}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Chain (PEM, optional)
             <input
               aria-label="Chain"
@@ -245,10 +235,10 @@ export default function CertificatesPanel({
               accept=".pem,.crt,.cer"
               disabled={!canWrite || busy}
               onChange={(event) => setChainFile(event.target.files?.[0] ?? null)}
-              className="text-xs normal-case text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+              className={fileInput}
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+          <label className={`flex flex-col gap-2 ${fieldLabel}`}>
             Expected names (comma separated)
             <input
               aria-label="Expected names"
@@ -257,10 +247,10 @@ export default function CertificatesPanel({
               disabled={!canWrite || busy}
               onChange={(event) => setExpectedNames(event.target.value)}
               placeholder="mosquitto.example.internal"
-              className="rounded bg-slate-800 px-3 py-2 font-mono text-sm normal-case text-slate-100"
+              className={`font-mono font-normal ${input}`}
             />
           </label>
-          <label className="flex items-center gap-2 text-sm text-slate-300">
+          <label className="flex items-center gap-2 text-sm text-enamel">
             <input
               aria-label="Require client certificate"
               type="checkbox"
@@ -272,21 +262,21 @@ export default function CertificatesPanel({
           </label>
         </div>
 
-        <div className="mt-5 flex items-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => { void handleUpload() }}
             disabled={uploadDisabled}
             title={canWrite ? undefined : permissionTitle('certificate.write')}
-            className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+            className={leverPrimary}
           >
             Upload revision
           </button>
-          {!canWrite ? <p className="text-xs text-slate-400">{permissionTitle('certificate.write')}</p> : null}
+          {!canWrite ? <p className={fieldHint}>{permissionTitle('certificate.write')}</p> : null}
         </div>
 
         {uploadError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">
+          <div className={`mt-5 ${notice.failed}`}>
             {uploadError}
             {uploadIssues.length > 0 ? (
               <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -296,23 +286,22 @@ export default function CertificatesPanel({
           </div>
         ) : null}
         {uploadedRevision ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100">
+          <div className={`mt-5 ${notice.neutral}`}>
             Revision {uploadedRevision.revision_id} stored. Preview it and activate it to serve it.
           </div>
         ) : null}
-      </div>
+      </Section>
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Profiles</p>
+      <Section title="Profiles">
         {hasActivatable ? (
           <div className="mt-4 space-y-2">
             <RecentMFAConfirmation state={mfa} />
-            {!mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+            {!mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
           </div>
         ) : null}
-        {isLoading ? <p className="mt-4 text-sm text-slate-400">Loading certificate profiles…</p> : null}
-        {!isLoading && profiles.length === 0 ? <p className="mt-4 text-sm text-slate-400">No certificate profiles yet.</p> : null}
-        <div className="mt-4 space-y-4">
+        {isLoading ? <p className={`mt-4 ${bodyText}`}>Loading certificate profiles…</p> : null}
+        {!isLoading && profiles.length === 0 ? <p className={`mt-4 ${bodyText}`}>No certificate profiles yet.</p> : null}
+        <div className="mt-4">
           {profiles.map((profile) => (
             <ProfileRow
               key={profile.name}
@@ -327,15 +316,15 @@ export default function CertificatesPanel({
           ))}
         </div>
 
-        {previewError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{previewError}</div> : null}
+        {previewError ? <div className={`mt-5 ${notice.failed}`}>{previewError}</div> : null}
         {preview ? (
-          <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/40 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Preview</p>
-            <p className="mt-2 font-mono text-sm text-slate-200">{preview.profile} · {preview.revision_id}</p>
-            <p className="mt-1 text-xs text-slate-400">
+          <div className="mt-6 border-t border-track pt-4">
+            <h4 className="text-sm font-semibold text-enamel-bright">Preview</h4>
+            <p className="mt-2 font-mono text-sm text-enamel-bright">{preview.profile} · {preview.revision_id}</p>
+            <p className={`mt-1 ${fieldHint}`}>
               current revision: {preview.current_revision || 'none'} · restart required: {preview.restart_required ? 'yes' : 'no'}
             </p>
-            <ul className="mt-3 space-y-1 text-xs text-slate-400">
+            <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-soft">
               {preview.files?.cert_path ? <li className="break-all">certificate: {preview.files.cert_path}</li> : null}
               {preview.files?.key_path ? <li className="break-all">private key: {preview.files.key_path}</li> : null}
               {preview.files?.ca_path ? <li className="break-all">authority: {preview.files.ca_path}</li> : null}
@@ -344,9 +333,10 @@ export default function CertificatesPanel({
           </div>
         ) : null}
 
-        {applyError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div> : null}
+        {applyError ? <div className={`mt-5 ${notice.failed}`}>{applyError}</div> : null}
         {applyResult ? (
-          <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100">
+          // A restored previous material is a rollback (amber); the activation itself carries no verified status here.
+          <div className={`mt-5 ${applyResult.recovered ? notice.caution : notice.neutral}`}>
             <p>Revision {applyResult.revision_id} activated. Previous revision: {applyResult.previous_revision || 'none'}.</p>
             {applyResult.recovered ? <p className="mt-1">The previous material was restored: {applyResult.recovery_note}</p> : null}
             {(applyResult.verification ?? []).length > 0 ? (
@@ -361,7 +351,7 @@ export default function CertificatesPanel({
             ) : null}
           </div>
         ) : null}
-      </div>
+      </Section>
     </section>
   )
 }

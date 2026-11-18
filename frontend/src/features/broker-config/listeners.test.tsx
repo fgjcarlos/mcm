@@ -203,8 +203,8 @@ describe('ListenersPanel', () => {
 
     const notice = await screen.findByText('Listener configuration applied.')
     // The listener apply carries no activation proof: amber, never verified green.
-    expect(notice.className).toMatch(/amber/)
-    expect(notice.className).not.toMatch(/emerald/)
+    expect(notice.className).toMatch(/\btext-lamp\b/)
+    expect(notice.className).not.toMatch(/proceed/)
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([input]) => input === '/api/v1/listeners')).toHaveLength(2)
     })

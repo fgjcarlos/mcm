@@ -1,19 +1,16 @@
 import { useMemo, useState } from 'react'
 import { can } from '../auth/permissions'
 import { useSettings } from './useSettings'
-import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Section } from '../ui/primitives'
+import { bodyText, fieldHint, input, leverDanger, leverPrimary, leverSecondary, notice, select } from '../ui/styles'
+import { DraftState, Findings, ReloadKind } from './panelParts'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { SettingsDocument, SettingsEntry, SettingsField } from './settingsTypes'
 
 type Occurrence = { values: string[] }
 type Draft = Record<string, Occurrence[]>
-
-const reloadKindTone: Record<string, string> = {
-  reload: 'bg-cyan-400/10 text-cyan-200',
-  restart: 'bg-amber-400/10 text-amber-200',
-  both: 'bg-violet-400/10 text-violet-200',
-}
 
 // draftFromDocument turns the document the server sent into the editable
 // state of the form. A directive the server marked unset has no occurrence.
@@ -213,7 +210,7 @@ export default function SettingsPanel({
   if (isLoading && !settings) {
     return (
       <section className="mt-8">
-        <p className="text-sm text-slate-400">Loading broker settings…</p>
+        <p className={bodyText}>Loading broker settings…</p>
       </section>
     )
   }
@@ -221,7 +218,7 @@ export default function SettingsPanel({
   if (!settings) {
     return (
       <section className="mt-8">
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+        <div className={notice.neutral}>
           Broker settings are not configured on this MCM instance.
         </div>
       </section>
@@ -229,90 +226,75 @@ export default function SettingsPanel({
   }
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Broker settings</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Edit the general settings of <span className="font-mono">{settings.path}</span> and preview the change before it reaches the broker.
-            </p>
-            <p className="mt-1 text-xs text-slate-400">Mosquitto {settings.version}</p>
-            <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
-          </div>          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handlePreview}
-              disabled={!canPreview || isLoading || isPreviewing || isApplying}
-              title={!canPreview ? 'Requires operator role' : undefined}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
-            >
-              {isPreviewing ? 'Generating…' : 'Preview changes'}
-            </button>
-          </div>
-        </div>
+    <section className="mt-8 space-y-10">
+      <Section
+        title="Broker settings"
+        description={<>Edit the general settings of <span className="font-mono">{settings.path}</span> and preview the change before it reaches the broker.</>}
+        aside={
+          <button
+            type="button"
+            onClick={handlePreview}
+            disabled={!canPreview || isLoading || isPreviewing || isApplying}
+            title={!canPreview ? 'Requires operator role' : undefined}
+            className={leverSecondary}
+          >
+            {isPreviewing ? 'Generating…' : 'Preview changes'}
+          </button>
+        }
+      >
+        <p className={`mt-1 ${fieldHint}`}>Mosquitto {settings.version}</p>
+        <DraftState dirty={dirty} />
 
         {previewError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {previewError}
           </div>
         ) : null}
         {applyError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {applyError}
           </div>
         ) : null}
         {applied ? (
-          <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[appliedLamp]} ${lampText[appliedLamp]}`} role={appliedNotice.role}>
+          <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[appliedLamp]}`} role={appliedNotice.role}>
             {appliedNotice.message}
           </div>
         ) : null}
         {settings.warnings?.length ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {settings.warnings.map((warning, index) => (
-                <li key={`${index}-${warning}`}>{warning}</li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Warnings">
+            {settings.warnings.map((warning, index) => (
+              <li key={`${index}-${warning}`}>{warning}</li>
+            ))}
+          </Findings>
         ) : null}
         {issues.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Issues</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-100">
-              {issues.map((issue, index) => (
-                <li key={`${issue.kind}-${issue.directive}-${index}`}>
-                  <span className="font-mono text-xs">{issue.directive}</span> · {issue.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="failed" title="Issues">
+            {issues.map((issue, index) => (
+              <li key={`${issue.kind}-${issue.directive}-${index}`}>
+                <span className="font-mono text-xs">{issue.directive}</span> · {issue.message}
+              </li>
+            ))}
+          </Findings>
         ) : null}
-      </div>
+      </Section>
 
       {settings.sections.map((section) => (
-        <div key={section.id} className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{section.title}</p>
-          {section.hint ? <p className="mt-1 text-sm text-slate-400">{section.hint}</p> : null}
-
-          <div className="mt-5 space-y-4">
+        <Section key={section.id} title={section.title} description={section.hint || undefined}>
+          <div className="mt-4">
             {section.fields.map((field) => {
               const occurrences = current[field.directive] ?? []
               const repeatable = field.multiplicity === 'many'
               return (
-                <div key={field.directive} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                <div key={field.directive} className="border-t border-track py-4 first:border-t-0 first:pt-0">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-mono text-sm text-cyan-100">{field.directive}</p>
-                      <p className="mt-1 max-w-2xl text-xs text-slate-400">{field.description}</p>
+                    <div className="min-w-0">
+                      <h4 className="font-mono text-sm font-semibold text-enamel-bright">{field.directive}</h4>
+                      <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>{field.description}</p>
                     </div>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindTone[field.reload_kind] ?? reloadKindTone.reload}`}>
-                      {field.reload_kind}
-                    </span>
+                    <ReloadKind kind={field.reload_kind} />
                   </div>
 
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className={`mt-2 ${fieldHint}`}>
                     {boundText(field) ? <span className="font-mono">{boundText(field)}</span> : null}
                     {boundText(field) && field.default ? ' · ' : null}
                     {field.default ? <>default <span className="font-mono">{field.default}</span></> : null}
@@ -322,7 +304,7 @@ export default function SettingsPanel({
                     {repeatable ? (
                       <>
                         {occurrences.length === 0 ? (
-                          <p className="text-xs text-slate-500">Not set in the configuration — the broker default applies.</p>
+                          <p className={fieldHint}>Not set in the configuration — the broker default applies.</p>
                         ) : null}
                         {occurrences.map((occurrence, index) => (
                           <div key={`${field.directive}-${index}`} className="flex flex-wrap items-center gap-2">
@@ -337,7 +319,7 @@ export default function SettingsPanel({
                               aria-label={`Remove ${field.directive} ${index + 1}`}
                               disabled={isApplying}
                               onClick={() => removeOccurrence(field.directive, index)}
-                              className="text-xs text-rose-200 disabled:opacity-50"
+                              className={leverDanger}
                             >
                               Remove
                             </button>
@@ -346,7 +328,7 @@ export default function SettingsPanel({
                       </>
                     ) : (
                       <label className="flex flex-wrap items-center gap-3">
-                        <span className="inline-flex items-center gap-2 text-xs text-slate-300">
+                        <span className="inline-flex items-center gap-2 text-sm text-enamel">
                           <input
                             type="checkbox"
                             aria-label={`Set ${field.directive}`}
@@ -370,7 +352,7 @@ export default function SettingsPanel({
                             onChange={(values) => updateOccurrence(field.directive, 0, values)}
                           />
                         ) : (
-                          <span className="text-xs text-slate-500">Not set — the broker default applies.</span>
+                          <span className={fieldHint}>Not set — the broker default applies.</span>
                         )}
                       </label>
                     )}
@@ -381,7 +363,7 @@ export default function SettingsPanel({
                       type="button"
                       onClick={() => addOccurrence(field.directive)}
                       disabled={isApplying}
-                      className="mt-3 rounded-xl border border-white/10 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                      className={`mt-3 ${leverSecondary}`}
                     >
                       Add {field.directive}
                     </button>
@@ -390,51 +372,36 @@ export default function SettingsPanel({
               )
             })}
           </div>
-        </div>
+        </Section>
       ))}
 
       {preview ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Preview</p>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindTone[preview.reload_kind] ?? reloadKindTone.reload}`}>
-              {preview.reload_kind || 'reload'}
-            </span>
-          </div>
-          <p className="mt-2 break-all font-mono text-xs text-slate-400">revision {preview.revision_id}</p>
+        <Section title="Preview" aside={<ReloadKind kind={preview.reload_kind || 'reload'} />}>
+          <p className="mt-2 break-all font-mono text-xs text-enamel-muted">revision {preview.revision_id}</p>
           {preview.changed_directives?.length ? (
-            <p className="mt-2 text-xs text-slate-300">
-              Changed: <span className="font-mono text-cyan-200">{preview.changed_directives.join(', ')}</span>
+            <p className={`mt-2 ${fieldHint}`}>
+              Changed: <span className="font-mono text-enamel-bright">{preview.changed_directives.join(', ')}</span>
             </p>
           ) : null}
           {preview.conf_diff ? (
-            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-              {preview.conf_diff.split('\n').map((line, index) => (
-                <span
-                  key={index}
-                  className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-red-500/10 text-red-200' : 'text-slate-300'}`}
-                >
-                  {line || ' '}
-                </span>
-              ))}
-            </pre>
+            <div className="mt-4"><DiffBlock content={preview.conf_diff} /></div>
           ) : (
-            <p className="mt-4 text-sm text-slate-300">No changes — the configuration already matches.</p>
+            <p className={`mt-4 ${bodyText}`}>No changes — the configuration already matches.</p>
           )}
 
           {preview.requires_restart ? (
-            <p className="mt-4 text-xs text-amber-200">
+            <p className="mt-4 text-xs text-lamp">
               This change needs a broker restart: {preview.changed_directives?.join(', ') || 'a restart-required directive'}.
             </p>
           ) : (
-            <p className="mt-4 text-xs text-cyan-200">The broker picks this up on the next reload.</p>
+            <p className={`mt-4 ${fieldHint}`}>The broker picks this up on the next reload.</p>
           )}
 
           {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {preview.requires_restart ? (
-              <label className="flex items-center gap-2 text-sm text-slate-200">
+              <label className="flex items-center gap-2 text-sm text-enamel">
                 <input
                   type="checkbox"
                   aria-label="Confirm broker restart"
@@ -450,13 +417,13 @@ export default function SettingsPanel({
               onClick={() => { void handleApply() }}
               disabled={!isAdmin || !mfa.proof || isApplying || (preview.requires_restart && !confirmRestart)}
               title={!isAdmin ? 'Requires admin role' : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverPrimary}
             >
               {isApplying ? 'Applying…' : 'Apply'}
             </button>
-            {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+            {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
           </div>
-        </div>
+        </Section>
       ) : null}
     </section>
   )
@@ -486,7 +453,7 @@ function OccurrenceEditor({
         disabled={disabled}
         value={values[0] ?? 'true'}
         onChange={(event) => onChange([event.target.value])}
-        className="rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+        className={select}
       >
         <option value="true">true</option>
         <option value="false">false</option>
@@ -504,7 +471,7 @@ function OccurrenceEditor({
         max={field.max}
         value={values[0] ?? ''}
         onChange={(event) => onChange([event.target.value])}
-        className="w-32 rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+        className={`w-32 font-mono ${input}`}
       />
     )
   }
@@ -522,14 +489,14 @@ function OccurrenceEditor({
           disabled={disabled}
           value={digits}
           onChange={(event) => onChange([`${event.target.value}${suffix}`])}
-          className="w-28 rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+          className={`w-28 font-mono ${input}`}
         />
         <select
           aria-label={`${field.directive} unit`}
           disabled={disabled}
           value={suffix}
           onChange={(event) => onChange([`${digits}${event.target.value}`])}
-          className="rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+          className={select}
         >
           {(field.duration_suffixes ?? []).map((candidate) => (
             <option key={candidate} value={candidate}>
@@ -555,7 +522,7 @@ function OccurrenceEditor({
             if (event.target.value !== 'file') next.length = 1
             onChange(next)
           }}
-          className="rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+          className={select}
         >
           <option value="">select…</option>
           {(field.allowed_values ?? []).map((allowed) => (
@@ -567,12 +534,12 @@ function OccurrenceEditor({
         {values[0] === 'file' ? (
           <input
             aria-label={`${field.directive} path`}
-          type="text"
-          disabled={disabled}
+            type="text"
+            disabled={disabled}
             value={extra[0] ?? ''}
             onChange={(event) => onChange([values[0], event.target.value])}
             placeholder="/var/log/mosquitto.log"
-            className="w-64 rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-64 font-mono ${input}`}
           />
         ) : null}
       </span>
@@ -586,7 +553,7 @@ function OccurrenceEditor({
       disabled={disabled}
       value={values[0] ?? ''}
       onChange={(event) => onChange([event.target.value])}
-      className="w-72 rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+      className={`w-72 font-mono ${input}`}
     />
   )
 }

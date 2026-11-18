@@ -3,7 +3,10 @@ import { can } from '../auth/permissions'
 import { useBridges } from './useBridges'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
-import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
+import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
+import { DiffBlock, Section } from '../ui/primitives'
+import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
+import { DraftState, Findings, ReloadKind } from './panelParts'
 import {
   bridgeDirections,
   bridgeProtocolVersions,
@@ -13,12 +16,6 @@ import {
   validateBridges,
 } from './bridgeValidation'
 import type { Bridge, BridgeTopicRule } from './bridgeTypes'
-
-const reloadKindTone: Record<string, string> = {
-  reload: 'bg-cyan-400/10 text-cyan-200',
-  restart: 'bg-amber-400/10 text-amber-200',
-  both: 'bg-violet-400/10 text-violet-200',
-}
 
 function applyNotice(status: string | undefined) {
   switch (status) {
@@ -172,28 +169,23 @@ export default function BridgesPanel({
   if (isLoading && bridges.length === 0 && !draft) {
     return (
       <section className="mt-8">
-        <p className="text-sm text-slate-400">Loading bridges…</p>
+        <p className={bodyText}>Loading bridges…</p>
       </section>
     )
   }
 
   return (
-    <section className="mt-8 space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Bridges</p>
-            <p className="mt-1 text-sm text-slate-300">
-              Connect this broker to remote brokers and preview the change before it reaches the broker.
-            </p>
-            <p className="mt-1 text-xs text-slate-400">{dirty ? 'Unsaved changes' : 'Saved'}</p>
-          </div>
-          <div className="flex gap-2">
+    <section className="mt-8 space-y-10">
+      <Section
+        title="Bridges"
+        description="Connect this broker to remote brokers and preview the change before it reaches the broker."
+        aside={
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={addBridge}
               disabled={isLoading || isApplying}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+              className={leverSecondary}
             >
               Add bridge
             </button>
@@ -202,70 +194,63 @@ export default function BridgesPanel({
               onClick={handlePreview}
               disabled={!canPreview || isLoading || isPreviewing || isApplying || blockingIssues.length > 0}
               title={!canPreview ? 'Requires operator role' : undefined}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+              className={leverSecondary}
             >
               {isPreviewing ? 'Generating…' : 'Preview'}
             </button>
           </div>
-        </div>
+        }
+      >
+        <DraftState dirty={dirty} />
 
         {previewError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {previewError}
           </div>
         ) : null}
         {applyError ? (
-          <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100" role="alert">
+          <div className={`mt-5 ${notice.failed}`} role="alert">
             {applyError}
           </div>
         ) : null}
         {applied ? (
-          <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[appliedLamp]} ${lampText[appliedLamp]}`} role={appliedNotice.role}>
+          <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[appliedLamp]}`} role={appliedNotice.role}>
             {appliedNotice.message}
           </div>
         ) : null}
         {blockingIssues.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200">Issues</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-100">
-              {blockingIssues.map((issue, index) => (
-                <li key={`${issue.kind}-${issue.bridge}-${index}`}>
-                  {issue.bridge ? <span className="font-mono text-xs">{issue.bridge}</span> : null}
-                  {issue.bridge ? ' · ' : null}
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="failed" title="Issues">
+            {blockingIssues.map((issue, index) => (
+              <li key={`${issue.kind}-${issue.bridge}-${index}`}>
+                {issue.bridge ? <span className="font-mono text-xs">{issue.bridge}</span> : null}
+                {issue.bridge ? ' · ' : null}
+                {issue.message}
+              </li>
+            ))}
+          </Findings>
         ) : null}
         {warnings.length > 0 ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {warnings.map((warning, index) => (
-                <li key={`${warning.kind}-${warning.bridge}-${index}`}>
-                  {warning.bridge ? <span className="font-mono text-xs">{warning.bridge}</span> : null}
-                  {warning.bridge ? ' · ' : null}
-                  {warning.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Warnings">
+            {warnings.map((warning, index) => (
+              <li key={`${warning.kind}-${warning.bridge}-${index}`}>
+                {warning.bridge ? <span className="font-mono text-xs">{warning.bridge}</span> : null}
+                {warning.bridge ? ' · ' : null}
+                {warning.message}
+              </li>
+            ))}
+          </Findings>
         ) : null}
         {issues.length > 0 && issues.every((issue) => issue.severity === 'warning') ? (
-          <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Server warnings</p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100">
-              {issues.map((issue, index) => (
-                <li key={`${issue.kind}-${issue.bridge}-${index}`}>{issue.message}</li>
-              ))}
-            </ul>
-          </div>
+          <Findings tone="caution" title="Server warnings">
+            {issues.map((issue, index) => (
+              <li key={`${issue.kind}-${issue.bridge}-${index}`}>{issue.message}</li>
+            ))}
+          </Findings>
         ) : null}
-      </div>
+      </Section>
 
       {specs.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">
+        <div className={notice.neutral}>
           No bridge is configured. Add one to connect this broker to a remote broker.
         </div>
       ) : null}
@@ -286,36 +271,21 @@ export default function BridgesPanel({
       ))}
 
       {preview ? (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Preview</p>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${reloadKindTone[preview.reload_kind ?? ''] ?? reloadKindTone.reload}`}>
-              {preview.reload_kind || 'reload'}
-            </span>
-          </div>
-          <p className="mt-2 break-all font-mono text-xs text-slate-400">revision {preview.revision_id}</p>
+        <Section title="Preview" aside={<ReloadKind kind={preview.reload_kind || 'reload'} />}>
+          <p className="mt-2 break-all font-mono text-xs text-enamel-muted">revision {preview.revision_id}</p>
           {preview.changed_directives?.length ? (
-            <p className="mt-2 text-xs text-slate-300">
-              Changed: <span className="font-mono text-cyan-200">{preview.changed_directives.join(', ')}</span>
+            <p className={`mt-2 ${fieldHint}`}>
+              Changed: <span className="font-mono text-enamel-bright">{preview.changed_directives.join(', ')}</span>
             </p>
           ) : null}
           {preview.conf_diff ? (
-            <pre className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-4 font-mono text-xs leading-5">
-              {preview.conf_diff.split('\n').map((line, index) => (
-                <span
-                  key={index}
-                  className={`block ${line.startsWith('+') ? 'bg-emerald-500/10 text-emerald-200' : line.startsWith('-') ? 'bg-red-500/10 text-red-200' : 'text-slate-300'}`}
-                >
-                  {line || ' '}
-                </span>
-              ))}
-            </pre>
+            <div className="mt-4"><DiffBlock content={preview.conf_diff} /></div>
           ) : (
-            <p className="mt-4 text-sm text-slate-300">No changes — the configuration already matches.</p>
+            <p className={`mt-4 ${bodyText}`}>No changes — the configuration already matches.</p>
           )}
 
           {preview.requires_restart ? (
-            <p className="mt-4 text-xs text-amber-200">
+            <p className="mt-4 text-xs text-lamp">
               Mosquitto reads a bridge at start-up, so this change needs a broker restart.
             </p>
           ) : null}
@@ -324,7 +294,7 @@ export default function BridgesPanel({
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {preview.requires_restart ? (
-              <label className="flex items-center gap-2 text-sm text-slate-200">
+              <label className="flex items-center gap-2 text-sm text-enamel">
                 <input
                   type="checkbox"
                   aria-label="Confirm broker restart"
@@ -340,13 +310,13 @@ export default function BridgesPanel({
               onClick={() => { void handleApply() }}
               disabled={!applyEnabled}
               title={!isAdmin ? 'Requires admin role' : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverPrimary}
             >
               {isApplying ? 'Applying…' : 'Apply'}
             </button>
-            {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+            {isAdmin && !mfa.proof ? <p className="text-xs text-lamp">Confirm MFA above before applying.</p> : null}
           </div>
-        </div>
+        </Section>
       ) : null}
     </section>
   )
@@ -380,22 +350,21 @@ function BridgeCard({
   const fieldWarnings = (field: string) => warnings.filter((issue) => issue.field === field)
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Bridge</p>
-          <p className="mt-1 text-sm text-slate-400">A connection to a remote broker and the topics it forwards.</p>
-        </div>
+    <Section
+      title="Bridge"
+      description="A connection to a remote broker and the topics it forwards."
+      aside={
         <button
           type="button"
           aria-label={`Remove bridge ${name}`}
           disabled={disabled}
           onClick={onRemove}
-          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:text-rose-100 disabled:opacity-50"
+          className={leverDanger}
         >
           Remove
         </button>
-      </div>
+      }
+    >
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <Field label="Name" error={fieldIssues('name').map((issue) => issue.message)}>
@@ -405,7 +374,7 @@ function BridgeCard({
             disabled={disabled}
             value={name}
             onChange={(event) => onChange({ name: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Address" error={fieldIssues('address').map((issue) => issue.message)}>
@@ -416,7 +385,7 @@ function BridgeCard({
             placeholder="broker.example.org:1883"
             value={bridge.address ?? ''}
             onChange={(event) => onChange({ address: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Remote client id" error={fieldIssues('remote_client_id').map((issue) => issue.message)}>
@@ -426,7 +395,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.remote_client_id ?? ''}
             onChange={(event) => onChange({ remote_client_id: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Local client id" error={fieldIssues('local_client_id').map((issue) => issue.message)}>
@@ -436,7 +405,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.local_client_id ?? ''}
             onChange={(event) => onChange({ local_client_id: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="User name" error={fieldIssues('username').map((issue) => issue.message)}>
@@ -446,7 +415,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.username ?? ''}
             onChange={(event) => onChange({ username: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field
@@ -462,12 +431,12 @@ function BridgeCard({
             placeholder={bridge.password_set ? 'stored' : ''}
             value={bridge.password ?? ''}
             onChange={(event) => onChange({ password: event.target.value })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
       </div>
 
-      <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Reconnection</p>
+      <h4 className="mt-6 text-sm font-semibold text-enamel-bright">Reconnection</h4>
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Protocol version">
           <select
@@ -475,7 +444,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.protocol_version ?? ''}
             onChange={(event) => onChange({ protocol_version: event.target.value || undefined })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${select}`}
           >
             <option value="">broker default</option>
             {bridgeProtocolVersions.map((version) => (
@@ -489,7 +458,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.start_type ?? ''}
             onChange={(event) => onChange({ start_type: event.target.value || undefined })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${select}`}
           >
             <option value="">broker default</option>
             {bridgeStartTypes.map((type) => (
@@ -506,7 +475,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.keepalive_seconds ?? ''}
             onChange={(event) => onChange({ keepalive_seconds: event.target.value === '' ? undefined : Number(event.target.value) })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Restart timeout" hint="Seconds, or a base and cap pair such as 5 30.">
@@ -517,7 +486,7 @@ function BridgeCard({
             placeholder="5 30"
             value={bridge.restart_timeout ?? ''}
             onChange={(event) => onChange({ restart_timeout: event.target.value || undefined })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Threshold">
@@ -528,7 +497,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.threshold ?? ''}
             onChange={(event) => onChange({ threshold: event.target.value === '' ? undefined : Number(event.target.value) })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Idle timeout (seconds)">
@@ -539,7 +508,7 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.idle_timeout_seconds ?? ''}
             onChange={(event) => onChange({ idle_timeout_seconds: event.target.value === '' ? undefined : Number(event.target.value) })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
       </div>
@@ -583,12 +552,12 @@ function BridgeCard({
             disabled={disabled}
             value={bridge.notification_topic ?? ''}
             onChange={(event) => onChange({ notification_topic: event.target.value || undefined })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
       </div>
 
-      <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">TLS</p>
+      <h4 className="mt-6 text-sm font-semibold text-enamel-bright">TLS</h4>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <Field label="CA file">
           <input
@@ -597,7 +566,7 @@ function BridgeCard({
             disabled={disabled}
             value={tls.ca_file ?? ''}
             onChange={(event) => onChange({ tls: { ...tls, ca_file: event.target.value } })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="CA path">
@@ -607,7 +576,7 @@ function BridgeCard({
             disabled={disabled}
             value={tls.ca_path ?? ''}
             onChange={(event) => onChange({ tls: { ...tls, ca_path: event.target.value } })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Client certificate" error={fieldIssues('tls.cert_file').map((issue) => issue.message)}>
@@ -617,7 +586,7 @@ function BridgeCard({
             disabled={disabled}
             value={tls.cert_file ?? ''}
             onChange={(event) => onChange({ tls: { ...tls, cert_file: event.target.value } })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="Private key" error={fieldIssues('tls.key_file').map((issue) => issue.message)}>
@@ -627,7 +596,7 @@ function BridgeCard({
             disabled={disabled}
             value={tls.key_file ?? ''}
             onChange={(event) => onChange({ tls: { ...tls, key_file: event.target.value } })}
-            className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-sm text-slate-100"
+            className={`w-full font-mono ${input}`}
           />
         </Field>
         <Field label="TLS version">
@@ -636,7 +605,7 @@ function BridgeCard({
             disabled={disabled}
             value={tls.tls_version ?? ''}
             onChange={(event) => onChange({ tls: { ...tls, tls_version: event.target.value || undefined } })}
-            className="w-full rounded bg-slate-800 px-2 py-1 text-sm text-slate-100"
+            className={`w-full ${select}`}
           >
             <option value="">broker default</option>
             {bridgeTLSVersions.map((version) => (
@@ -655,16 +624,16 @@ function BridgeCard({
         </div>
       </div>
       {fieldWarnings('tls.insecure').length > 0 ? (
-        <p className="mt-2 text-xs text-amber-200">{fieldWarnings('tls.insecure').map((issue) => issue.message).join(' ')}</p>
+        <p className="mt-2 text-xs text-lamp">{fieldWarnings('tls.insecure').map((issue) => issue.message).join(' ')}</p>
       ) : null}
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Topic rules</p>
+        <h4 className="text-sm font-semibold text-enamel-bright">Topic rules</h4>
         <button
           type="button"
           onClick={onTopicAdd}
           disabled={disabled}
-          className="rounded-xl border border-white/10 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+          className={leverSecondary}
         >
           Add topic rule
         </button>
@@ -672,21 +641,21 @@ function BridgeCard({
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[46rem] text-left text-sm">
           <thead>
-            <tr className="text-xs uppercase tracking-[0.18em] text-slate-500">
-              <th className="px-3 py-2">Topic</th>
-              <th className="px-3 py-2">Direction</th>
-              <th className="px-3 py-2">QoS</th>
-              <th className="px-3 py-2">Local prefix</th>
-              <th className="px-3 py-2">Remote prefix</th>
-              <th className="px-3 py-2" />
+            <tr className="border-b border-track-strong">
+              <th className={`${tableHead} text-left`}>Topic</th>
+              <th className={`${tableHead} text-left`}>Direction</th>
+              <th className={`${tableHead} text-left`}>QoS</th>
+              <th className={`${tableHead} text-left`}>Local prefix</th>
+              <th className={`${tableHead} text-left`}>Remote prefix</th>
+              <th className={tableHead} />
             </tr>
           </thead>
           <tbody>
             {(bridge.topics ?? []).map((rule, topicIndex) => {
               const topicIssues = issues.filter((issue) => issue.topic === rule.topic && issue.field === 'topics')
               return (
-                <tr key={topicIndex} className="border-b border-white/5 last:border-0 align-top">
-                  <td className="px-3 py-2">
+                <tr key={topicIndex} className={`${tableRow} align-top`}>
+                  <td className="py-2 pr-3">
                     <input
                       aria-label={`Topic ${name} ${topicIndex + 1}`}
                       type="text"
@@ -694,65 +663,65 @@ function BridgeCard({
                       placeholder="both/#"
                       value={rule.topic ?? ''}
                       onChange={(event) => onTopicChange(topicIndex, { topic: event.target.value })}
-                      className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                      className={`w-full font-mono ${input}`}
                     />
                     {topicIssues.map((issue, index) => (
-                      <p key={`${issue.kind}-${index}`} className="mt-1 text-xs text-rose-200">{issue.message}</p>
+                      <p key={`${issue.kind}-${index}`} className="mt-1 text-xs text-danger-text">{issue.message}</p>
                     ))}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="py-2 pr-3">
                     <select
                       aria-label={`Direction ${name} ${topicIndex + 1}`}
                       disabled={disabled}
                       value={rule.direction ?? 'both'}
                       onChange={(event) => onTopicChange(topicIndex, { direction: event.target.value as BridgeTopicRule['direction'] })}
-                      className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className={select}
                     >
                       {bridgeDirections.map((direction) => (
                         <option key={direction} value={direction}>{direction}</option>
                       ))}
                     </select>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="py-2 pr-3">
                     <select
                       aria-label={`QoS ${name} ${topicIndex + 1}`}
                       disabled={disabled}
                       value={String(rule.qos ?? 0)}
                       onChange={(event) => onTopicChange(topicIndex, { qos: Number(event.target.value) })}
-                      className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className={select}
                     >
                       <option value="0">0</option>
                       <option value="1">1</option>
                       <option value="2">2</option>
                     </select>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="py-2 pr-3">
                     <input
                       aria-label={`Local prefix ${name} ${topicIndex + 1}`}
                       type="text"
                       disabled={disabled}
                       value={rule.local_prefix ?? ''}
                       onChange={(event) => onTopicChange(topicIndex, { local_prefix: event.target.value })}
-                      className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                      className={`w-full font-mono ${input}`}
                     />
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="py-2 pr-3">
                     <input
                       aria-label={`Remote prefix ${name} ${topicIndex + 1}`}
                       type="text"
                       disabled={disabled}
                       value={rule.remote_prefix ?? ''}
                       onChange={(event) => onTopicChange(topicIndex, { remote_prefix: event.target.value })}
-                      className="w-full rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-100"
+                      className={`w-full font-mono ${input}`}
                     />
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="py-2 pr-3">
                     <button
                       type="button"
                       aria-label={`Remove topic ${name} ${topicIndex + 1}`}
                       disabled={disabled}
                       onClick={() => onTopicRemove(topicIndex)}
-                      className="text-xs text-rose-200 disabled:opacity-50"
+                      className={leverDanger}
                     >
                       Remove
                     </button>
@@ -762,7 +731,7 @@ function BridgeCard({
             })}
             {(bridge.topics ?? []).length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-4 text-sm text-slate-400">
+                <td colSpan={6} className={`py-4 ${bodyText}`}>
                   This bridge has no topic rule. Mosquitto refuses a connection without topics.
                 </td>
               </tr>
@@ -770,7 +739,7 @@ function BridgeCard({
           </tbody>
         </table>
       </div>
-    </div>
+    </Section>
   )
 }
 
@@ -790,14 +759,14 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</span>
-      <span className="mt-1 block">{children}</span>
-      {hint ? <span className="mt-1 block text-xs text-slate-500">{hint}</span> : null}
+      <span className={fieldLabel}>{label}</span>
+      <span className="mt-2 block">{children}</span>
+      {hint ? <span className={`mt-1 block ${fieldHint}`}>{hint}</span> : null}
       {(error ?? []).map((message) => (
-        <span key={message} className="mt-1 block text-xs text-rose-200">{message}</span>
+        <span key={message} className="mt-1 block text-xs text-danger-text">{message}</span>
       ))}
       {(warning ?? []).map((message) => (
-        <span key={message} className="mt-1 block text-xs text-amber-200">{message}</span>
+        <span key={message} className="mt-1 block text-xs text-lamp">{message}</span>
       ))}
     </label>
   )
@@ -818,7 +787,7 @@ function Toggle({
   onChange: (checked: boolean) => void
 }) {
   return (
-    <label className="flex items-center gap-2 text-xs text-slate-300">
+    <label className="flex items-center gap-2 text-sm text-enamel">
       <input
         type="checkbox"
         aria-label={ariaLabel}
