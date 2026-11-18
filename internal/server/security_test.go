@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -259,4 +260,33 @@ func okHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func TestCORSPreflightAllowsMFAHeaderOnEveryRecentMFARoute(t *testing.T) {
+	h := withCORS(okHandler(), []string{"https://ui.example.com"})
+	for _, p := range []string{
+		"/api/v1/broker/config/apply", "/api/v1/deployments/apply",
+		"/api/v1/listeners/apply", "/api/v1/broker/certificates/apply",
+		"/api/v1/broker/bridges/apply", "/api/v1/broker/plugins/apply",
+		"/api/v1/broker/dynsec/apply", "/api/v1/broker/dynsec/adopt",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodOptions, p, nil)
+		req.Header.Set("Origin", "https://ui.example.com")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "content-type,x-mcm-mfa")
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-MCM-MFA") {
+			t.Errorf("%s preflight Allow-Headers=%q lacks X-MCM-MFA", p, got)
+		}
+	}
+	// Routes without the guard keep the narrower header set.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/mqtt-users", nil)
+	req.Header.Set("Origin", "https://ui.example.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, Authorization" {
+		t.Errorf("unguarded preflight Allow-Headers=%q", got)
+	}
 }

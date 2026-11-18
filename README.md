@@ -21,7 +21,7 @@ Mosquitto remains the external MQTT broker. MCM provides the administration UI a
 | Capability | Current scope |
 | --- | --- |
 | MQTT users and ACLs | Available; changes require a separate Deploy action. Native ACL coverage is partial. |
-| Preview, apply and history | Available for password/ACL files, listeners, certificate material and the root configuration; apply requires recent MFA. Configuration recovery restores, reloads and verifies MQTT access after an activation failure. |
+| Preview, apply and history | Available for password/ACL files, listeners, certificate material and the root configuration. Every apply route requires recent MFA: users and ACLs, the root configuration and its settings, listeners, certificate material, bridges, plugins, and the Dynamic Security apply and adoption. Configuration recovery restores, reloads and verifies MQTT access after an activation failure. |
 | Listeners and broker TLS | Available; a listener is bound to a certificate profile, with optional mutual TLS, and the material is rotated as an immutable revision. |
 | General broker settings | Persistence, queues, connections, sessions and logging are editable through catalog-driven forms with a preview and a reload/restart distinction. |
 | Broker configuration editor | Advanced root editor with catalog checks, disk/draft/last-verified state and drift detection, plus an explicit adoption gate. Includes remain read-only; directive-level editing is exposed for the general settings, the listeners, the bridges and the plugins too. |

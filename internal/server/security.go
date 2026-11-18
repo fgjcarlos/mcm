@@ -47,6 +47,18 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 //
 // allowedOrigins is converted to a set at middleware construction time for O(1)
 // per-request lookup.
+// recentMFAApplyPaths lists the requireRecentMFA routes outside /broker/config/
+// (app.go) whose preflight must allow X-MCM-MFA.
+var recentMFAApplyPaths = map[string]bool{
+	"/api/v1/deployments/apply":         true,
+	"/api/v1/listeners/apply":           true,
+	"/api/v1/broker/certificates/apply": true,
+	"/api/v1/broker/bridges/apply":      true,
+	"/api/v1/broker/plugins/apply":      true,
+	"/api/v1/broker/dynsec/apply":       true,
+	"/api/v1/broker/dynsec/adopt":       true,
+}
+
 func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
@@ -84,7 +96,7 @@ func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			allowedHeaders := "Content-Type, Authorization"
-			if strings.HasPrefix(r.URL.Path, "/api/v1/broker/config/") || r.URL.Path == "/api/v1/deployments/apply" {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/broker/config/") || recentMFAApplyPaths[r.URL.Path] {
 				allowedHeaders += ", X-MCM-MFA"
 			}
 			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)

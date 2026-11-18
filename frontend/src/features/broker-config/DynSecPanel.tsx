@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { can } from '../auth/permissions'
 import { useDynSec } from './useDynSec'
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import { dynSecACLTypes, dynSecBackendLabels, dynSecBackendTones } from './dynsecTypes'
 import type {
   DynSecACL,
@@ -35,8 +37,9 @@ export default function DynSecPanel({
   onLogout: () => void
   role?: string
 }) {
+  const mfa = useRecentMFA(token, onLogout)
   const { state, preview, adoption, guard, previewError, applyError, issues, isLoading, isPreviewing, isApplying, isAdopting, applied, requestPreview, apply, adopt } =
-    useDynSec({ token, onLogout })
+    useDynSec({ token, onLogout, onMFARejected: mfa.clear })
   const [draft, setDraft] = useState<DynSecDocument | undefined>()
   const [previewedDocument, setPreviewedDocument] = useState<DynSecDocument | null>(null)
   const isAdmin = can(role, 'deploy.apply')
@@ -52,7 +55,7 @@ export default function DynSecPanel({
   // this guard the operator could apply a plan that no longer matches
   // what they reviewed.
   const isPreviewCurrent = Boolean(preview?.plan_id) && JSON.stringify(previewedDocument) === JSON.stringify(document)
-  const applyEnabled = isAdmin && !isApplying && isPreviewCurrent && preview?.has_changes !== false
+  const applyEnabled = isAdmin && Boolean(mfa.proof) && !isApplying && isPreviewCurrent && preview?.has_changes !== false
 
   const roleNames = document.roles.map((role) => role.rolename)
   const groupNames = document.groups.map((group) => group.groupname)
@@ -190,7 +193,7 @@ export default function DynSecPanel({
 
   const handleApply = async () => {
     if (!preview?.plan_id || !applyEnabled) return
-    const result = await apply({ plan_id: preview.plan_id, document: previewedDocument ?? document })
+    const result = await apply({ plan_id: preview.plan_id, document: previewedDocument ?? document }, mfa.proof)
     if (result) {
       setDraft(undefined)
       setPreviewedDocument(null)
@@ -198,12 +201,12 @@ export default function DynSecPanel({
   }
 
   const handleAdopt = async () => {
-    await adopt()
+    await adopt(mfa.proof)
   }
 
   const handleAdoptApply = async () => {
-    if (!adoption?.plan_id || !isAdmin || isApplying) return
-    await apply({ plan_id: adoption.plan_id })
+    if (!adoption?.plan_id || !isAdmin || !mfa.proof || isApplying) return
+    await apply({ plan_id: adoption.plan_id }, mfa.proof)
   }
 
   if (isLoading && !state) {
@@ -504,6 +507,8 @@ export default function DynSecPanel({
 
               {guard ? <GuardReport guard={guard} /> : null}
 
+              {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
+
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -514,6 +519,7 @@ export default function DynSecPanel({
                 >
                   {isApplying ? 'Applying…' : 'Apply'}
                 </button>
+                {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
               </div>
             </div>
           ) : null}
@@ -533,16 +539,18 @@ export default function DynSecPanel({
             <p className="mt-3 text-xs text-amber-200">
               The broker is restarted by the migration: Mosquitto loads a plugin at start-up.
             </p>
-            <div className="mt-5">
+            {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
+            <div className="mt-5 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={() => { void handleAdopt() }}
-                disabled={!isAdmin || isAdopting || isApplying}
+                disabled={!isAdmin || !mfa.proof || isAdopting || isApplying}
                 title={!isAdmin ? 'Requires admin role' : undefined}
                 className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
               >
                 {isAdopting ? 'Preparing…' : 'Adopt the dynamic security backend'}
               </button>
+              {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before adopting.</p> : null}
             </div>
           </div>
 
@@ -597,12 +605,13 @@ export default function DynSecPanel({
                 <button
                   type="button"
                   onClick={() => { void handleAdoptApply() }}
-                  disabled={!isAdmin || isApplying}
+                  disabled={!isAdmin || !mfa.proof || isApplying}
                   title={!isAdmin ? 'Requires admin role' : undefined}
                   className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
                 >
                   {isApplying ? 'Applying…' : 'Apply'}
                 </button>
+                {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
               </div>
             </div>
           ) : null}

@@ -58,6 +58,16 @@ function dynSecState(overrides: Record<string, unknown> = {}) {
   }
 }
 
+const stepUpRoute = {
+  'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
+}
+
+async function confirmMFA(user: { type: typeof userEvent.type; click: typeof userEvent.click } = userEvent) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
+}
+
 describe('DynSecPanel', () => {
   const originalFetch = globalThis.fetch
 
@@ -168,6 +178,7 @@ describe('DynSecPanel', () => {
   it('applies the reviewed plan with the same document', async () => {
     let applyRequest: { plan_id?: string; document?: { clients?: Array<{ username: string }> } } | null = null
     globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
       'GET /api/v1/broker/dynsec': () => jsonResponse(dynSecState()),
       'POST /api/v1/broker/dynsec/preview': () =>
         jsonResponse({
@@ -195,6 +206,7 @@ describe('DynSecPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
 
     const applyButton = await screen.findByRole('button', { name: 'Apply' })
+    await confirmMFA()
     await userEvent.click(applyButton)
 
     await waitFor(() => expect(applyRequest).not.toBeNull())
@@ -226,6 +238,7 @@ describe('DynSecPanel', () => {
   it('adopts the backend, shows the credentials once and applies the plan', async () => {
     let applyRequest: { plan_id?: string; document?: unknown } | null = null
     globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
       'GET /api/v1/broker/dynsec': () =>
         jsonResponse(dynSecState({ backend: 'file', enabled: false, guard: { ok: false } })),
       'POST /api/v1/broker/dynsec/adopt': () =>
@@ -253,6 +266,8 @@ describe('DynSecPanel', () => {
 
     render(<DynSecPanel token="token" onLogout={() => {}} role="admin" />)
 
+    await screen.findByLabelText('MFA code')
+    await confirmMFA()
     await userEvent.click(await screen.findByRole('button', { name: 'Adopt the dynamic security backend' }))
 
     expect(await screen.findByText(/Copy these now, they are shown once/)).toBeInTheDocument()
@@ -262,6 +277,68 @@ describe('DynSecPanel', () => {
 
     await waitFor(() => expect(applyRequest).not.toBeNull())
     expect((applyRequest as unknown as { plan_id: string }).plan_id).toBe('plan-adopt')
+  })
+
+  it('sends the recent MFA proof with the plan apply and blocks Apply until it exists', async () => {
+    const applyHeaders: HeadersInit[] = []
+    globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
+      'GET /api/v1/broker/dynsec': () => jsonResponse(dynSecState()),
+      'POST /api/v1/broker/dynsec/preview': () =>
+        jsonResponse({
+          plan_id: 'plan-1',
+          kind: 'update',
+          plan: { changes: [{ kind: 'client', name: 'alice', action: 'update', summary: 'update the client "alice"', commands: [] }] },
+          guard: { ok: true, management_client: 'mcm', allowed: ['mcm'], violations: [], reasons: [] },
+          backend: 'dynamic-security',
+          has_changes: true,
+        }),
+      'POST /api/v1/broker/dynsec/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ plan_id: 'plan-1', document, guard: { ok: true }, deployment: { id: 4, status: 'active_verified' } })
+      },
+    }) as unknown as typeof fetch
+
+    render(<DynSecPanel token="token" onLogout={() => {}} role="admin" />)
+    await waitFor(() => expect(screen.getByLabelText('Username client 1')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    const applyButton = await screen.findByRole('button', { name: 'Apply' })
+    expect(applyButton).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+    await confirmMFA()
+    await userEvent.click(applyButton)
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
+  })
+
+  it('sends the recent MFA proof with the adoption and its apply', async () => {
+    const headers: Record<string, HeadersInit> = {}
+    globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
+      'GET /api/v1/broker/dynsec': () => jsonResponse(dynSecState({ backend: 'file', enabled: false, guard: { ok: false } })),
+      'POST /api/v1/broker/dynsec/adopt': (init) => {
+        headers.adopt = init?.headers ?? {}
+        return jsonResponse({ plan_id: 'plan-adopt', kind: 'adopt', plan: { changes: [] }, guard: { ok: true }, backend: 'file', has_changes: true })
+      },
+      'POST /api/v1/broker/dynsec/apply': (init) => {
+        headers.apply = init?.headers ?? {}
+        return jsonResponse({ plan_id: 'plan-adopt', document, guard: { ok: true }, deployment: { id: 5, status: 'active_verified' } })
+      },
+    }) as unknown as typeof fetch
+
+    render(<DynSecPanel token="token" onLogout={() => {}} role="admin" />)
+    const adoptButton = await screen.findByRole('button', { name: 'Adopt the dynamic security backend' })
+    expect(adoptButton).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before adopting.')).toBeVisible()
+    await confirmMFA()
+    await userEvent.click(adoptButton)
+    await userEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => expect(headers.apply).toBeDefined())
+    expect(headers.adopt).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
+    expect(headers.apply).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
   })
 
   it('refuses a change that would open the management channel', async () => {

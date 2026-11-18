@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { can, permissionTitle } from '../auth/permissions'
 import { useCertificates } from './useCertificates'
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { CertificateProfile, CertificateRevision } from './certificateTypes'
 
 function readFileAsText(file: File): Promise<string> {
@@ -21,6 +23,7 @@ function ProfileRow({
   profile,
   canWrite,
   canApply,
+  hasProof,
   isBusy,
   onPreview,
   onActivate,
@@ -28,6 +31,7 @@ function ProfileRow({
   profile: CertificateProfile
   canWrite: boolean
   canApply: boolean
+  hasProof: boolean
   isBusy: boolean
   onPreview: (profile: string, revision: string) => void
   onActivate: (profile: string, revision: string) => void
@@ -73,7 +77,7 @@ function ProfileRow({
                 <button
                   type="button"
                   onClick={() => onActivate(profile.name, revision.revision_id)}
-                  disabled={!canApply || isBusy || revision.state === 'active'}
+                  disabled={!canApply || !hasProof || isBusy || revision.state === 'active'}
                   title={canApply ? undefined : permissionTitle('certificate.apply')}
                   className="rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                 >
@@ -97,6 +101,7 @@ export default function CertificatesPanel({
   onLogout: () => void
   role: string
 }) {
+  const mfa = useRecentMFA(token, onLogout)
   const {
     profiles,
     listError,
@@ -115,7 +120,7 @@ export default function CertificatesPanel({
     uploadRevision,
     requestPreview,
     applyRevision,
-  } = useCertificates({ token, onLogout })
+  } = useCertificates({ token, onLogout, onMFARejected: mfa.clear })
 
   const [profileName, setProfileName] = useState('')
   const [description, setDescription] = useState('')
@@ -129,6 +134,8 @@ export default function CertificatesPanel({
   const canWrite = can(role, 'certificate.write')
   const canApply = can(role, 'certificate.apply')
   const busy = isUploading || isPreviewing || isApplying
+  // Ask for MFA only when an admin has a revision to activate.
+  const hasActivatable = canApply && profiles.some((profile) => (profile.revisions ?? []).some((revision) => revision.state !== 'active'))
 
   const handleUpload = async () => {
     if (!profileName.trim()) {
@@ -297,6 +304,12 @@ export default function CertificatesPanel({
 
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Profiles</p>
+        {hasActivatable ? (
+          <div className="mt-4 space-y-2">
+            <RecentMFAConfirmation state={mfa} />
+            {!mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
+          </div>
+        ) : null}
         {isLoading ? <p className="mt-4 text-sm text-slate-400">Loading certificate profiles…</p> : null}
         {!isLoading && profiles.length === 0 ? <p className="mt-4 text-sm text-slate-400">No certificate profiles yet.</p> : null}
         <div className="mt-4 space-y-4">
@@ -306,9 +319,10 @@ export default function CertificatesPanel({
               profile={profile}
               canWrite={canWrite}
               canApply={canApply}
+              hasProof={Boolean(mfa.proof)}
               isBusy={busy}
               onPreview={(name, revision) => { void requestPreview({ profile: name, revision_id: revision }) }}
-              onActivate={(name, revision) => { void applyRevision({ profile: name, revision_id: revision }) }}
+              onActivate={(name, revision) => { void applyRevision({ profile: name, revision_id: revision }, mfa.proof) }}
             />
           ))}
         </div>

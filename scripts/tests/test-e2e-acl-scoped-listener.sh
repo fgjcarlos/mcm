@@ -225,7 +225,7 @@ fi
 pass 2 'the operator is authenticated'
 
 # --- recent MFA ------------------------------------------------------------
-# Applying a deployment requires a recent MFA proof. The helper creates a
+# Applying a deployment or a listener change requires a recent MFA proof. The helper creates a
 # dedicated operator, enrolls TOTP for it and exchanges an unused time step
 # for the proof; the apply then runs as that operator, because the proof is
 # bound to the session that requested it. The bootstrap operator keeps its
@@ -281,7 +281,7 @@ apply_listener_configuration() {
         cat "$BODY_FILE" >&2
         return 1
     fi
-    code="$(post_json '/api/v1/listeners/apply' \
+    code="$(post_json_mfa '/api/v1/listeners/apply' \
         "$(jq -cn --arg id "$revision" '{revision_id: $id, confirm: true}')")"
     if [ "$code" != "200" ]; then
         echo "the listener apply failed with HTTP ${code}:" >&2

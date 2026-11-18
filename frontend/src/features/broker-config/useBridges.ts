@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type {
   Bridge,
   BridgeApplyRequest,
@@ -18,8 +19,8 @@ function errorMessage(body: unknown, fallback: string) {
 // useBridges drives the bridge editor (issue #303). It loads the bridge
 // connections of the managed configuration, previews the edited set and
 // applies the resulting revision.
-export function useBridges(opts: { token: string; onLogout: () => void }) {
-  const { token, onLogout } = opts
+export function useBridges(opts: { token: string; onLogout: () => void; onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const [bridges, setBridges] = useState<Bridge[]>([])
   const [preview, setPreview] = useState<BridgePreviewResult | null>(null)
   const [previewError, setPreviewError] = useState('')
@@ -93,8 +94,8 @@ export function useBridges(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: BridgeApplyRequest): Promise<BridgeApplyResult | null> => {
-    if (applying.current) return null
+  const apply = useCallback(async (req: BridgeApplyRequest, proof: string): Promise<BridgeApplyResult | null> => {
+    if (applying.current || !proof) return null
     applying.current = true
     setIsApplying(true)
     setApplyError('')
@@ -103,7 +104,7 @@ export function useBridges(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(req),
       })
       const body = await response.json().catch(() => null) as BridgeApplyResult | { error?: string } | null
@@ -117,13 +118,14 @@ export function useBridges(opts: { token: string; onLogout: () => void }) {
       await refresh()
       return body as BridgeApplyResult
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
     } finally {
       applying.current = false
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
   return {
     bridges,

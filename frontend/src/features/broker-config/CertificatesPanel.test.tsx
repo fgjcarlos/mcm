@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import CertificatesPanel from './CertificatesPanel'
@@ -50,6 +50,16 @@ function baseRoutes(): Record<string, RouteHandler> {
   return {
     'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [profile] }),
   }
+}
+
+const stepUpRoute = {
+  'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
+}
+
+async function confirmMFA(user: { type: typeof userEvent.type; click: typeof userEvent.click } = userEvent) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
 }
 
 afterEach(() => {
@@ -105,6 +115,7 @@ describe('CertificatesPanel', () => {
   it('activates a revision and reports the broker verification', async () => {
     vi.stubGlobal('fetch', installFetchMock({
       ...baseRoutes(),
+      ...stepUpRoute,
       'POST /api/v1/broker/certificates/apply': () => jsonResponse({
         profile: 'production',
         revision_id: 'rev-pending',
@@ -119,11 +130,36 @@ describe('CertificatesPanel', () => {
     render(<CertificatesPanel token="tok" onLogout={() => {}} role="admin" />)
     await screen.findByText('production')
 
+    await confirmMFA(user)
     const pendingRow = screen.getByText('rev-pending').closest('li') as HTMLElement
     await user.click(within(pendingRow).getByRole('button', { name: 'Activate' }))
 
     expect(await screen.findByText(/Revision rev-pending activated/)).toBeInTheDocument()
     expect(screen.getByText(/e2e-tls port 8883: verified/)).toBeInTheDocument()
+  })
+
+  it('sends the recent MFA proof with the activation and blocks Activate until it exists', async () => {
+    const applyHeaders: HeadersInit[] = []
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes(),
+      ...stepUpRoute,
+      'POST /api/v1/broker/certificates/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ profile: 'production', revision_id: 'rev-pending', previous_revision: 'rev-active', restarted: true, recovered: false, verification: [] })
+      },
+    }))
+    const user = userEvent.setup()
+    render(<CertificatesPanel token="tok" onLogout={() => {}} role="admin" />)
+    await screen.findByText('production')
+
+    const pendingRow = screen.getByText('rev-pending').closest('li') as HTMLElement
+    expect(within(pendingRow).getByRole('button', { name: 'Activate' })).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+    await confirmMFA(user)
+    await user.click(within(pendingRow).getByRole('button', { name: 'Activate' }))
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
   })
 
   it('keeps the activation out of reach for roles below admin', async () => {

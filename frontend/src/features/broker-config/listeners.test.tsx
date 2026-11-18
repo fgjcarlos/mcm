@@ -38,7 +38,18 @@ function baseRoutes(): Record<string, RouteHandler> {
   return {
     'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs }),
     'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
+    'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
   }
+}
+
+const stepUpRoute = {
+  'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
+}
+
+async function confirmMFA(user: { type: typeof userEvent.type; click: typeof userEvent.click } = userEvent) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
 }
 
 afterEach(() => {
@@ -90,6 +101,7 @@ describe('ListenersPanel', () => {
 
     expect(await screen.findByText('revision-newer')).toBeInTheDocument()
     expect(screen.queryByText('revision-older')).not.toBeInTheDocument()
+    await confirmMFA(user)
     expect(screen.getByRole('button', { name: 'Apply (restart required)' })).toBeEnabled()
   })
 
@@ -165,6 +177,8 @@ describe('ListenersPanel', () => {
     expect(apply).toBeDisabled()
 
     await userEvent.setup().click(screen.getByRole('checkbox', { name: 'Confirm restart' }))
+    expect(apply).toBeDisabled()
+    await confirmMFA()
     expect(apply).toBeEnabled()
   })
 
@@ -184,6 +198,7 @@ describe('ListenersPanel', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Preview' }))
     await screen.findByText('revision-123')
     await userEvent.setup().click(screen.getByRole('checkbox', { name: 'Confirm restart' }))
+    await confirmMFA()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Apply (restart required)' }))
 
     const notice = await screen.findByText('Listener configuration applied.')
@@ -208,6 +223,7 @@ describe('ListenersPanel', () => {
       },
       'POST /api/v1/listeners/preview': () => jsonResponse({ ...preview, needs_restart: false }),
       'POST /api/v1/listeners/apply': () => jsonResponse({ revision_id: 'revision-123', applied: true }),
+      ...stepUpRoute,
     }))
 
     render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" onApplyStart={onApplyStart} onApplySuccess={onApplySuccess} />)
@@ -218,6 +234,7 @@ describe('ListenersPanel', () => {
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Preview' }))
     await screen.findByText('revision-123')
+    await confirmMFA()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Apply (restart required)' }))
 
     expect(await screen.findByText('Listener configuration applied.')).toBeInTheDocument()
@@ -248,6 +265,7 @@ describe('ListenersPanel', () => {
     await user.type(port, '1884')
     await user.click(screen.getByRole('button', { name: 'Preview' }))
     await screen.findByText('revision-123')
+    await confirmMFA(user)
     await user.click(screen.getByRole('button', { name: 'Apply (restart required)' }))
 
     await waitFor(() => expect(listenerFetches).toBe(2))
@@ -259,6 +277,53 @@ describe('ListenersPanel', () => {
     await screen.findByText('refresh failed')
     expect(screen.getByLabelText('Port mqtt')).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Add listener' })).toBeEnabled()
+  })
+
+  it('sends the recent MFA proof with the listener apply and blocks Apply until it exists', async () => {
+    const applyHeaders: HeadersInit[] = []
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes(),
+      ...stepUpRoute,
+      'POST /api/v1/listeners/preview': () => jsonResponse({ ...preview, needs_restart: false }),
+      'POST /api/v1/listeners/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ revision_id: 'revision-123', applied: true })
+      },
+    }))
+    const user = userEvent.setup()
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
+    await screen.findByText('1883')
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('revision-123')
+
+    expect(screen.getByRole('button', { name: 'Apply (restart required)' })).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+    await confirmMFA(user)
+    expect(screen.queryByText('Confirm MFA above before applying.')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply (restart required)' }))
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
+  })
+
+  it('asks for MFA again when the server rejects the proof', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes(),
+      ...stepUpRoute,
+      'POST /api/v1/listeners/preview': () => jsonResponse({ ...preview, needs_restart: false }),
+      'POST /api/v1/listeners/apply': () => jsonResponse({ error: 'recent MFA verification required', code: 'mfa_required' }, { status: 403 }),
+    }))
+    const user = userEvent.setup()
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
+    await screen.findByText('1883')
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('revision-123')
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply (restart required)' }))
+
+    expect(await screen.findByText('recent MFA verification required')).toBeInTheDocument()
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply (restart required)' })).toBeDisabled()
   })
 
   it('shows compose_unmapped (409) as an error', async () => {

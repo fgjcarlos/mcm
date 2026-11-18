@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,9 @@ import (
 	"time"
 
 	"github.com/fgjcarlos/mcm/internal/auth"
+	"github.com/fgjcarlos/mcm/internal/deploy"
+	"github.com/fgjcarlos/mcm/internal/dynsec"
+	"github.com/fgjcarlos/mcm/internal/mosquitto/plugins"
 	"github.com/fgjcarlos/mcm/internal/storage"
 	"github.com/pquerna/otp/totp"
 )
@@ -236,5 +240,160 @@ func TestRecentMFARequiredForApply(t *testing.T) {
 	}
 	if r := apply(proof); r.Code != 403 {
 		t.Fatalf("revoked enrollment accepted: %d", r.Code)
+	}
+}
+
+// fakeApplyCounter counts the plugin and dynamic security calls that change
+// the broker, so a guard test can prove a rejected request had no effect.
+type fakeApplyCounter struct{ calls int }
+
+func (f *fakeApplyCounter) GetPlugins(context.Context) (deploy.PluginsResult, error) {
+	return deploy.PluginsResult{}, nil
+}
+
+func (f *fakeApplyCounter) PreviewPlugins(context.Context, string, plugins.Document) (deploy.PreviewResult, error) {
+	return deploy.PreviewResult{}, nil
+}
+
+func (f *fakeApplyCounter) ApplyPlugins(context.Context, string, string, bool, bool) (storage.Deployment, error) {
+	f.calls++
+	return storage.Deployment{ID: 1}, nil
+}
+
+func (f *fakeApplyCounter) GetDynSec(context.Context) (deploy.DynSecResult, error) {
+	return deploy.DynSecResult{}, nil
+}
+
+func (f *fakeApplyCounter) PreviewDynSec(context.Context, string, dynsec.Document) (deploy.DynSecPreviewResult, error) {
+	return deploy.DynSecPreviewResult{}, nil
+}
+
+func (f *fakeApplyCounter) ApplyDynSec(context.Context, string, string, *dynsec.Document) (deploy.DynSecApplyResult, error) {
+	f.calls++
+	return deploy.DynSecApplyResult{}, nil
+}
+
+func (f *fakeApplyCounter) AdoptDynSec(context.Context, string) (deploy.DynSecPreviewResult, error) {
+	f.calls++
+	return deploy.DynSecPreviewResult{}, nil
+}
+
+// TestRecentMFARequiredForEveryApplyRoute pins that every route that changes
+// what the broker serves refuses a request without a recent-MFA proof, audits
+// the refusal, leaves the broker untouched, and still reaches the handler once
+// the proof is present.
+func TestRecentMFARequiredForEveryApplyRoute(t *testing.T) {
+	// Each case prepares its own app and returns the request body plus the
+	// number of changes the handler made so far.
+	type prepared struct {
+		body    string
+		changes func() int
+	}
+	// counted wires fakes that count every call that changes the broker.
+	counted := func(t *testing.T, app *App, token string) prepared {
+		fake := &fakeApplyCounter{}
+		bridge := &fakeBridgeService{applyRes: storage.Deployment{ID: 1}}
+		app.pluginSvc, app.dynsecSvc, app.bridgeSvc = fake, fake, bridge
+		return prepared{
+			body: `{"revision_id":"revision-1","plan_id":"plan-1"}`,
+			changes: func() int {
+				if bridge.applyRevID != "" {
+					return fake.calls + 1
+				}
+				return fake.calls
+			},
+		}
+	}
+	cases := []struct {
+		path    string
+		cert    bool
+		prepare func(t *testing.T, app *App, token string) prepared
+	}{
+		{path: "/api/v1/listeners/apply", prepare: func(t *testing.T, app *App, token string) prepared {
+			preview := listenerPreview(t, app, token)
+			// A rejected apply that consumed the preview would make the
+			// verified apply fail with 409.
+			return prepared{body: `{"revision_id":"` + preview.RevisionID + `","confirm":true}`}
+		}},
+		{path: "/api/v1/broker/certificates/apply", cert: true, prepare: func(t *testing.T, app *App, token string) prepared {
+			material := newCertificateMaterial(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
+			upload := httptest.NewRecorder()
+			app.Handler().ServeHTTP(upload, authedRequest(http.MethodPost, "/api/v1/broker/certificates/profiles/production/revisions", material.uploadBody(t, "production"), token))
+			if upload.Code != http.StatusCreated {
+				t.Fatalf("upload: %d %s", upload.Code, upload.Body.String())
+			}
+			var revision struct {
+				RevisionID string `json:"revision_id"`
+			}
+			if err := json.NewDecoder(upload.Body).Decode(&revision); err != nil {
+				t.Fatal(err)
+			}
+			// A rejected apply that activated the revision would make the
+			// verified apply fail because the revision is already active.
+			return prepared{body: `{"profile":"production","revision_id":"` + revision.RevisionID + `"}`}
+		}},
+		{path: "/api/v1/broker/bridges/apply", prepare: counted},
+		{path: "/api/v1/broker/plugins/apply", prepare: counted},
+		{path: "/api/v1/broker/dynsec/apply", prepare: counted},
+		{path: "/api/v1/broker/dynsec/adopt", prepare: counted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			var app *App
+			var store *storage.Store
+			if tc.cert {
+				app, store = newCertificateTestApp(t)
+			} else {
+				app, store = newTestApp(t)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
+			token := loginAs(t, app, "admin", "secret")
+			p := tc.prepare(t, app, token)
+			changes := func() int {
+				if p.changes == nil {
+					return 0
+				}
+				return p.changes()
+			}
+			call := func(proof string) *httptest.ResponseRecorder {
+				rec := httptest.NewRecorder()
+				req := authedRequest(http.MethodPost, tc.path, p.body, token)
+				if proof != "" {
+					req.Header.Set("X-MCM-MFA", proof)
+				}
+				app.Handler().ServeHTTP(rec, req)
+				return rec
+			}
+
+			denied := call("")
+			if denied.Code != http.StatusForbidden || denied.Body.String() != "{\"error\":\"recent MFA verification required\",\"code\":\"mfa_required\"}\n" {
+				t.Fatalf("unverified request: %d %s", denied.Code, denied.Body.String())
+			}
+			if n := changes(); n != 0 {
+				t.Fatalf("unverified request changed the broker %d time(s)", n)
+			}
+			events, err := store.ListAuditEvents(context.Background(), storage.AuditEventQuery{Limit: 50})
+			if err != nil {
+				t.Fatal(err)
+			}
+			audited := false
+			for _, e := range events {
+				if e.Action == "mfa.required" && e.ResourceID == tc.path && e.Result == "failure" && e.Actor == "admin" {
+					audited = true
+				}
+			}
+			if !audited {
+				t.Fatalf("no mfa.required audit for %s: %#v", tc.path, events)
+			}
+
+			accepted := call(recentMFATestProof(t, app, token))
+			if accepted.Code != http.StatusOK {
+				t.Fatalf("verified request: %d %s", accepted.Code, accepted.Body.String())
+			}
+			if p.changes != nil && changes() != 1 {
+				t.Fatalf("verified request reached the service %d time(s), want 1", changes())
+			}
+		})
 	}
 }

@@ -29,6 +29,16 @@ const storedBridge = {
   topics: [{ topic: 'both/#', direction: 'both', qos: 1 }],
 }
 
+const stepUpRoute = {
+  'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
+}
+
+async function confirmMFA(user: { type: typeof userEvent.type; click: typeof userEvent.click } = userEvent) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
+}
+
 describe('BridgesPanel', () => {
   const originalFetch = globalThis.fetch
 
@@ -127,6 +137,7 @@ describe('BridgesPanel', () => {
   it('applies the reviewed revision with a restart confirmation', async () => {
     let applyRequest: { revision_id?: string; force?: boolean } | null = null
     globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
       'GET /api/v1/broker/bridges': () => jsonResponse({ bridges: [storedBridge] }),
       'POST /api/v1/broker/bridges/preview': () =>
         jsonResponse({
@@ -151,6 +162,8 @@ describe('BridgesPanel', () => {
     expect(applyButton).toBeDisabled()
 
     await userEvent.click(screen.getByLabelText('Confirm broker restart'))
+    expect(applyButton).toBeDisabled()
+    await confirmMFA()
     expect(applyButton).toBeEnabled()
     await userEvent.click(applyButton)
 
@@ -183,6 +196,7 @@ describe('BridgesPanel', () => {
     },
   ] as const)('reports $status without claiming the bridge is active', async ({ status, role, message }) => {
     globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
       'GET /api/v1/broker/bridges': () => jsonResponse({ bridges: [storedBridge] }),
       'POST /api/v1/broker/bridges/preview': () =>
         jsonResponse({
@@ -200,10 +214,38 @@ describe('BridgesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
     await screen.findByText(/revision revision-1/)
     await userEvent.click(screen.getByLabelText('Confirm broker restart'))
+    await confirmMFA()
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
 
     expect(await screen.findByRole(role)).toHaveTextContent(message)
     expect(screen.queryByText(/Bridges applied/)).not.toBeInTheDocument()
+  })
+
+  it('sends the recent MFA proof with the bridge apply and blocks Apply until it exists', async () => {
+    const applyHeaders: HeadersInit[] = []
+    globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
+      'GET /api/v1/broker/bridges': () => jsonResponse({ bridges: [storedBridge] }),
+      'POST /api/v1/broker/bridges/preview': () =>
+        jsonResponse({ revision_id: 'revision-1', kind: 'bridges', reload_kind: 'reload', requires_restart: false, conf_diff: '+connection upstream' }),
+      'POST /api/v1/broker/bridges/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ id: 7, status: 'active_verified', kind: 'bridges' })
+      },
+    }) as unknown as typeof fetch
+
+    render(<BridgesPanel token="token" onLogout={() => {}} role="admin" />)
+    await waitFor(() => expect(screen.getByLabelText('Address upstream')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    const applyButton = await screen.findByRole('button', { name: 'Apply' })
+    expect(applyButton).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+    await confirmMFA()
+    await userEvent.click(applyButton)
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
   })
 
   it('adds a bridge to the draft', async () => {

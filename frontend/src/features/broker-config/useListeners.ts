@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type { ListenerApplyRequest, ListenerApplyResult, ListenerListResponse, ListenerPreviewResult, ListenerSpec } from './types'
 
 type ListenerIssue = NonNullable<ListenerPreviewResult['issues']>[number]
@@ -11,8 +12,8 @@ function errorMessage(body: unknown, fallback: string) {
   return fallback
 }
 
-export function useListeners(opts: { token: string; onLogout: () => void }) {
-  const { token, onLogout } = opts
+export function useListeners(opts: { token: string; onLogout: () => void; onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const [listeners, setListeners] = useState<ListenerSpec[]>([])
   const [composeHostPorts, setComposeHostPorts] = useState<number[]>([])
   const [previewResult, setPreviewResult] = useState<ListenerPreviewResult | null>(null)
@@ -78,8 +79,8 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: ListenerApplyRequest): Promise<ListenerApplyResult | null> => {
-    if (applying.current) return null
+  const apply = useCallback(async (req: ListenerApplyRequest, proof: string): Promise<ListenerApplyResult | null> => {
+    if (applying.current || !proof) return null
     applying.current = true
     setIsApplying(true)
     setApplyError('')
@@ -89,7 +90,7 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(req),
       })
       const body = await response.json().catch(() => null) as ListenerApplyResult | { error?: string } | null
@@ -105,13 +106,14 @@ export function useListeners(opts: { token: string; onLogout: () => void }) {
       }
       return result
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
     } finally {
       applying.current = false
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
   return {
     listeners,

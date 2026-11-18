@@ -479,14 +479,14 @@ func (a *App) Handler() http.Handler {
 		lAPI := &listenerAPI{svc: a.listenerSvc}
 		mux.Handle("GET /api/v1/listeners", a.requireRole(auth.RoleViewer, http.HandlerFunc(lAPI.handleList)))
 		mux.Handle("POST /api/v1/listeners/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(lAPI.handlePreview)))
-		mux.Handle("POST /api/v1/listeners/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(lAPI.handleApply)))
+		mux.Handle("POST /api/v1/listeners/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(lAPI.handleApply))))
 	}
 	if a.certificateSvc != nil {
 		cAPI := &certificateAPI{svc: a.certificateSvc}
 		mux.Handle("GET /api/v1/broker/certificates", a.requireRole(auth.RoleAuditor, http.HandlerFunc(cAPI.handleList)))
 		mux.Handle("POST /api/v1/broker/certificates/profiles/{name}/revisions", a.requireRole(auth.RoleOperator, http.HandlerFunc(cAPI.handleCreateRevision)))
 		mux.Handle("POST /api/v1/broker/certificates/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(cAPI.handlePreview)))
-		mux.Handle("POST /api/v1/broker/certificates/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(cAPI.handleApply)))
+		mux.Handle("POST /api/v1/broker/certificates/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(cAPI.handleApply))))
 	}
 	{
 		bAPI := a.brokerConfigAPI()
@@ -512,7 +512,7 @@ func (a *App) Handler() http.Handler {
 		brAPI := &bridgeAPI{svc: a.bridgeSvc}
 		mux.Handle("GET /api/v1/broker/bridges", a.requireRole(auth.RoleAuditor, http.HandlerFunc(brAPI.handleList)))
 		mux.Handle("POST /api/v1/broker/bridges/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(brAPI.handlePreview)))
-		mux.Handle("POST /api/v1/broker/bridges/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(brAPI.handleApply)))
+		mux.Handle("POST /api/v1/broker/bridges/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(brAPI.handleApply))))
 
 		// Issue #304: the plugin surface and the dynamic security
 		// surface. The plugin catalog is readable by an auditor, the
@@ -520,13 +520,13 @@ func (a *App) Handler() http.Handler {
 		plAPI := &pluginAPI{svc: a.pluginSvc}
 		mux.Handle("GET /api/v1/broker/plugins", a.requireRole(auth.RoleAuditor, http.HandlerFunc(plAPI.handleList)))
 		mux.Handle("POST /api/v1/broker/plugins/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(plAPI.handlePreview)))
-		mux.Handle("POST /api/v1/broker/plugins/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(plAPI.handleApply)))
+		mux.Handle("POST /api/v1/broker/plugins/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(plAPI.handleApply))))
 
 		dsAPI := &dynSecAPI{svc: a.dynsecSvc}
 		mux.Handle("GET /api/v1/broker/dynsec", a.requireRole(auth.RoleAuditor, http.HandlerFunc(dsAPI.handleGet)))
 		mux.Handle("POST /api/v1/broker/dynsec/preview", a.requireRole(auth.RoleOperator, http.HandlerFunc(dsAPI.handlePreview)))
-		mux.Handle("POST /api/v1/broker/dynsec/apply", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dsAPI.handleApply)))
-		mux.Handle("POST /api/v1/broker/dynsec/adopt", a.requireRole(auth.RoleAdmin, http.HandlerFunc(dsAPI.handleAdopt)))
+		mux.Handle("POST /api/v1/broker/dynsec/apply", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(dsAPI.handleApply))))
+		mux.Handle("POST /api/v1/broker/dynsec/adopt", a.requireRole(auth.RoleAdmin, a.requireRecentMFA(http.HandlerFunc(dsAPI.handleAdopt))))
 	}
 	mux.Handle("GET /api/v1/settings", a.requireRole(auth.RoleAdmin, http.HandlerFunc(a.handleSettings)))
 	if a.frontendFS != nil {

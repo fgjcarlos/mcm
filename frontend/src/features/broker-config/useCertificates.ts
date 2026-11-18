@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type {
   CertificateActionRequest,
   CertificateApplyResult,
@@ -88,8 +89,8 @@ export function useCertificateProfiles(opts: CertificatesOptions) {
  * actions: the operator always sees what an activation changes before the
  * broker restarts.
  */
-export function useCertificates(opts: CertificatesOptions) {
-  const { token, onLogout } = opts
+export function useCertificates(opts: CertificatesOptions & { onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const { profiles, error: listError, isLoading, isDisabled, refresh } = useCertificateProfiles(opts)
   const [uploadError, setUploadError] = useState('')
   const [uploadIssues, setUploadIssues] = useState<string[]>([])
@@ -172,7 +173,8 @@ export function useCertificates(opts: CertificatesOptions) {
     }
   }, [token, onLogout])
 
-  const applyRevision = useCallback(async (request: CertificateActionRequest) => {
+  const applyRevision = useCallback(async (request: CertificateActionRequest, proof: string) => {
+    if (!proof) return null
     setApplyError('')
     setApplyResult(null)
     setIsApplying(true)
@@ -181,7 +183,7 @@ export function useCertificates(opts: CertificatesOptions) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(request),
       })
       const body = await response.json().catch(() => null) as CertificateApplyResult | { error?: string } | null
@@ -194,6 +196,7 @@ export function useCertificates(opts: CertificatesOptions) {
       await refresh()
       return body as CertificateApplyResult
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) {
         setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       }
@@ -201,7 +204,7 @@ export function useCertificates(opts: CertificatesOptions) {
     } finally {
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
   return {
     profiles,

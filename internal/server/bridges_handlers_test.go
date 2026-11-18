@@ -220,7 +220,7 @@ func TestHandleBridgeApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/bridges/apply", `{"revision_id":"revision-1","force":true}`, token)
-		app.Handler().ServeHTTP(rec, req)
+		app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, req))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
 		}
@@ -241,7 +241,7 @@ func TestHandleBridgeApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/bridges/apply", `{}`, token)
-		app.Handler().ServeHTTP(rec, req)
+		app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, req))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
 		}
@@ -256,7 +256,7 @@ func TestHandleBridgeApply(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		req := authedRequest(http.MethodPost, "/api/v1/broker/bridges/apply", `{"revision_id":"revision-1"}`, token)
-		app.Handler().ServeHTTP(rec, req)
+		app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, req))
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 		}

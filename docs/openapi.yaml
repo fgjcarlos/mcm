@@ -1072,6 +1072,8 @@ paths:
         listener set; persists the new specs on success. Returns 409 on
         immutable-revision errors, on `confirm` rejection when a restart is
         required, or while another apply is in flight.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -1195,6 +1197,8 @@ paths:
         the restart or the verification fails, the previous revision is
         restored, the broker restarts again and the revision is recorded as
         failed.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -1736,6 +1740,8 @@ paths:
         Mosquitto reads a bridge at start-up, so a change needs a restart.
         The apply refuses the revision with 409 when `force` is not set and
         the deployment has no restart command configured.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -1844,6 +1850,8 @@ paths:
         on SIGHUP, so a change needs a restart. The apply refuses the revision
         with 409 when `force` is not set and the deployment has no restart
         command configured.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -1963,6 +1971,8 @@ paths:
         The `document` carries the passwords of the clients the plan creates.
         It is compared with the reviewed plan, so a change that was not
         reviewed is refused with 409.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       requestBody:
         required: true
         content:
@@ -2011,6 +2021,8 @@ paths:
 
         Apply the returned `plan_id` through `POST /api/v1/broker/dynsec/apply`
         to load the plugin and hand the access control over to it.
+      parameters:
+        - { $ref: "#/components/parameters/RecentMFA" }
       responses:
         "200":
           description: The prepared migration.

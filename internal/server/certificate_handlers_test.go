@@ -315,10 +315,10 @@ func TestCertificateApplyActivatesTheRevision(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost,
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost,
 		"/api/v1/broker/certificates/apply",
 		`{"profile":"production","revision_id":"`+revision.RevisionID+`"}`,
-		loginAs(t, app, "admin", "secret")))
+		loginAs(t, app, "admin", "secret"))))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("apply status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -343,10 +343,10 @@ func TestCertificateApplyReportsAnUnknownRevision(t *testing.T) {
 	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
 
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost,
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost,
 		"/api/v1/broker/certificates/apply",
 		`{"profile":"production","revision_id":"rev-404"}`,
-		loginAs(t, app, "admin", "secret")))
+		loginAs(t, app, "admin", "secret"))))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("apply status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
