@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useListeners } from './useListeners'
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
+import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
 import { useCertificateProfiles } from './useCertificates'
 import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerIssue, ListenerSpec } from './types'
@@ -26,7 +29,8 @@ export default function ListenersPanel({
   onApplySuccess?: (mutationWatermark: number) => void
   composeHostPorts?: number[]
 }) {
-  const { listeners, composeHostPorts: fetchedComposeHostPorts, preview, previewedSpecs, previewError, applyError, isLoading, isApplying, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout })
+  const mfa = useRecentMFA(token, onLogout)
+  const { listeners, composeHostPorts: fetchedComposeHostPorts, preview, previewedSpecs, previewError, applyError, isLoading, isApplying, requestPreview, apply, issues: backendIssues, applyResult } = useListeners({ token, onLogout, onMFARejected: mfa.clear })
   const { profiles: certificateProfiles, isDisabled: certificatesDisabled } = useCertificateProfiles({ token, onLogout })
   const composeHostPorts = composeHostPortsOverride ?? fetchedComposeHostPorts
   const [draft, setDraft] = useState<ListenerSpec[]>()
@@ -39,7 +43,7 @@ export default function ListenersPanel({
   const blockingIssues = [...validation.issues, ...backendIssues]
   const warnings = [...validation.warnings, ...(preview?.warnings ?? [])]
   const isPreviewCurrent = Boolean(preview?.revision_id) && JSON.stringify(previewedSpecs) === JSON.stringify(specs)
-  const applyEnabled = canApply && !isApplying && isPreviewCurrent && blockingIssues.length === 0 && (!preview?.needs_restart || confirmRestart)
+  const applyEnabled = canApply && Boolean(mfa.proof) && !isApplying && isPreviewCurrent && blockingIssues.length === 0 && (!preview?.needs_restart || confirmRestart)
 
   const updateListener = (id: string, changes: Partial<ListenerSpec>) => {
     setDraft((current) => (current ?? listeners).map((listener) => listener.ID === id ? { ...listener, ...changes } : listener))
@@ -86,7 +90,7 @@ export default function ListenersPanel({
   const handleApply = async () => {
     if (!preview?.revision_id || !applyEnabled) return
     const mutationWatermark = onApplyStart?.() ?? 0
-    const result = await apply({ revision_id: preview.revision_id, confirm: confirmRestart })
+    const result = await apply({ revision_id: preview.revision_id, confirm: confirmRestart }, mfa.proof)
     if (result?.applied) {
       setDraft(undefined)
       onApplySuccess?.(mutationWatermark)
@@ -131,7 +135,7 @@ export default function ListenersPanel({
 
         {previewError ? <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{previewError}</div> : null}
         {applyError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div> : null}
-        {applyResult?.applied ? <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100">Listener configuration applied.</div> : null}
+        {applyResult?.applied ? <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[deploymentLamp('applied')]} ${lampText[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
 
         <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/40">
           {isLoading ? (
@@ -237,6 +241,7 @@ export default function ListenersPanel({
                   Confirm restart
                 </label>
               ) : null}
+              {canApply ? <RecentMFAConfirmation state={mfa} /> : null}
             </>
           ) : null}
           <button
@@ -247,6 +252,7 @@ export default function ListenersPanel({
           >
             Apply (restart required)
           </button>
+          {preview && canApply && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
           {preview ? (
             <>
               <div>

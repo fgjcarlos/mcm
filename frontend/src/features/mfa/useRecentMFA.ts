@@ -1,19 +1,38 @@
-import { useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { isForbiddenResponseError } from '../api/client'
 
-type Proof = { session: string; value: string; expires: number }
+export type Proof = { session: string; value: string; expires: number }
+type Store = [Proof | null, (proof: Proof | null) => void]
+
+// Mirrors auth.ActionMFATTL (internal/auth/action_mfa.go:12); used only if the server omits expires_at.
+const ACTION_MFA_TTL_MS = 5 * 60_000
+
+// One proof for the signed-in session, shared by every panel. Without a
+// provider (isolated panel tests) each hook keeps its own proof.
+export const RecentMFAContext = createContext<Store | null>(null)
+
+// requireRecentMFA answers 403 "recent MFA verification required" (internal/server/recent_mfa.go).
+export function isMFARejection(err: unknown) {
+  return isForbiddenResponseError(err) && (err as Error).message === 'recent MFA verification required'
+}
 
 export function useRecentMFA(token: string, onLogout: () => void) {
-  const [confirmation, setConfirmation] = useState<Proof | null>(null)
+  const shared = useContext(RecentMFAContext)
+  const local = useState<Proof | null>(null)
+  const [confirmation, setConfirmation] = shared ?? local
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const proof = confirmation?.session === token ? confirmation.value : ''
+  const valid = confirmation?.session === token
+  const proof = valid ? confirmation.value : ''
+  const expires = valid ? confirmation.expires : 0
+  const clear = useCallback(() => setConfirmation(null), [setConfirmation])
 
   useEffect(() => {
     if (!confirmation) return
     const timer = window.setTimeout(() => setConfirmation(null), Math.max(0, confirmation.expires - Date.now()))
     return () => window.clearTimeout(timer)
-  }, [confirmation])
+  }, [confirmation, setConfirmation])
 
   async function confirm() {
     setBusy(true)
@@ -31,7 +50,7 @@ export function useRecentMFA(token: string, onLogout: () => void) {
         if (response.status === 401 && body.error !== 'invalid or reused mfa code') onLogout()
         throw new Error(body.error || 'MFA verification failed.')
       }
-      const expires = Date.parse(body.expires_at ?? '')
+      const expires = body.expires_at ? Date.parse(body.expires_at) : Date.now() + ACTION_MFA_TTL_MS
       if (!body.proof || !Number.isFinite(expires) || expires <= Date.now()) throw new Error('Invalid MFA confirmation response.')
       setConfirmation({ session: token, value: body.proof, expires })
       setCode('')
@@ -43,5 +62,5 @@ export function useRecentMFA(token: string, onLogout: () => void) {
     }
   }
 
-  return { proof, code, setCode, busy, error, confirm }
+  return { proof, expires, code, setCode, busy, error, confirm, clear }
 }

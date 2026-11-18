@@ -118,7 +118,7 @@ func TestHandleListenerApply_OK(t *testing.T) {
 	token := loginAs(t, app, "admin", "secret")
 	preview := listenerPreview(t, app, token)
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":true}`, token))
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":true}`, token)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -152,7 +152,7 @@ func TestHandleListenerApply_NotConfirmed(t *testing.T) {
 	token := loginAs(t, app, "admin", "secret")
 	preview := listenerPreview(t, app, token)
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":false}`, token))
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":false}`, token)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
@@ -168,7 +168,7 @@ func TestHandleListenerApply_Expired(t *testing.T) {
 	preview := listenerPreview(t, app, token)
 	clock = clock.Add(2 * time.Hour)
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":true}`, token))
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"`+preview.RevisionID+`","confirm":true}`, token)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
@@ -179,7 +179,7 @@ func TestHandleListenerApply_BadRevision(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
 	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"missing","confirm":true}`, loginAs(t, app, "admin", "secret")))
+	app.Handler().ServeHTTP(rec, withRecentMFATest(t, app, authedRequest(http.MethodPost, "/api/v1/listeners/apply", `{"revision_id":"missing","confirm":true}`, loginAs(t, app, "admin", "secret"))))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}

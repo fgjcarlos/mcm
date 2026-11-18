@@ -25,6 +25,7 @@ readonly RED='\033[0;31m'
 readonly YELLOW='\033[0;33m'
 readonly RESET='\033[0m'
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MCM_BASE_URL="${MCM_BASE_URL:-http://127.0.0.1:8080}"
 MCM_E2E_TLS_PORT="${MCM_E2E_TLS_PORT:-8883}"
 MCM_E2E_MTLS_PORT="${MCM_E2E_MTLS_PORT:-8884}"
@@ -123,6 +124,29 @@ post_json() {
     curl -sS -o "$output" -w '%{http_code}' \
         -X POST "${MCM_BASE_URL}${endpoint}" \
         -H "Authorization: Bearer ${MCM_AUTH_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d "$payload" || printf '000'
+}
+
+# post_json_mfa sends a request that needs a recent MFA proof. A proof lasts
+# five minutes and this script runs longer, so every call takes a fresh one
+# from scripts/mfa-step-up.sh. The proof is bound to the session that
+# requested it, so the request runs as the operator the helper created.
+post_json_mfa() {
+    local endpoint="$1"
+    local payload="$2"
+    local output="$3"
+    local mfa_token mfa_proof
+    read -r mfa_token mfa_proof <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$MCM_BASE_URL" "$MCM_AUTH_TOKEN")"
+    if [[ -z "$mfa_proof" ]]; then
+        printf '%b\n' "${RED}✗ could not obtain a recent MFA proof${RESET}" >&2
+        printf '000'
+        return
+    fi
+    curl -sS -o "$output" -w '%{http_code}' \
+        -X POST "${MCM_BASE_URL}${endpoint}" \
+        -H "Authorization: Bearer ${mfa_token}" \
+        -H "X-MCM-MFA: ${mfa_proof}" \
         -H 'Content-Type: application/json' \
         -d "$payload" || printf '000'
 }
@@ -323,7 +347,7 @@ listener_preview() {
 listener_apply() {
     local output="$1"
     local code
-    code="$(post_json '/api/v1/listeners/apply' \
+    code="$(post_json_mfa '/api/v1/listeners/apply' \
         "$(jq -cn --arg revision_id "$LISTENER_REVISION_ID" '{revision_id: $revision_id, confirm: true}')" \
         "$output")"
     if [[ "$code" != '200' ]]; then
@@ -466,7 +490,7 @@ pass 'preview the activation and the stable broker paths'
 
 response_file
 CERT_APPLY="$RESPONSE_FILE"
-CERT_APPLY_CODE="$(post_json '/api/v1/broker/certificates/apply' \
+CERT_APPLY_CODE="$(post_json_mfa '/api/v1/broker/certificates/apply' \
     "$(jq -cn --arg profile "$MCM_E2E_CERT_PROFILE" --arg revision "$REVISION_ONE" \
         '{profile: $profile, revision_id: $revision}')" "$CERT_APPLY")"
 if [[ "$CERT_APPLY_CODE" != '200' ]]; then
@@ -566,7 +590,7 @@ fi
 BROKEN_REVISION="$(jq -r '.revision_id // empty' "$BROKEN_UPLOAD")"
 response_file
 BROKEN_APPLY="$RESPONSE_FILE"
-BROKEN_APPLY_CODE="$(post_json '/api/v1/broker/certificates/apply' \
+BROKEN_APPLY_CODE="$(post_json_mfa '/api/v1/broker/certificates/apply' \
     "$(jq -cn --arg profile "$MCM_E2E_CERT_PROFILE" --arg revision "$BROKEN_REVISION" \
         '{profile: $profile, revision_id: $revision}')" "$BROKEN_APPLY")"
 if [[ "$BROKEN_APPLY_CODE" != '502' ]]; then
@@ -604,7 +628,7 @@ if [[ "$FINGERPRINT_TWO" == "$FINGERPRINT_ONE" ]]; then
 fi
 response_file
 ROTATION_APPLY="$RESPONSE_FILE"
-ROTATION_APPLY_CODE="$(post_json '/api/v1/broker/certificates/apply' \
+ROTATION_APPLY_CODE="$(post_json_mfa '/api/v1/broker/certificates/apply' \
     "$(jq -cn --arg profile "$MCM_E2E_CERT_PROFILE" --arg revision "$REVISION_TWO" \
         '{profile: $profile, revision_id: $revision}')" "$ROTATION_APPLY")"
 if [[ "$ROTATION_APPLY_CODE" != '200' ]]; then

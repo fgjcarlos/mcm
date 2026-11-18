@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import BrokerConfigPanel from './BrokerConfigPanel'
@@ -69,12 +69,12 @@ describe('BrokerConfigPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('Preview')).toBeInTheDocument()
     })
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: 'Apply and restart broker' }))
     await user.type(screen.getByLabelText('MFA code'), '123456')
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText(/MFA confirmed/)
-    await user.click(screen.getByLabelText(/I adopt/))
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
-    await user.click(screen.getByRole('button', { name: 'Force Apply' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply and restart broker' }))
 
     await waitFor(() => {
       const applyCalls = fetchMock.mock.calls.filter((call) => {
@@ -108,12 +108,12 @@ describe('BrokerConfigPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('Preview')).toBeInTheDocument()
     })
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: /^Apply/ }))
     await user.type(screen.getByLabelText('MFA code'), '123456')
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText(/MFA confirmed/)
-    await user.click(screen.getByLabelText(/I adopt/))
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
-    await user.click(screen.getByRole('button', { name: 'Force Apply' }))
+    await user.click(screen.getByRole('button', { name: /^Confirm Apply/ }))
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/apply requires broker restart/i)
@@ -140,12 +140,13 @@ describe('BrokerConfigPanel', () => {
     await user.type(editor, draft)
     await user.click(screen.getByRole('button', { name: 'Validate draft' }))
     await screen.findByText('revision edited')
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Apply/ })).toBeDisabled()
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: /^Apply/ }))
     await user.type(screen.getByLabelText('MFA code'), '123456')
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText(/MFA confirmed/)
-    await user.click(screen.getByLabelText(/I adopt/))
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.click(screen.getByRole('button', { name: /^Confirm Apply/ }))
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([url]) => url === '/api/v1/broker/config/apply')
       expect(call?.[1]?.headers).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
@@ -166,15 +167,42 @@ describe('BrokerConfigPanel', () => {
     const editor = await screen.findByRole('textbox', { name: 'Draft configuration' })
     await user.click(screen.getByRole('button', { name: 'Import / Refresh preview' }))
     await screen.findByText('revision rev-1')
-    await user.type(editor, '# unsaved edit')
-    expect(screen.queryByText('revision rev-1')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: /^Apply/ }))
     await user.type(screen.getByLabelText('MFA code'), '123456')
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText('invalid or reused mfa code')
     expect(onLogout).not.toHaveBeenCalled()
+    await user.type(editor, '# unsaved edit')
+    expect(screen.queryByText('revision rev-1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Apply/ })).not.toBeInTheDocument()
     expect(editor).toHaveValue('listener 1883\n# unsaved edit')
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/v1/broker/config/apply')).toBe(false)
+    vi.unstubAllGlobals()
+  })
+
+  it('drives the Config apply through the shared change route and announces the result', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...configRoute,
+      'POST /api/v1/broker/config/apply': () => jsonResponse({ id: 42, revision_id: 'rev-1', status: 'applied', message: 'Reloaded; activation probe unavailable.' }),
+    }))
+    const user = userEvent.setup()
+    render(<BrokerConfigPanel token="tok" onLogout={() => {}} role="admin" />)
+    await user.click(await screen.findByRole('button', { name: 'Import / Refresh preview' }))
+    const route = await screen.findByRole('list', { name: 'Change route' })
+    await within(route).findByRole('listitem', { name: 'Review: done' })
+    expect(screen.getByRole('button', { name: /^Apply/ })).toBeDisabled()
+    expect(screen.getByText('Tick “I adopt this reviewed configuration” to apply.')).toBeVisible()
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: /^Apply/ }))
+    expect(within(route).getByRole('listitem', { name: 'MFA: waiting' })).toBeInTheDocument()
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await user.click(await screen.findByRole('button', { name: /^Confirm Apply/ }))
+    const result = screen.getByRole('status', { name: 'Apply result' })
+    await waitFor(() => expect(result).toHaveTextContent('Applied — activation not proven'))
+    expect(result).toHaveTextContent('Reloaded; activation probe unavailable.')
+    expect(within(route).getByRole('listitem', { name: 'Result: caution' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 

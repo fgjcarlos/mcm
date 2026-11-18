@@ -11,6 +11,7 @@ readonly RED='\033[0;31m'
 readonly YELLOW='\033[0;33m'
 readonly RESET='\033[0m'
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MCM_BASE_URL="${MCM_BASE_URL:-http://127.0.0.1:8080}"
 MCM_E2E_LISTENER_PORT="${MCM_E2E_LISTENER_PORT:-1884}"
 MCM_E2E_WS_PORT=9001
@@ -77,6 +78,21 @@ post_json() {
         -d "$payload" || printf '000'
 }
 
+# post_json_mfa sends a request that needs a recent MFA proof. The proof is
+# bound to the session that requested it, so the request runs as the
+# operator scripts/mfa-step-up.sh created.
+post_json_mfa() {
+    local endpoint="$1"
+    local payload="$2"
+    local output="$3"
+    curl -sS -o "$output" -w '%{http_code}' \
+        -X POST "${MCM_BASE_URL}${endpoint}" \
+        -H "Authorization: Bearer ${MFA_TOKEN}" \
+        -H "X-MCM-MFA: ${MFA_PROOF}" \
+        -H 'Content-Type: application/json' \
+        -d "$payload" || printf '000'
+}
+
 preview() {
     local desired="$1"
     local output code
@@ -99,7 +115,7 @@ apply() {
     local output code
     response_file
     output="$RESPONSE_FILE"
-    code="$(post_json '/api/v1/listeners/apply' "$(jq -cn --arg revision_id "$REVISION_ID" '{revision_id: $revision_id, confirm: true}')" "$output")"
+    code="$(post_json_mfa '/api/v1/listeners/apply' "$(jq -cn --arg revision_id "$REVISION_ID" '{revision_id: $revision_id, confirm: true}')" "$output")"
     if [[ "$code" != '200' ]]; then
         fail "listener apply failed with HTTP ${code}: $(<"$output")"
     fi
@@ -124,6 +140,15 @@ PY
 }
 
 wait_for_ready
+
+# Applying listeners requires a recent MFA proof. The helper creates a
+# dedicated operator, enrolls TOTP for it and exchanges an unused time step
+# for the proof; the bootstrap token keeps its plain use for everything else.
+read -r MFA_TOKEN MFA_PROOF <<<"$("${REPO_ROOT}/scripts/mfa-step-up.sh" "$MCM_BASE_URL" "$MCM_AUTH_TOKEN")"
+if [[ -z "$MFA_PROOF" ]]; then
+    fail 'could not obtain a recent MFA proof'
+fi
+printf '%s\n' 'recent MFA proof acquired'
 printf '%s\n' "Listener Compose context: path=${MCM_MOSQUITTO_COMPOSE_PATH:-not set}, service=${MCM_MOSQUITTO_SERVICE}"
 
 LISTENERS="$(curl -fsS -H "Authorization: Bearer ${MCM_AUTH_TOKEN}" "${MCM_BASE_URL}/api/v1/listeners" | jq -c '.specs // []')" \

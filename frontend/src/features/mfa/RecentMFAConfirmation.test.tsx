@@ -20,7 +20,7 @@ it('confirms MFA in memory and does not transfer a proof to another session', as
   await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
   await screen.findByText(/MFA confirmed/)
   expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/mfa/step-up', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer first' }), body: '{"code":"123456"}' }))
-  expect(screen.getByLabelText('MFA code')).toHaveValue('')
+  expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
   rerender(<Confirmation token="second" onLogout={onLogout} />)
   expect(screen.queryByText(/MFA confirmed/)).not.toBeInTheDocument()
 })

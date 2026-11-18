@@ -32,8 +32,10 @@ same gates (recent MFA, activation verification with rollback). See
 | Adopt and apply configuration | Admin | Apply requires it |
 | Prepare recovery, import or export a configuration copy | Admin | Yes |
 | Apply MQTT users/ACL changes | Admin | Yes |
+| Apply listeners, certificate material, bridges or plugins | Admin | Yes |
+| Apply or adopt the Dynamic Security backend | Admin | Yes |
 
-Sensitive operations ask the operator to confirm a second factor first. `POST /api/v1/auth/mfa/step-up` exchanges an unused TOTP code for a short-lived proof.
+Every apply route requires recent MFA, and so does the Dynamic Security adoption. Sensitive operations ask the operator to confirm a second factor first. `POST /api/v1/auth/mfa/step-up` exchanges an unused TOTP code for a short-lived proof.
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/auth/mfa/step-up \

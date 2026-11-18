@@ -374,6 +374,7 @@ describe('connection test step', () => {
 
     expect(stage('Applied')).toHaveTextContent('Applied. This deployment status carries no activation proof.')
     expect(stage('Applied')).not.toHaveTextContent('verified')
+    expect(stage('Applied').className).not.toMatch(/emerald/)
   })
 
   it('keeps watching, not unobservable, while the diagnostics are still loading', async () => {

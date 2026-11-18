@@ -1,17 +1,17 @@
 import { useCallback, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type { BrokerConfig, BrokerConfigApplyRequest, BrokerConfigPreview, CatalogResponse, ConfigApplyResult, Revision, ValidationIssue } from './types'
 
 type Status = 'idle' | 'previewing' | 'applying'
 type Draft = { body: string; baseHash: string }
 
-export function useBrokerConfig(token: string, onLogout: () => void) {
+export function useBrokerConfig(token: string, onLogout: () => void, onMFARejected?: () => void) {
   const [config, setConfig] = useState<BrokerConfig | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [preview, setPreview] = useState<BrokerConfigPreview | null>(null)
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null)
   const [revisions, setRevisions] = useState<Revision[]>([])
-  const [result, setResult] = useState<ConfigApplyResult | null>(null)
   const [issues, setIssues] = useState<ValidationIssue[]>([])
   const [status, setStatus] = useState<Status>('idle')
   const [loading, setLoading] = useState(false)
@@ -29,6 +29,7 @@ export function useBrokerConfig(token: string, onLogout: () => void) {
   }, [token, onLogout])
 
   const report = (err: unknown) => {
+    if (isMFARejection(err)) onMFARejected?.()
     if (!isUnauthorizedResponseError(err)) setError(err instanceof Error ? err.message : 'Could not reach the server.')
   }
 
@@ -87,20 +88,20 @@ export function useBrokerConfig(token: string, onLogout: () => void) {
     finally { setStatus('idle') }
   }
 
-  async function apply(req: BrokerConfigApplyRequest, proof: string) {
+  async function apply(req: BrokerConfigApplyRequest, proof: string): Promise<ConfigApplyResult | null> {
     if (!proof || !preview || draft?.body !== preview.conf_body || draft.baseHash !== preview.base_conf_hash) {
       setError('Validate the current draft and confirm MFA before applying.')
-      return
+      return null
     }
     setStatus('applying')
     setError('')
     try {
       const outcome = await request('/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof }, body: JSON.stringify(req) }) as ConfigApplyResult
-      setResult(outcome)
       setPreview(null) // Every attempt consumes the revision, including rollback.
       if (outcome.status === 'active_verified') setDraft(null)
       await Promise.all([load(), loadHistory()])
-    } catch (err) { report(err) }
+      return outcome
+    } catch (err) { report(err); return null }
     finally { setStatus('idle') }
   }
 
@@ -123,7 +124,7 @@ export function useBrokerConfig(token: string, onLogout: () => void) {
   }
 
   return {
-    config, draft, preview, catalog, revisions, result, issues, status, loading, error,
+    config, draft, preview, catalog, revisions, issues, status, loading, error,
     load, loadCatalog, loadHistory, editDraft, resetDraft, apply, exportCopy,
     importCopyFile: async (file: File, proof: string) => {
       try { await importCopy(await file.text(), proof) } catch (err) { report(err) }

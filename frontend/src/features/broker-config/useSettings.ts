@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type {
   BrokerSettings,
   SettingsApplyRequest,
@@ -20,8 +21,8 @@ function errorMessage(body: unknown, fallback: string) {
 // current settings together with the catalog description of the form,
 // previews the edited document and applies the resulting revision through
 // the shared broker-config apply endpoint.
-export function useSettings(opts: { token: string; onLogout: () => void }) {
-  const { token, onLogout } = opts
+export function useSettings(opts: { token: string; onLogout: () => void; onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const [settings, setSettings] = useState<BrokerSettings | null>(null)
   const [preview, setPreview] = useState<SettingsPreview | null>(null)
   const [previewError, setPreviewError] = useState('')
@@ -93,8 +94,8 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: SettingsApplyRequest): Promise<boolean> => {
-    if (applying.current) return false
+  const apply = useCallback(async (req: SettingsApplyRequest, proof: string): Promise<boolean> => {
+    if (applying.current || !proof) return false
     applying.current = true
     setIsApplying(true)
     setApplyError('')
@@ -103,7 +104,7 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(req),
       })
       const body = await response.json().catch(() => null) as { error?: string; status?: string } | null
@@ -117,13 +118,14 @@ export function useSettings(opts: { token: string; onLogout: () => void }) {
       await refresh()
       return true
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return false
     } finally {
       applying.current = false
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
   return {
     settings,

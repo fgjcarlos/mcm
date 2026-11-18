@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import { can } from '../auth/permissions'
 import { useSettings } from './useSettings'
+import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { SettingsDocument, SettingsEntry, SettingsField } from './settingsTypes'
 
 type Occurrence = { values: string[] }
@@ -79,37 +82,31 @@ function applyNotice(status: string | undefined, requiresRestart: boolean) {
     case 'active_verified':
       return {
         role: 'status' as const,
-        className: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100',
         message: requiresRestart ? 'Settings applied. The broker was restarted.' : 'Settings applied. The broker was signalled to reload.',
       }
     case 'pending_activation':
       return {
         role: 'status' as const,
-        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
         message: 'Settings were written, but broker activation is pending.',
       }
     case 'rolled_back':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'Settings did not activate; the previous configuration was restored.',
       }
     case 'rollback_failed':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'Settings activation and rollback failed; manual recovery is required.',
       }
     case 'failed':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'Settings apply failed; check the broker before continuing.',
       }
     default:
       return {
         role: 'status' as const,
-        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
         message: 'Apply completed, but broker activation status is unknown.',
       }
   }
@@ -124,12 +121,14 @@ export default function SettingsPanel({
   onLogout: () => void
   role?: string
 }) {
+  const mfa = useRecentMFA(token, onLogout)
   const { settings, preview, previewError, applyError, issues, isLoading, isPreviewing, isApplying, applied, applyResult, requestPreview, apply } =
-    useSettings({ token, onLogout })
+    useSettings({ token, onLogout, onMFARejected: mfa.clear })
   const [draft, setDraft] = useState<Draft | undefined>()
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [appliedRequiresRestart, setAppliedRequiresRestart] = useState(false)
   const appliedNotice = applyNotice(applyResult?.status, appliedRequiresRestart)
+  const appliedLamp = deploymentLamp(applyResult?.status)
   const isAdmin = role === 'admin'
   // The preview endpoint requires an operator; the apply endpoint an
   // admin. The panel stays visible to an auditor, but the buttons that
@@ -202,7 +201,7 @@ export default function SettingsPanel({
       // Settings apply is the adoption action for this reviewed revision.
       // The backend requires a fresh adoption even for reload-only changes.
       adopt: true,
-    })
+    }, mfa.proof)
     if (ok) {
       setDraft(undefined)
       setConfirmRestart(false)
@@ -264,7 +263,7 @@ export default function SettingsPanel({
           </div>
         ) : null}
         {applied ? (
-          <div className={`mt-5 rounded-2xl border p-5 text-sm ${appliedNotice.className}`} role={appliedNotice.role}>
+          <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[appliedLamp]} ${lampText[appliedLamp]}`} role={appliedNotice.role}>
             {appliedNotice.message}
           </div>
         ) : null}
@@ -431,6 +430,8 @@ export default function SettingsPanel({
             <p className="mt-4 text-xs text-cyan-200">The broker picks this up on the next reload.</p>
           )}
 
+          {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
+
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {preview.requires_restart ? (
               <label className="flex items-center gap-2 text-sm text-slate-200">
@@ -447,12 +448,13 @@ export default function SettingsPanel({
             <button
               type="button"
               onClick={() => { void handleApply() }}
-              disabled={!isAdmin || isApplying || (preview.requires_restart && !confirmRestart)}
+              disabled={!isAdmin || !mfa.proof || isApplying || (preview.requires_restart && !confirmRestart)}
               title={!isAdmin ? 'Requires admin role' : undefined}
               className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
             >
               {isApplying ? 'Applying…' : 'Apply'}
             </button>
+            {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
           </div>
         </div>
       ) : null}

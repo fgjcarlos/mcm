@@ -1694,7 +1694,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
-    await screen.findByText('active_verified')
+    await screen.findByText('Verified')
     expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
 
     resolveCreate?.(jsonResponse({
@@ -1707,6 +1707,52 @@ describe('App', () => {
       expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
     })
     expect(window.localStorage.getItem('mcm_deploy_pending')).toBeNull()
+  })
+
+  it('paints an applied deployment without activation proof amber in Deploy, never verified green', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'applied-lamp-token')
+    const applied = { id: 21, status: 'applied', created_at: '2026-01-01T00:00:00Z' }
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('applied-lamp-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({
+        id: 9,
+        username: 'applied-admin',
+        disabled: false,
+        role: 'admin',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      }),
+      'GET /api/v1/deployments': () => envelope('deployments', [applied]),
+      'POST /api/v1/deployments/preview': () => jsonResponse({
+        revision_id: 'revision-applied',
+        acl_diff: '+user device',
+        passwd_diff: '',
+        orphan_rules: [],
+        has_changes: true,
+      }),
+      'POST /api/v1/deployments/apply': () => jsonResponse(applied),
+    }))
+
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await user.click(await screen.findByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    // The route result says in plain words that activation is not proven; the history pill keeps the raw status.
+    const result = await screen.findByRole('status', { name: 'Apply result' })
+    await waitFor(() => expect(result).toHaveTextContent('Applied — activation not proven'))
+    expect(screen.getByRole('listitem', { name: 'Result: caution' })).toBeInTheDocument()
+    for (const label of [result, within(screen.getByRole('table')).getByText('applied')]) {
+      expect(label.className).toMatch(/amber/)
+      expect(label.className).not.toMatch(/emerald/)
+    }
   })
 
   it('keeps the pending deploy banner when a mutation starts during apply', async () => {
@@ -2677,5 +2723,194 @@ describe('App', () => {
         expect(window.history.length).toBe(entries)
       })
     })
+  })
+})
+
+describe('app-wide recent MFA step-up', () => {
+  const adminMe = () => jsonResponse({ id: 9, username: 'mfa-admin', disabled: false, role: 'admin', mfa_enabled: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' })
+  const deployPreview = () => jsonResponse({ revision_id: 'rev-deploy', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true })
+  const deployed = () => jsonResponse({ id: 31, status: 'active_verified', message: 'Configuration verified successfully.', created_at: '2026-01-01T00:00:00Z' })
+  const mfaRejected = () => jsonResponse({ error: 'recent MFA verification required', code: 'mfa_required' }, { status: 403 })
+
+  function mfaRoutes(token: string, overrides: Record<string, RouteHandler> = {}) {
+    return installFetchMock({
+      ...authenticatedRoutes(token),
+      'GET /api/v1/auth/me': adminMe,
+      'GET /api/v1/deployments': () => envelope('deployments', []),
+      'POST /api/v1/deployments/preview': deployPreview,
+      'POST /api/v1/deployments/apply': deployed,
+      'GET /api/v1/broker/config': () => jsonResponse({ path: '/etc/mosquitto/mosquitto.conf', body: 'listener 1883\n', hash: 'hash-1', capabilities: { write: true, restart: true } }),
+      'GET /api/v1/broker/config/catalog': () => jsonResponse({ version: '2.0', directives: [] }),
+      'GET /api/v1/broker/config/revisions': () => jsonResponse({ revisions: [] }),
+      'POST /api/v1/broker/config/import': () => jsonResponse({ revision_id: 'rev-config', base_conf_hash: 'hash-1', has_changes: true, conf_diff: '+listener 1883', conf_body: 'listener 1883\n', reload_kind: 'reload', requires_restart: false, validation_issues: [] }),
+      'POST /api/v1/broker/config/apply': () => jsonResponse({ revision_id: 'rev-config', status: 'active_verified', message: 'Config verified.' }),
+      ...overrides,
+    })
+  }
+
+  const stepUps = (fetchMock: ReturnType<typeof installFetchMock>) => fetchMock.mock.calls.filter(([url]) => url === '/api/v1/auth/mfa/step-up').length
+
+  async function confirmInDeploy(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await user.click(await screen.findByRole('button', { name: 'Apply' }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed for this session/)
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+  }
+
+  beforeEach(() => {
+    const storage = new LocalStorageMock()
+    Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
+    window.history.replaceState(null, '', '/')
+    vi.stubGlobal('WebSocket', MockWebSocket)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('reuses the proof confirmed in Deploy when applying in Configuration, without a second code', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'shared-token')
+    const fetchMock = mfaRoutes('shared-token')
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+    await screen.findByText('Configuration verified successfully.')
+
+    await user.click(screen.getByRole('link', { name: /^Configuration(?! revisions)/ }))
+    await user.click(await screen.findByRole('button', { name: 'Import / Refresh preview' }))
+    await screen.findByText('revision rev-config')
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+    expect(screen.getByText(/MFA confirmed for this session/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    await waitFor(() => {
+      const apply = fetchMock.mock.calls.find(([url]) => url === '/api/v1/broker/config/apply')
+      expect((apply?.[1] as RequestInit | undefined)?.headers).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
+    })
+    const deployApply = fetchMock.mock.calls.find(([url]) => url === '/api/v1/deployments/apply')
+    expect((deployApply?.[1] as RequestInit).headers).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
+    expect(stepUps(fetchMock)).toBe(1)
+  })
+
+  it('runs a Deploy along the change route: Review → MFA → Apply and Probe → Result', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'route-token')
+    let resolveApply: ((response: Response) => void) | undefined
+    const pendingApply = new Promise<Response>((resolve) => { resolveApply = resolve })
+    vi.stubGlobal('fetch', mfaRoutes('route-token', { 'POST /api/v1/deployments/apply': () => pendingApply }))
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await user.click(await screen.findByRole('button', { name: 'Preview Changes' }))
+
+    const route = await screen.findByRole('list', { name: 'Change route' })
+    await waitFor(() => expect(within(route).getByRole('listitem', { name: 'Review: done' })).toBeInTheDocument())
+    expect(within(route).getAllByRole('listitem').map((lamp) => lamp.getAttribute('aria-label'))).toEqual([
+      'Review: done', 'MFA: not reached', 'Apply: not reached', 'Probe: not reached', 'Result: not reached',
+    ])
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(within(route).getByRole('listitem', { name: 'MFA: waiting' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm Apply' })).toBeDisabled()
+    expect(screen.getByText('Verify MFA above to confirm.')).toBeVisible()
+
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await within(route).findByRole('listitem', { name: 'MFA: done' })
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+    expect(await within(route).findByRole('listitem', { name: 'Apply: in progress' })).toBeInTheDocument()
+    expect(within(route).getByRole('listitem', { name: 'Probe: in progress' })).toBeInTheDocument()
+    expect(screen.getByText('Applying and verifying activation…')).toBeInTheDocument()
+
+    resolveApply?.(deployed())
+    const result = screen.getByRole('status', { name: 'Apply result' })
+    await waitFor(() => expect(result).toHaveTextContent('Verified'))
+    expect(result).toHaveTextContent('Configuration verified successfully.')
+    expect(result).toHaveAttribute('aria-live', 'polite')
+    expect(within(route).getByRole('listitem', { name: 'Result: verified' })).toBeInTheDocument()
+  })
+
+  it('does not ask for MFA before there is a preview to apply', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'no-preview-token')
+    vi.stubGlobal('fetch', mfaRoutes('no-preview-token'))
+    render(<App />)
+    const user = userEvent.setup()
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+    await screen.findByRole('button', { name: 'Preview Changes' })
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: /^Configuration(?! revisions)/ }))
+    await screen.findByRole('button', { name: 'Import / Refresh preview' })
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Import / Refresh preview' }))
+    await screen.findByText('revision rev-config')
+    // Asked at apply time: only once the operator starts the apply.
+    expect(screen.queryByLabelText('MFA code')).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+  })
+
+  it('asks again once the recent-MFA window has expired', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    window.localStorage.setItem('mcm_admin_token', 'expiry-token')
+    const fetchMock = mfaRoutes('expiry-token')
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await confirmInDeploy(user)
+
+    await act(async () => { vi.advanceTimersByTime(5 * 60_000 + 1) })
+    expect(screen.queryByText(/MFA confirmed for this session/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm Apply' })).toBeDisabled()
+  })
+
+  it('clears the shared proof when an apply is rejected for MFA', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'rejected-token')
+    vi.stubGlobal('fetch', mfaRoutes('rejected-token', { 'POST /api/v1/deployments/apply': mfaRejected }))
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    expect(await screen.findByText('recent MFA verification required')).toBeInTheDocument()
+    expect(screen.queryByText(/MFA confirmed for this session/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+  })
+
+  it('discards the proof on logout', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'logout-token')
+    const fetchMock = mfaRoutes('logout-token', {
+      'POST /api/v1/auth/login': () => jsonResponse({ token: 'logout-token', user: { id: 9, username: 'mfa-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+
+    await user.click(screen.getByRole('button', { name: 'Logout' }))
+    await user.type(await screen.findByLabelText(/username/i), 'mfa-admin')
+    await user.type(screen.getByLabelText(/password/i), 'secret-pass')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    await screen.findByText('Signed in')
+    await user.click(screen.getByRole('link', { name: /deploy/i }))
+    await user.click(await screen.findByRole('button', { name: 'Preview Changes' }))
+    await user.click(await screen.findByRole('button', { name: 'Apply' }))
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.queryByText(/MFA confirmed for this session/)).not.toBeInTheDocument()
   })
 })

@@ -27,6 +27,7 @@ function renderPanel(composeHostPorts: number[] = []) {
     'GET /api/v1/listeners': () => jsonResponse({ specs: initialSpecs }),
     'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
     'POST /api/v1/listeners/preview': () => jsonResponse(preview),
+    'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
   }))
   return render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" composeHostPorts={composeHostPorts} />)
 }
@@ -130,6 +131,8 @@ describe('ListenersPanel editor', () => {
     await user.click(screen.getByRole('button', { name: 'Preview' }))
     await screen.findByText('revision-123')
     expect(screen.getByText('Port 1883 conflicts with a Compose host port')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply (restart required)' })).toBeEnabled())
   })
 })

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type {
   DynSecApplyRequest,
   DynSecApplyResult,
@@ -30,8 +31,8 @@ function guardOf(body: unknown): DynSecGuard | null {
 // security database of the plugin together with the report of the
 // management channel, previews the edited document and applies the
 // resulting plan.
-export function useDynSec(opts: { token: string; onLogout: () => void }) {
-  const { token, onLogout } = opts
+export function useDynSec(opts: { token: string; onLogout: () => void; onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const [state, setState] = useState<DynSecState | null>(null)
   const [preview, setPreview] = useState<DynSecPreviewResult | null>(null)
   const [adoption, setAdoption] = useState<DynSecPreviewResult | null>(null)
@@ -113,8 +114,8 @@ export function useDynSec(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: DynSecApplyRequest): Promise<DynSecApplyResult | null> => {
-    if (applying.current) return null
+  const apply = useCallback(async (req: DynSecApplyRequest, proof: string): Promise<DynSecApplyResult | null> => {
+    if (applying.current || !proof) return null
     applying.current = true
     setIsApplying(true)
     setApplyError('')
@@ -123,7 +124,7 @@ export function useDynSec(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(req),
       })
       const body = await response.json().catch(() => null) as DynSecApplyResult | { error?: string } | null
@@ -141,15 +142,17 @@ export function useDynSec(opts: { token: string; onLogout: () => void }) {
       await refresh()
       return result
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
     } finally {
       applying.current = false
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
-  const adopt = useCallback(async (): Promise<DynSecPreviewResult | null> => {
+  const adopt = useCallback(async (proof: string): Promise<DynSecPreviewResult | null> => {
+    if (!proof) return null
     setIsAdopting(true)
     setApplyError('')
     setPreviewError('')
@@ -158,6 +161,7 @@ export function useDynSec(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
+        headers: { 'X-MCM-MFA': proof },
       })
       const body = await response.json().catch(() => null) as DynSecPreviewResult | { error?: string } | null
       if (!response.ok) {
@@ -169,12 +173,13 @@ export function useDynSec(opts: { token: string; onLogout: () => void }) {
       if (result.guard) setGuard(result.guard)
       return result
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
     } finally {
       setIsAdopting(false)
     }
-  }, [token, onLogout])
+  }, [token, onLogout, onMFARejected])
 
   return {
     state,

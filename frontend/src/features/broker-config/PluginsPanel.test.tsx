@@ -64,6 +64,16 @@ function pluginsResponse(plugins: unknown[]) {
   }
 }
 
+const stepUpRoute = {
+  'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
+}
+
+async function confirmMFA(user: { type: typeof userEvent.type; click: typeof userEvent.click } = userEvent) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
+}
+
 describe('PluginsPanel', () => {
   const originalFetch = globalThis.fetch
 
@@ -167,6 +177,7 @@ describe('PluginsPanel', () => {
   it('applies the reviewed revision with a restart confirmation', async () => {
     let applyRequest: { revision_id?: string; force?: boolean; adopt?: boolean } | null = null
     globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
       'GET /api/v1/broker/plugins': () => jsonResponse(pluginsResponse(storedPlugins)),
       'POST /api/v1/broker/plugins/preview': () =>
         jsonResponse({
@@ -191,6 +202,8 @@ describe('PluginsPanel', () => {
     expect(applyButton).toBeDisabled()
 
     await userEvent.click(screen.getByLabelText('Confirm broker restart'))
+    expect(applyButton).toBeDisabled()
+    await confirmMFA()
     expect(applyButton).toBeEnabled()
     await userEvent.click(applyButton)
 
@@ -199,6 +212,34 @@ describe('PluginsPanel', () => {
     expect((applyRequest as unknown as { force: boolean }).force).toBe(true)
     expect((applyRequest as unknown as { adopt: boolean }).adopt).toBe(true)
     expect(await screen.findByText(/Plugins applied/)).toBeInTheDocument()
+  })
+
+  it('sends the recent MFA proof with the plugin apply and blocks Apply until it exists', async () => {
+    const applyHeaders: HeadersInit[] = []
+    globalThis.fetch = installFetchMock({
+      ...stepUpRoute,
+      'GET /api/v1/broker/plugins': () => jsonResponse(pluginsResponse(storedPlugins)),
+      'POST /api/v1/broker/plugins/preview': () =>
+        jsonResponse({ revision_id: 'revision-1', kind: 'plugins', reload_kind: 'restart', requires_restart: true, conf_diff: '+plugin /usr/lib/mosquitto_dynamic_security.so' }),
+      'POST /api/v1/broker/plugins/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ id: 9, status: 'active_verified', kind: 'plugins' })
+      },
+    }) as unknown as typeof fetch
+
+    render(<PluginsPanel token="token" onLogout={() => {}} role="admin" />)
+    await waitFor(() => expect(screen.getByLabelText('Module dynamic-security')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    const applyButton = await screen.findByRole('button', { name: 'Apply' })
+    await userEvent.click(screen.getByLabelText('Confirm broker restart'))
+    expect(applyButton).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+    await confirmMFA()
+    await userEvent.click(applyButton)
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
   })
 
   it('shows the findings of a refused preview', async () => {

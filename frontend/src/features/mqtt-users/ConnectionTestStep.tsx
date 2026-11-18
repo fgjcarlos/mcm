@@ -280,7 +280,7 @@ export default function ConnectionTestStep({
     }
     // `applied` is a legacy status: it records the write, not an activation probe.
     if (deployment.status === 'applied') {
-      return { tone: 'ok', text: 'Applied. This deployment status carries no activation proof.', confirmable: false }
+      return { tone: 'unknown', text: 'Applied. This deployment status carries no activation proof.', confirmable: false }
     }
     return { tone: 'waiting', text: 'Applied — the deployment did not prove the activation yet.', confirmable: false }
   })()

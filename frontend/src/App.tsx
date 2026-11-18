@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import MQTTUsersPanel from './features/mqtt-users/MQTTUsersPanel'
 import AccountSecurityPanel from './features/mfa/AccountSecurityPanel'
-import RecentMFAConfirmation from './features/mfa/RecentMFAConfirmation'
-import { useRecentMFA } from './features/mfa/useRecentMFA'
+import ChangeRoute from './features/change-route/ChangeRoute'
+import { isMFARejection, useRecentMFA } from './features/mfa/useRecentMFA'
+import RecentMFAProvider from './features/mfa/RecentMFAProvider'
 import AdminUsersPanel from './features/admin-users/AdminUsersPanel'
 import ListenersPanel from './features/broker-config/ListenersPanel'
 import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import SettingsPanel from './features/broker-config/SettingsPanel'
 import BridgesPanel from './features/broker-config/BridgesPanel'
+import { deploymentLamp, lampBox, lampText } from './features/status/deploymentLamp'
 import PluginsPanel from './features/broker-config/PluginsPanel'
 import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
@@ -354,7 +356,7 @@ function App() {
     )
   }
 
-  return <Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} onRefreshUser={refreshCurrentUser} />
+  return <RecentMFAProvider><Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} onRefreshUser={refreshCurrentUser} /></RecentMFAProvider>
 }
 
 function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: string; currentUser: AdminUser; onLogout: () => void; onRefreshUser: () => void }) {
@@ -1525,10 +1527,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [unavailable, setUnavailable] = useState(false)
-  const [applying, setApplying] = useState(false)
-  const [applyResult, setApplyResult] = useState<Deployment | null>(null)
   const [applyError, setApplyError] = useState('')
-  const [confirmApply, setConfirmApply] = useState(false)
   const history = usePagedList<Deployment>({ path: '/api/v1/deployments', rowsKey: 'deployments', token, onUnauthorized: onLogout, namespace: 'deploy', filterParams: { status: 'status' } })
   const deployments = history.rows
   const scopeBlocked = Boolean(preview?.scope_issues?.length)
@@ -1551,9 +1550,9 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   const handlePreview = async () => {
     setPreviewLoading(true)
     setPreviewError('')
+    // Clearing the preview also drops ChangeRoute's started apply back to Review:
+    // a new revision invalidates the confirmation of the previous one.
     setPreview(null)
-    // A new revision invalidates the confirmation of the previous one.
-    setConfirmApply(false)
     try {
       const response = await authenticatedFetch('/api/v1/deployments/preview', {
         token,
@@ -1580,49 +1579,46 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
     }
   }
 
-  const handleApply = async () => {
-    if (!mfa.proof) { setApplyError('Confirm recent MFA before applying.'); return }
+  const handleApply = async (proof: string): Promise<Deployment | null> => {
     if (!preview?.revision_id) {
       setApplyError('Preview revision is missing. Generate a new preview before applying.')
-      return
+      return null
     }
 
     const mutationWatermark = onApplyStart?.() ?? 0
-    setApplying(true)
     setApplyError('')
-    setApplyResult(null)
-    setConfirmApply(false)
     try {
       const response = await authenticatedFetch('/api/v1/deployments/apply', {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': mfa.proof },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify({ revision_id: preview.revision_id }),
       })
       if (response.status === 404 || response.status === 422) {
         setUnavailable(true)
-        return
+        return null
       }
       if (!response.ok) {
         const errBody = (await response.json().catch(() => null)) as { error?: string; details?: string[] } | null
         const details = errBody?.details?.join('; ')
         setApplyError(details ? `${errBody?.error ?? 'Apply failed.'} ${details}` : errBody?.error ?? 'Apply failed.')
-        return
+        return null
       }
       const result = (await response.json()) as Deployment
-      setApplyResult(result)
       setPreview(null)
+      // `applied` wrote the config without activation proof: the saved changes are no
+      // longer pending a deploy (redeploying would not prove them), so clear the marker.
       if (result.status === 'active_verified' || result.status === 'applied') {
         onApplySuccess?.(mutationWatermark)
       }
       fetchHistory()
+      return result
     } catch (err) {
-      if (isUnauthorizedResponseError(err)) return
-      if (isForbiddenResponseError(err)) { setApplyError((err as Error).message); return }
-      setApplyError('Could not reach the server.')
-    } finally {
-      setApplying(false)
+      if (isUnauthorizedResponseError(err)) return null
+      if (isMFARejection(err)) mfa.clear()
+      setApplyError(isForbiddenResponseError(err) ? (err as Error).message : 'Could not reach the server.')
+      return null
     }
   }
 
@@ -1639,7 +1635,6 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
 
   return (
     <section className="mt-8 space-y-6">
-      {canApply ? <RecentMFAConfirmation state={mfa} /> : null}
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1647,39 +1642,6 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             <p className="mt-1 text-sm text-slate-300">Generate a diff of pending ACL and password file changes before applying.</p>
           </div>
           <div className="flex items-center gap-3">
-            {preview?.has_changes ? (
-              confirmApply ? (
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-xs text-slate-300">Apply changes?</span>
-                  <button
-                    type="button"
-                    onClick={() => { void handleApply() }}
-                    disabled={applying || !canApply || !mfa.proof || scopeBlocked}
-                    title={!canApply ? permissionTitle('deploy.apply') : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}
-                    className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-                  >
-                    {applying ? 'Applying…' : 'Confirm Apply'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmApply(false)}
-                    className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmApply(true)}
-                  disabled={!canApply || scopeBlocked}
-                  title={!canApply ? permissionTitle('deploy.apply') : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}
-                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
-                >
-                  Apply
-                </button>
-              )
-            ) : null}
             <button
               type="button"
               onClick={() => { void handlePreview() }}
@@ -1700,17 +1662,10 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
           <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div>
         ) : null}
 
-        {applyResult ? (
-          <div className={`mt-5 rounded-2xl border p-5 ${isSuccessfulDeployment(applyResult.status) ? 'border-emerald-300/30 bg-emerald-400/10' : 'border-amber-300/30 bg-amber-400/10'}`}>
-            <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${isSuccessfulDeployment(applyResult.status) ? 'text-emerald-200' : 'text-amber-200'}`}>
-              {applyResult.status}
-            </p>
-            {applyResult.message ? <p className="mt-2 text-sm text-slate-300">{applyResult.message}</p> : null}
-          </div>
-        ) : null}
-
+        <div className="mt-5">
+        <ChangeRoute hasChanges={Boolean(preview?.has_changes)} mfa={mfa} onApply={handleApply} applyLabel="Apply" disabledReason={!canApply ? `${permissionTitle('deploy.apply')} to apply.` : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}>
         {preview ? (
-          <div className="mt-5 space-y-4">
+          <div className="space-y-4">
             {!preview.has_changes && !(preview.orphan_rules?.length) ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-5 text-sm text-slate-300">No pending changes — configuration is up to date.</div>
             ) : (
@@ -1891,6 +1846,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             ) : null}
           </div>
         ) : null}
+        </ChangeRoute>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
@@ -1919,7 +1876,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 <tr key={dep.id} className="border-b border-white/5 last:border-0">
                   <td className="py-3 pr-4 font-mono text-xs text-slate-400">{String(dep.id).slice(0, 8)}</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${isSuccessfulDeployment(dep.status) ? 'bg-emerald-400/10 text-emerald-200' : 'bg-amber-400/10 text-amber-200'}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${lampBox[deploymentLamp(dep.status)]} ${lampText[deploymentLamp(dep.status)]}`}>
                       {dep.status}
                     </span>
                   </td>
@@ -1940,10 +1897,6 @@ const deploymentStatusOptions = [
   { value: '', label: 'All statuses' },
   ...['active_verified', 'applied', 'pending_activation', 'failed', 'rolled_back', 'rollback_failed'].map((status) => ({ value: status, label: status.replaceAll('_', ' ') })),
 ]
-
-function isSuccessfulDeployment(status: string) {
-  return status === 'active_verified' || status === 'applied'
-}
 
 function DiffBlock({ content }: { content: string }) {
   return (

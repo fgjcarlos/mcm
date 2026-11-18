@@ -158,9 +158,16 @@ function renderPanel(routes: Record<string, RouteHandler> = {}) {
   vi.stubGlobal('fetch', installFetchMock({
     'GET /api/v1/broker/settings': () => jsonResponse(settingsResponse),
     'POST /api/v1/broker/settings/preview': () => jsonResponse(preview),
+    'POST /api/v1/auth/mfa/step-up': () => jsonResponse({ proof: 'recent-proof', expires_at: new Date(Date.now() + 300000).toISOString() }),
     ...routes,
   }))
   return render(<SettingsPanel token="tok" onLogout={() => {}} role="admin" />)
+}
+
+async function confirmMFA(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText('MFA code'), '123456')
+  await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+  await screen.findByText(/MFA confirmed/)
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -306,6 +313,7 @@ describe('SettingsPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Preview changes' }))
     await screen.findByText(/revision-123/)
 
+    await confirmMFA(user)
     const applyButton = screen.getByRole('button', { name: 'Apply' })
     expect(applyButton).toBeDisabled()
     await user.click(screen.getByLabelText('Confirm broker restart'))
@@ -324,11 +332,47 @@ describe('SettingsPanel', () => {
     await screen.findByText('Persistence and autosave')
     await user.click(screen.getByRole('button', { name: 'Preview changes' }))
     await screen.findByText(/revision-123/)
+    await confirmMFA(user)
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
     await waitFor(() => expect(applyRequests).toHaveLength(1))
     expect(applyRequests[0]).toEqual({ revision_id: 'revision-123', force: false, adopt: true })
     expect(await screen.findByText('Settings applied. The broker was signalled to reload.')).toBeInTheDocument()
+  })
+
+  it('blocks apply with a visible reason until a recent MFA proof exists', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Persistence and autosave')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    expect(screen.getByText('Confirm MFA above before applying.')).toBeVisible()
+
+    await confirmMFA(user)
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled()
+    expect(screen.queryByText('Confirm MFA above before applying.')).not.toBeInTheDocument()
+  })
+
+  it('sends the recent MFA proof with the settings apply', async () => {
+    const applyHeaders: HeadersInit[] = []
+    const user = userEvent.setup()
+    renderPanel({
+      'POST /api/v1/broker/config/apply': (init) => {
+        applyHeaders.push(init?.headers ?? {})
+        return jsonResponse({ status: 'active_verified' })
+      },
+    })
+    await screen.findByText('Persistence and autosave')
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await screen.findByText(/revision-123/)
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => expect(applyHeaders).toHaveLength(1))
+    expect(applyHeaders[0]).toEqual(expect.objectContaining({ 'X-MCM-MFA': 'recent-proof' }))
   })
 
   it('reports a restart after applying a restart-required settings revision', async () => {
@@ -344,6 +388,7 @@ describe('SettingsPanel', () => {
     await screen.findByText('Connections and sessions')
     await user.click(screen.getByRole('button', { name: 'Preview changes' }))
     await screen.findByText(/revision-123/)
+    await confirmMFA(user)
     await user.click(screen.getByLabelText('Confirm broker restart'))
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
@@ -376,6 +421,7 @@ describe('SettingsPanel', () => {
     await screen.findByText('Connections and sessions')
     await user.click(screen.getByRole('button', { name: 'Preview changes' }))
     await screen.findByText(/revision-123/)
+    await confirmMFA(user)
     await user.click(screen.getByLabelText('Confirm broker restart'))
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
@@ -399,6 +445,7 @@ describe('SettingsPanel', () => {
     await screen.findByText('Connections and sessions')
     await user.click(screen.getByRole('button', { name: 'Preview changes' }))
     await screen.findByText(/revision-123/)
+    await confirmMFA(user)
     await user.click(screen.getByLabelText('Confirm broker restart'))
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     await waitFor(() => expect(settingsGets).toBe(2))

@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import { can } from '../auth/permissions'
 import { useBridges } from './useBridges'
+import { useRecentMFA } from '../mfa/useRecentMFA'
+import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
+import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
 import {
   bridgeDirections,
   bridgeProtocolVersions,
@@ -22,37 +25,31 @@ function applyNotice(status: string | undefined) {
     case 'active_verified':
       return {
         role: 'status' as const,
-        className: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100',
         message: 'Bridges applied. The broker confirmed the bridge configuration as active.',
       }
     case 'pending_activation':
       return {
         role: 'status' as const,
-        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
         message: 'Bridge configuration was applied, but broker activation could not be verified.',
       }
     case 'rolled_back':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'The bridge change did not activate; the previous configuration was restored.',
       }
     case 'rollback_failed':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'Bridge activation and rollback failed; manual recovery is required.',
       }
     case 'failed':
       return {
         role: 'alert' as const,
-        className: 'border-rose-300/30 bg-rose-400/10 text-rose-100',
         message: 'Bridge apply failed; check the broker before continuing.',
       }
     default:
       return {
         role: 'status' as const,
-        className: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
         message: 'Apply completed, but broker activation status is unknown.',
       }
   }
@@ -85,9 +82,11 @@ export default function BridgesPanel({
   onLogout: () => void
   role?: string
 }) {
+  const mfa = useRecentMFA(token, onLogout)
   const { bridges, preview, previewError, applyError, issues, isLoading, isPreviewing, isApplying, applied, appliedStatus, requestPreview, apply } =
-    useBridges({ token, onLogout })
+    useBridges({ token, onLogout, onMFARejected: mfa.clear })
   const appliedNotice = applyNotice(appliedStatus)
+  const appliedLamp = deploymentLamp(appliedStatus)
   const [draft, setDraft] = useState<Bridge[] | undefined>()
   const [previewedBridges, setPreviewedBridges] = useState<Bridge[] | null>(null)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -108,7 +107,7 @@ export default function BridgesPanel({
   const isPreviewCurrent = Boolean(preview?.revision_id) && JSON.stringify(previewedBridges) === JSON.stringify(specs)
   const hasChanges = preview?.has_changes !== false
   const applyEnabled =
-    isAdmin && !isApplying && isPreviewCurrent && hasChanges && blockingIssues.length === 0 && (!preview?.requires_restart || confirmRestart)
+    isAdmin && Boolean(mfa.proof) && !isApplying && isPreviewCurrent && hasChanges && blockingIssues.length === 0 && (!preview?.requires_restart || confirmRestart)
 
   const updateBridge = (index: number, changes: Partial<Bridge>) => {
     setDraft((current) => {
@@ -162,7 +161,7 @@ export default function BridgesPanel({
       revision_id: preview.revision_id,
       force: preview.requires_restart,
       adopt: preview.requires_restart,
-    })
+    }, mfa.proof)
     if (result) {
       setDraft(undefined)
       setPreviewedBridges(null)
@@ -221,7 +220,7 @@ export default function BridgesPanel({
           </div>
         ) : null}
         {applied ? (
-          <div className={`mt-5 rounded-2xl border p-5 text-sm ${appliedNotice.className}`} role={appliedNotice.role}>
+          <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[appliedLamp]} ${lampText[appliedLamp]}`} role={appliedNotice.role}>
             {appliedNotice.message}
           </div>
         ) : null}
@@ -321,6 +320,8 @@ export default function BridgesPanel({
             </p>
           ) : null}
 
+          {isAdmin ? <div className="mt-5"><RecentMFAConfirmation state={mfa} /></div> : null}
+
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {preview.requires_restart ? (
               <label className="flex items-center gap-2 text-sm text-slate-200">
@@ -343,6 +344,7 @@ export default function BridgesPanel({
             >
               {isApplying ? 'Applying…' : 'Apply'}
             </button>
+            {isAdmin && !mfa.proof ? <p className="text-xs text-amber-200">Confirm MFA above before applying.</p> : null}
           </div>
         </div>
       ) : null}

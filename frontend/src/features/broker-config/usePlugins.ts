@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
+import { isMFARejection } from '../mfa/useRecentMFA'
 import type {
   Plugin,
   PluginApplyRequest,
@@ -20,8 +21,8 @@ function errorMessage(body: unknown, fallback: string) {
 // the plugins MCM supports for the broker version together with the plugins
 // the broker loads, previews the edited document and applies the resulting
 // revision.
-export function usePlugins(opts: { token: string; onLogout: () => void }) {
-  const { token, onLogout } = opts
+export function usePlugins(opts: { token: string; onLogout: () => void; onMFARejected?: () => void }) {
+  const { token, onLogout, onMFARejected } = opts
   const [plugins, setPlugins] = useState<PluginsResponse | null>(null)
   const [preview, setPreview] = useState<PluginPreviewResult | null>(null)
   const [previewError, setPreviewError] = useState('')
@@ -92,8 +93,8 @@ export function usePlugins(opts: { token: string; onLogout: () => void }) {
     }
   }, [token, onLogout])
 
-  const apply = useCallback(async (req: PluginApplyRequest): Promise<PluginApplyResult | null> => {
-    if (applying.current) return null
+  const apply = useCallback(async (req: PluginApplyRequest, proof: string): Promise<PluginApplyResult | null> => {
+    if (applying.current || !proof) return null
     applying.current = true
     setIsApplying(true)
     setApplyError('')
@@ -102,7 +103,7 @@ export function usePlugins(opts: { token: string; onLogout: () => void }) {
         token,
         onUnauthorized: onLogout,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCM-MFA': proof },
         body: JSON.stringify(req),
       })
       const body = await response.json().catch(() => null) as PluginApplyResult | { error?: string } | null
@@ -116,13 +117,14 @@ export function usePlugins(opts: { token: string; onLogout: () => void }) {
       await refresh()
       return body as PluginApplyResult
     } catch (error) {
+      if (isMFARejection(error)) onMFARejected?.()
       if (!isUnauthorizedResponseError(error)) setApplyError(error instanceof Error ? error.message : 'Could not reach the server.')
       return null
     } finally {
       applying.current = false
       setIsApplying(false)
     }
-  }, [token, onLogout, refresh])
+  }, [token, onLogout, onMFARejected, refresh])
 
   return {
     plugins,

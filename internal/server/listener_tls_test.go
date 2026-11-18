@@ -31,10 +31,10 @@ func uploadAndActivateCertificate(t *testing.T, app *App, operatorToken string, 
 	}
 
 	apply := httptest.NewRecorder()
-	app.Handler().ServeHTTP(apply, authedRequest(http.MethodPost,
+	app.Handler().ServeHTTP(apply, withRecentMFATest(t, app, authedRequest(http.MethodPost,
 		"/api/v1/broker/certificates/apply",
 		`{"profile":"`+profile+`","revision_id":"`+revision.RevisionID+`"}`,
-		adminToken))
+		adminToken)))
 	if apply.Code != http.StatusOK {
 		t.Fatalf("apply status = %d, want %d, body = %s", apply.Code, http.StatusOK, apply.Body.String())
 	}
@@ -98,7 +98,9 @@ func TestListenerListExposesTheCertificateProfile(t *testing.T) {
 	seedAdminUserWithRole(t, store, "admin", "secret", auth.RoleAdmin)
 
 	material := newCertificateMaterial(t, "broker.example.com", time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(90*24*time.Hour))
-	uploadAndActivateCertificate(t, app, loginAs(t, app, "operator", "secret"), loginAs(t, app, "admin", "secret"), "production", material)
+	// The certificate apply enrolls MFA for the admin, so log in once first.
+	adminToken := loginAs(t, app, "admin", "secret")
+	uploadAndActivateCertificate(t, app, loginAs(t, app, "operator", "secret"), adminToken, "production", material)
 
 	preview := httptest.NewRecorder()
 	app.Handler().ServeHTTP(preview, authedRequest(http.MethodPost,
@@ -116,10 +118,10 @@ func TestListenerListExposesTheCertificateProfile(t *testing.T) {
 	}
 
 	apply := httptest.NewRecorder()
-	app.Handler().ServeHTTP(apply, authedRequest(http.MethodPost,
+	app.Handler().ServeHTTP(apply, withRecentMFATest(t, app, authedRequest(http.MethodPost,
 		"/api/v1/listeners/apply",
 		`{"revision_id":"`+previewResult.RevisionID+`","confirm":true}`,
-		loginAs(t, app, "admin", "secret")))
+		adminToken)))
 	if apply.Code != http.StatusOK {
 		t.Fatalf("apply status = %d, want %d, body = %s", apply.Code, http.StatusOK, apply.Body.String())
 	}

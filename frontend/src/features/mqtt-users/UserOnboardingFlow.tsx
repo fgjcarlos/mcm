@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
-import { useRecentMFA } from '../mfa/useRecentMFA'
+import { isMFARejection, useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
 import type { ACLPermission, ACLScope } from '../acl/types'
 import ConnectionTestStep from './ConnectionTestStep'
+import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
 
 // The integrated onboarding journey of issue #341: the MQTT user, its
 // access rule, the preview and the apply in one place.
@@ -65,14 +66,14 @@ const STEPS: { id: Stage; label: string }[] = [
 // verification may still be pending for it.
 const APPLIED_STATUSES = ['active_verified', 'applied', 'pending_activation']
 
-function isVerified(status: string) {
-  return status === 'active_verified' || status === 'applied'
-}
-
 // What each non-verified status honestly means for the broker configuration,
 // and the stage it belongs to. `failed` does not say the previous
 // configuration was restored: the applier may or may not have restored it.
 const NON_VERIFIED_STATUS: Record<string, { stage: string; explanation: string }> = {
+  applied: {
+    stage: 'Stage: activation verification (no proof recorded).',
+    explanation: 'The configuration was written to the broker, but the activation was not proven.',
+  },
   pending_activation: {
     stage: 'Stage: activation verification (pending).',
     explanation: 'The configuration was written to the broker, but the activation was not proven yet.',
@@ -266,11 +267,14 @@ export default function UserOnboardingFlow({
       }
       const deployment = (await response.json()) as Deployment
       setResult(deployment)
-      if (isVerified(deployment.status)) {
+      // `applied` wrote the config without activation proof: the saved changes are no
+      // longer pending a deploy, so clear the marker (its lamp stays amber).
+      if (deployment.status === 'active_verified' || deployment.status === 'applied') {
         onApplySuccess?.(mutationWatermark)
       }
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return
+      if (isMFARejection(err)) mfa.clear()
       if (isForbiddenResponseError(err)) { setApplyError((err as Error).message); return }
       setApplyError('Could not reach the server.')
     } finally {
@@ -584,22 +588,12 @@ export default function UserOnboardingFlow({
           {result ? (
             <div
               role="status"
-              className={`rounded-2xl border p-5 ${
-                isVerified(result.status)
-                  ? 'border-emerald-300/30 bg-emerald-400/10'
-                  : result.status === 'rollback_failed' || result.status === 'failed'
-                    ? 'border-rose-300/30 bg-rose-400/10'
-                    : 'border-amber-300/30 bg-amber-400/10'
-              }`}
+              className={`rounded-2xl border p-5 ${lampBox[deploymentLamp(result.status)]}`}
             >
-              <p
-                className={`text-xs font-semibold uppercase tracking-[0.18em] ${
-                  isVerified(result.status) ? 'text-emerald-200' : 'text-amber-200'
-                }`}
-              >
+              <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${lampText[deploymentLamp(result.status)]}`}>
                 {result.status === 'applied'
                   ? 'Applied — no activation proof recorded'
-                  : isVerified(result.status)
+                  : deploymentLamp(result.status) === 'verified'
                   ? 'Applied and verified'
                   : result.status === 'pending_activation'
                     ? 'Applied — activation pending'
@@ -609,7 +603,7 @@ export default function UserOnboardingFlow({
                         ? 'Rolled back'
                         : `Apply failed (${result.status})`}
               </p>
-              {!isVerified(result.status) ? (
+              {deploymentLamp(result.status) !== 'verified' ? (
                 <p className="mt-2 text-sm text-slate-300">
                   {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).stage}{' '}
                   {(NON_VERIFIED_STATUS[result.status] ?? NON_VERIFIED_STATUS.failed).explanation}
