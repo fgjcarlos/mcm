@@ -1564,6 +1564,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         const errBody = (await response.json().catch(() => null)) as { error?: string; details?: string[] } | null
         const details = errBody?.details?.join('; ')
         setApplyError(details ? `${errBody?.error ?? 'Apply failed.'} ${details}` : errBody?.error ?? 'Apply failed.')
+        setPreview(null) // the server consumed this revision, even though the apply failed
         return null
       }
       const result = (await response.json()) as Deployment
@@ -1578,6 +1579,8 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
     } catch (err) {
       if (isUnauthorizedResponseError(err)) return null
       if (isMFARejection(err)) mfa.clear()
+      // A 403 other than the recent-MFA rejection was answered, so the revision is consumed.
+      else if (isForbiddenResponseError(err)) setPreview(null)
       setApplyError(isForbiddenResponseError(err) ? (err as Error).message : 'Could not reach the server.')
       return null
     }
@@ -1618,9 +1621,10 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
         {applyError ? (
           <div className={`mt-5 ${notice.failed}`}>{applyError}</div>
         ) : null}
+        {applyError && !preview ? <p className="mt-2 text-sm text-lamp">Generate a new preview before applying again.</p> : null}
 
         <div className="mt-5">
-        <ChangeRoute hasChanges={Boolean(preview?.has_changes)} mfa={mfa} onApply={handleApply} applyLabel="Apply" disabledReason={!canApply ? `${permissionTitle('deploy.apply')} to apply.` : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}>
+        <ChangeRoute hasChanges={Boolean(preview?.has_changes)} reviewKey={preview?.revision_id} mfa={mfa} onApply={handleApply} applyLabel="Apply" disabledReason={!canApply ? `${permissionTitle('deploy.apply')} to apply.` : scopeBlocked ? 'Resolve the listener scope problems before applying.' : undefined}>
         {preview ? (
           <div className="space-y-6">
             {!preview.has_changes && !(preview.orphan_rules?.length) ? (

@@ -9,6 +9,7 @@ export type ApplyOutcome = { status: string; message?: string }
 
 type Props = {
   hasChanges: boolean
+  reviewKey?: string // identity of the reviewed content (preview revision); a new one restarts the route
   children?: ReactNode // the caller's review content (preview, diff)
   mfa: ReturnType<typeof useRecentMFA>
   // Resolves to null when the request failed; the caller shows its own error.
@@ -28,10 +29,17 @@ const resultLabels: Record<string, string> = {
 
 // The change as a signal-box route (DESIGN.md): Review → MFA → Apply → Probe → Result.
 // Amber lamps mark the set route; only the result lamp may turn green (verified) or red (failed).
-export default function ChangeRoute({ hasChanges, children, mfa, onApply, applyLabel, disabledReason }: Props) {
+export default function ChangeRoute({ hasChanges, reviewKey, children, mfa, onApply, applyLabel, disabledReason }: Props) {
   const [armed, setArmed] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<ApplyOutcome | null>(null)
+  const [reviewed, setReviewed] = useState(reviewKey)
+  // A previous apply's result must not survive into the review of new content. Only a new key
+  // resets: a panel clears its preview in the same batch as the outcome of its apply arrives.
+  if (reviewKey !== reviewed) {
+    setReviewed(reviewKey)
+    if (reviewKey) { setResult(null); setArmed(false) }
+  }
   // A new preview or a new blocking reason drops a started apply back to Review.
   if (armed && !running && (!hasChanges || disabledReason)) setArmed(false)
 
@@ -52,7 +60,8 @@ export default function ChangeRoute({ hasChanges, children, mfa, onApply, applyL
     ['Review', hasChanges ? 'done' : 'waiting', hasChanges ? 'caution' : 'off'],
     ['MFA', mfa.proof ? 'done' : armed ? 'waiting' : 'not reached', mfa.proof ? 'caution' : 'off'],
     ['Apply', running ? 'in progress' : result ? 'done' : armed ? 'waiting' : 'not reached', running || result ? 'caution' : 'off'],
-    ['Probe', running ? 'in progress' : result ? 'done' : 'not reached', running || result ? 'caution' : 'off'],
+    // Only a verified result proves the probe; otherwise say what the result lamp says.
+    ['Probe', running ? 'in progress' : !result ? 'not reached' : resultLamp === 'verified' ? 'done' : resultLamp === 'failed' ? 'failed' : 'not proven', running || result ? 'caution' : 'off'],
     ['Result', resultLamp ?? 'not reached', resultLamp ?? 'off'],
   ]
 

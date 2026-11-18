@@ -16,6 +16,7 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
   const [status, setStatus] = useState<Status>('idle')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [previewConsumed, setPreviewConsumed] = useState(false)
   const generation = useRef(0)
 
   const request = useCallback(async (path: string, init?: RequestInit) => {
@@ -59,6 +60,7 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
     generation.current += 1
     setDraft((previous) => ({ body, baseHash: previous?.baseHash ?? config?.hash ?? '' }))
     setPreview(null)
+    setPreviewConsumed(false)
     setIssues([])
     setError('')
   }
@@ -68,6 +70,7 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
     generation.current += 1
     setDraft({ body: config.body, baseHash: config.hash })
     setPreview(null)
+    setPreviewConsumed(false)
     setIssues([])
     setError('')
   }
@@ -78,6 +81,7 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
     setError('')
     setIssues([])
     setPreview(null)
+    setPreviewConsumed(false)
     try {
       const prepared = await request(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(proof ? { 'X-MCM-MFA': proof } : {}) }, body: JSON.stringify(body) }) as BrokerConfigPreview
       if (generation.current !== requestedGeneration) return
@@ -101,7 +105,16 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
       if (outcome.status === 'active_verified') setDraft(null)
       await Promise.all([load(), loadHistory()])
       return outcome
-    } catch (err) { report(err); return null }
+    } catch (err) {
+      report(err)
+      // The server consumes the revision on every attempt it answers, except the recent-MFA
+      // rejection; a TypeError is a fetch that never reached it.
+      if (!isMFARejection(err) && !isUnauthorizedResponseError(err) && !(err instanceof TypeError)) {
+        setPreview(null)
+        setPreviewConsumed(true)
+      }
+      return null
+    }
     finally { setStatus('idle') }
   }
 
@@ -124,7 +137,7 @@ export function useBrokerConfig(token: string, onLogout: () => void, onMFAReject
   }
 
   return {
-    config, draft, preview, catalog, revisions, issues, status, loading, error,
+    config, draft, preview, catalog, revisions, issues, status, loading, error, previewConsumed,
     load, loadCatalog, loadHistory, editDraft, resetDraft, apply, exportCopy,
     importCopyFile: async (file: File, proof: string) => {
       try { await importCopy(await file.text(), proof) } catch (err) { report(err) }
