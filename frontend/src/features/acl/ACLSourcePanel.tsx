@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { adoptACLSource, fetchACLSource } from './api'
 import type { ACLSource } from './types'
+import { Section } from '../ui/primitives'
+import { bodyText, codeBlock, fieldHint, fieldLabel, input, leverSecondary, notice, textarea } from '../ui/styles'
 
 // ACLSourcePanel brings an existing Mosquitto ACL file under the
 // management of MCM.
@@ -74,89 +76,84 @@ function ACLSourcePanel({ token, onLogout, canWrite, onMutationStart, onMutation
   }
 
   return (
-    <section className="mt-8 space-y-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Existing ACL file</p>
-        <p className="mt-1 text-sm text-slate-300">
-          Adopt an ACL file that already exists on the broker. MCM keeps its content verbatim and composes the managed
-          rules into it, so nothing is lost.
-        </p>
-      </div>
-
+    <Section
+      title="Existing ACL file"
+      description="Adopt an ACL file that already exists on the broker. MCM keeps its content verbatim and composes the managed rules into it, so nothing is lost."
+    >
       {error ? (
-        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+        <div className={`mt-4 ${notice.failed}`}>{error}</div>
       ) : null}
 
       {loading ? (
-        <p className="text-sm text-slate-400">Loading the adopted ACL source…</p>
+        <p className={`mt-4 ${bodyText}`}>Loading the adopted ACL source…</p>
       ) : source?.adopted ? (
-        <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/5 p-4">
-          <p className="text-sm text-emerald-100">
-            The ACL file <span className="font-mono">{source.path}</span> is adopted.
+        <div className="mt-4">
+          <p className="text-sm text-enamel">
+            The ACL file <span className="font-mono text-enamel-bright">{source.path}</span> is adopted.
           </p>
-          {source.content_hash ? <p className="mt-1 font-mono text-xs text-slate-400">sha256 {source.content_hash}</p> : null}
+          {source.content_hash ? <p className="mt-1 break-all font-mono text-xs text-enamel-muted">sha256 {source.content_hash}</p> : null}
           {source.body ? (
-            <pre className="mt-3 max-h-64 overflow-auto rounded-xl border border-white/10 bg-slate-950/70 p-3 font-mono text-xs text-slate-300">
+            <pre className={`mt-3 max-h-64 ${codeBlock}`}>
               {source.body}
             </pre>
           ) : null}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-900/40 p-5 text-sm text-slate-400">
+        <p className={`mt-4 ${notice.neutral}`}>
           No ACL file was adopted yet. The deploy writes the ACL file MCM manages.
-        </div>
+        </p>
       )}
 
-      <form onSubmit={handleAdopt} className="rounded-2xl border border-white/10 bg-slate-900/60 p-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">Adopt an ACL file</p>
-        <div className="mt-4 space-y-4">
+      <form onSubmit={handleAdopt} className="mt-6 max-w-2xl border-t border-track pt-4">
+        <h4 className="text-sm font-semibold text-enamel-bright">Adopt an ACL file</h4>
+        <div className="mt-4 space-y-5">
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Path (optional)</span>
+            <span className={fieldLabel}>Path (optional)</span>
             <input
               type="text"
               value={formPath}
               onChange={(e) => setFormPath(e.target.value)}
               placeholder="/mosquitto/config/acl"
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full font-mono ${input}`}
             />
-            <span className="mt-1 block text-xs text-slate-400">
+            <span className={`mt-1 block ${fieldHint}`}>
               The file to take over. Leave it empty to adopt the ACL file MCM manages, and leave the content empty to read
               the file from that path.
             </span>
           </label>
           <label className="block">
-            <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Content (optional)</span>
+            <span className={fieldLabel}>Content (optional)</span>
             <textarea
               value={formBody}
               onChange={(e) => setFormBody(e.target.value)}
               rows={6}
               placeholder={'user alice\ntopic read sensors/#\npattern readwrite devices/%u/data'}
-              className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 font-mono text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+              className={`mt-2 w-full ${textarea}`}
             />
           </label>
           {formError ? (
-            <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{formError}</div>
+            <div className={notice.failed}>{formError}</div>
           ) : null}
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
               disabled={submitting || !canWrite}
               title={!canWrite ? 'Requires the operator role' : undefined}
-              className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+              className={leverSecondary}
             >
               {submitting ? 'Adopting…' : 'Adopt ACL file'}
             </button>
             <button
               type="button"
               onClick={reload}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+              className={leverSecondary}
             >
               Refresh
             </button>
           </div>
         </div>
       </form>
-    </section>
+    </Section>
   )
 }
 

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { authenticatedFetch, isUnauthorizedResponseError } from '../api/client'
 import type { ListenerListResponse, ListenerSpec } from '../broker-config/types'
 import type { ACLPermission, ACLScope } from '../acl/types'
+import { Lamp } from '../ui/primitives'
+import { bodyText, fieldHint, fieldLabel, input, leverSecondary, notice, select, type LampTone } from '../ui/styles'
 import { newTestNonce, planConnectionTest, type PlannedOperation } from './connectionTest'
 
 // The last step of the onboarding journey (#353): the connection data of
@@ -47,6 +49,14 @@ type StreamState = 'connecting' | 'open' | 'closed'
 type StageTone = 'ok' | 'waiting' | 'unknown' | 'alert'
 type StageView = { tone: StageTone; text: string; confirmable: boolean }
 
+// Green only for a stage MCM proved (observed or verified); red only when the denied operation got through.
+const STAGE_LAMP: Record<StageTone, { tone: LampTone; word: string }> = {
+  ok: { tone: 'verified', word: 'verified' },
+  waiting: { tone: 'caution', word: 'pending' },
+  unknown: { tone: 'caution', word: 'not proven' },
+  alert: { tone: 'failed', word: 'failed' },
+}
+
 const OTHER_LISTENER = '__other__'
 // The activation probe of the deployment connects as the new account with
 // client ids built from diagnostics.ProbeClientIDPrefix
@@ -88,7 +98,7 @@ function operationSentence(op: PlannedOperation, allowed: boolean) {
 }
 
 function Code({ children }: { children: string }) {
-  return <code className="rounded bg-slate-950/70 px-1.5 py-0.5 font-mono text-xs text-cyan-100">{children}</code>
+  return <code className="rounded-plate bg-frame-high px-1.5 py-0.5 font-mono text-xs text-enamel-bright">{children}</code>
 }
 
 export default function ConnectionTestStep({
@@ -292,49 +302,43 @@ export default function ConnectionTestStep({
     { id: 'denied', label: 'Denied operation', view: deniedView },
   ]
 
-  const toneClass: Record<StageTone, string> = {
-    ok: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-50',
-    waiting: 'border-white/10 bg-white/[0.03] text-slate-200',
-    unknown: 'border-amber-300/30 bg-amber-400/10 text-amber-50',
-    alert: 'border-rose-300/30 bg-rose-400/10 text-rose-50',
-  }
-
   return (
     <section aria-label="Connection test" className="mt-6 space-y-5">
-      <p className="text-sm text-slate-300">
+      <h5 className="text-sm font-semibold text-enamel-bright">Connection test</h5>
+      <p className={`max-w-[68ch] ${bodyText}`}>
         Run this test with the MQTT client your application uses. MCM does not run it: it only watches what the broker reports.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Client host</span>
+          <span className={fieldLabel}>Client host</span>
           <input
             type="text"
             aria-label="Client host"
             value={host}
             onChange={(e) => setHost(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+            className={`mt-2 w-full font-mono ${input}`}
           />
-          <span className="mt-1 block text-xs text-slate-400">
+          <span className={`mt-1 block ${fieldHint}`}>
             The address your client uses to reach the broker. MCM cannot know it; it suggests the host you use to reach MCM.
           </span>
         </label>
         <label className="block">
-          <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener</span>
+          <span className={fieldLabel}>Listener</span>
           <select
             aria-label="Listener"
             value={selectedListener}
             onChange={(e) => setSelectedListener(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+            className={`mt-2 w-full ${select}`}
           >
             {listeners.map((spec) => (
               <option key={spec.ID} value={spec.ID}>{spec.ID} — port {spec.Port}</option>
             ))}
             <option value={OTHER_LISTENER}>A listener not managed by MCM</option>
           </select>
-          {listenersError ? <span className="mt-1 block text-xs text-amber-200">{listenersError}</span> : null}
+          {listenersError ? <span className="mt-1 block text-xs leading-5 text-lamp">{listenersError}</span> : null}
           {unlistedListener && selectedListener === OTHER_LISTENER ? (
-            <span className="mt-1 block text-xs text-amber-200">
+            <span className="mt-1 block text-xs leading-5 text-lamp">
               The rule names listener {unlistedListener}, which MCM does not list; enter its port and TLS mode below.
             </span>
           ) : null}
@@ -342,22 +346,22 @@ export default function ConnectionTestStep({
         {selectedListener === OTHER_LISTENER ? (
           <>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener port</span>
+              <span className={fieldLabel}>Listener port</span>
               <input
                 type="number"
                 min={1}
                 max={65535}
                 value={otherPort}
                 onChange={(e) => setOtherPort(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none"
+                className={`mt-2 w-full font-mono ${input}`}
               />
             </label>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.18em] text-cyan-300">Listener TLS</span>
+              <span className={fieldLabel}>Listener TLS</span>
               <select
                 value={otherTLS}
                 onChange={(e) => setOtherTLS(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2.5 text-sm text-white outline-none"
+                className={`mt-2 w-full ${select}`}
               >
                 <option value="no">No (plain MQTT)</option>
                 <option value="tls">Yes (TLS)</option>
@@ -368,34 +372,34 @@ export default function ConnectionTestStep({
         ) : null}
       </div>
 
-      <dl className="grid gap-x-6 gap-y-2 rounded-2xl border border-white/10 bg-slate-950/40 p-5 text-sm sm:grid-cols-[auto_1fr]">
-        <dt className="text-slate-400">Host</dt>
-        <dd className="font-mono text-slate-100">{host || '—'}</dd>
-        <dt className="text-slate-400">Port</dt>
-        <dd className="font-mono text-slate-100">{port}</dd>
-        <dt className="text-slate-400">TLS</dt>
-        <dd className="text-slate-100">{tls}</dd>
+      <dl className="grid gap-x-6 gap-y-2 border-y border-track py-4 text-sm sm:grid-cols-[auto_1fr]">
+        <dt className="text-enamel-muted">Host</dt>
+        <dd className="break-words font-mono text-enamel-bright">{host || '—'}</dd>
+        <dt className="text-enamel-muted">Port</dt>
+        <dd className="break-words font-mono text-enamel-bright">{port}</dd>
+        <dt className="text-enamel-muted">TLS</dt>
+        <dd className="text-enamel-bright">{tls}</dd>
         {websockets ? (
           <>
-            <dt className="text-slate-400">Transport</dt>
-            <dd className="text-slate-100">MQTT over WebSockets</dd>
+            <dt className="text-enamel-muted">Transport</dt>
+            <dd className="text-enamel-bright">MQTT over WebSockets</dd>
           </>
         ) : null}
-        <dt className="text-slate-400">Username</dt>
-        <dd className="font-mono text-slate-100">{username}</dd>
-        <dt className="text-slate-400">Password</dt>
-        <dd className="text-slate-100">the one-time password shown when the user was created. MCM does not keep it and cannot show it again.</dd>
-        <dt className="text-slate-400">Allowed operation</dt>
-        <dd className="font-mono text-slate-100">{`${permission} on ${topicFilter}`}</dd>
+        <dt className="text-enamel-muted">Username</dt>
+        <dd className="break-words font-mono text-enamel-bright">{username}</dd>
+        <dt className="text-enamel-muted">Password</dt>
+        <dd className="text-enamel-bright">the one-time password shown when the user was created. MCM does not keep it and cannot show it again.</dd>
+        <dt className="text-enamel-muted">Allowed operation</dt>
+        <dd className="break-words font-mono text-enamel-bright">{`${permission} on ${topicFilter}`}</dd>
       </dl>
       {anonymous ? (
-        <p className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-50">
+        <p className={notice.caution}>
           This listener admits anonymous clients: a connection on it does not prove the credentials. Choose an authenticated listener
           for this test.
         </p>
       ) : null}
 
-      <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-300">
+      <ol className={`max-w-[68ch] list-decimal space-y-2 pl-5 marker:font-mono marker:text-enamel-muted ${bodyText}`}>
         <li>
           Configure any MQTT 3.1.1 or MQTT 5 client with the host, port, TLS mode, username and password above
           {tls.startsWith('Yes') ? ', and trust the broker certificate authority' : ''}
@@ -412,16 +416,19 @@ export default function ConnectionTestStep({
         </li>
       </ol>
 
-      <ul aria-label="Connection test stages" className="space-y-2">
+      <ul aria-label="Connection test stages" className="divide-y divide-track border-y border-track-strong">
         {stages.map(({ id, label, view }) => (
-          <li key={id} aria-label={label} className={`rounded-2xl border px-4 py-3 text-sm ${toneClass[view.tone]}`}>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em]">{label}</p>
-            <p className="mt-1">{view.text}</p>
+          <li key={id} aria-label={label} className="py-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <p className="font-semibold text-enamel-bright">{label}</p>
+              <Lamp tone={STAGE_LAMP[view.tone].tone}>{STAGE_LAMP[view.tone].word}</Lamp>
+            </div>
+            <p className={`mt-1 ${view.tone === 'alert' ? 'text-danger-text' : 'text-enamel'}`}>{view.text}</p>
             {view.confirmable ? (
               <button
                 type="button"
                 onClick={() => setConfirmed((current) => ({ ...current, [id]: true }))}
-                className="mt-2 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-200 transition hover:border-white/20 hover:text-white"
+                className={`mt-2 ${leverSecondary}`}
               >
                 Confirm manually
               </button>
@@ -434,7 +441,7 @@ export default function ConnectionTestStep({
         <button
           type="button"
           onClick={() => { setStream('connecting'); setWatchRun((run) => run + 1) }}
-          className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:border-white/20 hover:text-white"
+          className={leverSecondary}
         >
           Watch again
         </button>

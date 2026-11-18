@@ -374,7 +374,9 @@ describe('connection test step', () => {
 
     expect(stage('Applied')).toHaveTextContent('Applied. This deployment status carries no activation proof.')
     expect(stage('Applied')).not.toHaveTextContent('verified')
-    expect(stage('Applied').className).not.toMatch(/emerald/)
+    // Its lamp is amber with the word "not proven", never the verified green.
+    expect(stage('Applied')).toHaveTextContent('not proven')
+    expect(stage('Applied').querySelector('.bg-proceed')).toBeNull()
   })
 
   it('keeps watching, not unobservable, while the diagnostics are still loading', async () => {

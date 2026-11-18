@@ -3,6 +3,8 @@ import { ListControls } from '../lists/ListControls'
 import { usePagedList } from '../lists/usePagedList'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
+import { Lamp } from '../ui/primitives'
+import { bodyText, codeBlock, leverDanger, leverSecondary, notice, tableHead, tableRow } from '../ui/styles'
 import UserOnboardingFlow from './UserOnboardingFlow'
 
 type MQTTUser = {
@@ -111,10 +113,10 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
 
   return (
     <section className="mt-8 space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">MQTT users</p>
-          <p className="mt-1 text-sm text-slate-300">The MQTT identities Mosquitto authenticates.</p>
+          <h3 className="text-lg font-semibold text-enamel-bright">MQTT users</h3>
+          <p className={`mt-1 max-w-[68ch] ${bodyText}`}>The MQTT identities Mosquitto authenticates.</p>
         </div>
         <button
           type="button"
@@ -123,14 +125,14 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
           }}
           disabled={!canWrite}
           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-          className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 disabled:opacity-50"
+          className={leverSecondary}
         >
           Add User
         </button>
       </div>
 
       {error ? (
-        <div className="rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{error}</div>
+        <div className={notice.failed}>{error}</div>
       ) : null}
 
       {onboarding ? (
@@ -150,17 +152,17 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
       ) : null}
 
       {resetUserId !== null && resetPassword !== null ? (
-        <div className="rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Password reset — save this password</p>
-          <p className="mt-2 text-sm text-slate-300">This password will not be shown again.</p>
-          <pre className="mt-3 rounded-xl bg-slate-950/60 px-4 py-3 font-mono text-sm text-emerald-100">{resetPassword}</pre>
+        <div className={notice.caution}>
+          <p className="font-semibold text-lamp">Password reset — save this password</p>
+          <p className="mt-1">This password will not be shown again.</p>
+          <pre className={`mt-3 ${codeBlock}`}>{resetPassword}</pre>
           <button
             type="button"
             onClick={() => {
               setResetUserId(null)
               setResetPassword(null)
             }}
-            className="mt-3 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white"
+            className={`mt-3 ${leverSecondary}`}
           >
             Dismiss
           </button>
@@ -169,54 +171,52 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
 
       <ListControls list={list} noun={{ one: 'user', many: 'users' }} searchLabel="Search users" />
 
-      <div className="rounded-2xl border border-white/10 bg-slate-900/60">
+      <div className="overflow-x-auto border-y border-track-strong">
         {users.length === 0 && list.loading ? (
-          <p className="p-6 text-sm text-slate-400">Loading users…</p>
+          <p className={`py-6 ${bodyText}`}>Loading users…</p>
         ) : users.length === 0 ? (
-          list.error ? null : <p className="p-6 text-sm text-slate-400">{list.hasFilters ? 'No MQTT users match the search.' : 'No MQTT users configured yet.'}</p>
+          list.error ? null : <p className={`py-6 ${bodyText}`}>{list.hasFilters ? 'No MQTT users match the search.' : 'No MQTT users configured yet.'}</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/10">
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Username</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Status</th>
-                <th className="px-4 py-3 text-left text-xs uppercase tracking-[0.18em] text-slate-400">Created</th>
-                <th className="px-4 py-3 text-right text-xs uppercase tracking-[0.18em] text-slate-400">Actions</th>
+              <tr className="border-b border-track-strong">
+                <th className={`${tableHead} text-left`}>Username</th>
+                <th className={`${tableHead} text-left`}>Status</th>
+                <th className={`${tableHead} text-left`}>Created</th>
+                <th className={`${tableHead} pr-0 text-right`}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-sm text-slate-200">{user.username}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${user.disabled ? 'bg-rose-400/10 text-rose-200' : 'bg-emerald-400/10 text-emerald-200'}`}>
-                      {user.disabled ? 'disabled' : 'enabled'}
-                    </span>
+                <tr key={user.id} className={tableRow}>
+                  <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{user.username}</td>
+                  <td className="py-3 pr-4">
+                    <Lamp tone={user.disabled ? 'off' : 'neutral'}>{user.disabled ? 'disabled' : 'enabled'}</Lamp>
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{new Date(user.created_at).toLocaleDateString()}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="py-3 pr-4 font-mono text-xs tabular-nums text-enamel-muted">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="py-3 text-right">
                     {deleteConfirmId === user.id ? (
                       <span className="inline-flex items-center gap-2">
-                        <span className="text-xs text-slate-300">Delete?</span>
+                        <span className="text-xs text-enamel-soft">Delete?</span>
                         <button
                           type="button"
                           onClick={() => {
                             void handleDelete(user.id)
                           }}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30"
+                          className={leverDanger}
                         >
                           Confirm
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeleteConfirmId(null)}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20"
+                          className={leverSecondary}
                         >
                           Cancel
                         </button>
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-2">
+                      <span className="inline-flex flex-wrap items-center justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => {
@@ -224,7 +224,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           }}
                           disabled={!canWriteRule}
                           title={!canWriteRule ? permissionTitle('acl.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                          className={leverSecondary}
                         >
                           Complete setup
                         </button>
@@ -235,7 +235,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           }}
                           disabled={togglingId === user.id || !canWrite}
                           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                          className={leverSecondary}
                         >
                           {togglingId === user.id ? '…' : user.disabled ? 'Enable' : 'Disable'}
                         </button>
@@ -246,7 +246,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           }}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-                          className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-slate-300 transition hover:border-white/20 hover:text-white disabled:opacity-50"
+                          className={leverSecondary}
                         >
                           Reset password
                         </button>
@@ -255,7 +255,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           onClick={() => setDeleteConfirmId(user.id)}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-                          className="rounded-xl bg-red-500/20 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/30 disabled:opacity-50"
+                          className={leverDanger}
                         >
                           Delete
                         </button>
