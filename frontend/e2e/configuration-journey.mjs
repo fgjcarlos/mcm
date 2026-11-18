@@ -106,16 +106,23 @@ async function openNavigationGroup(group) {
   if (await control.isVisible()) await control.click()
 }
 
+// ChangeRoute (Review → MFA → Apply → Probe → Result) asks for the recent-MFA
+// proof only once the apply is armed, and only when the session has none.
+const resultLabels = { active_verified: 'Verified', pending_activation: 'Pending activation — not verified' }
 async function applyReviewedRevision() {
   await page.getByLabel(/I adopt this reviewed configuration/).check()
+  await page.getByRole('button', { name: /^Apply( and restart broker)?$/ }).click()
+  const code = page.getByPlaceholder('Authenticator code')
+  await code.or(page.getByText(/MFA confirmed for this session/)).first().waitFor()
+  if (await code.count()) await confirmMFA()
   const applied = page.waitForResponse((response) => response.url().endsWith('/broker/config/apply') && response.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+  await page.getByRole('button', { name: /^Confirm Apply/ }).click()
   const response = await applied
   check(response.status()).toBe(200)
   const result = await response.json()
   check(result.revision_id).toBeTruthy()
   check(['active_verified', 'pending_activation']).toContain(result.status)
-  await check(page.getByText(`Revision result: ${result.status}`)).toBeVisible()
+  await check(page.getByRole('status', { name: 'Apply result' })).toContainText(resultLabels[result.status])
   return result
 }
 
@@ -242,7 +249,6 @@ try {
   await check(page.getByText('+connection_messages false', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Review changes', exact: true }).click()
   await check(page).toHaveURL(/\/changes$/)
-  await confirmMFA()
   await applyReviewedRevision()
   console.log('[UI] Imported, edited, validated, reviewed and activated the exact configuration revision')
 
