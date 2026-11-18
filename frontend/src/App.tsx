@@ -17,7 +17,7 @@ import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from './features/api/client'
 import { can, permissionTitle, ROLE_RANK, type Role } from './features/auth/permissions'
 import { PendingChangesAction } from './features/deploy/PendingChangesAction'
-import { DashboardFrame, type NavItem } from './features/dashboard/DashboardFrame'
+import { DashboardFrame, Mark, type NavItem } from './features/dashboard/DashboardFrame'
 import DashboardHome from './features/dashboard/DashboardHome'
 import ACLSourcePanel from './features/acl/ACLSourcePanel'
 import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
@@ -147,7 +147,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Configuration',
     path: '/broker-config',
-    eyebrow: 'Operations',
     title: 'Broker configuration manager',
     description: 'Import, edit, validate and version mosquitto.conf with explicit adoption before any apply.',
     minRole: 'auditor',
@@ -157,7 +156,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Broker settings',
     path: '/broker-settings',
-    eyebrow: 'Operations',
     title: 'Persistence, queues, sessions and logging',
     description: 'Edit the general broker settings with the catalog ranges and preview the change before any apply.',
     minRole: 'auditor',
@@ -167,7 +165,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Bridges',
     path: '/broker-bridges',
-    eyebrow: 'Operations',
     title: 'Bridges to remote brokers',
     description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
     minRole: 'auditor',
@@ -177,7 +174,6 @@ const navItems: NavItem[] = [
     group: 'Configuration',
     label: 'Plugins',
     path: '/broker-plugins',
-    eyebrow: 'Operations',
     title: 'Mosquitto plugins',
     description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
     minRole: 'auditor',
@@ -188,7 +184,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'MQTT users',
     path: '/users',
-    eyebrow: 'Broker clients',
     title: 'MQTT user directory',
     description: 'Provision MQTT users, toggle account status, reset credentials, and remove stale accounts.',
   },
@@ -197,7 +192,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'ACLs',
     path: '/acls',
-    eyebrow: 'Authorization',
     title: 'ACL policy workspace',
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
   },
@@ -206,7 +200,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Listeners',
     path: '/listeners',
-    eyebrow: 'MQTT access',
     title: 'MQTT listeners',
     description: 'Manage the broker listener set (TCP and WebSockets).',
   },
@@ -215,7 +208,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Certificates',
     path: '/certificates',
-    eyebrow: 'MQTT access',
     title: 'Broker TLS certificates',
     description: 'Upload, rotate and activate the TLS material the broker serves.',
     minRole: 'auditor',
@@ -225,7 +217,6 @@ const navItems: NavItem[] = [
     group: 'MQTT Access',
     label: 'Dynamic security',
     path: '/broker-dynsec',
-    eyebrow: 'Authorization',
     title: 'Dynamic security database',
     description: 'Manage the clients, groups and roles the dynamic security plugin enforces, and watch the management channel of the plugin.',
     minRole: 'auditor',
@@ -236,7 +227,6 @@ const navItems: NavItem[] = [
     group: 'Changes',
     label: 'Deploy',
     path: '/deploy',
-    eyebrow: 'Operations',
     title: 'Mosquitto configuration deploy',
     description: 'Preview, apply, and track configuration changes to the Mosquitto broker.',
   },
@@ -245,7 +235,6 @@ const navItems: NavItem[] = [
     group: 'Changes',
     label: 'Configuration revisions',
     path: '/changes',
-    eyebrow: 'Review and recovery',
     title: 'Configuration changes',
     description: 'Review exact configuration revisions, activation results and recoverable copies.',
     minRole: 'auditor',
@@ -256,7 +245,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Dashboard',
     path: '/dashboard',
-    eyebrow: 'Broker overview',
     title: 'Live broker snapshot',
     description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
   },
@@ -265,7 +253,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Topics',
     path: '/topics',
-    eyebrow: 'Observation',
     title: 'Topic explorer',
     description: 'Inspect incoming topic names and safe payload previews as messages arrive; optional Sparkplug B and JSON Schema diagnostics inspect messages only and never enforce broker traffic.',
   },
@@ -274,7 +261,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Broker diagnostics',
     path: '/broker-diagnostics',
-    eyebrow: 'Diagnostics',
     title: 'Broker diagnostics workspace',
     description: 'Separate MCM observations, broker logs, internal metrics and broker-published system metrics.',
     minRole: 'auditor',
@@ -284,7 +270,6 @@ const navItems: NavItem[] = [
     group: 'Diagnostics',
     label: 'Logs',
     path: '/logs',
-    eyebrow: 'Operations',
     title: 'Realtime broker and MCM events',
     description: 'Monitor broker-log entries, connection transitions and MCM operational events as they are ingested.',
   },
@@ -294,7 +279,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Security',
     path: '/security',
-    eyebrow: 'Audit',
     title: 'Recent security events',
     description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
   },
@@ -303,7 +287,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Audit',
     path: '/audit',
-    eyebrow: 'Security',
     title: 'Administrative audit log',
     description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
   },
@@ -312,7 +295,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Account',
     path: '/account',
-    eyebrow: 'Security',
     title: 'Account security',
     description: 'Manage two-factor authentication and account security settings.',
   },
@@ -321,7 +303,6 @@ const navItems: NavItem[] = [
     group: 'Panel administration',
     label: 'Panel operators',
     path: '/admin-users',
-    eyebrow: 'Console accounts',
     title: 'Panel operator directory',
     description: 'Manage dashboard operators: provision accounts, assign roles, reset credentials, and deactivate stale users.',
     minRole: 'admin',
@@ -350,8 +331,8 @@ function App() {
 
   if (!currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] text-slate-100">
-        <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Restoring session…</p>
+      <div className="flex min-h-screen items-center justify-center bg-frame text-enamel">
+        <p className="text-sm text-enamel-muted">Restoring session…</p>
       </div>
     )
   }
@@ -505,9 +486,9 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       onLogout={onLogout}
     >
       {deployPending ? (
-        <div role="status" aria-live="polite" className="mt-8 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Pending deploy</p>
-          <p className="mt-2 text-sm text-amber-50">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
+        <div role="status" aria-live="polite" className="mt-8 border border-lamp/45 bg-lamp/[0.06] p-5">
+          <p className="flex items-center gap-2 text-sm font-semibold text-lamp"><span aria-hidden="true" className="size-2.5 rounded-full bg-lamp" />Pending deploy</p>
+          <p className="mt-2 text-sm text-enamel">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
           {/* The dashboard home carries its own pending-changes card, and the
               deploy panel carries its own preview and apply controls, so the
               banner offers the action only on the panels that lack it. */}
@@ -1913,6 +1894,9 @@ function DiffBlock({ content }: { content: string }) {
   )
 }
 
+// The primary lever plate of the site: enamel face, engraved capitals, bevel that goes when pressed.
+const leverPrimary = 'h-12 w-full rounded-lever bg-enamel px-6 font-display text-base font-bold uppercase tracking-[0.14em] text-frame shadow-[inset_0_1px_0_rgb(255_255_255/0.4),inset_0_-2px_0_rgb(0_0_0/0.22)] transition-colors duration-150 hover:bg-enamel-bright active:translate-y-px active:bg-enamel-soft active:shadow-none disabled:cursor-not-allowed disabled:bg-enamel-muted disabled:shadow-none'
+
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {
   const [username, setUsername] = useState<string>('')
   const [password, setPassword] = useState<string>('')
@@ -1996,14 +1980,20 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#1d4e89_0%,#0f172a_38%,#020617_100%)] px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-slate-950/65 p-8 shadow-2xl shadow-slate-950/40 backdrop-blur">
-        <div className="border-b border-white/10 pb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-300">MCM</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+    <div className="flex min-h-screen items-center justify-center bg-frame px-4 py-12 text-enamel">
+      <div className="w-full max-w-sm">
+        <p className="flex items-center gap-2.5 font-display text-base font-semibold uppercase leading-none tracking-[0.1em] text-enamel-bright">
+          <Mark />
+          Mosquitto Control Manager
+        </p>
+        <div className="mt-10">
+          <h1 className="font-display text-4xl font-bold uppercase leading-none text-enamel-bright">
             {mfaChallenge ? 'Verify MFA' : 'Sign in'}
           </h1>
-          <p className="mt-2 text-sm text-slate-400">
+          <div aria-hidden="true" className="relative mt-4 h-px bg-track-strong">
+            <span className="absolute -top-px left-0 h-[3px] w-12 bg-enamel" />
+          </div>
+          <p className="mt-4 text-sm leading-relaxed text-enamel-soft">
             {mfaChallenge
               ? 'Enter the 6-digit code from your authenticator app, or one of your recovery codes.'
               : 'Authenticate with an admin user to access the Mosquitto Control Manager dashboard.'}
@@ -2013,7 +2003,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         {mfaChallenge ? (
           <form onSubmit={handleMFASubmit} className="mt-6 space-y-4">
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Code</span>
+              <span className="text-sm font-semibold text-enamel">Code</span>
               <input
                 type="text"
                 inputMode="text"
@@ -2022,12 +2012,12 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
                 autoFocus
                 value={mfaCode}
                 onChange={(event) => setMfaCode(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm tracking-[0.3em] text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm tracking-[0.3em] text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             {error ? (
-              <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              <div role="alert" className="border border-danger/60 px-4 py-3 text-sm text-danger-text">
                 {error}
               </div>
             ) : null}
@@ -2035,7 +2025,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
             <button
               type="submit"
               disabled={submitting}
-              className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-400/50"
+              className={leverPrimary}
             >
               {submitting ? 'Verifying…' : 'Verify and sign in'}
             </button>
@@ -2046,7 +2036,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
                 setMfaCode('')
                 setError('')
               }}
-              className="w-full text-xs uppercase tracking-[0.22em] text-slate-400 hover:text-white"
+              className="w-full py-2 text-sm text-enamel-soft underline decoration-track-bright underline-offset-4 transition-colors duration-150 hover:text-enamel-bright"
             >
               ← Back to sign in
             </button>
@@ -2054,31 +2044,31 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         ) : (
           <form onSubmit={handlePasswordSubmit} className="mt-6 space-y-4">
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Username</span>
+              <span className="text-sm font-semibold text-enamel">Username</span>
               <input
                 type="text"
                 autoComplete="username"
                 required
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">Password</span>
+              <span className="text-sm font-semibold text-enamel">Password</span>
               <input
                 type="password"
                 autoComplete="current-password"
                 required
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/30"
+                className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright"
               />
             </label>
 
             {error ? (
-              <div role="alert" className="rounded-2xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              <div role="alert" className="border border-danger/60 px-4 py-3 text-sm text-danger-text">
                 {error}
               </div>
             ) : null}
@@ -2086,7 +2076,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
             <button
               type="submit"
               disabled={submitting}
-              className="w-full rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold uppercase tracking-[0.22em] text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-400/50"
+              className={leverPrimary}
             >
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
