@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useBrokerConfig } from './useBrokerConfig'
 import { useRecentMFA } from '../mfa/useRecentMFA'
 import RecentMFAConfirmation from '../mfa/RecentMFAConfirmation'
+import ChangeRoute from '../change-route/ChangeRoute'
 
 const card = 'rounded-2xl border border-white/10 bg-slate-900/60 p-6 space-y-4'
 const button = 'rounded-xl border border-white/20 px-4 py-2 text-sm text-slate-100 disabled:opacity-40'
@@ -16,16 +17,19 @@ type Props = {
 }
 
 export default function BrokerConfigPanel({ token, onLogout, role = '', view = 'configuration', onReview }: Props) {
-  const state = useBrokerConfig(token, onLogout)
   const mfa = useRecentMFA(token, onLogout)
+  const state = useBrokerConfig(token, onLogout, mfa.clear)
   const [adopt, setAdopt] = useState(false)
-  const [confirmRestart, setConfirmRestart] = useState(false)
   const { config, draft, preview, catalog, status } = state
   const isAdmin = role === 'admin'
   const canEdit = isAdmin || role === 'operator'
   const busy = status !== 'idle'
   const drift = Boolean(config && draft && draft.baseHash !== config.hash)
-  const canApply = isAdmin && Boolean(preview && mfa.proof && adopt) && !busy && !drift && config?.capabilities?.write !== false && (!preview?.requires_restart || config?.capabilities?.restart === true)
+  const disabledReason = !isAdmin ? 'Requires admin role to apply.'
+    : config?.capabilities?.write === false ? 'This adapter cannot write the configuration.'
+      : preview?.requires_restart && config?.capabilities?.restart !== true ? 'Apply is unavailable: this adapter cannot restart the broker.'
+        : drift ? 'The file on disk changed since this preview. Refresh and validate again.'
+          : !adopt ? 'Tick “I adopt this reviewed configuration” to apply.' : undefined
 
   const { load, loadCatalog, loadHistory } = state
   useEffect(() => {
@@ -36,14 +40,6 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
 
   function changed() {
     setAdopt(false)
-    setConfirmRestart(false)
-  }
-
-  function apply() {
-    if (!preview || !canApply) return
-    if (preview.requires_restart && !confirmRestart) { setConfirmRestart(true); return }
-    setConfirmRestart(false)
-    void state.apply({ revision_id: preview.revision_id, force: preview.requires_restart, adopt: true }, mfa.proof)
   }
 
   if (state.loading && !config) return <section className="mt-8"><p>Loading broker configuration…</p></section>
@@ -51,7 +47,6 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
   return (
     <section className="mt-8 space-y-6" aria-label="Broker configuration workspace">
       {state.error ? <p role="alert" className="rounded-xl border border-rose-300/30 bg-rose-400/10 p-4 text-rose-100">{state.error}</p> : null}
-      {state.result ? <div role="status" className={card}><strong>Revision result: {state.result.status}</strong><p>{state.result.message}</p><p className="font-mono text-xs">{state.result.revision_id}</p></div> : null}
       {view === 'configuration' ? (
         <>
           <article className={card}>
@@ -90,21 +85,21 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
         </>
       ) : null}
 
-      {isAdmin ? <RecentMFAConfirmation state={mfa} /> : null}
-      {preview ? (
-        <article className={card}>
+      {/* The apply asks for MFA in its route; recovery and copies ask here. */}
+      {isAdmin && view === 'changes' && !preview ? <RecentMFAConfirmation state={mfa} /> : null}
+      <article className={card}>
+        <ChangeRoute hasChanges={Boolean(preview)} mfa={mfa} applyLabel={preview?.requires_restart ? 'Apply and restart broker' : 'Apply'} disabledReason={disabledReason}
+          onApply={(proof) => preview ? state.apply({ revision_id: preview.revision_id, force: preview.requires_restart, adopt: true }, proof) : Promise.resolve(null)}>
+          {preview ? <>
           <h3 className="text-xl font-semibold">Preview</h3>
           <p className="break-all font-mono text-xs">revision {preview.revision_id}</p>
           <p>Affected file: {config?.path}. Operational impact: <strong>{preview.reload_kind || 'reload'}</strong>.</p>
           {preview.requires_restart && !config?.capabilities?.restart ? <p className="text-amber-200">Restart required, but this adapter cannot restart the broker. Apply is unavailable; force never substitutes a reload for a restart.</p> : null}
           {preview.conf_diff ? <pre className={codeBlock}>{preview.conf_diff.split('\n').map((line, index) => <span key={index} className={`block ${line.startsWith('+') ? 'text-emerald-200' : line.startsWith('-') ? 'text-rose-200' : ''}`}>{line || ' '}</span>)}</pre> : <p>No root-file changes.</p>}
           <label className="block text-sm"><input type="checkbox" checked={adopt} disabled={!isAdmin || busy} onChange={(event) => setAdopt(event.target.checked)} /> I adopt this reviewed configuration and authorize replacing the root file.</label>
-          <div className="flex gap-3">
-            <button className={button} disabled={!canApply} onClick={apply}>{confirmRestart ? 'Force Apply' : 'Apply'}</button>
-            {confirmRestart ? <button className={button} onClick={() => setConfirmRestart(false)}>Cancel</button> : null}
-          </div>
-        </article>
-      ) : null}
+          </> : null}
+        </ChangeRoute>
+      </article>
       {(preview?.validation_issues ?? state.issues).length ? <article className={card}><h3>Validation</h3><ul>{(preview?.validation_issues ?? state.issues).map((issue, index) => <li key={index} className="text-sm">Line {issue.line} · {issue.kind}: {issue.message}</li>)}</ul></article> : null}
 
       {view === 'changes' ? (

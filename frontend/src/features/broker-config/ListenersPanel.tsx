@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useListeners } from './useListeners'
+import { deploymentLamp, lampBox, lampText } from '../status/deploymentLamp'
 import { useCertificateProfiles } from './useCertificates'
 import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerIssue, ListenerSpec } from './types'
@@ -131,7 +132,7 @@ export default function ListenersPanel({
 
         {previewError ? <div className="mt-5 rounded-2xl border border-dashed border-amber-300/30 bg-amber-400/10 p-5 text-sm text-amber-100">{previewError}</div> : null}
         {applyError ? <div className="mt-5 rounded-2xl border border-dashed border-rose-300/30 bg-rose-400/10 p-5 text-sm text-rose-100">{applyError}</div> : null}
-        {applyResult?.applied ? <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-5 text-sm text-emerald-100">Listener configuration applied.</div> : null}
+        {applyResult?.applied ? <div className={`mt-5 rounded-2xl border p-5 text-sm ${lampBox[deploymentLamp('applied')]} ${lampText[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
 
         <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/40">
           {isLoading ? (

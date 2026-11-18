@@ -186,7 +186,10 @@ describe('ListenersPanel', () => {
     await userEvent.setup().click(screen.getByRole('checkbox', { name: 'Confirm restart' }))
     await userEvent.setup().click(screen.getByRole('button', { name: 'Apply (restart required)' }))
 
-    expect(await screen.findByText('Listener configuration applied.')).toBeInTheDocument()
+    const notice = await screen.findByText('Listener configuration applied.')
+    // The listener apply carries no activation proof: amber, never verified green.
+    expect(notice.className).toMatch(/amber/)
+    expect(notice.className).not.toMatch(/emerald/)
     await waitFor(() => {
       expect(fetchMock.mock.calls.filter(([input]) => input === '/api/v1/listeners')).toHaveLength(2)
     })

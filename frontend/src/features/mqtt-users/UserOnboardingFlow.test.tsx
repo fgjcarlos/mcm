@@ -140,6 +140,34 @@ describe('UserOnboardingFlow journey', () => {
     vi.unstubAllGlobals()
   })
 
+  it('paints an applied deployment without activation proof amber, not verified green', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes,
+      'POST /api/v1/deployments/apply': () =>
+        jsonResponse({ id: 13, status: 'applied', message: '', created_at: '2026-01-01T00:00:00Z' }),
+    }))
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+    await confirmMFA(user)
+    await user.click(screen.getByRole('button', { name: 'Apply and verify' }))
+
+    const label = await screen.findByText('Applied — no activation proof recorded')
+    expect(label.className).toMatch(/amber/)
+    expect(label.className).not.toMatch(/emerald/)
+    expect(label.closest('[role="status"]')?.className).toMatch(/amber/)
+    expect(label.closest('[role="status"]')?.className).not.toMatch(/emerald/)
+    expect(screen.queryByText('Applied and verified')).not.toBeInTheDocument()
+    // Written but unproven, not a failed apply.
+    expect(screen.getByText(/the activation was not proven\./)).toBeInTheDocument()
+    expect(screen.queryByText(/The apply failed/)).not.toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
   it('names the failed stage when the access rule cannot be saved', async () => {
     const ruleFailingRoutes: Record<string, RouteHandler> = {
       ...baseRoutes,
