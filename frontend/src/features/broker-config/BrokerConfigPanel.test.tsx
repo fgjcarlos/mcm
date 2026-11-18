@@ -231,4 +231,64 @@ describe('BrokerConfigPanel', () => {
     vi.unstubAllGlobals()
   })
 
+  it('keeps Apply disabled with a reason while a preview request is still in flight', async () => {
+    let revisionCalls = 0
+    let release: ((response: Response) => void) | undefined
+    vi.stubGlobal('fetch', installFetchMock({
+      ...configRoute,
+      'POST /api/v1/broker/config/preview': () => jsonResponse({ revision_id: 'rev-1', base_conf_hash: 'abc123def4567890', conf_body: 'listener 1883\n', has_changes: true, conf_diff: '+listener 1883', reload_kind: 'reload', requires_restart: false, validation_issues: [] }),
+      // The preview request finishes by reloading the revisions; hold that part open.
+      'GET /api/v1/broker/config/revisions': () => ++revisionCalls === 1 ? jsonResponse({ revisions: [] }) : new Promise<Response>((resolve) => { release = resolve }),
+    }))
+    const user = userEvent.setup()
+    render(<BrokerConfigPanel token="tok" onLogout={() => {}} role="admin" />)
+    await user.click(await screen.findByRole('button', { name: 'Validate draft' }))
+    await screen.findByText('revision rev-1')
+    expect(screen.getByRole('button', { name: /^Apply/ })).toBeDisabled()
+    expect(screen.getByText('Wait for the preview to finish.')).toBeVisible()
+
+    release?.(jsonResponse({ revisions: [] }))
+    await waitFor(() => expect(screen.queryByText('Wait for the preview to finish.')).not.toBeInTheDocument())
+    await user.click(screen.getByLabelText(/I adopt/))
+    expect(screen.getByRole('button', { name: /^Apply/ })).toBeEnabled()
+    vi.unstubAllGlobals()
+  })
+
+  async function applyWith(response: () => Response) {
+    vi.stubGlobal('fetch', installFetchMock({ ...configRoute, 'POST /api/v1/broker/config/apply': response }))
+    const user = userEvent.setup()
+    render(<BrokerConfigPanel token="tok" onLogout={() => {}} role="admin" />)
+    await user.click(await screen.findByRole('button', { name: 'Import / Refresh preview' }))
+    await screen.findByText('revision rev-1')
+    await user.click(screen.getByLabelText(/I adopt/))
+    await user.click(screen.getByRole('button', { name: /^Apply/ }))
+    await user.type(screen.getByLabelText('MFA code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
+    await screen.findByText(/MFA confirmed/)
+    await user.click(screen.getByRole('button', { name: /^Confirm Apply/ }))
+  }
+
+  it.each([
+    [500, 'config apply failed; restored from snapshot'],
+    [409, 'preview was already applied'],
+  ])('drops the consumed preview after a failed apply (%i) and asks for a new one', async (status, error) => {
+    await applyWith(() => jsonResponse({ error }, { status }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(error)
+    expect(screen.getByText('Generate a new preview before applying again.')).toBeVisible()
+    expect(screen.queryByText('revision rev-1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(Confirm )?Apply/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Import / Refresh preview' })).toBeEnabled()
+    expect(within(screen.getByRole('list', { name: 'Change route' })).getByRole('listitem', { name: 'Review: waiting' })).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the preview and asks for MFA again when the apply is rejected for recent MFA', async () => {
+    await applyWith(() => jsonResponse({ error: 'recent MFA verification required', code: 'mfa_required' }, { status: 403 }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('recent MFA verification required')
+    expect(screen.getByText('revision rev-1')).toBeInTheDocument()
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Confirm Apply/ })).toBeDisabled()
+    expect(screen.queryByText('Generate a new preview before applying again.')).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
 })

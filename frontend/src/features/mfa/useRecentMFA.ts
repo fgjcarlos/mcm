@@ -23,7 +23,10 @@ export function useRecentMFA(token: string, onLogout: () => void) {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const valid = confirmation?.session === token
+  // Render must not read the clock, so read it once per mount: a proof that expired while
+  // no panel was mounted is invalid on arrival; while mounted, the timer below clears it.
+  const [mountedAt] = useState(Date.now)
+  const valid = confirmation?.session === token && confirmation.expires > mountedAt
   const proof = valid ? confirmation.value : ''
   const expires = valid ? confirmation.expires : 0
   const clear = useCallback(() => setConfirmation(null), [setConfirmation])

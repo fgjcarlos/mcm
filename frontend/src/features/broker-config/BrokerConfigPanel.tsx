@@ -28,6 +28,7 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
   const busy = status !== 'idle'
   const drift = Boolean(config && draft && draft.baseHash !== config.hash)
   const disabledReason = !isAdmin ? 'Requires admin role to apply.'
+    : busy ? 'Wait for the preview to finish.'
     : config?.capabilities?.write === false ? 'This adapter cannot write the configuration.'
       : preview?.requires_restart && config?.capabilities?.restart !== true ? 'Apply is unavailable: this adapter cannot restart the broker.'
         : drift ? 'The file on disk changed since this preview. Refresh and validate again.'
@@ -49,6 +50,7 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
   return (
     <section className="mt-8 space-y-10" aria-label="Broker configuration workspace">
       {state.error ? <p role="alert" className={notice.failed}>{state.error}</p> : null}
+      {state.previewConsumed ? <p className="text-sm text-lamp">Generate a new preview before applying again.</p> : null}
       {view === 'configuration' ? (
         <>
           <Section title="Broker configuration">
@@ -91,7 +93,7 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
       {/* The apply asks for MFA in its route; recovery and copies ask here. */}
       {isAdmin && view === 'changes' && !preview ? <RecentMFAConfirmation state={mfa} /> : null}
       <div>
-        <ChangeRoute hasChanges={Boolean(preview)} mfa={mfa} applyLabel={preview?.requires_restart ? 'Apply and restart broker' : 'Apply'} disabledReason={disabledReason}
+        <ChangeRoute hasChanges={Boolean(preview)} reviewKey={preview?.revision_id} mfa={mfa} applyLabel={preview?.requires_restart ? 'Apply and restart broker' : 'Apply'} disabledReason={disabledReason}
           onApply={(proof) => preview ? state.apply({ revision_id: preview.revision_id, force: preview.requires_restart, adopt: true }, proof) : Promise.resolve(null)}>
           {preview ? <div className="space-y-4">
           <h3 className="text-lg font-semibold text-enamel-bright">Preview</h3>

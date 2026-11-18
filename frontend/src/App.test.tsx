@@ -2908,6 +2908,60 @@ describe('app-wide recent MFA step-up', () => {
     expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
   })
 
+  it('drops a previous apply result when a new preview arrives', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'stale-result-token')
+    let previews = 0
+    vi.stubGlobal('fetch', mfaRoutes('stale-result-token', {
+      'POST /api/v1/deployments/preview': () => jsonResponse({ revision_id: `rev-deploy-${++previews}`, acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }),
+    }))
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+    const route = screen.getByRole('list', { name: 'Change route' })
+    await within(route).findByRole('listitem', { name: 'Result: verified' })
+
+    await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+    await screen.findByRole('button', { name: 'Apply' })
+    expect(within(route).getAllByRole('listitem').map((lamp) => lamp.getAttribute('aria-label'))).toEqual([
+      'Review: done', 'MFA: done', 'Apply: not reached', 'Probe: not reached', 'Result: not reached',
+    ])
+    expect(screen.getByRole('status', { name: 'Apply result' })).toBeEmptyDOMElement()
+  })
+
+  it.each([
+    [500, 'deploy apply failed: restored from snapshot'],
+    [409, 'preview was already applied'],
+  ])('drops the consumed preview after a failed Deploy apply (%i) and asks for a new one', async (status, error) => {
+    window.localStorage.setItem('mcm_admin_token', 'failed-apply-token')
+    vi.stubGlobal('fetch', mfaRoutes('failed-apply-token', { 'POST /api/v1/deployments/apply': () => jsonResponse({ error }, { status }) }))
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    expect(await screen.findByText(error)).toBeInTheDocument()
+    expect(screen.getByText('Generate a new preview before applying again.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^(Confirm )?Apply$/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Preview Changes' })).toBeEnabled()
+    expect(within(screen.getByRole('list', { name: 'Change route' })).getByRole('listitem', { name: 'Review: waiting' })).toBeInTheDocument()
+  })
+
+  it('keeps the Deploy preview armed when the apply is rejected for recent MFA', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'mfa-kept-token')
+    vi.stubGlobal('fetch', mfaRoutes('mfa-kept-token', { 'POST /api/v1/deployments/apply': mfaRejected }))
+    render(<App />)
+    const user = userEvent.setup()
+    await confirmInDeploy(user)
+    await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
+
+    expect(await screen.findByText('recent MFA verification required')).toBeInTheDocument()
+    expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm Apply' })).toBeDisabled()
+    expect(within(screen.getByRole('list', { name: 'Change route' })).getByRole('listitem', { name: 'Review: done' })).toBeInTheDocument()
+    expect(screen.queryByText('Generate a new preview before applying again.')).not.toBeInTheDocument()
+  })
+
   it('discards the proof on logout', async () => {
     window.localStorage.setItem('mcm_admin_token', 'logout-token')
     const fetchMock = mfaRoutes('logout-token', {
