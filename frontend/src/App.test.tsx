@@ -1764,9 +1764,10 @@ describe('App', () => {
     const result = await screen.findByRole('status', { name: 'Apply result' })
     await waitFor(() => expect(result).toHaveTextContent('Applied — activation not proven'))
     expect(screen.getByRole('listitem', { name: 'Result: caution' })).toBeInTheDocument()
+    // Both carry the route-amber token, never the verified green one.
     for (const label of [result, within(screen.getByRole('table')).getByText('applied')]) {
-      expect(label.className).toMatch(/amber/)
-      expect(label.className).not.toMatch(/emerald/)
+      expect(label).toHaveClass('text-lamp')
+      expect(label.className).not.toMatch(/proceed/)
     }
   })
 

@@ -4,6 +4,8 @@ import { PendingChangesAction } from '../deploy/PendingChangesAction'
 import type { BrokerConnectionStatus, BrokerLog, BrokerStatusFacts, BrokerStreamState } from '../broker/useBrokerStream'
 import { logsPath, matchesLogFilter, type LogFilter } from '../live-feed/logFilter'
 import { plural } from '../live-feed/feedText'
+import { Fact, Lamp, Section } from '../ui/primitives'
+import { bodyText, leverSecondary, notice, textLink, type LampTone } from '../ui/styles'
 
 // The operational part of the dashboard home (issue #354): broker health and
 // how fresh it is, pending changes with the next allowed action, and the way
@@ -41,12 +43,13 @@ const streamLabel: Record<BrokerStreamState, string> = {
   disconnected: 'Stopped',
 }
 
-const healthCopy: Record<BrokerHealth, { title: string; tone: string }> = {
-  checking: { title: 'Checking broker status…', tone: 'border-white/10 bg-white/[0.04] text-slate-200' },
-  unknown: { title: 'Status unavailable', tone: 'border-amber-300/30 bg-amber-400/10 text-amber-100' },
-  disconnected: { title: 'Disconnected', tone: 'border-rose-300/30 bg-rose-400/10 text-rose-100' },
-  idle: { title: 'Connected · no traffic', tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' },
-  active: { title: 'Connected · receiving traffic', tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' },
+// Connected is reachable, not verified: an enamel lamp, never green; amber when it is not.
+const healthCopy: Record<BrokerHealth, { title: string; tone: LampTone }> = {
+  checking: { title: 'Checking broker status…', tone: 'off' },
+  unknown: { title: 'Status unavailable', tone: 'caution' },
+  disconnected: { title: 'Disconnected', tone: 'caution' },
+  idle: { title: 'Connected · no traffic', tone: 'neutral' },
+  active: { title: 'Connected · receiving traffic', tone: 'neutral' },
 }
 
 type DashboardHomeProps = {
@@ -73,24 +76,24 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
   const address = statusFacts.address || 'the configured address'
 
   return (
-    <div className="mt-8 grid gap-4 lg:grid-cols-[1.2fr_1fr_1fr]">
-      <HomeCard label="Broker health">
-        <p className={`mt-4 inline-flex rounded-full border px-3 py-1 text-sm font-semibold ${healthCopy[health].tone}`}>{healthCopy[health].title}</p>
-        <p className="mt-3 text-sm leading-6 text-slate-300">
+    <div className="mt-8 grid gap-y-6 lg:grid-cols-[1.2fr_1fr_1fr] lg:divide-x lg:divide-track">
+      <HomeSection label="Broker health">
+        <p className="mt-3"><Lamp tone={healthCopy[health].tone}>{healthCopy[health].title}</Lamp></p>
+        <p className={`mt-2 ${bodyText}`}>
           {health === 'checking' ? 'Reading the broker status from MCM.' : null}
           {health === 'unknown' ? 'MCM could not read the broker status. This does not mean the broker is down.' : null}
           {health === 'disconnected' ? <>MCM cannot reach the broker at {address}. Clients cannot publish or subscribe through it until it is back.</> : null}
           {health === 'idle' ? <>The broker is reachable, but no messages were observed in the last {windowMinutes} minutes. No traffic is not a disconnection.</> : null}
           {health === 'active' ? <>The broker is reachable and clients are publishing: {messageCount} messages observed in the last {windowMinutes} minutes.</> : null}
         </p>
-        <dl className="mt-4 grid gap-2 sm:grid-cols-2">
-          <HomeFact label="Address" value={statusFacts.address || 'Unknown'} />
-          <HomeFact label="Status reported" value={formatAge(statusFacts.observedAt) ?? 'Unknown'} />
-          <HomeFact label="Last message" value={formatAge(statusFacts.lastMessageAt) ?? 'None observed yet'} />
-          <HomeFact label="Live updates" value={streamLabel[streamState]} />
+        <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-track pt-4 sm:grid-cols-2">
+          <Fact label="Address" value={<span className="break-all">{statusFacts.address || 'Unknown'}</span>} />
+          <Fact label="Status reported" value={formatAge(statusFacts.observedAt) ?? 'Unknown'} />
+          <Fact label="Last message" value={formatAge(statusFacts.lastMessageAt) ?? 'None observed yet'} />
+          <Fact label="Live updates" value={streamLabel[streamState]} />
         </dl>
         {mcmProblemCount > 0 || mosquittoProblemCount > 0 ? (
-          <section aria-label="Diagnostic warnings" className="mt-4 space-y-3">
+          <section aria-label="Diagnostic warnings" className={`mt-4 space-y-3 ${notice.caution}`}>
             {mcmProblemCount > 0 ? (
               <HomeWarning text={`MCM recorded ${plural(mcmProblemCount, 'warning or error', 'warnings or errors')} in the live window.`} filter={mcmProblems} onOpenLogs={onOpenLogs}>
                 View {plural(mcmProblemCount, 'related MCM event', 'related MCM events')}
@@ -103,56 +106,43 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
             ) : null}
           </section>
         ) : null}
-      </HomeCard>
+      </HomeSection>
 
-      <HomeCard label="Pending changes">
+      <HomeSection label="Pending changes">
         {deployPending ? (
           <>
-            <p className="mt-4 inline-flex rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-sm font-semibold text-amber-100">Saved, not applied</p>
-            <p className="mt-3 text-sm leading-6 text-slate-300">User or ACL changes are saved in MCM, but Mosquitto does not use them yet.</p>
+            <p className="mt-3"><Lamp tone="caution">Saved, not applied</Lamp></p>
+            <p className={`mt-2 ${bodyText}`}>User or ACL changes are saved in MCM, but Mosquitto does not use them yet.</p>
             <PendingChangesAction role={role} onReview={() => onOpenPanel('deploy')} />
           </>
         ) : (
           <>
-            <p className="mt-4 inline-flex rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-sm font-semibold text-slate-200">Nothing pending in this browser</p>
-            <p className="mt-3 text-sm leading-6 text-slate-300">Changes saved from another browser are not tracked here.</p>
+            <p className="mt-3"><Lamp tone="off">Nothing pending in this browser</Lamp></p>
+            <p className={`mt-2 ${bodyText}`}>Changes saved from another browser are not tracked here.</p>
           </>
         )}
-      </HomeCard>
+      </HomeSection>
 
-      <HomeCard label="Connect an application">
-        <p className="mt-4 text-sm leading-6 text-slate-300">Create its MQTT user and access rule, apply them, and test the connection in one guided flow.</p>
+      <HomeSection label="Connect an application">
+        <p className={`mt-3 ${bodyText}`}>Create its MQTT user and access rule, apply them, and test the connection in one guided flow.</p>
         {can(role, 'mqttUser.write') ? (
           <HomeAction onClick={onConnectApplication}>Connect an application</HomeAction>
         ) : (
-          <p className="mt-2 text-sm leading-6 text-slate-300">Connecting an application needs the {requiredRoleFor('mqttUser.write')} role or higher.</p>
+          <p className={`mt-2 ${bodyText}`}>Connecting an application needs the {requiredRoleFor('mqttUser.write')} role or higher.</p>
         )}
-      </HomeCard>
+      </HomeSection>
     </div>
   )
 }
 
-function HomeCard({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <section aria-label={label} className="rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{label}</h2>
-      {children}
-    </section>
-  )
-}
-
-function HomeFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/35 px-3 py-2">
-      <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{label}</dt>
-      <dd className="mt-1 break-all font-mono text-sm text-slate-100">{value}</dd>
-    </div>
-  )
+// A home section: hairline-ruled when stacked, divided by vertical hairlines on wide screens.
+function HomeSection({ label, children }: { label: string; children: ReactNode }) {
+  return <Section title={label} className="lg:border-t-0 lg:px-8 lg:pt-0 lg:first:pl-0 lg:last:pr-0">{children}</Section>
 }
 
 function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; filter: LogFilter; onOpenLogs: (filter: LogFilter) => void; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm leading-6 text-amber-50">
+    <div>
       <p>{text}</p>
       <a
         href={logsPath(filter)}
@@ -162,7 +152,7 @@ function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; fil
           event.preventDefault()
           onOpenLogs(filter)
         }}
-        className="font-semibold text-amber-100 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200"
+        className={`font-semibold ${textLink}`}
       >
         {children}
       </a>
@@ -172,7 +162,7 @@ function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; fil
 
 function HomeAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className="mt-4 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
+    <button type="button" onClick={onClick} className={`mt-4 ${leverSecondary}`}>
       {children}
     </button>
   )

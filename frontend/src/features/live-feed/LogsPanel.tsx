@@ -5,6 +5,7 @@ import { useLiveFeed } from './useLiveFeed'
 import { LiveFeedChrome } from './LiveFeedChrome'
 import { emptyFeedText } from './feedText'
 import { SeverityBadge } from './SeverityBadge'
+import { fieldLabel, input, leverToggle, select, textLink } from '../ui/styles'
 
 // Live Logs view (issue #357): compact rows with an expandable detail,
 // filters, a visual pause and the limit of the live window. MCM events stay
@@ -42,35 +43,37 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
     return next
   })
 
-  return <section className="mt-8 rounded-[1.75rem] border border-white/10 bg-slate-900/70 p-6">
+  return <section className="mt-8">
     <LiveFeedChrome feed={feed} streamState={streamState} windowSize={liveLogWindow} noun={eventNoun} label="Log feed" />
 
-    <div className="mt-4 flex flex-wrap items-end gap-4">
-      <label className="text-sm text-slate-300">Source{' '}
-        <select aria-label="Source" value={filter.source} onChange={(event) => setFilter((current) => ({ ...current, source: event.target.value as LogSourceFilter }))} className="ml-2 rounded-lg bg-slate-900 p-2">
+    <div className="mt-6 flex flex-wrap items-end gap-4 border-t border-track pt-4">
+      <label className="flex flex-col gap-2"><span className={fieldLabel}>Source</span>
+        <select aria-label="Source" value={filter.source} onChange={(event) => setFilter((current) => ({ ...current, source: event.target.value as LogSourceFilter }))} className={select}>
           <option value="all">All sources</option>
           {logSources.map((source) => <option key={source} value={source}>{sourceLabels[source].option}</option>)}
         </select>
       </label>
-      <div role="group" aria-label="Severity" className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
-        <span>Severity</span>
-        {logSeverities.map((severity) => <button key={severity} type="button" aria-pressed={filter.severities.includes(severity)} onClick={() => toggleSeverity(severity)} className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${filter.severities.includes(severity) ? 'border-cyan-300 bg-cyan-400/20 text-cyan-50' : 'border-white/15 text-slate-300'}`}>{severity}</button>)}
+      <div role="group" aria-label="Severity" className="flex flex-col gap-2">
+        <span className={fieldLabel}>Severity</span>
+        <span className="flex flex-wrap gap-2">
+          {logSeverities.map((severity) => <button key={severity} type="button" aria-pressed={filter.severities.includes(severity)} onClick={() => toggleSeverity(severity)} className={leverToggle}>{severity}</button>)}
+        </span>
       </div>
-      <label className="text-sm text-slate-300">Search messages{' '}
-        <input type="search" aria-label="Search messages" value={filter.text} onChange={(event) => setFilter((current) => ({ ...current, text: event.target.value }))} className="ml-2 rounded-lg bg-slate-900 p-2" />
+      <label className="flex flex-col gap-2"><span className={fieldLabel}>Search messages</span>
+        <input type="search" aria-label="Search messages" value={filter.text} onChange={(event) => setFilter((current) => ({ ...current, text: event.target.value }))} className={input} />
       </label>
-      {isLogFilterActive(filter) ? <button type="button" onClick={() => setFilter(emptyLogFilter)} className="text-sm font-semibold text-cyan-200 underline">Clear filters</button> : null}
+      {isLogFilterActive(filter) ? <button type="button" onClick={() => setFilter(emptyLogFilter)} className={`h-9 text-sm ${textLink}`}>Clear filters</button> : null}
     </div>
 
-    <div className={`mt-5 grid gap-5 ${filter.source === 'all' ? 'lg:grid-cols-2' : ''}`}>
+    <div className={`mt-6 grid gap-x-8 gap-y-6 ${filter.source === 'all' ? 'lg:grid-cols-2' : ''}`}>
       {logSources.filter((source) => filter.source === 'all' || filter.source === source).map((source) => {
         const received = feed.visible.filter((log) => log.source === source)
         const shown = received.filter((log) => matchesLogFilter(log, filter))
         return <section key={source} aria-label={sourceLabels[source].title}>
-          <h3 className="text-sm font-semibold text-cyan-100">{sourceLabels[source].title}</h3>
-          {shown.length > 0 ? <ol className="mt-3 divide-y divide-white/5 rounded-2xl border border-white/10 bg-white/[0.03]">
+          <h4 className="border-b border-track-strong pb-2 text-sm font-semibold text-enamel-bright">{sourceLabels[source].title}</h4>
+          {shown.length > 0 ? <ol className="divide-y divide-track">
             {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}
-          </ol> : <p className="mt-3 text-sm text-slate-300">{emptyFeedText({
+          </ol> : <p className="mt-3 text-sm text-enamel-soft">{emptyFeedText({
             noun: eventNoun,
             filterLabel: 'filters',
             receivedAny: received.length > 0,
@@ -87,18 +90,18 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
 function LogRow({ log, expanded, onToggle }: { log: LiveBrokerLog; expanded: boolean; onToggle: () => void }) {
   const detailId = `log-detail-${log.id}`
   return <li>
-    <button type="button" aria-expanded={expanded} aria-controls={detailId} onClick={onToggle} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+    <button type="button" aria-expanded={expanded} aria-controls={detailId} onClick={onToggle} className="flex w-full items-center gap-3 px-2 py-2 text-left transition-colors duration-150 hover:bg-frame-raised aria-expanded:bg-frame-raised">
       <SeverityBadge severity={log.severity} />
-      <time dateTime={log.observed_at} className="shrink-0 font-mono text-xs text-slate-400">{new Date(log.observed_at).toLocaleTimeString()}</time>
-      <span className="min-w-0 flex-1 truncate text-sm text-slate-100">{log.message}</span>
+      <time dateTime={log.observed_at} className="shrink-0 font-mono text-xs tabular-nums text-enamel-muted">{new Date(log.observed_at).toLocaleTimeString()}</time>
+      <span className="min-w-0 flex-1 truncate text-sm text-enamel">{log.message}</span>
     </button>
-    {expanded ? <div id={detailId} role="region" aria-label="Event detail" className="border-t border-white/5 px-3 py-3 text-sm">
-      <dl className="grid gap-x-4 gap-y-1 text-xs text-slate-300 sm:grid-cols-[auto_1fr]">
-        <dt className="text-slate-400">Source</dt><dd>{sourceLabels[log.source].title}</dd>
-        <dt className="text-slate-400">Severity</dt><dd>{log.severity}</dd>
-        <dt className="text-slate-400">Received</dt><dd className="font-mono">{log.observed_at} ({new Date(log.observed_at).toLocaleString()})</dd>
+    {expanded ? <div id={detailId} role="region" aria-label="Event detail" className="bg-frame-raised px-2 pb-3 pt-1 text-sm">
+      <dl className="grid gap-x-4 gap-y-1 text-xs text-enamel sm:grid-cols-[auto_1fr]">
+        <dt className="text-enamel-muted">Source</dt><dd>{sourceLabels[log.source].title}</dd>
+        <dt className="text-enamel-muted">Severity</dt><dd className="font-mono">{log.severity}</dd>
+        <dt className="text-enamel-muted">Received</dt><dd className="font-mono">{log.observed_at} ({new Date(log.observed_at).toLocaleString()})</dd>
       </dl>
-      <p className="mt-3 whitespace-pre-wrap break-words leading-6 text-slate-100">{log.message}</p>
+      <p className="mt-3 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-enamel-bright">{log.message}</p>
     </div> : null}
   </li>
 }

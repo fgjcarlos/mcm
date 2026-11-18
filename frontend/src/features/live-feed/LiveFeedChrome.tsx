@@ -1,6 +1,8 @@
 import type { BrokerStreamState, LiveEntry } from '../broker/useBrokerStream'
 import type { useLiveFeed } from './useLiveFeed'
 import { plural, type LiveFeedNoun } from './feedText'
+import { Lamp } from '../ui/primitives'
+import { bodyText, leverSecondary, notice } from '../ui/styles'
 
 // Shared chrome of the live views (issue #357): the window limit, the
 // pause/resume control, the not-connected banner and the live feed state.
@@ -29,23 +31,24 @@ export function LiveFeedChrome({ feed, streamState, windowSize, noun, label }: {
   streamState: BrokerStreamState
   windowSize: number
   noun: LiveFeedNoun
-  // Eyebrow naming the feed, for example "Log feed".
+  // Heading naming the feed, for example "Log feed".
   label: string
 }) {
   const connected = streamState === 'connected'
   return <>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-300">{label} · {streamState}</p>
-        <p className="mt-2 max-w-2xl text-sm text-slate-300">Live window: the newest {windowSize} {noun.many} received while this page is open. Older {noun.many} are dropped, so there is no history to page through.</p>
+        {/* The stream is connected, not verified: an enamel lamp, amber when it is not up. */}
+        <h3 className="flex flex-wrap items-center gap-x-3 gap-y-1 text-lg font-semibold text-enamel-bright">{label} <Lamp tone={connected ? 'neutral' : 'caution'}>{streamState}</Lamp></h3>
+        <p className={`mt-1 max-w-[68ch] ${bodyText}`}>Live window: the newest {windowSize} {noun.many} received while this page is open. Older {noun.many} are dropped, so there is no history to page through.</p>
       </div>
-      <button type="button" onClick={feed.mode === 'paused' ? feed.resume : feed.pause} className="rounded-xl border border-cyan-300/30 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/10">
+      <button type="button" onClick={feed.mode === 'paused' ? feed.resume : feed.pause} className={leverSecondary}>
         {feed.mode === 'paused' ? 'Resume live' : 'Pause'}
       </button>
     </div>
 
-    {connected ? null : <p className="mt-4 rounded-xl border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-100">Not connected to the live event stream ({streamState}). New {noun.many} will not arrive until it reconnects.</p>}
+    {connected ? null : <p className={`mt-4 ${notice.caution}`}>Not connected to the live event stream ({streamState}). New {noun.many} will not arrive until it reconnects.</p>}
 
-    <p role="status" aria-label="Live feed state" className={`mt-4 text-sm ${feed.mode === 'paused' ? 'text-amber-200' : 'text-emerald-200'}`}>{feedStateText(feed, noun, windowSize)}</p>
+    <p role="status" aria-label="Live feed state" className={`mt-4 font-mono text-[0.8125rem] ${feed.mode === 'paused' ? 'text-lamp' : 'text-enamel-soft'}`}>{feedStateText(feed, noun, windowSize)}</p>
   </>
 }

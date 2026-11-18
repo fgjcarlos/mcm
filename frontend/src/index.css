@@ -32,12 +32,26 @@
 
   --font-display: "Big Shoulders Variable", "Arial Narrow", ui-sans-serif,
     sans-serif;
-  --font-sans: "Overpass Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Overpass Middle Dot", "Overpass Variable", ui-sans-serif,
+    system-ui, sans-serif;
   --font-mono: "Overpass Mono Variable", ui-monospace, "SFMono-Regular", Menlo,
     Monaco, Consolas, monospace;
 
   --radius-plate: 2px;
   --radius-lever: 3px;
+}
+
+/* Overpass draws the middle dot (U+00B7) with no advance width, so the
+   " · " separator collapses onto the next word ("clients ·devices"). The
+   sans stack takes that one glyph from Overpass Mono, which spaces it. */
+@font-face {
+  font-family: "Overpass Middle Dot";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/overpass-mono/files/overpass-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+00B7;
 }
 
 @layer base {
@@ -91,6 +105,15 @@
   :focus-visible {
     outline: 2px solid var(--color-enamel-bright);
     outline-offset: 3px;
+  }
+
+  /* Mono is for data: no "ffi"/"fl" ligatures squeezing topics and IDs. */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-variant-ligatures: none;
   }
 
   ::selection {

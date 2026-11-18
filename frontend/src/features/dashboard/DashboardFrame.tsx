@@ -193,8 +193,8 @@ export function DashboardFrame({
             {activeId === 'dashboard' ? (
               <dl className="flex divide-x divide-track border-y border-track">
                 <Metric label="Status" value={brokerStatus} />
-                <Metric label="Topics" value={String(uniqueTopicCount).padStart(2, '0')} />
-                <Metric label="Logs" value={String(logCount).padStart(2, '0')} />
+                <Metric label="Topics" value={String(uniqueTopicCount)} />
+                <Metric label="Logs" value={String(logCount)} />
               </dl>
             ) : null}
           </header>
