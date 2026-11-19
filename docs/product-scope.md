@@ -68,7 +68,7 @@ MCM keeps the plugins of the broker and the security database of the dynamic sec
 5. Apply that exact revision and verify its effect, including expected access denials.
 6. Recover a previous revision or a verified backup, with a visible result and audit record.
 
-The proposed navigation is Configuration, MQTT Access (MQTT users and broker access), Changes, Diagnostics and Panel administration (panel operators and account security). Below the desktop breakpoint the navigation folds behind a Menu button so the content comes first. Preserve role restrictions, MFA and audit throughout the journey. A saved database record must not be presented as an active broker change.
+The Dashboard is the home and sits above the groups: MQTT Access (MQTT users, ACLs and dynamic security), Broker (listeners, TLS certificates, settings, bridges, plugins and the `mosquitto.conf` editor), Changes, Diagnostics and Panel administration (account, panel operators, security and audit). Simple mode, the default, shows only the Dashboard, MQTT users, ACLs, Deploy, Logs and Account; the **Advanced mode** switch in the sidebar shows every view and is remembered per browser. Opening an advanced view directly, for example by URL, turns advanced mode on. Below the desktop breakpoint the navigation folds behind a Menu button so the content comes first. Preserve role restrictions, MFA and audit throughout the journey. A saved database record must not be presented as an active broker change.
 
 ## Known operational gaps
 

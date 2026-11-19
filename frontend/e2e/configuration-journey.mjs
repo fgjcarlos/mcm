@@ -131,7 +131,9 @@ try {
   await page.locator('input[autocomplete="username"]').fill('admin')
   await page.locator('input[autocomplete="current-password"]').fill('ui-test-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
+  // Simple mode by default: the Broker group holds only advanced views, so it is absent.
+  await check(page.getByRole('navigation').getByRole('heading', { name: 'Broker', exact: true })).toHaveCount(0)
+  for (const name of ['MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
     await check(page.getByRole('navigation').getByRole('heading', { name, exact: true })).toBeVisible()
   }
   // #355: at 360 px the navigation folds behind a keyboard-operable Menu button.
@@ -235,7 +237,9 @@ try {
   console.log('[UI] MQTT user, ACL grant and verified deployment completed in one journey')
 
   const current = page.waitForResponse((response) => response.url().endsWith('/broker/config'))
-  // Configuration is expanded by default, including after navigating away.
+  // The configuration editor is an advanced view inside the Broker group.
+  await page.getByRole('switch', { name: 'Advanced mode' }).click()
+  await openNavigationGroup('Broker')
   await page.locator('nav a[href="/broker-config"]').click()
   const original = (await (await current).json()).body
   const imported = page.waitForResponse((response) => response.url().endsWith('/broker/config/import'))
