@@ -292,6 +292,7 @@ describe('App', () => {
       'GET /api/v1/broker/diagnostics?severity=warning&limit=17': () => jsonResponse(diagnostics),
     })
     vi.stubGlobal('fetch', fetchMock)
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
     await screen.findByText('Signed in')
     const user = userEvent.setup()
@@ -337,6 +338,7 @@ describe('App', () => {
       'GET /api/v1/auth/me': () => jsonResponse({ id: 8, username: 'auditor', disabled: false, role: 'auditor', created_at: '', updated_at: '' }),
       'GET /api/v1/broker/diagnostics': () => jsonResponse(diagnostics),
     }))
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
     await screen.findByText('Signed in')
     await userEvent.setup().click(screen.getByRole('link', { name: /broker diagnostics/i }))
@@ -696,6 +698,7 @@ describe('App', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
 
     await screen.findByText('Signed in')
@@ -726,6 +729,7 @@ describe('App', () => {
     async function openTopics() {
       window.localStorage.setItem('mcm_admin_token', 'topics-live-token')
       vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('topics-live-token')))
+      window.localStorage.setItem('mcm_nav_mode', 'advanced')
       render(<App />)
       await screen.findByText('Signed in')
       const user = userEvent.setup()
@@ -1025,6 +1029,7 @@ describe('App', () => {
     window.history.replaceState(null, '', '/dashboard')
     vi.stubGlobal('fetch', installFetchMock({ ...authenticatedRoutes('metrics-token') }))
 
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
 
     await screen.findByRole('heading', { name: 'Live broker snapshot' })
@@ -2197,24 +2202,99 @@ describe('App', () => {
       expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
     })
   })
-  it('organizes existing routes into five collapsible operator areas with the requested defaults', async () => {
+  it('organizes the advanced navigation into five collapsible operator areas with the requested defaults', async () => {
     window.localStorage.setItem('mcm_admin_token', 'navigation-token')
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('navigation-token')))
     render(<App />)
-    for (const name of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
+    const groups = ['MQTT Access', 'Broker', 'Changes', 'Diagnostics', 'Panel administration']
+    for (const name of groups) {
       expect(await screen.findByRole('heading', { name, level: 2 })).toBeInTheDocument()
     }
-    for (const group of ['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration']) {
-      const expanded = group === 'Configuration' || group === 'Diagnostics'
+    for (const group of groups) {
+      const expanded = group === 'MQTT Access' || group === 'Changes'
       const control = screen.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${group}` })
       expect(control).toHaveAttribute('aria-controls', `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
       expect(control).toHaveAttribute('aria-expanded', expanded ? 'true' : 'false')
     }
-    expect(screen.getByRole('region', { name: 'Configuration' })).toBeInTheDocument()
     expect(screen.getByText('Observation · read-only')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
-    expect(screen.getByRole('link', { name: /ACLs/ })).toHaveAttribute('href', '/acls')
-    expect(screen.getByRole('link', { name: /Configuration revisions/ })).toHaveAttribute('href', '/changes')
+    expect(within(screen.getByRole('region', { name: 'MQTT Access' })).getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
+    expect(within(screen.getByRole('region', { name: 'MQTT Access' })).getByRole('link', { name: /^ACLs/ })).toHaveAttribute('href', '/acls')
+    expect(within(screen.getByRole('region', { name: 'Changes' })).getByRole('link', { name: /Configuration revisions/ })).toHaveAttribute('href', '/changes')
+    // Listeners and TLS material configure the broker, not the MQTT accounts.
+    const broker = screen.getByRole('region', { name: 'Broker' })
+    for (const [name, href] of [['Listeners', '/listeners'], ['Certificates', '/certificates'], ['Broker settings', '/broker-settings'], ['Bridges', '/broker-bridges'], ['Plugins', '/broker-plugins'], ['Configuration', '/broker-config']]) {
+      expect(within(broker).getByRole('link', { name: new RegExp(`^${name}`) })).toHaveAttribute('href', href)
+    }
+    expect(within(screen.getByRole('region', { name: 'MQTT Access' })).queryByRole('link', { name: /Listeners|Certificates/ })).not.toBeInTheDocument()
+  })
+
+  it('places the dashboard as the standalone home link above every group', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'home-link-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('home-link-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const nav = screen.getByRole('navigation', { name: 'Primary navigation' })
+    const home = within(nav).getAllByRole('link')[0]
+    expect(home).toHaveAccessibleName(/^Dashboard/)
+    expect(home).toHaveAttribute('href', '/dashboard')
+    expect(home).toHaveAttribute('aria-current', 'page')
+    expect(home.closest('[role="region"]')).toBeNull()
+    expect(within(nav).queryByRole('heading', { name: 'Diagnostics', level: 2 })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Diagnostics' })).queryByRole('link', { name: /^Dashboard/ })).not.toBeInTheDocument()
+  })
+
+  it('starts in simple mode with only the basic views', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'simple-mode-token')
+    vi.stubGlobal('fetch', installFetchMock({
+      ...authenticatedRoutes('simple-mode-token'),
+      'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'admin', disabled: false, role: 'admin', created_at: '', updated_at: '' }),
+    }))
+    render(<App />)
+    await screen.findByText('Signed in')
+    expect(screen.getByRole('switch', { name: 'Advanced mode' })).toHaveAttribute('aria-checked', 'false')
+    const nav = screen.getByRole('navigation', { name: 'Primary navigation' })
+    expect(within(nav).getAllByRole('link', { hidden: true }).map((link) => link.getAttribute('href'))).toEqual(['/dashboard', '/users', '/acls', '/deploy', '/logs', '/account'])
+    expect(within(nav).queryByRole('heading', { name: 'Broker', level: 2 })).not.toBeInTheDocument()
+  })
+
+  it('shows the advanced views when advanced mode is switched on and remembers the choice', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'advanced-mode-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('advanced-mode-token')))
+    const { unmount } = render(<App />)
+    await screen.findByText('Signed in')
+    await userEvent.setup().click(screen.getByRole('switch', { name: 'Advanced mode' }))
+    expect(screen.getByRole('switch', { name: 'Advanced mode' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('link', { name: /^Bridges/, hidden: true })).toHaveAttribute('href', '/broker-bridges')
+    expect(window.localStorage.getItem('mcm_nav_mode')).toBe('advanced')
+    unmount()
+    render(<App />)
+    await screen.findByText('Signed in')
+    expect(screen.getByRole('switch', { name: 'Advanced mode' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('switches to advanced mode when an advanced view is opened by URL', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'advanced-url-token')
+    window.history.replaceState(null, '', '/topics')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('advanced-url-token')))
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Topic explorer' })
+    expect(screen.getByRole('switch', { name: 'Advanced mode' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('link', { name: /^Topics/ })).toHaveAttribute('aria-current', 'page')
+    expect(window.localStorage.getItem('mcm_nav_mode')).toBe('advanced')
+  })
+
+  it('returns to the dashboard when advanced mode is switched off on an advanced view', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'simple-return-token')
+    window.history.replaceState(null, '', '/topics')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('simple-return-token')))
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Topic explorer' })
+    await userEvent.setup().click(screen.getByRole('switch', { name: 'Advanced mode' }))
+    expect(await screen.findByRole('heading', { name: 'Live broker snapshot' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/dashboard')
+    expect(screen.queryByRole('link', { name: /^Topics/, hidden: true })).not.toBeInTheDocument()
+    expect(window.localStorage.getItem('mcm_nav_mode')).toBe('simple')
   })
 
   it('toggles a collapsed group with a button and hides its entries from assistive technology and the tab order', async () => {
@@ -2223,18 +2303,18 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('Signed in')
     const user = userEvent.setup()
-    const control = screen.getByRole('button', { name: 'Expand MQTT Access' })
-    const region = screen.getByRole('region', { name: 'MQTT Access' })
+    const control = screen.getByRole('button', { name: 'Expand Panel administration' })
+    const region = screen.getByRole('region', { name: 'Panel administration' })
     expect(region).toHaveClass('max-h-0')
     // A collapsed disclosure keeps its entries out of the accessibility tree
     // and out of the tab order: the toggle button is the only way in.
     expect(region).toHaveAttribute('inert')
     await user.click(control)
-    expect(screen.getByRole('button', { name: 'Collapse MQTT Access' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'Collapse Panel administration' })).toHaveAttribute('aria-expanded', 'true')
     expect(region).toHaveClass('max-h-[40rem]')
     expect(region).not.toHaveAttribute('inert')
     await user.keyboard('{Enter}')
-    expect(screen.getByRole('button', { name: 'Expand MQTT Access' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Expand Panel administration' })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('auto-expands the active group on a direct URL load and keeps the active link current', async () => {
@@ -2249,6 +2329,7 @@ describe('App', () => {
 
   it('preserves role filtering and omits groups with no visible entries', async () => {
     window.localStorage.setItem('mcm_admin_token', 'viewer-navigation-token')
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     vi.stubGlobal('fetch', installFetchMock({
       ...authenticatedRoutes('viewer-navigation-token'),
       'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'viewer', disabled: false, role: 'viewer', created_at: '', updated_at: '' }),
@@ -2257,15 +2338,18 @@ describe('App', () => {
     await screen.findByText('Signed in')
     expect(screen.getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
     expect(screen.getByRole('link', { name: /Dashboard/ })).toHaveAttribute('href', '/dashboard')
-    expect(screen.queryByRole('heading', { name: 'Configuration', level: 2 })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Changes', level: 2 })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Configuration revisions/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Certificates/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Panel operators/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Configuration revisions/, hidden: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Certificates/, hidden: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Panel operators/, hidden: true })).not.toBeInTheDocument()
+    // Back in simple mode the Broker group has no entry left, so it is omitted.
+    await userEvent.setup().click(screen.getByRole('switch', { name: 'Advanced mode' }))
+    expect(screen.queryByRole('heading', { name: 'Broker', level: 2 })).not.toBeInTheDocument()
   })
 
   it('separates MQTT users from panel operators in unambiguous groups (#355)', async () => {
     window.localStorage.setItem('mcm_admin_token', 'grouped-accounts-token')
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     vi.stubGlobal('fetch', installFetchMock({
       ...authenticatedRoutes('grouped-accounts-token'),
       'GET /api/v1/auth/me': () => jsonResponse({ id: 1, username: 'admin', disabled: false, role: 'admin', created_at: '', updated_at: '' }),
@@ -2275,9 +2359,9 @@ describe('App', () => {
     const mqttAccess = screen.getByRole('region', { name: 'MQTT Access' })
     const panelAdministration = screen.getByRole('region', { name: 'Panel administration' })
     expect(within(mqttAccess).getByRole('link', { name: /^MQTT users/ })).toHaveAttribute('href', '/users')
-    expect(within(panelAdministration).getByRole('link', { name: /^Panel operators/ })).toHaveAttribute('href', '/admin-users')
+    expect(within(panelAdministration).getByRole('link', { name: /^Panel operators/, hidden: true })).toHaveAttribute('href', '/admin-users')
     expect(within(mqttAccess).queryByRole('link', { name: /operators/i })).not.toBeInTheDocument()
-    expect(within(panelAdministration).queryByRole('link', { name: /MQTT/ })).not.toBeInTheDocument()
+    expect(within(panelAdministration).queryByRole('link', { name: /MQTT/, hidden: true })).not.toBeInTheDocument()
     expect(screen.getByText('Broker clients · devices and apps')).toBeInTheDocument()
     expect(screen.getByText('MCM console · operator accounts')).toBeInTheDocument()
   })
@@ -2794,6 +2878,7 @@ describe('app-wide recent MFA step-up', () => {
     window.localStorage.setItem('mcm_admin_token', 'shared-token')
     const fetchMock = mfaRoutes('shared-token')
     vi.stubGlobal('fetch', fetchMock)
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
     const user = userEvent.setup()
     await confirmInDeploy(user)
@@ -2860,6 +2945,7 @@ describe('app-wide recent MFA step-up', () => {
   it('does not ask for MFA before there is a preview to apply', async () => {
     window.localStorage.setItem('mcm_admin_token', 'no-preview-token')
     vi.stubGlobal('fetch', mfaRoutes('no-preview-token'))
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
     render(<App />)
     const user = userEvent.setup()
     await screen.findByText('Signed in')

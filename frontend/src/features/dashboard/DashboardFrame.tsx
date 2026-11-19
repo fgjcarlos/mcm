@@ -11,6 +11,8 @@ export type NavItem = {
   path: string
   /** Minimum role required to see this nav item. Hidden from lower roles. */
   minRole?: string
+  /** Shown only in advanced mode. */
+  advanced?: boolean
 }
 
 type DashboardFrameProps = {
@@ -22,6 +24,8 @@ type DashboardFrameProps = {
   uniqueTopicCount: number
   logCount: number
   currentUser: AdminUser
+  advanced: boolean
+  onToggleAdvanced: () => void
   onSelectNav: (item: NavItem) => void
   onLogout: () => void
   children: ReactNode
@@ -36,17 +40,44 @@ export function DashboardFrame({
   uniqueTopicCount,
   logCount,
   currentUser,
+  advanced,
+  onToggleAdvanced,
   onSelectNav,
   onLogout,
   children,
 }: DashboardFrameProps) {
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['Configuration']))
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['MQTT Access', 'Changes']))
   // Below lg the sidebar folds behind a menu button so the content comes first.
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenu = () => {
     setMenuOpen(false)
     menuButtonRef.current?.focus()
+  }
+
+  const navLink = (item: NavItem) => {
+    const isActive = item.id === activeId
+    return (
+      <a
+        key={item.id}
+        href={item.path}
+        aria-current={isActive ? 'page' : undefined}
+        onClick={(event) => {
+          event.preventDefault()
+          onSelectNav(item)
+          if (menuOpen) closeMenu()
+        }}
+        className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 ${
+          isActive
+            ? 'bg-frame-high font-semibold text-enamel-bright'
+            : 'text-enamel-soft hover:bg-frame-raised hover:text-enamel-bright'
+        }`}
+      >
+        {/* The current view is lit: lamp, weight and fill, not colour alone. */}
+        <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${isActive ? 'bg-enamel-bright' : ''}`} />
+        {item.label}
+      </a>
+    )
   }
 
   return (
@@ -91,9 +122,29 @@ export function DashboardFrame({
             <p className="mt-1 text-xs text-enamel-muted">Event stream: {streamState}</p>
           </div>
 
+          <button
+            type="button"
+            role="switch"
+            aria-checked={advanced}
+            aria-labelledby="advanced-mode-label"
+            aria-describedby="advanced-mode-description"
+            onClick={onToggleAdvanced}
+            className="flex w-full items-center justify-between gap-3 border-b border-track py-3 text-left transition-colors duration-150 hover:text-enamel-bright"
+          >
+            <span className="min-w-0">
+              <span id="advanced-mode-label" className="block text-sm font-semibold text-enamel-bright">Advanced mode</span>
+              <span id="advanced-mode-description" className="mt-0.5 block text-xs text-enamel-muted">{advanced ? 'Every broker, change and administration view' : 'MQTT users, ACLs, deploy and logs'}</span>
+            </span>
+            {/* On and off read from position and fill, not colour alone. */}
+            <span aria-hidden="true" className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors duration-150 ${advanced ? 'border-enamel bg-frame-high' : 'border-track-bright'}`}>
+              <span className={`absolute top-0.5 size-4 rounded-full transition-all duration-150 ${advanced ? 'left-[1.375rem] bg-enamel-bright' : 'left-0.5 bg-enamel-muted'}`} />
+            </span>
+          </button>
+
           <nav className="mt-2 divide-y divide-track" aria-label="Primary navigation">
-            {['Configuration', 'MQTT Access', 'Changes', 'Diagnostics', 'Panel administration'].map((group) => {
-              const items = navItems.filter((item) => (item.group ?? 'Diagnostics') === group)
+            {navItems.filter((item) => !item.group).length ? <div className="py-3">{navItems.filter((item) => !item.group).map(navLink)}</div> : null}
+            {['MQTT Access', 'Broker', 'Changes', 'Diagnostics', 'Panel administration'].map((group) => {
+              const items = navItems.filter((item) => item.group === group)
               if (!items.length) return null
               const groupId = `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
               const hasActiveItem = items.some((item) => item.id === activeId)
@@ -134,30 +185,7 @@ export function DashboardFrame({
                     inert={!expanded}
                     className={`overflow-hidden transition-[max-height,opacity] duration-200 ${expanded ? 'mt-2 max-h-[40rem] opacity-100' : 'max-h-0 opacity-0'}`}
                   >
-                    {items.map((item) => {
-                      const isActive = item.id === activeId
-                      return (
-                        <a
-                          key={item.id}
-                          href={item.path}
-                          aria-current={isActive ? 'page' : undefined}
-                          onClick={(event) => {
-                            event.preventDefault()
-                            onSelectNav(item)
-                            if (menuOpen) closeMenu()
-                          }}
-                          className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 ${
-                            isActive
-                              ? 'bg-frame-high font-semibold text-enamel-bright'
-                              : 'text-enamel-soft hover:bg-frame-raised hover:text-enamel-bright'
-                          }`}
-                        >
-                          {/* The current view is lit: lamp, weight and fill, not colour alone. */}
-                          <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${isActive ? 'bg-enamel-bright' : ''}`} />
-                          {item.label}
-                        </a>
-                      )
-                    })}
+                    {items.map(navLink)}
                   </div>
                 </section>
               )

@@ -134,6 +134,25 @@ function persistDeployPending(pending: boolean) {
   }
 }
 
+// Simple or advanced navigation, remembered per browser.
+const navModeStorageKey = 'mcm_nav_mode'
+
+function readAdvancedMode() {
+  try {
+    return window.localStorage.getItem(navModeStorageKey) === 'advanced'
+  } catch {
+    return false
+  }
+}
+
+function persistAdvancedMode(advanced: boolean) {
+  try {
+    window.localStorage.setItem(navModeStorageKey, advanced ? 'advanced' : 'simple')
+  } catch {
+    // The in-memory state remains authoritative when storage is unavailable.
+  }
+}
+
 type LoginResponse = {
   token?: string
   expires_at?: string
@@ -142,45 +161,17 @@ type LoginResponse = {
   mfa_challenge?: string
 }
 
+// Simple mode shows the entries without `advanced`; advanced mode shows all.
 const navItems: NavItem[] = [
-  // Configuration
+  // The home: standalone, above every group.
   {
-    id: 'broker-config',
-    group: 'Configuration',
-    label: 'Configuration',
-    path: '/broker-config',
-    title: 'Broker configuration manager',
-    description: 'Import, edit, validate and version mosquitto.conf with explicit adoption before any apply.',
-    minRole: 'auditor',
+    id: 'dashboard',
+    label: 'Dashboard',
+    path: '/dashboard',
+    title: 'Live broker snapshot',
+    description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
   },
-  {
-    id: 'broker-settings',
-    group: 'Configuration',
-    label: 'Broker settings',
-    path: '/broker-settings',
-    title: 'Persistence, queues, sessions and logging',
-    description: 'Edit the general broker settings with the catalog ranges and preview the change before any apply.',
-    minRole: 'auditor',
-  },
-  {
-    id: 'broker-bridges',
-    group: 'Configuration',
-    label: 'Bridges',
-    path: '/broker-bridges',
-    title: 'Bridges to remote brokers',
-    description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
-    minRole: 'auditor',
-  },
-  {
-    id: 'broker-plugins',
-    group: 'Configuration',
-    label: 'Plugins',
-    path: '/broker-plugins',
-    title: 'Mosquitto plugins',
-    description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
-    minRole: 'auditor',
-  },
-  // MQTT Access
+  // MQTT Access: the broker clients (devices and apps) and what they may do
   {
     id: 'users',
     group: 'MQTT Access',
@@ -198,23 +189,6 @@ const navItems: NavItem[] = [
     description: 'Topic permissions, policy reviews, and audit-safe change workflows.',
   },
   {
-    id: 'listeners',
-    group: 'MQTT Access',
-    label: 'Listeners',
-    path: '/listeners',
-    title: 'MQTT listeners',
-    description: 'Manage the broker listener set (TCP and WebSockets).',
-  },
-  {
-    id: 'certificates',
-    group: 'MQTT Access',
-    label: 'Certificates',
-    path: '/certificates',
-    title: 'Broker TLS certificates',
-    description: 'Upload, rotate and activate the TLS material the broker serves.',
-    minRole: 'auditor',
-  },
-  {
     id: 'broker-dynsec',
     group: 'MQTT Access',
     label: 'Dynamic security',
@@ -222,6 +196,67 @@ const navItems: NavItem[] = [
     title: 'Dynamic security database',
     description: 'Manage the clients, groups and roles the dynamic security plugin enforces, and watch the management channel of the plugin.',
     minRole: 'auditor',
+    advanced: true,
+  },
+  // Broker: how the broker listens and runs
+  {
+    id: 'listeners',
+    group: 'Broker',
+    label: 'Listeners',
+    path: '/listeners',
+    title: 'MQTT listeners',
+    description: 'Manage the broker listener set (TCP and WebSockets).',
+    advanced: true,
+  },
+  {
+    id: 'certificates',
+    group: 'Broker',
+    label: 'Certificates',
+    path: '/certificates',
+    title: 'Broker TLS certificates',
+    description: 'Upload, rotate and activate the TLS material the broker serves.',
+    minRole: 'auditor',
+    advanced: true,
+  },
+  {
+    id: 'broker-settings',
+    group: 'Broker',
+    label: 'Broker settings',
+    path: '/broker-settings',
+    title: 'Persistence, queues, sessions and logging',
+    description: 'Edit the general broker settings with the catalog ranges and preview the change before any apply.',
+    minRole: 'auditor',
+    advanced: true,
+  },
+  {
+    id: 'broker-bridges',
+    group: 'Broker',
+    label: 'Bridges',
+    path: '/broker-bridges',
+    title: 'Bridges to remote brokers',
+    description: 'Connect this broker to remote brokers, forward topics in both directions and preview the change before any apply.',
+    minRole: 'auditor',
+    advanced: true,
+  },
+  {
+    id: 'broker-plugins',
+    group: 'Broker',
+    label: 'Plugins',
+    path: '/broker-plugins',
+    title: 'Mosquitto plugins',
+    description: 'Load the plugins this broker needs, keep the options MCM does not manage untouched and preview the change before any apply.',
+    minRole: 'auditor',
+    advanced: true,
+  },
+  {
+    id: 'broker-config',
+    group: 'Broker',
+    label: 'Configuration',
+    path: '/broker-config',
+    title: 'Broker configuration manager',
+    description: 'Import, edit, validate and version mosquitto.conf with explicit adoption before any apply.',
+    minRole: 'auditor',
+    advanced: true,
   },
   // Changes
   {
@@ -240,16 +275,9 @@ const navItems: NavItem[] = [
     title: 'Configuration changes',
     description: 'Review exact configuration revisions, activation results and recoverable copies.',
     minRole: 'auditor',
+    advanced: true,
   },
   // Diagnostics
-  {
-    id: 'dashboard',
-    group: 'Diagnostics',
-    label: 'Dashboard',
-    path: '/dashboard',
-    title: 'Live broker snapshot',
-    description: 'Connection state and the latest topic traffic from the configured Mosquitto broker.',
-  },
   {
     id: 'topics',
     group: 'Diagnostics',
@@ -257,15 +285,7 @@ const navItems: NavItem[] = [
     path: '/topics',
     title: 'Topic explorer',
     description: 'Inspect incoming topic names and safe payload previews as messages arrive; optional Sparkplug B and JSON Schema diagnostics inspect messages only and never enforce broker traffic.',
-  },
-  {
-    id: 'broker-diagnostics',
-    group: 'Diagnostics',
-    label: 'Broker diagnostics',
-    path: '/broker-diagnostics',
-    title: 'Broker diagnostics workspace',
-    description: 'Separate MCM observations, broker logs, internal metrics and broker-published system metrics.',
-    minRole: 'auditor',
+    advanced: true,
   },
   {
     id: 'logs',
@@ -275,23 +295,17 @@ const navItems: NavItem[] = [
     title: 'Realtime broker and MCM events',
     description: 'Monitor broker-log entries, connection transitions and MCM operational events as they are ingested.',
   },
-  // Administration
   {
-    id: 'security',
-    group: 'Panel administration',
-    label: 'Security',
-    path: '/security',
-    title: 'Recent security events',
-    description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
+    id: 'broker-diagnostics',
+    group: 'Diagnostics',
+    label: 'Broker diagnostics',
+    path: '/broker-diagnostics',
+    title: 'Broker diagnostics workspace',
+    description: 'Separate MCM observations, broker logs, internal metrics and broker-published system metrics.',
+    minRole: 'auditor',
+    advanced: true,
   },
-  {
-    id: 'audit',
-    group: 'Panel administration',
-    label: 'Audit',
-    path: '/audit',
-    title: 'Administrative audit log',
-    description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
-  },
+  // Panel administration
   {
     id: 'account',
     group: 'Panel administration',
@@ -308,6 +322,25 @@ const navItems: NavItem[] = [
     title: 'Panel operator directory',
     description: 'Manage dashboard operators: provision accounts, assign roles, reset credentials, and deactivate stale users.',
     minRole: 'admin',
+    advanced: true,
+  },
+  {
+    id: 'security',
+    group: 'Panel administration',
+    label: 'Security',
+    path: '/security',
+    title: 'Recent security events',
+    description: 'Review failed admin logins, disabled-user login attempts, protected API failures, and ACL API audit hooks.',
+    advanced: true,
+  },
+  {
+    id: 'audit',
+    group: 'Panel administration',
+    label: 'Audit',
+    path: '/audit',
+    title: 'Administrative audit log',
+    description: 'Review recent administrative changes, actors, affected resources, and outcomes.',
+    advanced: true,
   },
 ]
 
@@ -350,10 +383,13 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditError, setAuditError] = useState<string>('')
   const [deployPending, setDeployPending] = useState(readDeployPending)
+  // Opening an advanced view, by URL or by a link, switches to advanced mode.
+  const [advanced, setAdvanced] = useState(() => readAdvancedMode() || Boolean(navItems.find((item) => item.id === navIdFromPath(window.location.pathname))?.advanced))
   const nextMutationID = useRef(0)
   const appliedMutationID = useRef(0)
   const activeItem = navItems.find((item) => item.id === activeId) ?? navItems[0]
   const visibleNavItems = navItems.filter((item) => {
+    if (item.advanced && !advanced) return false
     if (!item.minRole) return true
     const userRank = ROLE_RANK[currentUser.role as Role] ?? 0
     const minRank  = ROLE_RANK[item.minRole as Role] ?? 0
@@ -386,6 +422,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
   // links always open the plain panel.
   const handleSelectNav = useCallback((item: NavItem, options?: { startOnboarding?: boolean; search?: string }) => {
     if (item.id === 'broker-config' || item.id === 'changes') setVisitedBroker(true)
+    if (item.advanced) setAdvanced(true)
     // Compare path and query together: opening the same view with another
     // filter (a different query) is a new history entry, while opening exactly
     // the current URL again adds none.
@@ -420,10 +457,18 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
     persistDeployPending(false)
   }, [])
 
+  useEffect(() => persistAdvancedMode(advanced), [advanced])
+  const toggleAdvanced = useCallback(() => {
+    // Leaving advanced mode on an advanced view goes home, as that view leaves the navigation.
+    if (advanced && activeItem.advanced) openPanel('dashboard')
+    setAdvanced(!advanced)
+  }, [advanced, activeItem, openPanel])
+
   useEffect(() => {
     const handlePopState = () => {
       const selected = navIdFromPath(window.location.pathname)
       if (selected === 'broker-config' || selected === 'changes') setVisitedBroker(true)
+      if (navItems.find((item) => item.id === selected)?.advanced) setAdvanced(true)
       setStartOnboarding(false)
       setActiveId(selected)
       setNavigationKey((current) => current + 1)
@@ -484,6 +529,8 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       uniqueTopicCount={uniqueTopicCount}
       logCount={logs.length}
       currentUser={currentUser}
+      advanced={advanced}
+      onToggleAdvanced={toggleAdvanced}
       onSelectNav={handleSelectNav}
       onLogout={onLogout}
     >
