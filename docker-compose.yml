@@ -59,6 +59,12 @@ services:
     # safe.
     entrypoint: /mosquitto-init/mosquitto-bootstrap.sh
     command: []
+    environment:
+      # The bootstrap runs the broker as the mcm service user so the
+      # passwd/acl files MCM writes are owned by the broker, as Mosquitto
+      # requires (issue #394). Must match `docker exec mcm-server id`.
+      MCM_SERVICE_UID: "100"
+      MCM_SERVICE_GID: "101"
     healthcheck:
       # The broker now requires auth; the healthcheck must use the same
       # dev admin credentials the bootstrap script seeds.

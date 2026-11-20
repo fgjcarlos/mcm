@@ -44,7 +44,7 @@ text = Path(source).read_text()
 replacements = {
     'CONFIG_DIR="/mosquitto/config"': f'CONFIG_DIR="{config}"',
     'INIT_DIR="${MOSQUITTO_INIT_DIR:-/mosquitto-init}"': f'INIT_DIR="{init}"',
-    'exec /usr/sbin/mosquitto -c "$CONFIG_DIR/mosquitto.conf"': f'exec "{broker}" -c "$CONFIG_DIR/mosquitto.conf"',
+    'BROKER_BIN="/usr/sbin/mosquitto"': f'BROKER_BIN="{broker}"',
 }
 for old, new in replacements.items():
     if text.count(old) != 1:

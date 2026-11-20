@@ -29,7 +29,9 @@
 #   6. mosquitto_pub for the allowed topic succeeds (exit 0).
 #   7. mosquitto_pub for the forbidden topic fails with a non-zero exit
 #      and "not authorised" in stderr.
-#   8. docker compose down -v cleans up.
+#   8. The broker logs no ownership or mode warning for the files it
+#      loads (issue #394).
+#   9. docker compose down -v cleans up.
 #
 # Exit code:
 #   0  every invariant passed.
@@ -369,5 +371,18 @@ if printf '%s\n' "$forbidden_log" | grep -q '^bad$'; then
     exit 1
 fi
 echo "forbidden-topic publish correctly dropped"
+
+# Issue #394: Mosquitto warns, and future versions refuse to load, a
+# password or ACL file whose owner or group is not the broker's user or
+# that is world readable. The apply above made the broker reload the
+# files MCM wrote, so any such warning since startup is a regression.
+permission_warnings="$($COMPOSE logs --no-color mosquitto 2>&1 \
+    | grep -E 'owner is not|group is not|world readable' || true)"
+if [ -n "$permission_warnings" ]; then
+    echo "broker warned about the ownership or mode of the files it loads:" >&2
+    printf '%s\n' "$permission_warnings" >&2
+    exit 1
+fi
+echo "broker loaded passwd/acl without permission warnings"
 
 echo "--- e2e-deploy: all invariants passed ---"

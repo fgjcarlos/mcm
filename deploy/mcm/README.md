@@ -103,7 +103,7 @@ existing tokens.
 
 The development `mosquitto.conf` ships with `allow_anonymous false` plus a shared passwd/acl file pattern (see [Integration with MCM](../mosquitto/README.md#integration-with-mcm) in the Mosquitto README), but the production template still requires file, ACL and activation alignment. See [known limitations](../../docs/production.md#current-limitations). The development shortcuts are:
 
-- **Dev**: `user root` in the broker config so the broker can read passwd/acl files written by the mcm UID across the shared volume. The bootstrap admin password is hardcoded (`mcm-dev-broker-password`) in both `mosquitto-bootstrap.sh` and `docker-compose.yml` so a clean clone works without operator input. The mcm service mounts `/var/run/docker.sock` to run `docker exec … kill -HUP 1` for reloads.
+- **Dev**: the bootstrap runs the broker as the mcm UID/GID (`MCM_SERVICE_UID`/`MCM_SERVICE_GID`), so the broker owns the passwd/acl files MCM writes into the shared volume, as Mosquitto requires. The bootstrap admin password is hardcoded (`mcm-dev-broker-password`) in both `mosquitto-bootstrap.sh` and `docker-compose.yml` so a clean clone works without operator input. The mcm service mounts `/var/run/docker.sock` to run `docker exec … kill -HUP 1` for reloads.
 - **Production**: drop the `user root` directive, source the broker password from a secret manager (do NOT hardcode), do NOT mount the Docker socket into mcm, and use [`deploy/mosquitto/config/mosquitto.prod.conf`](../mosquitto/config/mosquitto.prod.conf) as the broker config (TLS on port `8883`, uncomment `require_certificate true` if mutual TLS is required). Configure MCM's `mosquitto.tls` settings to connect on `8883`.
 
 For production:
