@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import EffectivePermissionsPanel from './EffectivePermissionsPanel'
@@ -136,6 +136,59 @@ describe('EffectivePermissionsPanel', () => {
 
     await waitFor(() => expect(screen.getByText('Denied')).toBeInTheDocument())
     expect(screen.getByText('a deny rule covers the topic')).toBeInTheDocument()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('pages the permissions of each ACL file on its own and filters them by identity or topic', async () => {
+    const grants = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, i) => ({ topic_filter: `${prefix}/${i + 1}`, permission: 'read', selector: 'user', denied: false }))
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes,
+      'GET /api/v1/acls/effective': () =>
+        jsonResponse({
+          scopes: [
+            {
+              scope: 'global',
+              path: '/mosquitto/config/acl',
+              identities: [
+                { identity: 'alice', kind: 'user', grants: grants(20, 'alice') },
+                { identity: 'bob', kind: 'user', grants: grants(10, 'bob') },
+              ],
+            },
+            {
+              scope: 'listener',
+              listener_id: 'tls',
+              path: '/mosquitto/config/acl.tls',
+              identities: [{ identity: 'carol', kind: 'user', grants: grants(26, 'carol') }],
+            },
+          ],
+        }),
+    }))
+    const user = userEvent.setup()
+
+    render(<EffectivePermissionsPanel token="tok" onLogout={() => {}} />)
+
+    await screen.findByText('alice/1')
+    expect(screen.getByText('bob/5')).toBeInTheDocument()
+    expect(screen.queryByText('bob/6')).not.toBeInTheDocument()
+    const globalNav = screen.getByRole('navigation', { name: 'broker-wide permissions pages' })
+    const tlsNav = screen.getByRole('navigation', { name: 'tls permissions pages' })
+    expect(within(globalNav).getByText('Page 1 of 2')).toBeInTheDocument()
+    expect(within(tlsNav).getByText('Page 1 of 2')).toBeInTheDocument()
+
+    await user.click(within(globalNav).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByText('bob/6')).toBeInTheDocument()
+    expect(screen.queryByText('alice/1')).not.toBeInTheDocument()
+    // The other file keeps its own page.
+    expect(within(tlsNav).getByText('Page 1 of 2')).toBeInTheDocument()
+    expect(screen.getByText('carol/25')).toBeInTheDocument()
+
+    await user.type(screen.getByRole('searchbox', { name: 'Filter broker-wide permissions' }), 'ALICE/2')
+    expect(screen.getByText('alice/2')).toBeInTheDocument()
+    expect(screen.getByText('alice/20')).toBeInTheDocument()
+    expect(screen.queryByText('alice/3')).not.toBeInTheDocument()
+    expect(screen.queryByText('bob/6')).not.toBeInTheDocument()
 
     vi.unstubAllGlobals()
   })

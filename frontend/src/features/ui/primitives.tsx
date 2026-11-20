@@ -65,7 +65,8 @@ export function Fact({ label, value }: { label: ReactNode; value: ReactNode }) {
 /** A unified diff: additions bright on a raised row, removals muted and struck; green and red stay reserved for lamps. */
 export function DiffBlock({ content }: { content: string }) {
   return (
-    <pre className="max-h-64 overflow-auto rounded-plate border border-track-strong bg-frame-raised py-3 font-mono text-xs leading-5">
+    // Focusable so a long diff scrolls from the keyboard.
+    <pre tabIndex={0} className="max-h-64 overflow-auto rounded-plate border border-track-strong bg-frame-raised py-3 font-mono text-xs leading-5">
       {content.split('\n').map((line, idx) => (
         <span
           key={idx}

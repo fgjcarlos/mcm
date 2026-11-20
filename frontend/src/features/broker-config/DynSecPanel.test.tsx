@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DynSecPanel from './DynSecPanel'
@@ -173,6 +173,67 @@ describe('DynSecPanel', () => {
     expect(previewRequest).not.toBeNull()
     const sent = (previewRequest as unknown as { document: { clients: Array<{ username: string }> } }).document
     expect(sent.clients[1].username).toBe('bob')
+  })
+
+  const twelve = (prefix: string) => Array.from({ length: 12 }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`)
+  const crowded = {
+    ...document,
+    clients: twelve('user').map((username) => ({ username, textname: '', textdescription: '', clientid: '', password: '', password_set: false, roles: [], groups: [] })),
+    groups: twelve('group').map((groupname) => ({ groupname, textname: '', textdescription: '', roles: [], clients: [] })),
+    roles: twelve('role').map((rolename) => ({ rolename, textname: '', textdescription: '', acls: [] })),
+  }
+
+  it.each([
+    { kind: 'client', field: 'Username', prefix: 'user' },
+    { kind: 'group', field: 'Name', prefix: 'group' },
+    { kind: 'role', field: 'Name', prefix: 'role' },
+  ])('pages, edits, adds and filters the $kind cards', async ({ kind, field, prefix }) => {
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/dynsec': () => jsonResponse(dynSecState({ document: crowded })),
+    }) as unknown as typeof fetch
+    const user = userEvent.setup()
+    render(<DynSecPanel token="token" onLogout={() => {}} role="operator" />)
+
+    await waitFor(() => expect(screen.getByLabelText(`${field} ${kind} 1`)).toHaveValue(`${prefix}01`))
+    expect(screen.getByLabelText(`${field} ${kind} 10`)).toHaveValue(`${prefix}10`)
+    expect(screen.queryByLabelText(`${field} ${kind} 11`)).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: `${kind}s pages` })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByLabelText(`${field} ${kind} 11`)).toHaveValue(`${prefix}11`)
+    expect(screen.queryByLabelText(`${field} ${kind} 1`)).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(`Text name ${kind} 11`), 'edited')
+    expect(screen.getByLabelText(`Text name ${kind} 11`)).toHaveValue('edited')
+
+    await user.click(within(pages).getByRole('button', { name: 'Previous page' }))
+    expect(screen.getByLabelText(`Text name ${kind} 1`)).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: `Add ${kind}` }))
+    expect(screen.getByLabelText(`${field} ${kind} 13`)).toHaveValue('')
+    expect(screen.getByRole('navigation', { name: `${kind}s pages` })).toHaveTextContent('Page 2 of 2')
+
+    await user.type(screen.getByLabelText(`Filter ${kind}s by name`), `${prefix.toUpperCase()}05`)
+    expect(screen.getByLabelText(`${field} ${kind} 5`)).toHaveValue(`${prefix}05`)
+    expect(screen.queryByLabelText(`${field} ${kind} 11`)).not.toBeInTheDocument()
+  })
+
+  it('keeps every change of a long plan in a scrollable region', async () => {
+    const changes = Array.from({ length: 30 }, (_, i) => ({ kind: 'client', name: `c${i + 1}`, action: 'create', summary: `create the client "c${i + 1}"`, commands: [{ command: `createClient c${i + 1}` }] }))
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/dynsec': () => jsonResponse(dynSecState()),
+      'POST /api/v1/broker/dynsec/preview': () => jsonResponse({ plan_id: 'plan-1', kind: 'update', plan: { changes }, guard: { ok: true, management_client: 'mcm', allowed: ['mcm'], violations: [], reasons: [] }, backend: 'dynamic-security', has_changes: true }),
+    }) as unknown as typeof fetch
+    render(<DynSecPanel token="token" onLogout={() => {}} role="operator" />)
+
+    await waitFor(() => expect(screen.getByLabelText('Username client 1')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    const region = await screen.findByRole('region', { name: 'Plan changes' })
+    expect(region).toHaveAttribute('tabindex', '0')
+    expect(region).toHaveClass('max-h-96', 'overflow-y-auto')
+    expect(within(region).getByText('create the client "c1"')).toBeInTheDocument()
+    expect(within(region).getByText('create the client "c30"')).toBeInTheDocument()
+    expect(within(region).getByText('createClient c30')).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: /pages$/ })).not.toBeInTheDocument()
   })
 
   it('applies the reviewed plan with the same document', async () => {

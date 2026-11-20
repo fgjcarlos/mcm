@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { fetchACLScopes, fetchEffectivePermissions, simulateAccess } from './api'
-import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLScope, type ACLScopeDescriptor, type EffectiveScope, type SimulationDecision } from './types'
+import { PERMISSION_LABELS, SELECTOR_LABELS, type ACLScope, type ACLScopeDescriptor, type EffectiveGrant, type EffectiveIdentity, type EffectiveScope, type SimulationDecision } from './types'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 import { Lamp, Plate, Section } from '../ui/primitives'
 import { bodyText, fieldHint, fieldLabel, input, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
 
@@ -116,67 +118,7 @@ function EffectivePermissionsPanel({ token, onLogout }: { token: string; onLogou
             ))}
 
           {effective.map((scope) => (
-            <div key={scope.scope === 'global' ? scope.path : `${scope.path}-${scope.listener_id}`}>
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h4 className="text-sm font-semibold text-enamel-bright">
-                  {scope.scope === 'global' ? 'Broker-wide ACL file' : `ACL file of ${scope.listener_id}`}
-                </h4>
-                <span className="break-all font-mono text-xs text-enamel-muted">{scope.path}</span>
-              </div>
-              {scope.identities.length === 0 ? (
-                <p className={`mt-2 border-y border-track py-3 ${bodyText}`}>No identity has a rule in this file.</p>
-              ) : (
-                <div className="mt-2 table-scroll border-y border-track-strong">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-track-strong">
-                      <th className={`${tableHead} text-left`}>Identity</th>
-                      <th className={`${tableHead} text-left`}>Source</th>
-                      <th className={`${tableHead} text-left`}>Topic filter</th>
-                      <th className={`${tableHead} text-left`}>Permission</th>
-                      <th className={`${tableHead} pr-0 text-left`}>Effective</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scope.identities.flatMap((identity) =>
-                      identity.grants.length === 0
-                        ? [
-                            <tr key={`${scope.path}-${identity.identity}-empty`} className={tableRow}>
-                              <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{identity.identity}</td>
-                              <td className="py-3 pr-4 text-xs text-enamel-muted">{identity.kind}</td>
-                              <td className="py-3 text-xs text-enamel-muted" colSpan={3}>
-                                No access.
-                              </td>
-                            </tr>,
-                          ]
-                        : identity.grants.map((grant, index) => (
-                            <tr
-                              key={`${scope.path}-${identity.identity}-${grant.selector}-${grant.topic_filter}-${index}`}
-                              className={tableRow}
-                            >
-                              <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{identity.identity}</td>
-                              <td className="py-3 pr-4 text-xs text-enamel-muted">{SELECTOR_LABELS[grant.selector]}</td>
-                              <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{grant.topic_filter}</td>
-                              <td className="py-3 pr-4">
-                                <Plate>{PERMISSION_LABELS[grant.permission]}</Plate>
-                              </td>
-                              <td className="py-3">
-                                {grant.denied ? (
-                                  <Lamp tone="caution">
-                                    denied by {grant.denied_by?.join(', ')}
-                                  </Lamp>
-                                ) : (
-                                  <Lamp tone="neutral">granted</Lamp>
-                                )}
-                              </td>
-                            </tr>
-                          )),
-                    )}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </div>
+            <EffectiveScopeTable key={scope.scope === 'global' ? scope.path : `${scope.path}-${scope.listener_id}`} scope={scope} />
           ))}
         </div>
       )}
@@ -292,6 +234,88 @@ function EffectivePermissionsPanel({ token, onLogout }: { token: string; onLogou
         </form>
       </Section>
     </Section>
+  )
+}
+
+// One row per identity × grant (or one "No access." row for an identity
+// without grants), paged per ACL file: a file can hold hundreds of rows.
+type EffectiveRow = { identity: EffectiveIdentity; grant?: EffectiveGrant; grantIndex: number }
+
+function EffectiveScopeTable({ scope }: { scope: EffectiveScope }) {
+  const rows: EffectiveRow[] = scope.identities.flatMap((identity) =>
+    identity.grants.length === 0 ? [{ identity, grantIndex: -1 }] : identity.grants.map((grant, grantIndex) => ({ identity, grant, grantIndex })),
+  )
+  const pager = useClientPage(rows, {
+    pageSize: 25,
+    match: ({ identity, grant }, query) => identity.identity.toLowerCase().includes(query) || Boolean(grant?.topic_filter.toLowerCase().includes(query)),
+  })
+  // The listener id names the file, so each file's pager gets its own label.
+  const label = scope.scope === 'global' ? 'broker-wide' : (scope.listener_id ?? scope.path)
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h4 className="text-sm font-semibold text-enamel-bright">
+          {scope.scope === 'global' ? 'Broker-wide ACL file' : `ACL file of ${scope.listener_id}`}
+        </h4>
+        <span className="break-all font-mono text-xs text-enamel-muted">{scope.path}</span>
+      </div>
+      {scope.identities.length === 0 ? (
+        <p className={`mt-2 border-y border-track py-3 ${bodyText}`}>No identity has a rule in this file.</p>
+      ) : (
+        <>
+          <div className="mt-2">
+            <ClientPager pager={pager} noun={{ one: `${label} permission`, many: `${label} permissions` }} searchLabel={`Filter ${label} permissions`} />
+          </div>
+          <div className="mt-2 table-scroll border-y border-track-strong">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-track-strong">
+                <th className={`${tableHead} text-left`}>Identity</th>
+                <th className={`${tableHead} text-left`}>Source</th>
+                <th className={`${tableHead} text-left`}>Topic filter</th>
+                <th className={`${tableHead} text-left`}>Permission</th>
+                <th className={`${tableHead} pr-0 text-left`}>Effective</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pager.rows.map(({ item: { identity, grant, grantIndex } }) =>
+                !grant ? (
+                  <tr key={`${scope.path}-${identity.identity}-empty`} className={tableRow}>
+                    <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{identity.identity}</td>
+                    <td className="py-3 pr-4 text-xs text-enamel-muted">{identity.kind}</td>
+                    <td className="py-3 text-xs text-enamel-muted" colSpan={3}>
+                      No access.
+                    </td>
+                  </tr>
+                ) : (
+                  <tr
+                    key={`${scope.path}-${identity.identity}-${grant.selector}-${grant.topic_filter}-${grantIndex}`}
+                    className={tableRow}
+                  >
+                    <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{identity.identity}</td>
+                    <td className="py-3 pr-4 text-xs text-enamel-muted">{SELECTOR_LABELS[grant.selector]}</td>
+                    <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{grant.topic_filter}</td>
+                    <td className="py-3 pr-4">
+                      <Plate>{PERMISSION_LABELS[grant.permission]}</Plate>
+                    </td>
+                    <td className="py-3">
+                      {grant.denied ? (
+                        <Lamp tone="caution">
+                          denied by {grant.denied_by?.join(', ')}
+                        </Lamp>
+                      ) : (
+                        <Lamp tone="neutral">granted</Lamp>
+                      )}
+                    </td>
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

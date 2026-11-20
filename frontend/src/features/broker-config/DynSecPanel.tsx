@@ -17,6 +17,8 @@ import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
 import { DiffBlock, Plate, Section } from '../ui/primitives'
 import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
 import { DraftState, Findings } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 
 // emptyDocument is the security database of a broker that has none yet.
 const emptyDocument: DynSecDocument = {
@@ -63,6 +65,10 @@ export default function DynSecPanel({
 
   const roleNames = document.roles.map((role) => role.rolename)
   const groupNames = document.groups.map((group) => group.groupname)
+  // Cards are paged; each row keeps its index in the document for the handlers.
+  const clientPager = useClientPage(document.clients, { match: (client, query) => client.username.toLowerCase().includes(query) })
+  const groupPager = useClientPage(document.groups, { match: (group, query) => group.groupname.toLowerCase().includes(query) })
+  const rolePager = useClientPage(document.roles, { match: (role, query) => role.rolename.toLowerCase().includes(query) })
 
   const mutate = (change: (doc: DynSecDocument) => DynSecDocument) => {
     setDraft((current) => change(current ?? base))
@@ -90,6 +96,7 @@ export default function DynSecPanel({
       ...doc,
       clients: [...doc.clients, { username: '', textname: '', textdescription: '', clientid: '', password: '', roles: [], groups: [] }],
     }))
+    clientPager.showLast()
   }
 
   const removeClient = (index: number) => {
@@ -125,6 +132,7 @@ export default function DynSecPanel({
       ...doc,
       groups: [...doc.groups, { groupname: '', textname: '', textdescription: '', roles: [], clients: [] }],
     }))
+    groupPager.showLast()
   }
 
   const removeGroup = (index: number) => {
@@ -167,6 +175,7 @@ export default function DynSecPanel({
       ...doc,
       roles: [...doc.roles, { rolename: '', textname: '', textdescription: '', acls: [] }],
     }))
+    rolePager.showLast()
   }
 
   const removeRole = (index: number) => {
@@ -308,25 +317,28 @@ export default function DynSecPanel({
             description="The clients the plugin authenticates."
             aside={<button type="button" onClick={addClient} disabled={isApplying || isPreviewing} className={leverSecondary}>Add client</button>}
           >
-            <div className="mt-4">
-              {document.clients.length === 0 ? (
-                <p className={bodyText}>No client is configured.</p>
-              ) : null}
-              {document.clients.map((client, index) => (
-                <ClientCard
-                  key={index}
-                  client={client}
-                  index={index}
-                  roleNames={roleNames}
-                  groupNames={groupNames}
-                  disabled={isApplying || isPreviewing}
-                  onChange={(changes) => updateClient(index, changes)}
-                  onRename={(username) => renameClient(index, username)}
-                  onRemove={() => removeClient(index)}
-                  onRolesChange={(roles) => updateClient(index, { roles })}
-                  onGroupsChange={(groups) => updateClient(index, { groups })}
-                />
-              ))}
+            <div className="mt-4 space-y-4">
+              <ClientPager pager={clientPager} noun={{ one: 'client', many: 'clients' }} searchLabel="Filter clients by name" />
+              <div>
+                {document.clients.length === 0 ? (
+                  <p className={bodyText}>No client is configured.</p>
+                ) : null}
+                {clientPager.rows.map(({ item: client, index }) => (
+                  <ClientCard
+                    key={index}
+                    client={client}
+                    index={index}
+                    roleNames={roleNames}
+                    groupNames={groupNames}
+                    disabled={isApplying || isPreviewing}
+                    onChange={(changes) => updateClient(index, changes)}
+                    onRename={(username) => renameClient(index, username)}
+                    onRemove={() => removeClient(index)}
+                    onRolesChange={(roles) => updateClient(index, { roles })}
+                    onGroupsChange={(groups) => updateClient(index, { groups })}
+                  />
+                ))}
+              </div>
             </div>
           </Section>
 
@@ -335,25 +347,28 @@ export default function DynSecPanel({
             description="The groups of clients that share the same roles."
             aside={<button type="button" onClick={addGroup} disabled={isApplying || isPreviewing} className={leverSecondary}>Add group</button>}
           >
-            <div className="mt-4">
-              {document.groups.length === 0 ? (
-                <p className={bodyText}>No group is configured.</p>
-              ) : null}
-              {document.groups.map((group, index) => (
-                <GroupCard
-                  key={index}
-                  group={group}
-                  index={index}
-                  roleNames={roleNames}
-                  clientNames={document.clients.map((client) => client.username)}
-                  disabled={isApplying || isPreviewing}
-                  onChange={(changes) => updateGroup(index, changes)}
-                  onRename={(groupname) => renameGroup(index, groupname)}
-                  onRemove={() => removeGroup(index)}
-                  onRolesChange={(roles) => updateGroup(index, { roles })}
-                  onClientsChange={(clients) => updateGroup(index, { clients })}
-                />
-              ))}
+            <div className="mt-4 space-y-4">
+              <ClientPager pager={groupPager} noun={{ one: 'group', many: 'groups' }} searchLabel="Filter groups by name" />
+              <div>
+                {document.groups.length === 0 ? (
+                  <p className={bodyText}>No group is configured.</p>
+                ) : null}
+                {groupPager.rows.map(({ item: group, index }) => (
+                  <GroupCard
+                    key={index}
+                    group={group}
+                    index={index}
+                    roleNames={roleNames}
+                    clientNames={document.clients.map((client) => client.username)}
+                    disabled={isApplying || isPreviewing}
+                    onChange={(changes) => updateGroup(index, changes)}
+                    onRename={(groupname) => renameGroup(index, groupname)}
+                    onRemove={() => removeGroup(index)}
+                    onRolesChange={(roles) => updateGroup(index, { roles })}
+                    onClientsChange={(clients) => updateGroup(index, { clients })}
+                  />
+                ))}
+              </div>
             </div>
           </Section>
 
@@ -362,22 +377,25 @@ export default function DynSecPanel({
             description="The roles that carry the topic permissions."
             aside={<button type="button" onClick={addRole} disabled={isApplying || isPreviewing} className={leverSecondary}>Add role</button>}
           >
-            <div className="mt-4">
-              {document.roles.length === 0 ? (
-                <p className={bodyText}>No role is configured.</p>
-              ) : null}
-              {document.roles.map((role, index) => (
-                <RoleCard
-                  key={index}
-                  role={role}
-                  index={index}
-                  disabled={isApplying || isPreviewing}
-                  onChange={(changes) => updateRole(index, changes)}
-                  onRename={(rolename) => renameRole(index, rolename)}
-                  onRemove={() => removeRole(index)}
-                  onACLsChange={(acls) => updateRole(index, { acls })}
-                />
-              ))}
+            <div className="mt-4 space-y-4">
+              <ClientPager pager={rolePager} noun={{ one: 'role', many: 'roles' }} searchLabel="Filter roles by name" />
+              <div>
+                {document.roles.length === 0 ? (
+                  <p className={bodyText}>No role is configured.</p>
+                ) : null}
+                {rolePager.rows.map(({ item: role, index }) => (
+                  <RoleCard
+                    key={index}
+                    role={role}
+                    index={index}
+                    disabled={isApplying || isPreviewing}
+                    onChange={(changes) => updateRole(index, changes)}
+                    onRename={(rolename) => renameRole(index, rolename)}
+                    onRemove={() => removeRole(index)}
+                    onACLsChange={(acls) => updateRole(index, { acls })}
+                  />
+                ))}
+              </div>
             </div>
           </Section>
 
@@ -431,23 +449,26 @@ export default function DynSecPanel({
               <p className="mt-2 break-all font-mono text-xs text-enamel-muted">plan {preview.plan_id}</p>
 
               {preview.plan?.changes?.length ? (
-                <ul className="mt-4 border-y border-track">
-                  {preview.plan.changes.map((change, index) => (
-                    <li key={`${change.kind}-${change.name}-${index}`} className="border-b border-track py-3 last:border-0">
-                      <p className="font-mono text-xs text-enamel-muted">
-                        {change.kind} · {change.action}
-                      </p>
-                      <p className="mt-1 text-sm text-enamel">{change.summary}</p>
-                      {change.commands?.length ? (
-                        <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-soft">
-                          {change.commands.map((command, commandIndex) => (
-                            <li key={`${command.command}-${commandIndex}`}>{command.command}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
+                // A review before applying: bounded, but never paged, so no change hides on another page.
+                <div role="region" aria-label="Plan changes" tabIndex={0} className="mt-4 max-h-96 overflow-y-auto border-y border-track">
+                  <ul>
+                    {preview.plan.changes.map((change, index) => (
+                      <li key={`${change.kind}-${change.name}-${index}`} className="border-b border-track py-3 last:border-0">
+                        <p className="font-mono text-xs text-enamel-muted">
+                          {change.kind} · {change.action}
+                        </p>
+                        <p className="mt-1 text-sm text-enamel">{change.summary}</p>
+                        {change.commands?.length ? (
+                          <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-soft">
+                            {change.commands.map((command, commandIndex) => (
+                              <li key={`${command.command}-${commandIndex}`}>{command.command}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : (
                 <p className={`mt-4 ${bodyText}`}>No changes — the security database already matches.</p>
               )}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ListenersPanel from './ListenersPanel'
@@ -134,5 +134,40 @@ describe('ListenersPanel editor', () => {
     await user.type(screen.getByLabelText('MFA code'), '123456')
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply (restart required)' })).toBeEnabled())
+  })
+
+  it('pages, edits, adds and filters the listener rows and keeps the issues listed', async () => {
+    // l12 sits on page 2 with an invalid port: the Issues summary must still name it from page 1.
+    const specs = Array.from({ length: 12 }, (_, i) => ({ ID: `l${String(i + 1).padStart(2, '0')}`, Port: i === 11 ? 70000 : 1801 + i, Bind: '0.0.0.0', Protocols: ['mqtt'] }))
+    vi.stubGlobal('fetch', installFetchMock({
+      'GET /api/v1/listeners': () => jsonResponse({ specs }),
+      'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [] }),
+    }))
+    const user = userEvent.setup()
+    render(<ListenersPanel token="tok" onLogout={() => {}} role="admin" />)
+
+    expect(await screen.findByLabelText('Port l01')).toHaveValue('1801')
+    expect(screen.getByLabelText('Port l10')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Port l11')).not.toBeInTheDocument()
+    expect(screen.getAllByText('port must be between 1 and 65535')).toHaveLength(1)
+    const pages = screen.getByRole('navigation', { name: 'listeners pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.queryByLabelText('Port l01')).not.toBeInTheDocument()
+    const bind = screen.getByLabelText('Bind l11')
+    await user.clear(bind)
+    await user.type(bind, '127.0.0.1')
+    expect(screen.getByLabelText('Bind l11')).toHaveValue('127.0.0.1')
+
+    await user.click(within(pages).getByRole('button', { name: 'Previous page' }))
+    expect(screen.getByLabelText('Bind l01')).toHaveValue('0.0.0.0')
+    await user.click(screen.getByRole('button', { name: 'Add listener' }))
+    expect(screen.getByLabelText('Port listener-1')).toHaveValue('1883')
+    expect(screen.getByRole('navigation', { name: 'listeners pages' })).toHaveTextContent('Page 2 of 2')
+
+    await user.type(screen.getByLabelText('Filter listeners by port, bind or protocol'), '1805')
+    expect(screen.getByLabelText('Port l05')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Port listener-1')).not.toBeInTheDocument()
   })
 })

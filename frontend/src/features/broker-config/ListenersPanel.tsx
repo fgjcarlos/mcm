@@ -6,6 +6,8 @@ import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
 import { DiffBlock, Section } from '../ui/primitives'
 import { bodyText, codeBlock, fieldHint, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
 import { DraftState, Findings } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 import { useCertificateProfiles } from './useCertificates'
 import { composePortConflicts, validateListeners } from './listenerValidation'
 import type { ListenerIssue, ListenerSpec } from './types'
@@ -39,6 +41,7 @@ export default function ListenersPanel({
   const [draft, setDraft] = useState<ListenerSpec[]>()
   const specs = draft ?? listeners
   const dirty = draft !== undefined
+  const pager = useClientPage(specs, { match: (listener, query) => `${listener.Port} ${listener.Bind} ${listener.Protocols.join(' ')}`.toLowerCase().includes(query) })
   const [confirmRestart, setConfirmRestart] = useState(false)
   const canApply = role === 'admin'
   const validation = useMemo(() => validateListeners(specs), [specs])
@@ -106,6 +109,7 @@ export default function ListenersPanel({
       return match ? Math.max(max, Number(match[1])) : max
     }, 0) + 1
     setDraft((current) => [...(current ?? listeners), newListener(nextIndex)])
+    pager.showLast()
   }
 
   const removeListener = (id: string) => {
@@ -139,80 +143,83 @@ export default function ListenersPanel({
         {applyError ? <div className={`mt-5 ${notice.failed}`}>{applyError}</div> : null}
         {applyResult?.applied ? <div className={`mt-5 px-4 py-3 text-sm ${lampPanel[deploymentLamp('applied')]}`}>Listener configuration applied.</div> : null}
 
-        <div className="mt-5 table-scroll border-y border-track-strong">
-          {isLoading ? (
-            <p className={`py-6 ${bodyText}`}>Loading listeners…</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-track-strong">
-                  <th className={`${tableHead} text-left`}>Port</th>
-                  <th className={`${tableHead} text-left`}>Bind</th>
-                  <th className={`${tableHead} text-left`}>Protocols</th>
-                  <th className={`${tableHead} text-left`}>TLS</th>
-                  <th className={`${tableHead} text-left`}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {specs.map((listener) => {
-                  const rowIssues = listenerIssues(listener.ID)
-                  const conflicts = composeConflicts[listener.ID] ?? []
-                  return (
-                    <tr key={listener.ID} className={`${tableRow} align-top`}>
-                      <td className="py-3 pr-4">
-                        <input aria-label={`Port ${listener.ID}`} disabled={isApplying} type="text" inputMode="numeric" value={listener.Port} onChange={(event) => updateListener(listener.ID, { Port: event.target.value === '' ? 0 : Number(event.target.value) })} className={`w-24 font-mono ${input}`} />
-                        <span className="sr-only">{listener.Port}</span>
-                        {rowIssues.filter((issue) => issue.kind === 'port_range').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
-                        {conflicts.map((port) => <span key={port} className="mt-1 block text-xs text-lamp">Port {port} conflicts with a Compose host port</span>)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <input aria-label={`Bind ${listener.ID}`} disabled={isApplying} value={listener.Bind} onChange={(event) => updateListener(listener.ID, { Bind: event.target.value })} className={`w-36 font-mono ${input}`} />
-                        <span className="sr-only">{listener.Bind}</span>
-                        {rowIssues.filter((issue) => issue.kind === 'bind').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <input aria-label={`Protocols ${listener.ID}`} disabled={isApplying} value={listener.Protocols.join(', ')} onChange={(event) => updateListener(listener.ID, { Protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className={`w-36 font-mono ${input}`} />
-                        <span className="sr-only">{listener.Protocols.join(', ')}</span>
-                        {rowIssues.filter((issue) => issue.kind.startsWith('protocols')).map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
-                      </td>
-                      <td className="py-3 pr-4">
-                        {certificatesDisabled ? (
-                          <p className={fieldHint}>Certificate profiles are unavailable.</p>
-                        ) : (
-                          <>
-                            <select
-                              aria-label={`TLS profile ${listener.ID}`}
-                              disabled={isApplying}
-                              value={listener.tls_profile ?? ''}
-                              onChange={(event) => updateListenerProfile(listener.ID, event.target.value)}
-                              className={`w-44 ${select}`}
-                            >
-                              <option value="">None (plain MQTT)</option>
-                              {certificateProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}
-                            </select>
-                            {listener.tls_profile ? (
-                              <label className="mt-2 flex items-center gap-2 text-xs text-enamel">
-                                <input
-                                  aria-label={`Require client certificate ${listener.ID}`}
-                                  type="checkbox"
-                                  disabled={isApplying}
-                                  checked={listener.Options?.require_certificate === 'true'}
-                                  onChange={(event) => updateListenerOption(listener.ID, 'require_certificate', event.target.checked ? 'true' : undefined)}
-                                />
-                                Require client certificate
-                              </label>
-                            ) : null}
-                          </>
-                        )}
-                      </td>
-                      <td className="py-3"><button type="button" aria-label={`Remove listener ${listener.ID}`} disabled={isApplying} onClick={() => removeListener(listener.ID)} className={leverDanger}>Remove</button></td>
-                    </tr>
-                  )
-                })}
-                {specs.length === 0 ? <tr><td colSpan={5} className={`py-6 ${bodyText}`}>No listeners configured.</td></tr> : null}
-              </tbody>
-            </table>
-          )}
+        <div className="mt-5 space-y-4">
+          <ClientPager pager={pager} noun={{ one: 'listener', many: 'listeners' }} searchLabel="Filter listeners by port, bind or protocol" />
+          <div className="table-scroll border-y border-track-strong">
+            {isLoading ? (
+              <p className={`py-6 ${bodyText}`}>Loading listeners…</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-track-strong">
+                    <th className={`${tableHead} text-left`}>Port</th>
+                    <th className={`${tableHead} text-left`}>Bind</th>
+                    <th className={`${tableHead} text-left`}>Protocols</th>
+                    <th className={`${tableHead} text-left`}>TLS</th>
+                    <th className={`${tableHead} text-left`}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pager.rows.map(({ item: listener }) => {
+                    const rowIssues = listenerIssues(listener.ID)
+                    const conflicts = composeConflicts[listener.ID] ?? []
+                    return (
+                      <tr key={listener.ID} className={`${tableRow} align-top`}>
+                        <td className="py-3 pr-4">
+                          <input aria-label={`Port ${listener.ID}`} disabled={isApplying} type="text" inputMode="numeric" value={listener.Port} onChange={(event) => updateListener(listener.ID, { Port: event.target.value === '' ? 0 : Number(event.target.value) })} className={`w-24 font-mono ${input}`} />
+                          <span className="sr-only">{listener.Port}</span>
+                          {rowIssues.filter((issue) => issue.kind === 'port_range').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
+                          {conflicts.map((port) => <span key={port} className="mt-1 block text-xs text-lamp">Port {port} conflicts with a Compose host port</span>)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <input aria-label={`Bind ${listener.ID}`} disabled={isApplying} value={listener.Bind} onChange={(event) => updateListener(listener.ID, { Bind: event.target.value })} className={`w-36 font-mono ${input}`} />
+                          <span className="sr-only">{listener.Bind}</span>
+                          {rowIssues.filter((issue) => issue.kind === 'bind').map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <input aria-label={`Protocols ${listener.ID}`} disabled={isApplying} value={listener.Protocols.join(', ')} onChange={(event) => updateListener(listener.ID, { Protocols: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} className={`w-36 font-mono ${input}`} />
+                          <span className="sr-only">{listener.Protocols.join(', ')}</span>
+                          {rowIssues.filter((issue) => issue.kind.startsWith('protocols')).map((issue) => <p key={issue.message} className="mt-1 text-xs text-danger-text">{issue.message}</p>)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {certificatesDisabled ? (
+                            <p className={fieldHint}>Certificate profiles are unavailable.</p>
+                          ) : (
+                            <>
+                              <select
+                                aria-label={`TLS profile ${listener.ID}`}
+                                disabled={isApplying}
+                                value={listener.tls_profile ?? ''}
+                                onChange={(event) => updateListenerProfile(listener.ID, event.target.value)}
+                                className={`w-44 ${select}`}
+                              >
+                                <option value="">None (plain MQTT)</option>
+                                {certificateProfiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}</option>)}
+                              </select>
+                              {listener.tls_profile ? (
+                                <label className="mt-2 flex items-center gap-2 text-xs text-enamel">
+                                  <input
+                                    aria-label={`Require client certificate ${listener.ID}`}
+                                    type="checkbox"
+                                    disabled={isApplying}
+                                    checked={listener.Options?.require_certificate === 'true'}
+                                    onChange={(event) => updateListenerOption(listener.ID, 'require_certificate', event.target.checked ? 'true' : undefined)}
+                                  />
+                                  Require client certificate
+                                </label>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <td className="py-3"><button type="button" aria-label={`Remove listener ${listener.ID}`} disabled={isApplying} onClick={() => removeListener(listener.ID)} className={leverDanger}>Remove</button></td>
+                      </tr>
+                    )
+                  })}
+                  {specs.length === 0 ? <tr><td colSpan={5} className={`py-6 ${bodyText}`}>No listeners configured.</td></tr> : null}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         {blockingIssues.length > 0 ? (

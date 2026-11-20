@@ -26,6 +26,8 @@ import EffectivePermissionsPanel from './features/acl/EffectivePermissionsPanel'
 import { LogsPanel } from './features/live-feed/LogsPanel'
 import { ListControls } from './features/lists/ListControls'
 import { usePagedList } from './features/lists/usePagedList'
+import { useClientPage } from './features/lists/useClientPage'
+import { ClientPager } from './features/lists/ClientPager'
 import { serializeLogFilterQuery } from './features/live-feed/logFilter'
 import { LiveFeedChrome } from './features/live-feed/LiveFeedChrome'
 import { emptyFeedText } from './features/live-feed/feedText'
@@ -745,6 +747,7 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
   const shown = feed.visible.filter((topic) => matchesTopicFilter(topic.topic, filterText))
+  const pager = useClientPage(shown)
   const selected = selectedId === null ? undefined : shown.find((topic) => topic.id === selectedId)
   const detail = selected ?? shown[0]
   let fallbackNotice = ''
@@ -771,9 +774,12 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
       <div className="mt-6 grid gap-x-8 gap-y-6 lg:grid-cols-2">
         <section aria-label="Topic messages" className="min-w-0">
           {shown.length > 0 ? (
-            <ol className="divide-y divide-track border-y border-track">
-              {shown.map((topic) => <TopicRow key={topic.id} topic={topic} chosen={topic.id === selected?.id} inDetail={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
-            </ol>
+            <div className="space-y-4">
+              <ClientPager pager={pager} noun={messageNoun} />
+              <ol className="divide-y divide-track border-y border-track">
+                {pager.rows.map(({ item: topic }) => <TopicRow key={topic.id} topic={topic} chosen={topic.id === selected?.id} inDetail={topic.id === detail?.id} onSelect={() => setSelectedId(topic.id)} />)}
+              </ol>
+            </div>
           ) : (
             <p className={bodyText}>{emptyFeedText({
               noun: messageNoun,
@@ -793,7 +799,7 @@ function TopicsPanel({ topics, streamState }: { topics: LiveTopicMessage[]; stre
               <p className="mt-2 break-all font-mono text-xl font-semibold text-enamel-bright">{detail.topic}</p>
               <p className="mt-1 font-mono text-xs text-enamel-muted">Received {detail.observed_at} ({new Date(detail.observed_at).toLocaleString()})</p>
               {detail.schema_validation ? <SchemaValidationDetails validation={detail.schema_validation} /> : null}
-              {detail.sparkplug ? <SparkplugDetails metadata={detail.sparkplug} sparkplugMetrics={detail.sparkplug_metrics} /> : null}
+              {detail.sparkplug ? <SparkplugDetails key={detail.id} metadata={detail.sparkplug} sparkplugMetrics={detail.sparkplug_metrics} /> : null}
               <PayloadMetadata event={detail} />
               <pre className={`mt-4 max-h-64 ${codeBlock}`}>{detail.payload_preview}</pre>
             </>
@@ -907,6 +913,8 @@ function SparkplugDetails({
     ['Edge node', metadata.edge_node_id],
     ['Device', metadata.device_id],
   ].filter(([, value]) => Boolean(value))
+  // The broker caps decoded metrics per payload (default 50, configurable), so they can outgrow a page.
+  const pager = useClientPage(sparkplugMetrics?.metrics ?? [], { pageSize: 25 })
 
   return (
     <div className={`${compact ? 'mt-3' : 'mt-4'} border-t border-track pt-3`}>
@@ -925,6 +933,7 @@ function SparkplugDetails({
             Decoded metrics
             {sparkplugMetrics.truncated ? ` (showing ${sparkplugMetrics.metrics.length} of more)` : ` (${sparkplugMetrics.metrics.length})`}
           </p>
+          <div className="mt-2"><ClientPager pager={pager} noun={sparkplugMetricNoun} /></div>
           <div className="mt-2 table-scroll">
             <table className="w-full text-xs">
               <thead>
@@ -935,7 +944,7 @@ function SparkplugDetails({
                 </tr>
               </thead>
               <tbody>
-                {sparkplugMetrics.metrics.map((metric, index) => (
+                {pager.rows.map(({ item: metric, index }) => (
                   <tr key={`${metric.name}-${index}`} className={tableRow}>
                     <td className="break-all py-2 pr-4 font-mono text-enamel-bright">{metric.name || <span className="italic text-enamel-muted">unnamed</span>}</td>
                     <td className="py-2 pr-4 font-mono text-enamel-soft">{metric.datatype}</td>
@@ -995,7 +1004,12 @@ function payloadChips(event: TopicMessage) {
   ].filter((chip): chip is string => Boolean(chip))
 }
 
+const sparkplugMetricNoun = { one: 'Sparkplug metric', many: 'Sparkplug metrics' }
+const securityEventNoun = { one: 'security event', many: 'security events' }
+const auditEventNoun = { one: 'audit event', many: 'audit events' }
+
 function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: string }) {
+  const pager = useClientPage(events)
   return (
     <section className="mt-8">
       <Section
@@ -1008,8 +1022,10 @@ function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: stri
         ) : events.length === 0 ? (
           <p className={`mt-5 ${notice.neutral}`}>No security events recorded yet.</p>
         ) : (
-          <ol className="mt-5 divide-y divide-track border-y border-track">
-            {events.map((event) => (
+          <div className="mt-5 space-y-4">
+          <ClientPager pager={pager} noun={securityEventNoun} />
+          <ol className="divide-y divide-track border-y border-track">
+            {pager.rows.map(({ item: event }) => (
               <li key={event.id} className="py-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1026,6 +1042,7 @@ function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: stri
               </li>
             ))}
           </ol>
+          </div>
         )}
       </Section>
     </section>
@@ -1036,6 +1053,7 @@ function SecurityPanel({ events, error }: { events: SecurityEvent[]; error: stri
 const auditTone = (result: string): LampTone => (result === 'success' ? 'neutral' : 'failed')
 
 function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) {
+  const pager = useClientPage(events)
   return (
     <section className="mt-8">
       <Section
@@ -1048,8 +1066,10 @@ function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) 
         ) : events.length === 0 ? (
           <p className={`mt-5 ${notice.neutral}`}>No audit events recorded yet.</p>
         ) : (
-          <ol className="mt-5 divide-y divide-track border-y border-track">
-            {events.map((event) => (
+          <div className="mt-5 space-y-4">
+          <ClientPager pager={pager} noun={auditEventNoun} />
+          <ol className="divide-y divide-track border-y border-track">
+            {pager.rows.map(({ item: event }) => (
               <li key={event.id} className="py-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-3">
@@ -1068,6 +1088,7 @@ function AuditPanel({ events, error }: { events: AuditEvent[]; error: string }) 
               </li>
             ))}
           </ol>
+          </div>
         )}
       </Section>
     </section>
@@ -1090,6 +1111,10 @@ type DiagnosticsPayload = {
     mqtt?: { status: string; client_id: string; subscriptions: string[]; error: string }
   }
 }
+
+const brokerLogEntryNoun = { one: 'broker log entry', many: 'broker log entries' }
+const counterNoun = { one: 'counter', many: 'counters' }
+const sysMetricNoun = { one: '$SYS metric', many: '$SYS metrics' }
 
 function BrokerDiagnosticsPanel({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [severity, setSeverity] = useState('')
@@ -1114,6 +1139,9 @@ function BrokerDiagnosticsPanel({ token, onLogout }: { token: string; onLogout: 
   const logs = sources?.broker_logs
   const internal = sources?.internal_metrics
   const sys = data?.broker_sys
+  const logPager = useClientPage(logs?.entries ?? [], { pageSize: 25 })
+  const counterPager = useClientPage(Object.entries(internal?.counters ?? {}), { pageSize: 25, match: ([name], query) => name.toLowerCase().includes(query) })
+  const sysPager = useClientPage(Object.entries(sys?.metrics ?? {}), { pageSize: 25, match: ([topic], query) => topic.toLowerCase().includes(query) })
   const loading = <p className={`mt-3 ${bodyText}`}>Loading…</p>
   return <section className="mt-8 space-y-8">
     <Section title="Broker diagnostics">
@@ -1142,20 +1170,20 @@ function BrokerDiagnosticsPanel({ token, onLogout }: { token: string; onLogout: 
           <h5 className="mt-4 text-xs font-semibold text-enamel-soft">Effective limits</h5>
           <dl className="mt-2 grid gap-3 sm:grid-cols-2"><WidgetFact label="Max entries" value={String(logs.limits.max_entries)} /><WidgetFact label="Max entries per read" value={String(logs.limits.max_entries_per_read)} /><WidgetFact label="Max message bytes" value={String(logs.limits.max_message_bytes)} /><WidgetFact label="Max age" value={`${logs.limits.max_age_seconds} seconds`} /></dl>
           <p className={`mt-3 ${fieldHint}`}>{logs.note}</p>
-          {logs.available ? <div className="mt-4">{logs.entries.length ? <div className="divide-y divide-track border-y border-track">{logs.entries.map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="py-3">
+          {logs.available ? <div className="mt-4 space-y-4">{logs.entries.length ? <><ClientPager pager={logPager} noun={brokerLogEntryNoun} /><div className="divide-y divide-track border-y border-track">{logPager.rows.map(({ item: entry, index }) => <article key={`${entry.observed_at}-${index}`} className="py-3">
             <div className="flex flex-wrap items-center gap-3"><time dateTime={entry.observed_at} className="font-mono text-xs tabular-nums text-enamel-muted">{new Date(entry.observed_at).toLocaleString()}</time><SeverityBadge severity={entry.severity} /><span className="font-mono text-xs text-enamel">{entry.kind}</span></div>
             {entry.client_id ? <p className="mt-2 text-xs text-enamel-soft">Client ID (broker-sourced): <span className="font-mono text-enamel-bright">{entry.client_id}</span></p> : null}
             {entry.topic ? <p className="mt-1 break-all text-xs text-enamel-soft">Topic: <span className="font-mono text-enamel-bright">{entry.topic}</span></p> : null}
             <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-enamel-bright">{entry.message}</p>
-          </article>)}</div> : <p className={bodyText}>No broker log entries in this window.</p>}</div> : null}
+          </article>)}</div></> : <p className={bodyText}>No broker log entries in this window.</p>}</div> : null}
         </> : loading}
       </Section>
       <Section title="Internal metrics" ruled={false}>
-        {internal ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Endpoint" value={internal.endpoint} /><WidgetFact label="Format" value={internal.format} /></dl><h5 className="mt-4 text-xs font-semibold text-enamel-soft">Counters</h5><ul className="mt-2 divide-y divide-track border-y border-track">{Object.entries(internal.counters).map(([name, value]) => <li key={name} className="flex justify-between gap-3 py-2 text-sm"><span className="break-all font-mono text-enamel">{name}</span><span className="font-mono tabular-nums text-enamel-bright">{value}</span></li>)}</ul>{Object.keys(internal.counters).length === 0 ? <p className={`mt-2 ${bodyText}`}>No counters reported.</p> : null}<p className={`mt-3 ${fieldHint}`}>{internal.note}</p></> : loading}
+        {internal ? <><dl className="mt-3 grid gap-3 sm:grid-cols-2"><WidgetFact label="Endpoint" value={internal.endpoint} /><WidgetFact label="Format" value={internal.format} /></dl><h5 className="mt-4 text-xs font-semibold text-enamel-soft">Counters</h5><div className="mt-2"><ClientPager pager={counterPager} noun={counterNoun} searchLabel="Filter counters" /></div><ul className="mt-2 divide-y divide-track border-y border-track">{counterPager.rows.map(({ item: [name, value] }) => <li key={name} className="flex justify-between gap-3 py-2 text-sm"><span className="break-all font-mono text-enamel">{name}</span><span className="font-mono tabular-nums text-enamel-bright">{value}</span></li>)}</ul>{Object.keys(internal.counters).length === 0 ? <p className={`mt-2 ${bodyText}`}>No counters reported.</p> : null}<p className={`mt-3 ${fieldHint}`}>{internal.note}</p></> : loading}
       </Section>
     </div>
     <Section title="Broker-published $SYS metrics">
-      {sys ? sys.available ? <><p className={`mt-1 ${fieldHint}`}>{sys.note}</p><ul className="mt-3 divide-y divide-track border-y border-track">{Object.entries(sys.metrics).map(([topic, metric]) => <li key={topic} className="grid gap-2 py-2 sm:grid-cols-3"><span className="break-all font-mono text-sm text-enamel">{topic}</span><span className="font-mono text-sm tabular-nums text-enamel-bright">{metric.value}</span><time dateTime={metric.observed_at} className="font-mono text-xs tabular-nums text-enamel-muted">{new Date(metric.observed_at).toLocaleString()}</time></li>)}</ul>{Object.keys(sys.metrics).length === 0 ? <p className={`mt-3 ${bodyText}`}>No $SYS metrics observed yet.</p> : null}</> : <p className="mt-3 text-sm text-lamp">Unavailable: {sys.reason || 'No reason provided.'}</p> : loading}
+      {sys ? sys.available ? <><p className={`mt-1 ${fieldHint}`}>{sys.note}</p><div className="mt-3"><ClientPager pager={sysPager} noun={sysMetricNoun} searchLabel="Filter $SYS metrics" /></div><ul className="mt-3 divide-y divide-track border-y border-track">{sysPager.rows.map(({ item: [topic, metric] }) => <li key={topic} className="grid gap-2 py-2 sm:grid-cols-3"><span className="break-all font-mono text-sm text-enamel">{topic}</span><span className="font-mono text-sm tabular-nums text-enamel-bright">{metric.value}</span><time dateTime={metric.observed_at} className="font-mono text-xs tabular-nums text-enamel-muted">{new Date(metric.observed_at).toLocaleString()}</time></li>)}</ul>{Object.keys(sys.metrics).length === 0 ? <p className={`mt-3 ${bodyText}`}>No $SYS metrics observed yet.</p> : null}</> : <p className="mt-3 text-sm text-lamp">Unavailable: {sys.reason || 'No reason provided.'}</p> : loading}
     </Section>
     <Section title="Diagnostic checks"><div className="mt-3 grid gap-x-8 gap-y-4 sm:grid-cols-3 sm:divide-x sm:divide-track">{(['tcp','tls','mqtt'] as const).map((name) => { const check = data?.diagnostics?.[name]; return <div key={name} className="sm:px-6 sm:first:pl-0 sm:last:pr-0"><div className="flex items-center justify-between gap-2"><strong className="font-mono text-sm uppercase text-enamel-bright">{name}</strong><SeverityStatusBadge status={check?.status ?? 'not run'} /></div>
       {check ? <DiagnosticCheckDetail name={name} check={check} /> : <p className={`mt-2 ${fieldHint}`}>Check not run.</p>}
@@ -1701,7 +1729,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.scope_issues?.length ? (
               <PreviewBlock tone="failed" title="Listener scope problems" count={preview.scope_issues.length}>
                 <p className={`mt-2 ${bodyText}`}>The listener-scoped rules would never reach the broker. The apply is refused until these are resolved.</p>
-                <ul className="mt-3 space-y-2 font-mono text-xs text-enamel-bright">
+                <ul aria-label="Listener scope problems" tabIndex={0} className={`mt-3 space-y-2 font-mono text-xs text-enamel-bright ${reviewScroll}`}>
                   {preview.scope_issues.map((issue) => (
                     <li key={issue} className="break-words">{issue}</li>
                   ))}
@@ -1712,7 +1740,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.orphan_rules?.length ? (
               <PreviewBlock tone="caution" title="Orphan ACL rules" count={preview.orphan_rules.length}>
                 <p className={`mt-2 ${bodyText}`}>These rules reference missing or disabled MQTT users and will be excluded from the rendered Mosquitto ACL file. Delete or reassign them before applying.</p>
-                <div className="mt-3 table-scroll">
+                <div role="region" aria-label="Orphan ACL rules" tabIndex={0} className={`mt-3 table-scroll ${reviewScroll}`}>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-track-strong">
@@ -1737,7 +1765,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.at_risk_entries?.length ? (
               <PreviewBlock tone="caution" title="Access at risk" count={preview.at_risk_entries.length}>
                 <p className={`mt-2 ${bodyText}`}>The current file grants these entries and the rendered one does not. The deploy would drop that access.</p>
-                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
+                <ul aria-label="Access at risk" tabIndex={0} className={`mt-3 space-y-1 font-mono text-xs text-enamel-bright ${reviewScroll}`}>
                   {preview.at_risk_entries.map((entry) => (
                     <li key={entry} className="break-all">{entry}</li>
                   ))}
@@ -1746,7 +1774,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             ) : null}
             {listenerAtRisk.length ? (
               <PreviewBlock tone="caution" title="Listener access at risk">
-                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
+                <ul aria-label="Listener access at risk" tabIndex={0} className={`mt-3 space-y-1 font-mono text-xs text-enamel-bright ${reviewScroll}`}>
                   {listenerAtRisk.map(({ listener, entry }) => (
                     <li key={`${listener}|${entry}`} className="break-all">at risk ({listener}): {entry}</li>
                   ))}
@@ -1755,7 +1783,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             ) : null}
             {preview.composition_warnings?.length ? (
               <PreviewBlock tone="caution" title="Composition warnings">
-                <ul className="mt-3 space-y-2 text-sm text-enamel">
+                <ul aria-label="Composition warnings" tabIndex={0} className={`mt-3 space-y-2 text-sm text-enamel ${reviewScroll}`}>
                   {preview.composition_warnings.map((warning) => (
                     <li key={warning} className="break-words">{warning}</li>
                   ))}
@@ -1765,7 +1793,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.scope_pending_activation?.length ? (
               <PreviewBlock tone="neutral" title="Pending listener activation" count={preview.scope_pending_activation.length}>
                 <p className={`mt-2 ${bodyText}`}>The files of these listeners are written by this deployment. Their rules become active once the listener configuration declares them.</p>
-                <ul className="mt-3 space-y-2 text-sm text-enamel">
+                <ul aria-label="Pending listener activation" tabIndex={0} className={`mt-3 space-y-2 text-sm text-enamel ${reviewScroll}`}>
                   {preview.scope_pending_activation.map((item) => (
                     <li key={item} className="break-words">{item}</li>
                   ))}
@@ -1775,7 +1803,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             {preview.removed_acl_files?.length ? (
               <PreviewBlock tone="caution" title="Files the deploy would delete">
                 <p className={`mt-2 ${bodyText}`}>These listener files lose their last scoped rule, so the deploy removes them.</p>
-                <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
+                <ul aria-label="Files the deploy would delete" tabIndex={0} className={`mt-3 space-y-1 font-mono text-xs text-enamel-bright ${reviewScroll}`}>
                   {preview.removed_acl_files.map((path) => (
                     <li key={path} className="break-all">{path}</li>
                   ))}
@@ -1789,14 +1817,14 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                   {preview.preserved_entries?.length ? (
                     <PreviewBlock tone="neutral" title="Preserved entries" count={preview.preserved_entries.length}>
                       <p className={`mt-2 ${bodyText}`}>These lines of the adopted file survive into the rendered one — nothing of the import is lost.</p>
-                      <ul className="mt-3 space-y-1 font-mono text-xs text-enamel-bright">
+                      <ul aria-label="Preserved entries" tabIndex={0} className={`mt-3 space-y-1 font-mono text-xs text-enamel-bright ${reviewScroll}`}>
                         {preview.preserved_entries.map((entry) => (
                           <li key={entry} className="break-all">{entry}</li>
                         ))}
                       </ul>
                     </PreviewBlock>
                   ) : null}
-                  {preview.listener_acl_files?.map((file) => (
+                  {preview.listener_acl_files?.length ? <div role="region" aria-label="Listener files" tabIndex={0} className={`space-y-6 ${reviewScroll}`}>{preview.listener_acl_files.map((file) => (
                     <div key={file.path}>
                       <div className="flex flex-wrap items-baseline justify-between gap-3">
                         <h5 className="text-sm font-semibold text-enamel-bright">Listener file — {file.listener_id}</h5>
@@ -1807,7 +1835,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                       </p>
                       {file.diff ? <div className="mt-3"><DiffBlock content={file.diff} /></div> : null}
                     </div>
-                  ))}
+                  ))}</div> : null}
                   {preview.acl_diff ? (
                     <div>
                       <h5 className="mb-2 text-sm font-semibold text-enamel-bright">ACL diff</h5>
@@ -1870,6 +1898,9 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
 }
 
 // One block of the deploy preview: a lamp-lit heading with its count on a hairline, no box.
+// Deploy review lists stay whole (S3): bounded height with a scroll, never pages.
+const reviewScroll = 'max-h-96 overflow-y-auto'
+
 function PreviewBlock({ tone, title, count, children }: { tone: LampTone; title: string; count?: number; children: ReactNode }) {
   return (
     <section className="border-t border-track pt-4">

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PluginsPanel from './PluginsPanel'
@@ -262,5 +262,66 @@ describe('PluginsPanel', () => {
 
     expect(await screen.findByText(/plugin configuration is invalid/)).toBeInTheDocument()
     expect(screen.getByText(/needs the option "plugin_opt_config_file"/)).toBeInTheDocument()
+  })
+
+  const twelveSpecs = Array.from({ length: 12 }, (_, i) => {
+    const n = String(i + 1).padStart(2, '0')
+    return { id: `plugin-${n}`, title: `Plugin ${n}`, module: `/usr/lib/plugin_${n}.so`, reload_kind: 'restart', options: [] }
+  })
+  function crowdedPlugins(configured: number) {
+    return { ...pluginsResponse(twelveSpecs.slice(0, configured).map((spec) => ({ id: spec.id, module: spec.module }))), catalog: twelveSpecs }
+  }
+
+  it('pages and filters the supported plugins', async () => {
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/plugins': () => jsonResponse(crowdedPlugins(0)),
+    }) as unknown as typeof fetch
+    const user = userEvent.setup()
+    render(<PluginsPanel token="token" onLogout={() => {}} role="operator" />)
+
+    expect(await screen.findByRole('button', { name: 'Enable Plugin 10' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enable Plugin 01' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Enable Plugin 11' })).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'supported plugins pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByRole('button', { name: 'Enable Plugin 12' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Enable Plugin 01' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Filter supported plugins'), 'PLUGIN-03')
+    expect(screen.getByRole('button', { name: 'Enable Plugin 03' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Enable Plugin 12' })).not.toBeInTheDocument()
+  })
+
+  it('pages, edits, adds and filters the configured plugins', async () => {
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/plugins': () => jsonResponse(crowdedPlugins(11)),
+    }) as unknown as typeof fetch
+    const user = userEvent.setup()
+    render(<PluginsPanel token="token" onLogout={() => {}} role="operator" />)
+
+    await waitFor(() => expect(screen.getByLabelText('Module plugin-01')).toHaveValue('/usr/lib/plugin_01.so'))
+    expect(screen.getByLabelText('Module plugin-10')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Module plugin-11')).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'configured plugins pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.queryByLabelText('Module plugin-01')).not.toBeInTheDocument()
+    const module = screen.getByLabelText('Module plugin-11')
+    await user.clear(module)
+    await user.type(module, '/opt/edited.so')
+    expect(screen.getByLabelText('Module plugin-11')).toHaveValue('/opt/edited.so')
+
+    await user.click(within(pages).getByRole('button', { name: 'Previous page' }))
+    expect(screen.getByLabelText('Module plugin-01')).toHaveValue('/usr/lib/plugin_01.so')
+    const catalogPages = screen.getByRole('navigation', { name: 'supported plugins pages' })
+    await user.click(within(catalogPages).getByRole('button', { name: 'Next page' }))
+    await user.click(screen.getByRole('button', { name: 'Enable Plugin 12' }))
+    expect(screen.getByLabelText('Module plugin-12')).toHaveValue('/usr/lib/plugin_12.so')
+    expect(screen.getByRole('navigation', { name: 'configured plugins pages' })).toHaveTextContent('Page 2 of 2')
+
+    await user.type(screen.getByLabelText('Filter configured plugins'), 'plugin_05')
+    expect(screen.getByLabelText('Module plugin-05')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Module plugin-12')).not.toBeInTheDocument()
   })
 })

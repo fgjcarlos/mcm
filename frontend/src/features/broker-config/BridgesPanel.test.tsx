@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BridgesPanel from './BridgesPanel'
@@ -259,5 +259,37 @@ describe('BridgesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Add bridge' }))
     expect(await screen.findByLabelText('Name bridge-1')).toHaveValue('bridge-1')
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument()
+  })
+
+  it('pages, edits, adds and filters the bridge cards', async () => {
+    const bridges = Array.from({ length: 7 }, (_, i) => ({ ...storedBridge, name: `b0${i + 1}`, address: `remote${i + 1}.example.org:1883`, remote_client_id: `mcm-b0${i + 1}` }))
+    globalThis.fetch = installFetchMock({
+      'GET /api/v1/broker/bridges': () => jsonResponse({ bridges }),
+    }) as unknown as typeof fetch
+    const user = userEvent.setup()
+    render(<BridgesPanel token="token" onLogout={() => {}} role="operator" />)
+
+    await waitFor(() => expect(screen.getByLabelText('Name b01')).toHaveValue('b01'))
+    expect(screen.getByLabelText('Name b05')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Name b06')).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'bridges pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.queryByLabelText('Name b01')).not.toBeInTheDocument()
+    const address = screen.getByLabelText('Address b06')
+    await user.clear(address)
+    await user.type(address, 'edited.example.org:1883')
+    expect(screen.getByLabelText('Address b06')).toHaveValue('edited.example.org:1883')
+
+    await user.click(within(pages).getByRole('button', { name: 'Previous page' }))
+    expect(screen.getByLabelText('Address b01')).toHaveValue('remote1.example.org:1883')
+    await user.click(screen.getByRole('button', { name: 'Add bridge' }))
+    expect(screen.getByLabelText('Name bridge-1')).toHaveValue('bridge-1')
+    expect(screen.getByRole('navigation', { name: 'bridges pages' })).toHaveTextContent('Page 2 of 2')
+
+    await user.type(screen.getByLabelText('Filter bridges by name or address'), 'REMOTE3')
+    expect(screen.getByLabelText('Name b03')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Name b01')).not.toBeInTheDocument()
   })
 })

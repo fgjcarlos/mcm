@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import UserOnboardingFlow from './UserOnboardingFlow'
@@ -414,6 +414,33 @@ describe('UserOnboardingFlow journey', () => {
     const createButton = screen.getByRole('button', { name: 'Create user' })
     expect(createButton).toBeDisabled()
     expect(createButton).toHaveAttribute('title', 'Requires operator role or higher')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps every scope problem and composition warning of the preview in a bounded scroll region', async () => {
+    const issues = Array.from({ length: 30 }, (_, i) => `listener l${i + 1} has no acl_file`)
+    const warnings = Array.from({ length: 30 }, (_, i) => `warning ${i + 1}`)
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes,
+      'POST /api/v1/deployments/preview': () =>
+        jsonResponse({ revision_id: 'rev-1', acl_diff: '+user probe\n', passwd_diff: '', has_changes: true, scope_issues: issues, composition_warnings: warnings }),
+    }))
+    const user = userEvent.setup()
+
+    render(<UserOnboardingFlow token="tok" onLogout={() => {}} role="admin" />)
+
+    await completeUserAndRule(user)
+    await user.click(screen.getByRole('button', { name: 'Preview changes' }))
+
+    const problems = await screen.findByRole('region', { name: 'Listener scope problems' })
+    expect(problems).toHaveAttribute('tabindex', '0')
+    expect(problems.className).toContain('overflow-y-auto')
+    expect(within(problems).getAllByRole('listitem')).toHaveLength(30)
+    const warningRegion = screen.getByRole('region', { name: 'Composition warnings' })
+    expect(warningRegion).toHaveAttribute('tabindex', '0')
+    expect(within(warningRegion).getAllByRole('listitem')).toHaveLength(30)
+    expect(screen.queryByRole('navigation', { name: /pages$/ })).not.toBeInTheDocument()
 
     vi.unstubAllGlobals()
   })

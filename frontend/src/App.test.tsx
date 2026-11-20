@@ -2824,6 +2824,185 @@ describe('App', () => {
       })
     })
   })
+
+  // Paginated lists (odd/tasks/app-paginated-lists.md S1, S3).
+  describe('paginated lists', () => {
+    const pad = (index: number) => String(index).padStart(2, '0')
+    const range = (count: number) => Array.from({ length: count }, (_, index) => index + 1)
+
+    async function openView(token: string, link: RegExp, routes: Record<string, RouteHandler> = {}) {
+      window.localStorage.setItem('mcm_admin_token', token)
+      window.localStorage.setItem('mcm_nav_mode', 'advanced')
+      vi.stubGlobal('fetch', installFetchMock({ ...authenticatedRoutes(token), ...routes }))
+      render(<App />)
+      await screen.findByText('Signed in')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('link', { name: link }))
+      return user
+    }
+
+    it('pages the audit history ten entries at a time', async () => {
+      const user = await openView('audit-pages-token', /^Audit$/, {
+        'GET /api/v1/audit-events': () => jsonResponse({ events: range(12).map((index) => ({ id: index, occurred_at: '2026-01-01T00:00:00Z', actor: `actor-${pad(index)}`, action: 'user.update', resource_type: 'user', result: 'success' })) }),
+      })
+      expect(await screen.findByText('actor-10')).toBeInTheDocument()
+      expect(screen.getByText('actor-01')).toBeInTheDocument()
+      expect(screen.queryByText('actor-11')).not.toBeInTheDocument()
+      const nav = screen.getByRole('navigation', { name: 'audit events pages' })
+      expect(nav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(nav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('actor-11')).toBeInTheDocument()
+      expect(screen.getByText('actor-12')).toBeInTheDocument()
+      expect(screen.queryByText('actor-01')).not.toBeInTheDocument()
+    })
+
+    it('pages the security feed ten events at a time', async () => {
+      const user = await openView('security-pages-token', /^Security$/, {
+        'GET /api/v1/security/events': () => jsonResponse({ events: range(12).map((index) => ({ id: index, category: `category-${pad(index)}`, reason: 'bad_password', observed_at: '2026-01-01T00:00:00Z' })) }),
+      })
+      expect(await screen.findByText('category-10')).toBeInTheDocument()
+      expect(screen.queryByText('category-11')).not.toBeInTheDocument()
+      const nav = screen.getByRole('navigation', { name: 'security events pages' })
+      expect(nav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(nav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('category-12')).toBeInTheDocument()
+      expect(screen.queryByText('category-01')).not.toBeInTheDocument()
+    })
+
+    it('pages the diagnostics log entries and filters the metric lists by name', async () => {
+      const diagnostics = {
+        sources: {
+          observed_traffic: { message_count: 0, window_seconds: 300, message_rate_per_minute: 0, top_topics: [], top_clients: [], top_clients_available: false, top_clients_note: '', rate_points: [], persistence: '' },
+          mcm_events: { status_events: 0, topic_messages: 0, event_subscribers: 0, last_message_at: null, note: '' },
+          broker_logs: { available: true, reason: '', entries: range(30).map((index) => ({ observed_at: '2026-01-01T00:00:00Z', severity: 'info', kind: 'notice', message: `Broker entry ${pad(index)}` })), severity_counts: {}, limits: { max_entries: 200, max_entries_per_read: 50, max_message_bytes: 1024, max_age_seconds: 900 }, note: '' },
+          internal_metrics: { endpoint: '/metrics', format: 'prometheus', counters: Object.fromEntries(range(30).map((index) => [`counter_${pad(index)}`, index])), note: '' },
+        },
+        broker_sys: { available: true, reason: '', metrics: Object.fromEntries(range(30).map((index) => [`$SYS/metric/${pad(index)}`, { value: 'v', observed_at: '2026-01-01T00:00:00Z' }])), note: '' },
+        diagnostics: {},
+      }
+      const user = await openView('diagnostics-pages-token', /broker diagnostics/i, {
+        'GET /api/v1/auth/me': () => jsonResponse({ id: 8, username: 'auditor', disabled: false, role: 'auditor', created_at: '', updated_at: '' }),
+        'GET /api/v1/broker/diagnostics': () => jsonResponse(diagnostics),
+      })
+      expect(await screen.findByText('Broker entry 25')).toBeInTheDocument()
+      expect(screen.queryByText('Broker entry 26')).not.toBeInTheDocument()
+      const logNav = screen.getByRole('navigation', { name: 'broker log entries pages' })
+      expect(logNav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(logNav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('Broker entry 26')).toBeInTheDocument()
+      expect(screen.queryByText('Broker entry 01')).not.toBeInTheDocument()
+
+      expect(screen.getByText('counter_25')).toBeInTheDocument()
+      expect(screen.queryByText('counter_26')).not.toBeInTheDocument()
+      const counterNav = screen.getByRole('navigation', { name: 'counters pages' })
+      expect(counterNav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(counterNav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('counter_26')).toBeInTheDocument()
+      await user.type(screen.getByRole('searchbox', { name: 'Filter counters' }), 'COUNTER_3')
+      expect(screen.getByText('counter_30')).toBeInTheDocument()
+      expect(screen.queryByText('counter_26')).not.toBeInTheDocument()
+      expect(counterNav).toHaveTextContent('Page 1 of 1')
+
+      expect(screen.getByText('$SYS/metric/25')).toBeInTheDocument()
+      expect(screen.queryByText('$SYS/metric/26')).not.toBeInTheDocument()
+      const sysNav = screen.getByRole('navigation', { name: '$SYS metrics pages' })
+      expect(sysNav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(sysNav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('$SYS/metric/26')).toBeInTheDocument()
+      await user.type(screen.getByRole('searchbox', { name: 'Filter $SYS metrics' }), 'metric/07')
+      expect(screen.getByText('$SYS/metric/07')).toBeInTheDocument()
+      expect(screen.queryByText('$SYS/metric/26')).not.toBeInTheDocument()
+    })
+
+    function emitTopicMessage(message: Record<string, unknown>) {
+      MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'topic_message', source: 'observed', payload_format: 'json', observed_at: '2026-01-01T00:00:00Z', ...message }) }))
+    }
+
+    it('pages the live topic messages and keeps a selection made on another page', async () => {
+      const user = await openView('topics-pages-token', /topics/i)
+      for (const index of range(12)) emitTopicMessage({ topic: `page/topic-${pad(index)}`, payload_preview: `"${index}"` })
+      const messages = screen.getByRole('region', { name: 'Topic messages' })
+      expect(await within(messages).findByRole('button', { name: /page\/topic-12/ })).toBeInTheDocument()
+      expect(within(messages).getByRole('button', { name: /page\/topic-03/ })).toBeInTheDocument()
+      expect(within(messages).queryByRole('button', { name: /page\/topic-02/ })).not.toBeInTheDocument()
+      const nav = screen.getByRole('navigation', { name: 'messages pages' })
+      expect(nav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(nav).getByRole('button', { name: 'Next page' }))
+      await user.click(within(messages).getByRole('button', { name: /page\/topic-01/ }))
+      await user.click(within(nav).getByRole('button', { name: 'Previous page' }))
+      expect(within(messages).queryByRole('button', { name: /page\/topic-01/ })).not.toBeInTheDocument()
+      const detail = screen.getByRole('region', { name: 'Message detail' })
+      expect(detail).toHaveTextContent('Selected message')
+      expect(detail).toHaveTextContent('page/topic-01')
+    })
+
+    it('pages the decoded Sparkplug metrics of a message', async () => {
+      const user = await openView('sparkplug-pages-token', /topics/i)
+      emitTopicMessage({
+        topic: 'spBv1.0/plant/DDATA/edge/device',
+        payload_preview: '',
+        sparkplug: { namespace: 'spBv1.0', group_id: 'plant', message_type: 'DDATA', edge_node_id: 'edge', device_id: 'device' },
+        sparkplug_metrics: { timestamp: 0, seq: 0, truncated: false, metrics: range(30).map((index) => ({ name: `metric-${pad(index)}`, datatype: 'Int32', value: index })) },
+      })
+      const detail = screen.getByRole('region', { name: 'Message detail' })
+      expect(await within(detail).findByText('metric-25')).toBeInTheDocument()
+      expect(within(detail).getByText('Decoded metrics (30)')).toBeInTheDocument()
+      expect(within(detail).queryByText('metric-26')).not.toBeInTheDocument()
+      const nav = within(detail).getByRole('navigation', { name: 'Sparkplug metrics pages' })
+      expect(nav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(nav).getByRole('button', { name: 'Next page' }))
+      expect(within(detail).getByText('metric-30')).toBeInTheDocument()
+      expect(within(detail).queryByText('metric-01')).not.toBeInTheDocument()
+    })
+
+    it('pages each live log source with its own pager', async () => {
+      const user = await openView('logs-pages-token', /^Logs$/)
+      const emit = (source: 'mcm' | 'mosquitto_log', message: string) => MockWebSocket.instances[0]?.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: source === 'mcm' ? 'broker_log' : 'broker_log_entry', source, severity: 'info', message, observed_at: '2026-01-01T00:00:00Z' }) }))
+      for (const index of range(30)) emit('mcm', `MCM line ${pad(index)}`)
+      for (const index of range(27)) emit('mosquitto_log', `Broker line ${pad(index)}`)
+      expect(await screen.findByText('MCM line 30')).toBeInTheDocument()
+      expect(screen.getByText('MCM line 06')).toBeInTheDocument()
+      expect(screen.queryByText('MCM line 05')).not.toBeInTheDocument()
+      const mcmNav = within(screen.getByRole('region', { name: 'MCM events and logs' })).getByRole('navigation', { name: 'MCM log lines pages' })
+      const brokerNav = within(screen.getByRole('region', { name: 'Broker logs (Mosquitto)' })).getByRole('navigation', { name: 'Mosquitto log lines pages' })
+      expect(mcmNav).toHaveTextContent('Page 1 of 2')
+      expect(brokerNav).toHaveTextContent('Page 1 of 2')
+      await user.click(within(mcmNav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('MCM line 01')).toBeInTheDocument()
+      expect(screen.queryByText('MCM line 30')).not.toBeInTheDocument()
+      expect(screen.getByText('Broker line 27')).toBeInTheDocument()
+      expect(screen.queryByText('Broker line 02')).not.toBeInTheDocument()
+    })
+
+    it('keeps every deploy preview review list whole inside a keyboard-scrollable bounded region', async () => {
+      const entries = (prefix: string) => range(30).map((index) => `${prefix}-${pad(index)}`)
+      await openDeployPreview('bounded-review-token', {
+        acl_diff: '+user plant',
+        scope_issues: entries('scope-issue'),
+        orphan_rules: range(30).map((index) => ({ id: `orphan-${index}`, principal: `orphan-${pad(index)}`, topic_filter: 'factory/#', permission: 'read' })),
+        at_risk_entries: entries('at-risk'),
+        composition_warnings: entries('warning'),
+        scope_pending_activation: entries('pending'),
+        removed_acl_files: entries('/removed'),
+        preserved_entries: entries('preserved'),
+        listener_acl_files: range(30).map((index) => ({ listener_id: `listener-${pad(index)}`, path: `/acl.${pad(index)}`, diff: '+user plant', at_risk_entries: [`listener-risk-${pad(index)}`] })),
+      })
+      await screen.findByText('Orphan ACL rules')
+      const bounded = (label: string) => {
+        const region = screen.getByLabelText(label)
+        expect(region).toHaveAttribute('tabindex', '0')
+        expect(region).toHaveClass('max-h-96', 'overflow-y-auto')
+        return region
+      }
+      for (const label of ['Listener scope problems', 'Access at risk', 'Listener access at risk', 'Composition warnings', 'Pending listener activation', 'Files the deploy would delete', 'Preserved entries']) {
+        expect(within(bounded(label)).getAllByRole('listitem')).toHaveLength(30)
+      }
+      expect(within(bounded('Orphan ACL rules')).getAllByRole('row')).toHaveLength(31)
+      expect(within(bounded('Listener files')).getAllByText(/^Listener file — listener-/)).toHaveLength(30)
+      // Only the server-paged deployment history carries a pager (nav "Pagination"); no review list is paged.
+      expect(screen.queryAllByRole('navigation', { name: /pages$/ })).toHaveLength(0)
+    })
+  })
 })
 
 describe('app-wide recent MFA step-up', () => {
