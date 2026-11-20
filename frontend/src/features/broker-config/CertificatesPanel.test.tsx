@@ -175,6 +175,42 @@ describe('CertificatesPanel', () => {
     }
   })
 
+  it('pages and filters the certificate profiles by name', async () => {
+    const profiles = Array.from({ length: 12 }, (_, i) => ({ name: `profile-${String(i + 1).padStart(2, '0')}`, active_revision: '', expiry_status: 'valid', revisions: [] }))
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/broker/certificates': () => jsonResponse({ profiles }) }))
+    const user = userEvent.setup()
+    render(<CertificatesPanel token="tok" onLogout={() => {}} role="auditor" />)
+
+    expect(await screen.findByText('profile-10')).toBeInTheDocument()
+    expect(screen.getByText('profile-01')).toBeInTheDocument()
+    expect(screen.queryByText('profile-11')).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'certificate profiles pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByText('profile-12')).toBeInTheDocument()
+    expect(screen.queryByText('profile-01')).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Filter certificate profiles by name'), 'PROFILE-03')
+    expect(screen.getByText('profile-03')).toBeInTheDocument()
+    expect(screen.queryByText('profile-12')).not.toBeInTheDocument()
+  })
+
+  it('pages the revisions of each profile five at a time', async () => {
+    const revisions = Array.from({ length: 7 }, (_, i) => ({ revision_id: `rev-${i + 1}`, state: 'pending', expiry_status: 'valid' }))
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/broker/certificates': () => jsonResponse({ profiles: [{ ...profile, revisions }] }) }))
+    const user = userEvent.setup()
+    render(<CertificatesPanel token="tok" onLogout={() => {}} role="auditor" />)
+
+    expect(await screen.findByText('rev-5')).toBeInTheDocument()
+    expect(screen.getByText('rev-1')).toBeInTheDocument()
+    expect(screen.queryByText('rev-6')).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'production revisions pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByText('rev-6')).toBeInTheDocument()
+    expect(screen.getByText('rev-7')).toBeInTheDocument()
+    expect(screen.queryByText('rev-1')).not.toBeInTheDocument()
+  })
+
   it('reports the certificate surface as disabled when the API answers 503', async () => {
     vi.stubGlobal('fetch', installFetchMock({
       'GET /api/v1/broker/certificates': () => jsonResponse({ error: 'the certificate surface is disabled' }, { status: 503 }),

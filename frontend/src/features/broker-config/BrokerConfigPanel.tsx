@@ -7,6 +7,8 @@ import { deploymentLamp } from '../status/deploymentLamp'
 import { DiffBlock, Fact, Lamp, Section } from '../ui/primitives'
 import { bodyText, codeBlock, fieldHint, fieldLabel, leverSecondary, notice, textarea } from '../ui/styles'
 import { fileInput } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 
 const summary = 'cursor-pointer text-sm font-semibold text-enamel-bright transition-colors duration-150 hover:text-enamel'
 
@@ -40,6 +42,8 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
     void loadCatalog()
     void loadHistory()
   }, [load, loadCatalog, loadHistory])
+  const revisionPager = useClientPage(state.revisions)
+  const directivePager = useClientPage(catalog?.directives ?? [], { pageSize: 25, match: (directive, query) => directive.name.toLowerCase().includes(query) })
 
   function changed() {
     setAdopt(false)
@@ -110,14 +114,14 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
       {view === 'changes' ? (
         <>
           <Section title="Configuration revisions" aside={<button className={leverSecondary} onClick={() => { void state.load(); void state.loadHistory() }} disabled={busy}>Refresh revisions</button>}>
-            {!state.revisions.length ? <p className={`mt-4 ${bodyText}`}>No configuration revisions recorded.</p> : <ul className="mt-4 border-y border-track">{state.revisions.map((revision) => (
+            {!state.revisions.length ? <p className={`mt-4 ${bodyText}`}>No configuration revisions recorded.</p> : <div className="mt-4 space-y-4"><ClientPager pager={revisionPager} noun={{ one: 'revision', many: 'revisions' }} /><ul className="border-y border-track">{revisionPager.rows.map(({ item: revision }) => (
               <li key={revision.id} className="space-y-2 border-b border-track py-4 last:border-0">
                 <p className="break-all font-mono text-xs text-enamel-muted">{revision.id}</p>
                 <p className={bodyText}>{revision.actor} · {revision.created_at} · <Lamp tone={deploymentLamp(revision.status)}>{revision.status}</Lamp>{revision.deployment_id ? ` · deployment ${revision.deployment_id}` : ''}</p>
                 {revision.message ? <p className={bodyText}>{revision.message}</p> : null}
                 <button className={leverSecondary} disabled={!isAdmin || !mfa.proof || busy} onClick={() => { changed(); void state.recover(revision.id, mfa.proof) }}>Recover revision {revision.id.slice(0, 8)}</button>
               </li>
-            ))}</ul>}
+            ))}</ul></div>}
           </Section>
           <Section title="Configuration copies">
             <p className={`mt-4 ${notice.caution}`}>Root configuration only — not a complete backup. Includes, credentials, ACLs, certificates, SQLite and broker data are excluded. Import prepares a preview; it does not apply automatically.</p>
@@ -132,7 +136,7 @@ export default function BrokerConfigPanel({ token, onLogout, role = '', view = '
           </Section>
         </>
       ) : null}
-      <details className="border-t border-track pt-6"><summary className={summary}>Directive catalog</summary><p className={`mt-3 ${bodyText}`}>Catalog {catalog?.version || 'unavailable'}; not a detected broker version.</p><ul className="mt-3 space-y-3">{catalog?.directives.map((directive) => <li key={directive.name} className="text-sm text-enamel"><code className="font-mono text-enamel-bright">{directive.name}</code> · {directive.type} · {directive.reload_kind}<p className={fieldHint}>{directive.description}</p></li>)}</ul></details>
+      <details className="border-t border-track pt-6"><summary className={summary}>Directive catalog</summary><p className={`mt-3 ${bodyText}`}>Catalog {catalog?.version || 'unavailable'}; not a detected broker version.</p><div className="mt-3 space-y-3"><ClientPager pager={directivePager} noun={{ one: 'directive', many: 'directives' }} searchLabel="Filter directives by name" /><ul className="space-y-3">{directivePager.rows.map(({ item: directive }) => <li key={directive.name} className="text-sm text-enamel"><code className="font-mono text-enamel-bright">{directive.name}</code> · {directive.type} · {directive.reload_kind}<p className={fieldHint}>{directive.description}</p></li>)}</ul></div></details>
     </section>
   )
 }

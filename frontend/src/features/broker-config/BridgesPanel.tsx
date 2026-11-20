@@ -7,6 +7,8 @@ import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
 import { DiffBlock, Section } from '../ui/primitives'
 import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow } from '../ui/styles'
 import { DraftState, Findings, ReloadKind } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 import {
   bridgeDirections,
   bridgeProtocolVersions,
@@ -95,6 +97,7 @@ export default function BridgesPanel({
 
   const specs = draft ?? bridges
   const dirty = draft !== undefined
+  const pager = useClientPage(specs, { pageSize: 5, match: (bridge, query) => `${bridge.name ?? ''} ${bridge.address ?? ''}`.toLowerCase().includes(query) })
   const validation = useMemo(() => validateBridges(specs), [specs])
   const blockingIssues = validation.issues
   const warnings = validation.warnings
@@ -121,6 +124,7 @@ export default function BridgesPanel({
     }, 0) + 1
     setDraft((current) => [...(current ?? bridges), newBridge(nextIndex)])
     setConfirmRestart(false)
+    pager.showLast()
   }
 
   const removeBridge = (index: number) => {
@@ -255,7 +259,9 @@ export default function BridgesPanel({
         </div>
       ) : null}
 
-      {specs.map((bridge, index) => (
+      <ClientPager pager={pager} noun={{ one: 'bridge', many: 'bridges' }} searchLabel="Filter bridges by name or address" />
+
+      {pager.rows.map(({ item: bridge, index }) => (
         <BridgeCard
           key={index}
           bridge={bridge}

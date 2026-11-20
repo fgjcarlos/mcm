@@ -231,6 +231,43 @@ describe('BrokerConfigPanel', () => {
     vi.unstubAllGlobals()
   })
 
+  it('pages the configuration revisions ten at a time', async () => {
+    const revisions = Array.from({ length: 12 }, (_, i) => ({ id: `r${i + 1}`, actor: 'admin', created_at: '2026-01-01', status: 'active_verified' }))
+    vi.stubGlobal('fetch', installFetchMock({ ...configRoute, 'GET /api/v1/broker/config/revisions': () => jsonResponse({ revisions }) }))
+    const user = userEvent.setup()
+    render(<BrokerConfigPanel token="tok" onLogout={() => {}} role="admin" view="changes" />)
+    expect(await screen.findByRole('button', { name: 'Recover revision r10' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recover revision r1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Recover revision r11' })).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'revisions pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByRole('button', { name: 'Recover revision r11' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recover revision r12' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Recover revision r1' })).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('pages and filters the directive catalog by name', async () => {
+    const directives = Array.from({ length: 30 }, (_, i) => ({ name: `directive_${String(i + 1).padStart(2, '0')}`, type: 'string', scope: 'broker', multiplicity: '0+', reload_kind: 'reload', since_version: '1.0', description: '' }))
+    vi.stubGlobal('fetch', installFetchMock({ ...configRoute, 'GET /api/v1/broker/config/catalog': () => jsonResponse({ version: '2.0', directives }) }))
+    const user = userEvent.setup()
+    render(<BrokerConfigPanel token="tok" onLogout={() => {}} role="admin" />)
+    await user.click(await screen.findByText('Directive catalog'))
+    expect(await screen.findByText('directive_25')).toBeInTheDocument()
+    expect(screen.getByText('directive_01')).toBeInTheDocument()
+    expect(screen.queryByText('directive_26')).not.toBeInTheDocument()
+    const pages = screen.getByRole('navigation', { name: 'directives pages' })
+    expect(pages).toHaveTextContent('Page 1 of 2')
+    await user.click(within(pages).getByRole('button', { name: 'Next page' }))
+    expect(screen.getByText('directive_30')).toBeInTheDocument()
+    expect(screen.queryByText('directive_01')).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Filter directives by name'), 'DIRECTIVE_07')
+    expect(screen.getByText('directive_07')).toBeInTheDocument()
+    expect(screen.queryByText('directive_30')).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
   it('keeps Apply disabled with a reason while a preview request is still in flight', async () => {
     let revisionCalls = 0
     let release: ((response: Response) => void) | undefined

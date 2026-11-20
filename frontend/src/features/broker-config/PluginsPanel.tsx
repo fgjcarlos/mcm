@@ -9,6 +9,8 @@ import { deploymentLamp, lampPanel } from '../status/deploymentLamp'
 import { DiffBlock, Plate, Section } from '../ui/primitives'
 import { bodyText, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice } from '../ui/styles'
 import { DraftState, Findings, ReloadKind } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 
 // defaultOptions returns the options a plugin starts with when the
 // operator enables it: the defaults of the catalog.
@@ -45,6 +47,8 @@ export default function PluginsPanel({
   const loaded = plugins?.document?.plugins ?? []
   const specs = draft ?? loaded
   const dirty = draft !== undefined
+  const catalogPager = useClientPage(catalog, { match: (spec, query) => `${spec.title} ${spec.id} ${spec.module}`.toLowerCase().includes(query) })
+  const configuredPager = useClientPage(specs, { match: (plugin, query) => `${plugin.id ?? ''} ${plugin.module}`.toLowerCase().includes(query) })
   // A preview only applies to the exact set that is on screen. Without
   // this guard the operator could apply a revision that no longer matches
   // what they reviewed.
@@ -73,6 +77,7 @@ export default function PluginsPanel({
   const enablePlugin = (spec: PluginSpec) => {
     setDraft((current) => [...(current ?? loaded), { id: spec.id, module: spec.module, options: defaultOptions(spec) }])
     setConfirmRestart(false)
+    configuredPager.showLast()
   }
 
   const removePlugin = (index: number) => {
@@ -190,101 +195,107 @@ export default function PluginsPanel({
         title="Supported plugins"
         description={`The plugins MCM supports for Mosquitto ${plugins.version}. A plugin is loaded at start-up, so every change needs a restart.`}
       >
-        <div className="mt-4">
-          {catalog.length === 0 ? (
-            <p className={bodyText}>MCM knows no plugin for Mosquitto {plugins.version}.</p>
-          ) : null}
-          {catalog.map((spec) => {
-            const enabled = specs.some((plugin) => plugin.id === spec.id)
-            return (
-              <div key={spec.id} className="border-t border-track py-4 first:border-t-0 first:pt-0">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h4 className="text-sm font-semibold text-enamel-bright">{spec.title}</h4>
-                    {spec.description ? <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>{spec.description}</p> : null}
-                    <p className="mt-2 break-all font-mono text-xs text-enamel-soft">{spec.module}</p>
-                    {spec.modules?.length ? (
-                      <p className="mt-1 break-all font-mono text-xs text-enamel-muted">{spec.modules.join(' · ')}</p>
-                    ) : null}
-                    <p className={`mt-1 ${fieldHint}`}>
-                      {spec.since_version ? <>since Mosquitto {spec.since_version} · </> : null}
-                      <span className="font-mono">{spec.id}</span>
-                    </p>
+        <div className="mt-4 space-y-4">
+          <ClientPager pager={catalogPager} noun={{ one: 'supported plugin', many: 'supported plugins' }} searchLabel="Filter supported plugins" />
+          <div>
+            {catalog.length === 0 ? (
+              <p className={bodyText}>MCM knows no plugin for Mosquitto {plugins.version}.</p>
+            ) : null}
+            {catalogPager.rows.map(({ item: spec }) => {
+              const enabled = specs.some((plugin) => plugin.id === spec.id)
+              return (
+                <div key={spec.id} className="border-t border-track py-4 first:border-t-0 first:pt-0">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-semibold text-enamel-bright">{spec.title}</h4>
+                      {spec.description ? <p className={`mt-1 max-w-[68ch] ${fieldHint}`}>{spec.description}</p> : null}
+                      <p className="mt-2 break-all font-mono text-xs text-enamel-soft">{spec.module}</p>
+                      {spec.modules?.length ? (
+                        <p className="mt-1 break-all font-mono text-xs text-enamel-muted">{spec.modules.join(' · ')}</p>
+                      ) : null}
+                      <p className={`mt-1 ${fieldHint}`}>
+                        {spec.since_version ? <>since Mosquitto {spec.since_version} · </> : null}
+                        <span className="font-mono">{spec.id}</span>
+                      </p>
+                    </div>
+                    <ReloadKind kind={spec.reload_kind || 'restart'} />
                   </div>
-                  <ReloadKind kind={spec.reload_kind || 'restart'} />
-                </div>
 
-                {spec.options?.length ? (
+                  {spec.options?.length ? (
+                    <div className="mt-4">
+                      <h5 className="text-xs font-semibold text-enamel">Options</h5>
+                      <ul className="mt-2 space-y-2">
+                        {spec.options.map((option) => (
+                          <li key={option.name} className="text-sm text-enamel-soft">
+                            <span className="font-mono text-enamel-bright">plugin_opt_{option.name}</span>
+                            {option.required ? <span className="ml-2 text-xs text-lamp">required</span> : null}
+                            {option.default ? (
+                              <span className="ml-2 text-xs text-enamel-muted">
+                                default <span className="font-mono">{option.default}</span>
+                              </span>
+                            ) : null}
+                            {option.description ? <span className={`mt-0.5 block ${fieldHint}`}>{option.description}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
                   <div className="mt-4">
-                    <h5 className="text-xs font-semibold text-enamel">Options</h5>
-                    <ul className="mt-2 space-y-2">
-                      {spec.options.map((option) => (
-                        <li key={option.name} className="text-sm text-enamel-soft">
-                          <span className="font-mono text-enamel-bright">plugin_opt_{option.name}</span>
-                          {option.required ? <span className="ml-2 text-xs text-lamp">required</span> : null}
-                          {option.default ? (
-                            <span className="ml-2 text-xs text-enamel-muted">
-                              default <span className="font-mono">{option.default}</span>
-                            </span>
-                          ) : null}
-                          {option.description ? <span className={`mt-0.5 block ${fieldHint}`}>{option.description}</span> : null}
-                        </li>
-                      ))}
-                    </ul>
+                    {enabled ? (
+                      <button
+                        type="button"
+                        aria-label={`Disable ${spec.title}`}
+                        disabled={isApplying || isPreviewing}
+                        onClick={() => {
+                          const index = specs.findIndex((plugin) => plugin.id === spec.id)
+                          if (index >= 0) removePlugin(index)
+                        }}
+                        className={leverSecondary}
+                      >
+                        Disable
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`Enable ${spec.title}`}
+                        disabled={isApplying || isPreviewing}
+                        onClick={() => enablePlugin(spec)}
+                        className={leverSecondary}
+                      >
+                        Enable
+                      </button>
+                    )}
                   </div>
-                ) : null}
-
-                <div className="mt-4">
-                  {enabled ? (
-                    <button
-                      type="button"
-                      aria-label={`Disable ${spec.title}`}
-                      disabled={isApplying || isPreviewing}
-                      onClick={() => {
-                        const index = specs.findIndex((plugin) => plugin.id === spec.id)
-                        if (index >= 0) removePlugin(index)
-                      }}
-                      className={leverSecondary}
-                    >
-                      Disable
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={`Enable ${spec.title}`}
-                      disabled={isApplying || isPreviewing}
-                      onClick={() => enablePlugin(spec)}
-                      className={leverSecondary}
-                    >
-                      Enable
-                    </button>
-                  )}
                 </div>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       </Section>
 
       <Section title="Configured plugins" description="The plugins the broker loads. The plugin MCM does not know is preserved untouched.">
-        <div className="mt-4">
-          {specs.length === 0 ? (
-            <div className={notice.neutral}>
-              No plugin is configured. Enable one from the catalog to load it in the broker.
-            </div>
-          ) : null}
+        <div className="mt-4 space-y-4">
+          <ClientPager pager={configuredPager} noun={{ one: 'configured plugin', many: 'configured plugins' }} searchLabel="Filter configured plugins" />
+          <div>
+            {specs.length === 0 ? (
+              <div className={notice.neutral}>
+                No plugin is configured. Enable one from the catalog to load it in the broker.
+              </div>
+            ) : null}
 
-          {specs.map((plugin, index) => (
-            <PluginCard
-              key={index}
-              plugin={plugin}
-              spec={catalog.find((candidate) => candidate.id === plugin.id)}
-              disabled={isApplying || isPreviewing}
-              onChange={(changes) => updatePlugin(index, changes)}
-              onOptionChange={(name, value) => setOption(index, name, value)}
-              onRemove={() => removePlugin(index)}
-            />
-          ))}
+            {configuredPager.rows.map(({ item: plugin, index }) => (
+              <PluginCard
+                key={index}
+                plugin={plugin}
+                spec={catalog.find((candidate) => candidate.id === plugin.id)}
+                disabled={isApplying || isPreviewing}
+                onChange={(changes) => updatePlugin(index, changes)}
+                onOptionChange={(name, value) => setOption(index, name, value)}
+                onRemove={() => removePlugin(index)}
+              />
+            ))}
+          </div>
         </div>
       </Section>
 

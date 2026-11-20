@@ -7,6 +7,8 @@ import type { CertificateProfile, CertificateRevision } from './certificateTypes
 import { Section } from '../ui/primitives'
 import { bodyText, fieldHint, fieldLabel, input, leverPrimary, leverSecondary, notice } from '../ui/styles'
 import { fileInput } from './panelParts'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -40,6 +42,7 @@ function ProfileRow({
   onActivate: (profile: string, revision: string) => void
 }) {
   const revisions = profile.revisions ?? []
+  const pager = useClientPage(revisions, { pageSize: 5 })
   return (
     <div className="border-t border-track pt-4 first:border-t-0 first:pt-0">
       <h4 className="font-mono text-sm font-semibold text-enamel-bright">{profile.name}</h4>
@@ -48,45 +51,49 @@ function ProfileRow({
       </p>
       {profile.description ? <p className={`mt-1 ${fieldHint}`}>{profile.description}</p> : null}
       {revisions.length === 0 ? <p className={`mt-3 ${bodyText}`}>No revisions uploaded.</p> : null}
-      <ul className="mt-3 border-y border-track">
-        {revisions.map((revision) => (
-          <li key={revision.revision_id} className="border-b border-track py-3 last:border-0">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="font-mono text-xs text-enamel-bright">{revision.revision_id}</p>
-                <p className={`mt-1 ${fieldHint}`}>
-                  state: {revision.state} · {expiryLabel(revision)}
-                  {revision.subject ? ` · ${revision.subject}` : ''}
-                </p>
-                {revision.fingerprint_sha256 ? (
-                  <p className="mt-1 break-all font-mono text-[11px] text-enamel-muted">sha256:{revision.fingerprint_sha256}</p>
-                ) : null}
-                {revision.failure_reason ? <p className="mt-1 text-xs text-danger-text">{revision.failure_reason}</p> : null}
+      <div className="mt-3 space-y-3">
+        {/* The noun carries the profile name: every profile has its own pager. */}
+        <ClientPager pager={pager} noun={{ one: `${profile.name} revision`, many: `${profile.name} revisions` }} />
+        <ul className="border-y border-track">
+          {pager.rows.map(({ item: revision }) => (
+            <li key={revision.revision_id} className="border-b border-track py-3 last:border-0">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="font-mono text-xs text-enamel-bright">{revision.revision_id}</p>
+                  <p className={`mt-1 ${fieldHint}`}>
+                    state: {revision.state} · {expiryLabel(revision)}
+                    {revision.subject ? ` · ${revision.subject}` : ''}
+                  </p>
+                  {revision.fingerprint_sha256 ? (
+                    <p className="mt-1 break-all font-mono text-[11px] text-enamel-muted">sha256:{revision.fingerprint_sha256}</p>
+                  ) : null}
+                  {revision.failure_reason ? <p className="mt-1 text-xs text-danger-text">{revision.failure_reason}</p> : null}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onPreview(profile.name, revision.revision_id)}
+                    disabled={!canWrite || isBusy}
+                    title={canWrite ? undefined : permissionTitle('certificate.write')}
+                    className={leverSecondary}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onActivate(profile.name, revision.revision_id)}
+                    disabled={!canApply || !hasProof || isBusy || revision.state === 'active'}
+                    title={canApply ? undefined : permissionTitle('certificate.apply')}
+                    className={leverSecondary}
+                  >
+                    Activate
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => onPreview(profile.name, revision.revision_id)}
-                  disabled={!canWrite || isBusy}
-                  title={canWrite ? undefined : permissionTitle('certificate.write')}
-                  className={leverSecondary}
-                >
-                  Preview
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onActivate(profile.name, revision.revision_id)}
-                  disabled={!canApply || !hasProof || isBusy || revision.state === 'active'}
-                  title={canApply ? undefined : permissionTitle('certificate.apply')}
-                  className={leverSecondary}
-                >
-                  Activate
-                </button>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }
@@ -133,6 +140,7 @@ export default function CertificatesPanel({
   const canWrite = can(role, 'certificate.write')
   const canApply = can(role, 'certificate.apply')
   const busy = isUploading || isPreviewing || isApplying
+  const profilePager = useClientPage(profiles, { match: (profile, query) => profile.name.toLowerCase().includes(query) })
   // Ask for MFA only when an admin has a revision to activate.
   const hasActivatable = canApply && profiles.some((profile) => (profile.revisions ?? []).some((revision) => revision.state !== 'active'))
 
@@ -301,19 +309,22 @@ export default function CertificatesPanel({
         ) : null}
         {isLoading ? <p className={`mt-4 ${bodyText}`}>Loading certificate profiles…</p> : null}
         {!isLoading && profiles.length === 0 ? <p className={`mt-4 ${bodyText}`}>No certificate profiles yet.</p> : null}
-        <div className="mt-4">
-          {profiles.map((profile) => (
-            <ProfileRow
-              key={profile.name}
-              profile={profile}
-              canWrite={canWrite}
-              canApply={canApply}
-              hasProof={Boolean(mfa.proof)}
-              isBusy={busy}
-              onPreview={(name, revision) => { void requestPreview({ profile: name, revision_id: revision }) }}
-              onActivate={(name, revision) => { void applyRevision({ profile: name, revision_id: revision }, mfa.proof) }}
-            />
-          ))}
+        <div className="mt-4 space-y-4">
+          <ClientPager pager={profilePager} noun={{ one: 'certificate profile', many: 'certificate profiles' }} searchLabel="Filter certificate profiles by name" />
+          <div>
+            {profilePager.rows.map(({ item: profile }) => (
+              <ProfileRow
+                key={profile.name}
+                profile={profile}
+                canWrite={canWrite}
+                canApply={canApply}
+                hasProof={Boolean(mfa.proof)}
+                isBusy={busy}
+                onPreview={(name, revision) => { void requestPreview({ profile: name, revision_id: revision }) }}
+                onActivate={(name, revision) => { void applyRevision({ profile: name, revision_id: revision }, mfa.proof) }}
+              />
+            ))}
+          </div>
         </div>
 
         {previewError ? <div className={`mt-5 ${notice.failed}`}>{previewError}</div> : null}
