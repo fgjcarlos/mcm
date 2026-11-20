@@ -16,3 +16,13 @@ export const lampPanel: Record<Lamp, string> = {
   caution: 'border border-lamp/45 bg-lamp/[0.06] text-lamp',
   failed: 'border border-danger/60 text-danger-text',
 }
+
+/** A deployment status in words, the same on the change route result and in the history (#359). */
+export const deploymentStatusLabel: Record<string, string> = {
+  active_verified: 'Verified',
+  applied: 'Applied — activation not proven',
+  pending_activation: 'Pending activation — not verified',
+  rolled_back: 'Rolled back to the previous configuration',
+  rollback_failed: 'Rollback failed',
+  failed: 'Failed',
+}

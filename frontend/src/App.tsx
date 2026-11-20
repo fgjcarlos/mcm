@@ -10,9 +10,9 @@ import CertificatesPanel from './features/broker-config/CertificatesPanel'
 import BrokerConfigPanel from './features/broker-config/BrokerConfigPanel'
 import SettingsPanel from './features/broker-config/SettingsPanel'
 import BridgesPanel from './features/broker-config/BridgesPanel'
-import { deploymentLamp } from './features/status/deploymentLamp'
+import { deploymentLamp, deploymentStatusLabel } from './features/status/deploymentLamp'
 import { DiffBlock, Fact, Lamp, Plate, Section } from './features/ui/primitives'
-import { bodyText, codeBlock, fieldHint, fieldLabel, input, lampDot, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow, textLink, type LampTone } from './features/ui/styles'
+import { bodyText, codeBlock, fieldHint, fieldLabel, input, leverDanger, leverPrimary, leverSecondary, notice, select, tableHead, tableRow, textLink, type LampTone } from './features/ui/styles'
 import PluginsPanel from './features/broker-config/PluginsPanel'
 import DynSecPanel from './features/broker-config/DynSecPanel'
 import { useAuthSession, type AdminUser } from './features/auth/useAuthSession'
@@ -536,14 +536,14 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       onSelectNav={handleSelectNav}
       onLogout={onLogout}
     >
-      {deployPending ? (
+      {/* The dashboard home shows the pending state in its own card (#359): one caution, not two. */}
+      {deployPending && activeId !== 'dashboard' ? (
         <div role="status" aria-live="polite" className={`mt-8 ${notice.caution}`}>
           <p className="flex items-center gap-2 text-sm font-semibold text-lamp"><span aria-hidden="true" className="size-2.5 rounded-full bg-lamp" />Pending deploy</p>
           <p className="mt-2 text-sm text-enamel">User or ACL changes are saved but have not been applied to Mosquitto yet.</p>
-          {/* The dashboard home carries its own pending-changes card, and the
-              deploy panel carries its own preview and apply controls, so the
+          {/* The deploy panel carries its own preview and apply controls, so the
               banner offers the action only on the panels that lack it. */}
-          {activeId === 'dashboard' || activeId === 'deploy' ? null : <PendingChangesAction role={currentUser.role} onReview={() => openPanel('deploy')} />}
+          {activeId === 'deploy' ? null : <PendingChangesAction role={currentUser.role} onReview={() => openPanel('deploy')} />}
         </div>
       ) : null}
 
@@ -613,9 +613,10 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
   const hasRateSamples = metrics.rate_points.some((point) => point.count > 0)
 
   return (
-    <section className="mt-10 space-y-8 border-t border-track-strong pt-8">
-      <div className="grid gap-y-6 lg:grid-cols-3 lg:divide-x lg:divide-track">
-        <Section title="Message rate" className={trafficColumn}>
+    // The detail below the home summary (#359): one heading, its parts one level down.
+    <Section title="Recent traffic" ruled={false} className="mt-10 border-t border-track-strong pt-8">
+      <div className="mt-6 grid gap-y-6 lg:grid-cols-3 lg:divide-x lg:divide-track">
+        <Section level={4} title="Message rate" className={trafficColumn}>
           <p className="mt-3 flex items-baseline gap-2">
             <span className="font-mono text-3xl font-semibold tabular-nums text-enamel-bright">{metrics.message_rate_per_minute.toFixed(1)}</span>
             <span className="font-mono text-sm text-enamel-soft">msg/min</span>
@@ -625,9 +626,9 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
           {!hasRateSamples ? <p className={`mt-3 ${fieldHint}`}>Waiting for the first rate sample</p> : null}
         </Section>
 
-        <HotspotCard title="Top topics" empty="No topic activity in the recent window." items={metrics.top_topics} className={trafficColumn} />
+        <HotspotCard title="Top topics" empty="No topic activity in the recent window." items={metrics.top_topics} level={4} className={trafficColumn} />
 
-        <Section title="Top clients" className={trafficColumn}>
+        <Section level={4} title="Top clients" className={trafficColumn}>
           {metrics.top_clients_available && metrics.top_clients.length > 0 ? (
             <TrafficBars items={metrics.top_clients} />
           ) : (
@@ -643,15 +644,15 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
         </Section>
       </div>
 
-      <div className="grid gap-y-6 border-t border-track pt-6 lg:grid-cols-[0.85fr_1.15fr] lg:divide-x lg:divide-track">
-        <Section title="Metric source" className={trafficColumn}>
+      <div className="mt-8 grid gap-y-6 border-t border-track pt-6 lg:grid-cols-[0.85fr_1.15fr] lg:divide-x lg:divide-track">
+        <Section level={4} title="Metric source" className={trafficColumn}>
           <dl className="mt-3 grid gap-3 sm:grid-cols-3">
             <WidgetFact label="Source" value={metrics.persistence || 'Browser memory'} />
             <WidgetFact label="Window" value={`${Math.round(metrics.window_seconds / 60)} min`} />
             <WidgetFact label="Samples" value={String(metrics.rate_points.length)} />
           </dl>
         </Section>
-        <Section title="Latest activity" className={trafficColumn}>
+        <Section level={4} title="Latest activity" className={trafficColumn}>
           {latestTopic ? (
             <div className="mt-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -671,7 +672,7 @@ function DashboardPanel({ metrics, topics, latestTopic }: { metrics: BrokerTraff
           )}
         </Section>
       </div>
-    </section>
+    </Section>
   )
 }
 
@@ -1683,18 +1684,19 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
             onClick={() => { void handlePreview() }}
             disabled={previewLoading || !canPreview}
             title={!canPreview ? permissionTitle('deploy.preview') : undefined}
-            className={leverSecondary}
+            // The view's one primary lever until a preview with changes hands it to Apply (#359).
+            className={preview?.has_changes ? leverSecondary : leverPrimary}
           >
             {previewLoading ? 'Generating…' : 'Preview Changes'}
           </button>
         }
       >
         {previewError ? (
-          <div className={`mt-5 ${notice.failed}`}>{previewError}</div>
+          <div role="alert" className={`mt-5 ${notice.failed}`}>{previewError}</div>
         ) : null}
 
         {applyError ? (
-          <div className={`mt-5 ${notice.failed}`}>{applyError}</div>
+          <div role="alert" className={`mt-5 ${notice.failed}`}>{applyError}</div>
         ) : null}
         {applyError && !preview ? <p className="mt-2 text-sm text-lamp">Generate a new preview before applying again.</p> : null}
 
@@ -1882,7 +1884,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
                 <tr key={dep.id} className={tableRow}>
                   <td className="py-3 pr-4 font-mono text-xs text-enamel-muted">{String(dep.id).slice(0, 8)}</td>
                   <td className="py-3 pr-4">
-                    <Lamp tone={deploymentLamp(dep.status)}>{dep.status}</Lamp>
+                    <Lamp tone={deploymentLamp(dep.status)}>{deploymentStatusLabel[dep.status] ?? dep.status}</Lamp>
                   </td>
                   <td className="py-3 pr-4 text-sm text-enamel-soft">{dep.message ?? '—'}</td>
                   <td className="whitespace-nowrap py-3 text-right font-mono text-xs tabular-nums text-enamel-muted">{new Date(dep.created_at).toLocaleString()}</td>
@@ -1901,11 +1903,17 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
 // Deploy review lists stay whole (S3): bounded height with a scroll, never pages.
 const reviewScroll = 'max-h-96 overflow-y-auto'
 
-function PreviewBlock({ tone, title, count, children }: { tone: LampTone; title: string; count?: number; children: ReactNode }) {
+// The block's severity in words next to its lamp: colour never carries it alone (#359).
+const previewSeverity = { failed: 'Blocks apply', caution: 'Review before applying', neutral: 'For information' } as const
+
+function PreviewBlock({ tone, title, count, children }: { tone: keyof typeof previewSeverity; title: string; count?: number; children: ReactNode }) {
   return (
     <section className="border-t border-track pt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h4 className="flex items-center gap-2 text-sm font-semibold text-enamel-bright"><span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${lampDot[tone]}`} />{title}</h4>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h4 className="text-sm font-semibold text-enamel-bright">{title}</h4>
+          <Lamp tone={tone}>{previewSeverity[tone]}</Lamp>
+        </div>
         {count !== undefined ? <Plate tone={tone === 'caution' ? 'caution' : 'neutral'}>{count}</Plate> : null}
       </div>
       {children}
@@ -1916,7 +1924,7 @@ function PreviewBlock({ tone, title, count, children }: { tone: LampTone; title:
 // Deployment statuses the history can be filtered by (S10b: exact match).
 const deploymentStatusOptions = [
   { value: '', label: 'All statuses' },
-  ...['active_verified', 'applied', 'pending_activation', 'failed', 'rolled_back', 'rollback_failed'].map((status) => ({ value: status, label: status.replaceAll('_', ' ') })),
+  ...['active_verified', 'applied', 'pending_activation', 'failed', 'rolled_back', 'rollback_failed'].map((status) => ({ value: status, label: deploymentStatusLabel[status] })),
 ]
 
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {

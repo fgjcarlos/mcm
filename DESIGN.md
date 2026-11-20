@@ -404,8 +404,9 @@ The app (`frontend/src`) is the same signal box seen from the operator's chair: 
 - **Shell.** A left rail (18rem, `track` hairline on its right) holds the lockup, the Alpha plate, the broker lamp, at most five nav groups and the signed-in operator. Below 64rem it folds behind a Menu control so the page title comes first. The current item is lit: a small enamel lamp, semibold `enamel-bright` text on `frame-high`.
 - **Live counts.** The Status / Topics / Logs strip belongs to the dashboard home only.
 - **Primary lever.** Enamel face, frame text, Big Shoulders 700 1rem +0.14em capitals, 48px, lever bevel that drops when pressed. One per view. Secondary controls are small controls: `track-bright` outline, Overpass Mono 0.75rem capitals, 36px.
+- **Which lever is primary.** The view's next step, and only it: on the dashboard home, reviewing pending changes when the role can act on them, otherwise connecting an application; on MQTT users, Add User until the onboarding flow opens with its own; on Deploy, Preview until a preview with changes hands the lever to Apply. Everything else on the view is a small control.
 - **Disabled controls stay.** Unlike the site, the app shows controls that cannot act, and says why in visible text next to them, not only in a tooltip.
-- **Every lamp has its word.** Broker connected is an enamel lamp plus "connected", disconnected an amber lamp plus "disconnected"; connected is never green, because nothing was verified.
+- **Every lamp has its word.** Deploy preview blocks say their weight next to the lamp ("Blocks apply", "Review before applying", "For information"), and the deployment history uses the change route's words ("Verified", "Applied — activation not proven"), never raw status codes. Broker connected is an enamel lamp plus "connected", disconnected an amber lamp plus "disconnected"; connected is never green, because nothing was verified.
 - **Focus.** The global 2px `enamel-bright` ring, offset 3px, on every control. Selection and caret are amber.
 
 ### What stays on the site

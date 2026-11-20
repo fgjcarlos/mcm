@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { leverPrimary } from '../ui/styles'
 import MQTTUsersPanel from './MQTTUsersPanel'
 
 type RouteHandler = (init?: RequestInit, url?: string) => Response | Promise<Response>
@@ -400,5 +401,84 @@ describe('MQTTUsersPanel 403 forbidden handling', () => {
     expect(setupBtn).toHaveAttribute('title', 'Requires operator role or higher')
 
     vi.unstubAllGlobals()
+  })
+})
+
+describe('MQTTUsersPanel hierarchy and keyboard (#359)', () => {
+  const primaryLevers = () => screen.queryAllByRole('button').filter((button) => button.className.includes(leverPrimary))
+
+  it('makes Add User the primary lever, and hands the lever to the onboarding flow once it is open', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+    await screen.findByText('sensor-01')
+
+    const addUser = screen.getByRole('button', { name: 'Add User' })
+    expect(primaryLevers()).toEqual([addUser])
+
+    await userEvent.setup().click(addUser)
+
+    await screen.findByRole('region', { name: 'MQTT user onboarding' })
+    expect(addUser.className).not.toContain(leverPrimary)
+  })
+
+  it('tells a viewer in words why the user controls are disabled', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="viewer" />)
+    await screen.findByText('sensor-01')
+
+    expect(screen.getByText('Changing MQTT users needs the operator role or higher.')).toBeInTheDocument()
+  })
+
+  it('does not tell an operator that the controls are disabled', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+    await screen.findByText('sensor-01')
+
+    expect(screen.queryByText(/Changing MQTT users needs/)).not.toBeInTheDocument()
+  })
+
+  it('keeps keyboard focus through the delete confirmation and back', async () => {
+    vi.stubGlobal('fetch', installFetchMock(baseRoutes))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+    await screen.findByText('sensor-01')
+    const user = userEvent.setup()
+
+    screen.getByRole('button', { name: 'Delete' }).focus()
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus()
+  })
+
+  it('announces a failed row action', async () => {
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes,
+      'PUT /api/v1/mqtt-users/1': () => jsonResponse({ error: 'The user is locked.' }, { status: 409 }),
+    }))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+    await screen.findByText('sensor-01')
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Disable' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The user is locked.')
+  })
+
+  it('names the toggle while it is busy', async () => {
+    let finish: ((response: Response) => void) | undefined
+    vi.stubGlobal('fetch', installFetchMock({
+      ...baseRoutes,
+      'PUT /api/v1/mqtt-users/1': () => new Promise<Response>((resolve) => { finish = resolve }),
+    }))
+    render(<MQTTUsersPanel token="tok" onLogout={() => {}} role="operator" />)
+    await screen.findByText('sensor-01')
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Disable' }))
+
+    expect(await screen.findByRole('button', { name: 'Disabling…' })).toBeDisabled()
+    finish?.(jsonResponse(userRow(1, 'sensor-01')))
+    expect(await screen.findByRole('button', { name: 'Disable' })).toBeInTheDocument()
   })
 })

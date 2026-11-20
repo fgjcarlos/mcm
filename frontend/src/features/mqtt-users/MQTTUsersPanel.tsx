@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ListControls } from '../lists/ListControls'
 import { usePagedList } from '../lists/usePagedList'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
-import { can, permissionTitle } from '../auth/permissions'
+import { can, permissionTitle, requiredRoleFor } from '../auth/permissions'
 import { Lamp } from '../ui/primitives'
-import { bodyText, codeBlock, leverDanger, leverSecondary, notice, tableHead, tableRow } from '../ui/styles'
+import { bodyText, codeBlock, leverDanger, leverPrimary, leverSecondary, notice, tableHead, tableRow } from '../ui/styles'
 import UserOnboardingFlow from './UserOnboardingFlow'
 
 type MQTTUser = {
@@ -30,6 +30,15 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
   const [resetUserId, setResetUserId] = useState<number | null>(null)
   const [resetPassword, setResetPassword] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
+  // The row whose Delete button takes focus back after the confirmation is cancelled.
+  const [deleteReturnId, setDeleteReturnId] = useState<number | null>(null)
+  // Swapping Delete for its confirmation unmounts the focused button: move focus
+  // to Cancel, and back to Delete when the confirmation closes (#359).
+  const focusTarget = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    focusTarget.current?.focus()
+    focusTarget.current = null
+  }, [deleteConfirmId, deleteReturnId])
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const fetchUsers = list.reload
 
@@ -117,6 +126,8 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
         <div>
           <h3 className="text-lg font-semibold text-enamel-bright">MQTT users</h3>
           <p className={`mt-1 max-w-[68ch] ${bodyText}`}>The MQTT identities Mosquitto authenticates.</p>
+          {/* Disabled controls cannot take focus, so their reason is said here, not only in a tooltip. */}
+          {!canWrite ? <p className={`mt-1 max-w-[68ch] ${bodyText}`}>Changing MQTT users needs the {requiredRoleFor('mqttUser.write')} role or higher.</p> : null}
         </div>
         <button
           type="button"
@@ -125,14 +136,15 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
           }}
           disabled={!canWrite}
           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
-          className={leverSecondary}
+          // The view's one primary lever, until the open onboarding flow carries its own.
+          className={onboarding ? leverSecondary : leverPrimary}
         >
           Add User
         </button>
       </div>
 
       {error ? (
-        <div className={notice.failed}>{error}</div>
+        <div role="alert" className={notice.failed}>{error}</div>
       ) : null}
 
       {onboarding ? (
@@ -209,7 +221,11 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                         </button>
                         <button
                           type="button"
-                          onClick={() => setDeleteConfirmId(null)}
+                          onClick={() => {
+                            setDeleteConfirmId(null)
+                            setDeleteReturnId(user.id)
+                          }}
+                          ref={(button) => { if (button) focusTarget.current = button }}
                           className={leverSecondary}
                         >
                           Cancel
@@ -237,7 +253,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
                           className={leverSecondary}
                         >
-                          {togglingId === user.id ? '…' : user.disabled ? 'Enable' : 'Disable'}
+                          {togglingId === user.id ? (user.disabled ? 'Enabling…' : 'Disabling…') : user.disabled ? 'Enable' : 'Disable'}
                         </button>
                         <button
                           type="button"
@@ -252,7 +268,11 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                         </button>
                         <button
                           type="button"
-                          onClick={() => setDeleteConfirmId(user.id)}
+                          onClick={() => {
+                            setDeleteConfirmId(user.id)
+                            setDeleteReturnId(null)
+                          }}
+                          ref={deleteReturnId === user.id ? (button) => { if (button) focusTarget.current = button } : undefined}
                           disabled={!canWrite}
                           title={!canWrite ? permissionTitle('mqttUser.write') : undefined}
                           className={leverDanger}
