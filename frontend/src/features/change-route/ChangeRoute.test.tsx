@@ -50,3 +50,29 @@ it('returns focus to Apply when the confirmation is cancelled (#359)', async () 
 
   expect(screen.getByRole('button', { name: 'Apply' })).toHaveFocus()
 })
+
+const outsideRoute = (state: typeof mfa) => <div><input aria-label="outside" /><ChangeRoute hasChanges reviewKey="rev-1" mfa={state} applyLabel="Apply" onApply={async () => null} /></div>
+
+it('takes no focus on mount', () => {
+  render(outsideRoute(mfa))
+  expect(document.body).toHaveFocus()
+})
+
+it('leaves focus where it is when the MFA proof changes while the apply is not armed (#359)', () => {
+  const { rerender } = render(outsideRoute({ ...mfa, proof: '' }))
+  screen.getByLabelText('outside').focus()
+  rerender(outsideRoute(mfa))
+  rerender(outsideRoute({ ...mfa, proof: '' }))
+  expect(screen.getByLabelText('outside')).toHaveFocus()
+})
+
+it('leaves focus where it is when the MFA proof expires while the apply is armed (#359)', async () => {
+  const user = userEvent.setup()
+  const { rerender } = render(outsideRoute(mfa))
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+  screen.getByLabelText('outside').focus()
+
+  rerender(outsideRoute({ ...mfa, proof: '' }))
+
+  expect(screen.getByLabelText('outside')).toHaveFocus()
+})

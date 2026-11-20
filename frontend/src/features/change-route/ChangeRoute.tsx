@@ -38,11 +38,14 @@ export default function ChangeRoute({ hasChanges, reviewKey, children, mfa, onAp
   const confirmButton = useRef<HTMLButtonElement>(null)
   const applyButton = useRef<HTMLButtonElement>(null)
   const cancelled = useRef(false)
+  const wasArmed = useRef(false)
   useEffect(() => {
     if (armed && mfa.proof) confirmButton.current?.focus()
-    else if (armed) confirmation.current?.querySelector<HTMLElement>('input, button:not(:disabled)')?.focus()
-    else if (cancelled.current) applyButton.current?.focus()
+    // Only on arming: a proof that expires later must not pull focus from elsewhere on the page.
+    else if (armed && !wasArmed.current) confirmation.current?.querySelector<HTMLElement>('input, button:not(:disabled)')?.focus()
+    else if (!armed && cancelled.current) applyButton.current?.focus()
     cancelled.current = false
+    wasArmed.current = armed
   }, [armed, mfa.proof])
   // A new preview or a new blocking reason drops a started apply back to Review.
   if (armed && !running && (!hasChanges || disabledReason)) setArmed(false)
