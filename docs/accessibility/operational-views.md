@@ -53,7 +53,7 @@ PLAYWRIGHT_CHROMIUM_PATH=~/.cache/ms-playwright/chromium_headless_shell-1248/chr
 - **States:**
   - **Empty:** the broker is connected with no traffic; there are no MQTT users,
     no deployment history and nothing pending; the preview has no changes.
-  - **Loaded:** 8 MQTT users, one of them disabled; 1,287 messages with five top
+  - **Loaded:** 8 MQTT users, one of them disabled; 1,284 messages with five top
     topics, three live topic messages and one Mosquitto warning; pending changes
     in this browser; a preview with changes, 2 orphan rules, one access-at-risk
     entry, one composition warning and one pending listener activation; a history
