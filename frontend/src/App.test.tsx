@@ -2517,6 +2517,43 @@ describe('App', () => {
     expect(toggle).toHaveFocus()
   })
 
+  it('closes the narrow-screen menu when the window widens to desktop, keeping focus (#389)', async () => {
+    // jsdom has no layout: drive the lg media query by hand.
+    let desktop = false
+    const listeners = new Set<() => void>()
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      media: query,
+      get matches() { return desktop },
+      addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    }))
+    const resize = (wide: boolean) => act(() => {
+      desktop = wide
+      listeners.forEach((listener) => listener())
+    })
+    window.localStorage.setItem('mcm_admin_token', 'widen-menu-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('widen-menu-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const user = userEvent.setup()
+    const toggle = screen.getByRole('button', { name: 'Menu' })
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const dashboard = screen.getByRole('link', { name: /^Dashboard/ })
+    dashboard.focus()
+
+    resize(true)
+    // The sidebar is the desktop navigation now: the menu closes and focus stays on the visible link.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(dashboard).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(dashboard).toHaveFocus()
+
+    resize(false)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(document.getElementById('primary-menu')).toHaveClass('hidden')
+  })
+
   describe('the pending deploy notice (issue #358)', () => {
     function noticeRoutes(token: string, role: string): Record<string, RouteHandler> {
       return {
