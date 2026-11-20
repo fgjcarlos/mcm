@@ -5,6 +5,8 @@ import { useLiveFeed } from './useLiveFeed'
 import { LiveFeedChrome } from './LiveFeedChrome'
 import { emptyFeedText } from './feedText'
 import { SeverityBadge } from './SeverityBadge'
+import { useClientPage } from '../lists/useClientPage'
+import { ClientPager } from '../lists/ClientPager'
 import { fieldLabel, input, leverToggle, select, textLink } from '../ui/styles'
 
 // Live Logs view (issue #357): compact rows with an expandable detail,
@@ -21,6 +23,11 @@ const sourceLabels: Record<BrokerLog['source'], { title: string; option: string 
 }
 
 const eventNoun = { one: 'event', many: 'events' }
+// One pager per source region, so each nav needs its own name.
+const lineNouns: Record<BrokerLog['source'], { one: string; many: string }> = {
+  mcm: { one: 'MCM log line', many: 'MCM log lines' },
+  mosquitto_log: { one: 'Mosquitto log line', many: 'Mosquitto log lines' },
+}
 
 export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; streamState: BrokerStreamState }) {
   const feed = useLiveFeed(logs, liveLogWindow)
@@ -71,9 +78,7 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
         const shown = received.filter((log) => matchesLogFilter(log, filter))
         return <section key={source} aria-label={sourceLabels[source].title} className="min-w-0">
           <h4 className="border-b border-track-strong pb-2 text-sm font-semibold text-enamel-bright">{sourceLabels[source].title}</h4>
-          {shown.length > 0 ? <ol className="divide-y divide-track">
-            {shown.map((log) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => toggleExpanded(log.id)} />)}
-          </ol> : <p className="mt-3 text-sm text-enamel-soft">{emptyFeedText({
+          {shown.length > 0 ? <PagedLogList logs={shown} noun={lineNouns[source]} expanded={expanded} onToggle={toggleExpanded} /> : <p className="mt-3 text-sm text-enamel-soft">{emptyFeedText({
             noun: eventNoun,
             filterLabel: 'filters',
             receivedAny: received.length > 0,
@@ -85,6 +90,16 @@ export function LogsPanel({ logs, streamState }: { logs: LiveBrokerLog[]; stream
       })}
     </div>
   </section>
+}
+
+function PagedLogList({ logs, noun, expanded, onToggle }: { logs: LiveBrokerLog[]; noun: { one: string; many: string }; expanded: ReadonlySet<number>; onToggle: (id: number) => void }) {
+  const pager = useClientPage(logs, { pageSize: 25 })
+  return <>
+    <div className="not-empty:my-3"><ClientPager pager={pager} noun={noun} /></div>
+    <ol className="divide-y divide-track">
+      {pager.rows.map(({ item: log }) => <LogRow key={log.id} log={log} expanded={expanded.has(log.id)} onToggle={() => onToggle(log.id)} />)}
+    </ol>
+  </>
 }
 
 function LogRow({ log, expanded, onToggle }: { log: LiveBrokerLog; expanded: boolean; onToggle: () => void }) {
