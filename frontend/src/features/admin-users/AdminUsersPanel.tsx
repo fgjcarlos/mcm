@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { authenticatedFetch, isForbiddenResponseError, isUnauthorizedResponseError } from '../api/client'
 import { can, permissionTitle } from '../auth/permissions'
+import { ClientPager } from '../lists/ClientPager'
+import { useClientPage } from '../lists/useClientPage'
 import { Lamp, Plate } from '../ui/primitives'
 import { bodyText, codeBlock, fieldHint, fieldLabel, leverDanger, leverPrimary, leverSecondary, input, notice, select, tableHead, tableRow } from '../ui/styles'
 
@@ -45,6 +47,8 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
+
+  const pager = useClientPage(users, { match: (user, query) => user.username.toLowerCase().includes(query) || user.role.toLowerCase().includes(query) })
 
   const fetchUsers = useCallback(() => setRefreshTick((n) => n + 1), [])
 
@@ -296,6 +300,8 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
         </div>
       ) : null}
 
+      <ClientPager pager={pager} noun={{ one: 'admin user', many: 'admin users' }} searchLabel="Filter admin users" />
+
       <div className="table-scroll border-y border-track-strong">
         {loading ? (
           <p className={`py-6 ${bodyText}`}>Loading users…</p>
@@ -313,7 +319,7 @@ function AdminUsersPanel({ token, onLogout, role = '' }: { token: string; onLogo
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
+              {pager.rows.map(({ item: user }) => (
                 <tr key={user.id} className={tableRow}>
                   <td className="py-3 pr-4 font-mono text-sm text-enamel-bright">{user.username}</td>
                   <td className="py-3 pr-4"><Plate>{user.role}</Plate></td>

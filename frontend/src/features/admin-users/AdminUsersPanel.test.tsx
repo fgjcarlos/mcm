@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import AdminUsersPanel from './AdminUsersPanel'
@@ -645,6 +645,51 @@ describe('AdminUsersPanel', () => {
       
       // Click the dismiss button
       await userEvent.setup().click(dismissButtons[0])
+
+      vi.unstubAllGlobals()
+    })
+  })
+
+  describe('Pagination', () => {
+    it('pages a long user list, filters it and keeps the row actions on the right user', async () => {
+      const many = Array.from({ length: 12 }, (_, i) => ({
+        id: i + 1,
+        username: `user${String(i + 1).padStart(2, '0')}`,
+        disabled: false,
+        role: i === 11 ? 'auditor' : 'operator',
+        mfa_enabled: false,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      }))
+      const putUser11 = vi.fn(() => jsonResponse({ ...many[10], disabled: true }))
+      vi.stubGlobal('fetch', installFetchMock({
+        'GET /api/v1/admin-users': () => jsonResponse(many),
+        'PUT /api/v1/admin-users/11': putUser11,
+      }))
+      const user = userEvent.setup()
+
+      render(<AdminUsersPanel token="tok" onLogout={() => {}} role="admin" />)
+
+      expect(await screen.findByText('user01')).toBeInTheDocument()
+      expect(screen.getByText('user10')).toBeInTheDocument()
+      expect(screen.queryByText('user11')).not.toBeInTheDocument()
+      expect(screen.getByText('12 operators configured')).toBeInTheDocument()
+      const nav = screen.getByRole('navigation', { name: 'admin users pages' })
+      expect(within(nav).getByText('Page 1 of 2')).toBeInTheDocument()
+
+      await user.click(within(nav).getByRole('button', { name: 'Next page' }))
+      expect(screen.getByText('user11')).toBeInTheDocument()
+      expect(screen.queryByText('user01')).not.toBeInTheDocument()
+      expect(within(nav).getByText('Page 2 of 2')).toBeInTheDocument()
+
+      // The Disable action of the first row on page 2 targets user11, not the first user.
+      await user.click(screen.getAllByRole('button', { name: 'Disable' })[0])
+      await waitFor(() => expect(putUser11).toHaveBeenCalledTimes(1))
+      expect(JSON.parse(String((putUser11.mock.calls[0] as unknown as [RequestInit])[0].body))).toMatchObject({ username: 'user11', disabled: true })
+
+      await user.type(screen.getByRole('searchbox', { name: 'Filter admin users' }), 'AUDITOR')
+      expect(screen.getByText('user12')).toBeInTheDocument()
+      expect(screen.queryByText('user11')).not.toBeInTheDocument()
 
       vi.unstubAllGlobals()
     })

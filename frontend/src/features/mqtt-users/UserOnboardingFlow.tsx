@@ -549,18 +549,22 @@ export default function UserOnboardingFlow({
           {preview?.scope_issues?.length ? (
             <div className={notice.failed}>
               <h5 className="font-semibold">Listener scope problems</h5>
-              <ul className="mt-2 space-y-1 font-mono text-xs text-enamel-bright">
-                {preview.scope_issues.map((issue) => <li key={issue} className="break-words">{issue}</li>)}
-              </ul>
+              <div role="region" aria-label="Listener scope problems" tabIndex={0} className="mt-2 max-h-96 overflow-y-auto">
+                <ul className="space-y-1 font-mono text-xs text-enamel-bright">
+                  {preview.scope_issues.map((issue) => <li key={issue} className="break-words">{issue}</li>)}
+                </ul>
+              </div>
             </div>
           ) : null}
 
           {preview?.composition_warnings?.length ? (
             <div className={notice.caution}>
               <h5 className="font-semibold text-lamp">Composition warnings</h5>
-              <ul className="mt-2 space-y-1">
-                {preview.composition_warnings.map((warning) => <li key={warning} className="break-words">{warning}</li>)}
-              </ul>
+              <div role="region" aria-label="Composition warnings" tabIndex={0} className="mt-2 max-h-96 overflow-y-auto">
+                <ul className="space-y-1">
+                  {preview.composition_warnings.map((warning) => <li key={warning} className="break-words">{warning}</li>)}
+                </ul>
+              </div>
             </div>
           ) : null}
 
