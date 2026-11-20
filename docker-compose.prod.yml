@@ -3,7 +3,8 @@
 # Mirrors the production managed flow without giving MCM access to the
 # Docker socket:
 #
-#   - mosquitto runs as the official `mosquitto` UID (NOT root).
+#   - mosquitto runs as root, the user MCM runs as here, so it owns the
+#     passwd/acl files MCM writes (issue #394).
 #   - The mcm service shares a NAMED VOLUME with mosquitto for the
 #     passwd/acl files but does NOT mount /var/run/docker.sock.
 #   - Reload is signalled via MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND
@@ -28,10 +29,14 @@ services:
       - mosquitto_config:/mosquitto/config
       - mosquitto_logs:/mosquitto/log
       - ./deploy/mosquitto/config:/mosquitto-init:ro
-    # Run the dev bootstrap (chmods are dev-only side effects — they are
-    # no-ops here because we share the host PID namespace and the
-    # cross-UID mismatch workaround is unnecessary).
+    # Run the dev bootstrap: it seeds config/passwd/acl and starts the
+    # broker as MCM_SERVICE_UID/MCM_SERVICE_GID.
     command: /mosquitto-init/mosquitto-bootstrap.sh
+    environment:
+      # MCM runs as root below, so the broker runs as root too and owns
+      # the passwd/acl files MCM writes (issue #394).
+      MCM_SERVICE_UID: "0"
+      MCM_SERVICE_GID: "0"
     healthcheck:
       # The eclipse-mosquitto image ships busybox; use `nc -z` to confirm
       # the MQTT listener accepts TCP connections. Combined with the

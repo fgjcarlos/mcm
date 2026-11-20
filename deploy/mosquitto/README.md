@@ -69,7 +69,7 @@ The production template is not a drop-in version of this managed flow. Align its
 | Knob | Dev value | Why it's dev-only |
 |---|---|---|
 | `MCM_MOSQUITTO_PASSWORD` | Hardcoded `mcm-dev-broker-password` in `docker-compose.yml` and `mosquitto-bootstrap.sh` | Production reads the broker password from a secret manager; never embed it in source. |
-| `user root` in `mosquitto.conf` | Set | The cross-container shared volume is pre-populated by the image as the `mosquitto` UID; running as root is the simplest way for the broker to read files written by the `mcm` UID. Production should match broker/mcm UIDs (or run both as the same UID). |
+| Broker runs as the `mcm` UID (`MCM_SERVICE_UID`/`MCM_SERVICE_GID`, default `100`/`101`) | Set by `mosquitto-bootstrap.sh` | MCM writes `passwd`/`acl` as `0600` files owned by its own user, and Mosquitto warns (future versions refuse to load) a password or ACL file whose owner or group is not the broker's user, or that is world readable. The bootstrap starts as root, hands `passwd`, `acl`, the data directory and the log to that user, and runs the broker as it, so the broker owns every file MCM writes. The `user root` in `mosquitto.conf` is ignored by a non-root broker. Production should run the broker and MCM as the same user. |
 | `chmod 777` on the shared config dir | Set by `mosquitto-bootstrap.sh` | Same UID-mismatch workaround. Production matches UIDs, no chmod needed. |
 | Mount of `/var/run/docker.sock` into mcm | Set | Lets MCM run `docker exec … kill -HUP 1` against the host daemon. **Do NOT do this in production.** File mode needs compatible ownership and a configured PID/signal path. Any broker-side reload trigger is operator-provided; the production adapter remains tracked in #294. |
 | `docker-cli` installed in the mcm image | Set | Companion to the docker socket mount; the `DockerApplier` shells out to `docker exec`. Production does not need the docker CLI. |
@@ -292,6 +292,6 @@ A mutual TLS listener is always reported as `unverified`: MCM owns no client cer
 
 ## Security note
 
-The development configuration enables authentication (no anonymous access) and uses a shared volume so MCM can manage users and ACLs through the deploy service. The dev-only shortcuts above (hardcoded password, broker running as root, docker socket mount, world-writable shared dir) exist purely so a clean clone of the repo works without operator input.
+The development configuration enables authentication (no anonymous access) and uses a shared volume so MCM can manage users and ACLs through the deploy service. The dev-only shortcuts above (hardcoded password, broker running as the MCM service user, docker socket mount, world-writable shared dir) exist purely so a clean clone of the repo works without operator input.
 
 Do not use this configuration in production. Production deployments must use authentication, ACLs, TLS where appropriate, and explicit listener hardening — see the [Production TLS checklist](#production-tls-checklist) below.
