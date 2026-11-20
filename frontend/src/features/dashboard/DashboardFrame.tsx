@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import type { AdminUser } from '../auth/useAuthSession'
-import type { BrokerConnectionStatus, BrokerStreamState } from '../broker/useBrokerStream'
+import type { BrokerConnectionStatus, BrokerStatusLoad, BrokerStreamState } from '../broker/useBrokerStream'
+import { lampDot } from '../ui/styles'
 
 export type NavItem = {
   id: string
@@ -20,6 +21,7 @@ type DashboardFrameProps = {
   activeItem: NavItem
   activeId: string
   brokerStatus: BrokerConnectionStatus
+  statusLoad: BrokerStatusLoad
   streamState: BrokerStreamState
   uniqueTopicCount: number
   logCount: number
@@ -36,6 +38,7 @@ export function DashboardFrame({
   activeItem,
   activeId,
   brokerStatus,
+  statusLoad,
   streamState,
   uniqueTopicCount,
   logCount,
@@ -46,6 +49,8 @@ export function DashboardFrame({
   onLogout,
   children,
 }: DashboardFrameProps) {
+  // Connected or disconnected only once the status was read; an unread status is not a disconnection.
+  const statusWord = statusLoad === 'loading' ? 'checking' : statusLoad === 'failed' ? 'unknown' : brokerStatus
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['MQTT Access', 'Changes']))
   // Below lg the sidebar folds behind a menu button so the content comes first.
   const [menuOpen, setMenuOpen] = useState(false)
@@ -67,7 +72,8 @@ export function DashboardFrame({
           onSelectNav(item)
           if (menuOpen) closeMenu()
         }}
-        className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 ${
+        // The focus ring is drawn inside: the collapsible group and the scrolling sidebar clip anything outside.
+        className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 focus-visible:outline-offset-[-2px] ${
           isActive
             ? 'bg-frame-high font-semibold text-enamel-bright'
             : 'text-enamel-soft hover:bg-frame-raised hover:text-enamel-bright'
@@ -116,8 +122,8 @@ export function DashboardFrame({
             <p className="text-xs text-enamel-muted">Broker</p>
             {/* Connected is not verified, so no green: an enamel lamp when up, amber when not, always with the word. */}
             <p className="mt-1 flex items-center gap-2 font-mono text-sm text-enamel-bright">
-              <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${brokerStatus === 'connected' ? 'bg-enamel' : 'bg-lamp'}`} />
-              <span className="capitalize">{brokerStatus}</span>
+              <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${statusWord === 'connected' ? 'bg-enamel' : statusWord === 'checking' ? lampDot.off : 'bg-lamp'}`} />
+              <span className="capitalize">{statusWord}</span>
             </p>
             <p className="mt-1 text-xs text-enamel-muted">Event stream: {streamState}</p>
           </div>
@@ -220,7 +226,7 @@ export function DashboardFrame({
             {/* The live counts belong to the dashboard home, not to every page. */}
             {activeId === 'dashboard' ? (
               <dl className="flex divide-x divide-track border-y border-track">
-                <Metric label="Status" value={brokerStatus} />
+                <Metric label="Status" value={statusWord} />
                 <Metric label="Topics" value={String(uniqueTopicCount)} />
                 <Metric label="Logs" value={String(logCount)} />
               </dl>

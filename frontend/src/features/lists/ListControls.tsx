@@ -18,12 +18,12 @@ export function ListControls<T>({ list, noun, searchLabel, filterFields = [] }: 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-0 flex-wrap items-end gap-3">
           {searchLabel ? (
             <input type="search" aria-label={searchLabel} placeholder={searchLabel} value={list.search} onChange={(event) => list.setSearch(event.target.value)} className={input} />
           ) : null}
           {filterFields.map((field) => field.options ? (
-            <select key={field.key} aria-label={field.label} value={list.filters[field.key] ?? ''} onChange={(event) => list.setFilter(field.key, event.target.value)} className={select}>
+            <select key={field.key} aria-label={field.label} value={list.filters[field.key] ?? ''} onChange={(event) => list.setFilter(field.key, event.target.value)} className={`${select} max-w-full`}>
               {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           ) : (

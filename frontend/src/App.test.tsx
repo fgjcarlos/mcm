@@ -1782,7 +1782,7 @@ describe('App', () => {
   })
 
   describe('deploy hierarchy (#359)', () => {
-    function deployHierarchyRoutes(token: string, preview: () => Response): Record<string, RouteHandler> {
+    function deployHierarchyRoutes(token: string, preview: RouteHandler): Record<string, RouteHandler> {
       return {
         ...authenticatedRoutes(token),
         'GET /api/v1/auth/me': () => jsonResponse({ id: 9, username: 'hierarchy-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
@@ -1791,7 +1791,7 @@ describe('App', () => {
       }
     }
 
-    async function openDeploy(token: string, preview: () => Response) {
+    async function openDeploy(token: string, preview: RouteHandler) {
       window.localStorage.setItem('mcm_admin_token', token)
       vi.stubGlobal('fetch', installFetchMock(deployHierarchyRoutes(token, preview)))
       render(<App />)
@@ -1812,6 +1812,35 @@ describe('App', () => {
       const apply = await screen.findByRole('button', { name: 'Apply' })
       expect(primaryLevers()).toEqual([apply])
       expect(screen.getByRole('button', { name: 'Preview Changes' })).toBeEnabled()
+    })
+
+    it('keeps keyboard focus on Preview Changes while the preview is generating and after it arrives', async () => {
+      let resolvePreview: ((response: Response) => void) | undefined
+      const pending = new Promise<Response>((resolve) => { resolvePreview = resolve })
+      const user = await openDeploy('hierarchy-focus-token', () => pending)
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+      const generating = screen.getByRole('button', { name: 'Generating…' })
+      expect(generating).toHaveFocus()
+      expect(generating).toBeEnabled()
+      expect(generating).toHaveAttribute('aria-disabled', 'true')
+      await user.click(generating)
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/v1/deployments/preview')).toHaveLength(1)
+
+      resolvePreview?.(jsonResponse({ revision_id: 'rev-focus', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }))
+      await screen.findByRole('button', { name: 'Apply' })
+      expect(screen.getByRole('button', { name: 'Preview Changes' })).toHaveFocus()
+      expect(screen.getByRole('button', { name: 'Preview Changes' })).not.toHaveAttribute('aria-disabled')
+    })
+
+    it('moves focus to the MFA code field when Apply is pressed', async () => {
+      const user = await openDeploy('hierarchy-apply-focus-token', () => jsonResponse({ revision_id: 'rev-1', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }))
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+      await user.click(await screen.findByRole('button', { name: 'Apply' }))
+
+      expect(screen.getByLabelText('MFA code')).toHaveFocus()
     })
 
     it('announces a failed preview', async () => {
@@ -2306,6 +2335,16 @@ describe('App', () => {
     expect(within(screen.getByRole('region', { name: 'MQTT Access' })).queryByRole('link', { name: /Listeners|Certificates/ })).not.toBeInTheDocument()
   })
 
+  it('draws the focus ring of every nav link inside the link so a clipping group cannot hide it (#359)', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'focus-ring-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('focus-ring-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const links = within(screen.getByRole('navigation', { name: 'Primary navigation' })).getAllByRole('link')
+    expect(links.length).toBeGreaterThan(1)
+    for (const link of links) expect(link.className).toContain('focus-visible:outline-offset-[-2px]')
+  })
+
   it('places the dashboard as the standalone home link above every group', async () => {
     window.localStorage.setItem('mcm_admin_token', 'home-link-token')
     vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('home-link-token')))
@@ -2636,6 +2675,42 @@ describe('App', () => {
       expect(await within(health).findByText('Status unavailable')).toBeInTheDocument()
       expect(within(health).getByText(/does not mean the broker is down/)).toBeInTheDocument()
       expect(within(health).queryByText('Disconnected')).not.toBeInTheDocument()
+    })
+
+    // The frame (sidebar lamp and header Status metric) never claims a disconnection it did not read (#359).
+    const frameStatus = () => ({
+      sidebar: screen.getByText('Broker', { selector: 'p' }).nextElementSibling!,
+      metric: screen.getByText('Status', { selector: 'dt' }).parentElement!.querySelector('dd')!,
+    })
+
+    it('says checking in the frame while the broker status is still loading', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'frame-checking-token')
+      vi.stubGlobal('fetch', installFetchMock({ ...homeRoutes(), 'GET /api/v1/status': () => new Promise<Response>(() => {}) }))
+      render(<App />)
+      await screen.findByText('Signed in')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(/^checking$/)
+      expect(metric).toHaveTextContent(/^checking$/)
+    })
+
+    it('says unknown with an amber lamp in the frame when the broker status cannot be read', async () => {
+      renderHome('frame-unknown-token', { statusFails: true })
+      await within(await screen.findByRole('region', { name: 'Broker health' })).findByText('Status unavailable')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(/^unknown$/)
+      expect(sidebar.querySelector('[aria-hidden="true"]')).toHaveClass('bg-lamp')
+      expect(metric).toHaveTextContent(/^unknown$/)
+    })
+
+    it.each(['connected', 'disconnected'] as const)('says %s in the frame once the broker status is loaded', async (broker) => {
+      renderHome(`frame-${broker}-token`, { broker })
+      await within(await screen.findByRole('region', { name: 'Broker health' })).findByText(broker === 'connected' ? 'Connected · no traffic' : 'Disconnected')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(new RegExp(`^${broker}$`))
+      expect(metric).toHaveTextContent(new RegExp(`^${broker}$`))
     })
 
     it('reports recent traffic and the time of the last message when the broker is active', async () => {

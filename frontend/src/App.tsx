@@ -527,6 +527,7 @@ function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: str
       activeItem={activeItem}
       activeId={activeId}
       brokerStatus={brokerStatus}
+      statusLoad={statusFacts.load}
       streamState={streamState}
       uniqueTopicCount={uniqueTopicCount}
       logCount={logs.length}
@@ -1585,6 +1586,7 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
   }, [history.error, token, onLogout])
 
   const handlePreview = async () => {
+    if (previewLoading) return
     setPreviewLoading(true)
     setPreviewError('')
     // Clearing the preview also drops ChangeRoute's started apply back to Review:
@@ -1682,7 +1684,9 @@ function DeployPanel({ token, onLogout, role = '', onApplyStart, onApplySuccess 
           <button
             type="button"
             onClick={() => { void handlePreview() }}
-            disabled={previewLoading || !canPreview}
+            // aria-disabled, not disabled, while generating: a disabled button drops keyboard focus to the body (#359).
+            disabled={!canPreview}
+            aria-disabled={previewLoading || undefined}
             title={!canPreview ? permissionTitle('deploy.preview') : undefined}
             // The view's one primary lever until a preview with changes hands it to Apply (#359).
             className={preview?.has_changes ? leverSecondary : leverPrimary}

@@ -568,9 +568,10 @@ journeys.push(await journey('Deploy: preview, Apply, MFA field (no apply)', asyn
   const afterApply = (await focused(page))?.element ?? 'body'
   steps.push({ step: `Tab to Apply, Enter arms the apply (focus after: ${afterApply})`, tabs: toApply, ok: true })
   const isCode = () => document.activeElement?.matches('input[placeholder="Authenticator code"]')
-  let toCode
+  let toCode = 0
   let direction = 'Tab'
-  try {
+  // Arming Apply may already have put focus on the field: then no press is needed.
+  if (!(await page.evaluate(isCode))) try {
     toCode = await tabUntil(page, isCode, undefined, 80)
   } catch {
     direction = 'Shift+Tab'
