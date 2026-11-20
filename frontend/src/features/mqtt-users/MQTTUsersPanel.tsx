@@ -6,6 +6,7 @@ import { can, permissionTitle, requiredRoleFor } from '../auth/permissions'
 import { Lamp } from '../ui/primitives'
 import { bodyText, codeBlock, leverDanger, leverPrimary, leverSecondary, notice, tableHead, tableRow } from '../ui/styles'
 import UserOnboardingFlow from './UserOnboardingFlow'
+import UserRulesPanel from './UserRulesPanel'
 
 type MQTTUser = {
   id: number
@@ -15,7 +16,7 @@ type MQTTUser = {
   updated_at: string
 }
 
-function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, onMutationStart, onMutation, onApplyStart, onApplySuccess }: { token: string; onLogout: () => void; role?: string; startOnboarding?: boolean; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void }) {
+function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, onMutationStart, onMutation, onApplyStart, onApplySuccess, onReviewChanges }: { token: string; onLogout: () => void; role?: string; startOnboarding?: boolean; onMutationStart?: () => number; onMutation?: (mutationID: number) => void; onApplyStart?: () => number; onApplySuccess?: (mutationWatermark: number) => void; onReviewChanges?: () => void }) {
   const canWrite = can(role, 'mqttUser.write')
   const canWriteRule = can(role, 'acl.write')
   const list = usePagedList<MQTTUser>({ path: '/api/v1/mqtt-users', rowsKey: 'users', token, onUnauthorized: onLogout, namespace: 'users', searchParam: 'q' })
@@ -27,6 +28,8 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
   // step from "Add User" and at the rule step for an existing user. The
   // dashboard's "Connect an application" action (#354) opens it on mount.
   const [onboarding, setOnboarding] = useState<{ stage: 'user' | 'rule'; username: string } | null>(() => (startOnboarding && canWrite ? { stage: 'user', username: '' } : null))
+  // The account whose direct ACL rules are open (#360).
+  const [rulesFor, setRulesFor] = useState<string | null>(null)
   const [resetUserId, setResetUserId] = useState<number | null>(null)
   const [resetPassword, setResetPassword] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
@@ -107,6 +110,7 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
         return
       }
       setDeleteConfirmId(null)
+      if (users.find((user) => user.id === id)?.username === rulesFor) setRulesFor(null)
       if (resetUserId === id) {
         setResetUserId(null)
         setResetPassword(null)
@@ -160,6 +164,20 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
           onApplySuccess={onApplySuccess}
           onUserCreated={() => { fetchUsers() }}
           onClose={() => setOnboarding(null)}
+        />
+      ) : null}
+
+      {rulesFor ? (
+        <UserRulesPanel
+          key={rulesFor}
+          token={token}
+          onLogout={onLogout}
+          role={role}
+          username={rulesFor}
+          onMutationStart={onMutationStart}
+          onMutation={onMutation}
+          onReviewChanges={onReviewChanges}
+          onClose={() => setRulesFor(null)}
         />
       ) : null}
 
@@ -243,6 +261,14 @@ function MQTTUsersPanel({ token, onLogout, role = '', startOnboarding = false, o
                           className={leverSecondary}
                         >
                           Complete setup
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Rules for ${user.username}`}
+                          onClick={() => setRulesFor(user.username)}
+                          className={leverSecondary}
+                        >
+                          Rules
                         </button>
                         <button
                           type="button"

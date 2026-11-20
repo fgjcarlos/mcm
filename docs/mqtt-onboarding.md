@@ -28,6 +28,18 @@ setup** in a user row opens it at step 2 for a user that already exists,
 so an identity created outside the journey can still get its rule and its
 apply in the same place.
 
+**Rules** in a user row opens the direct ACL rules of that account (#360):
+the rules whose source is *User* and whose principal is exactly that
+username. They are not its effective permissions; pattern rules and the
+ACL file of each listener also decide its access, so the *ACLs* panel still
+evaluates them. An operator or admin adds, edits or removes a rule there
+without typing the username again, and the save never touches the rules of
+another account. A save only marks the deployment pending: the panel says
+the change is saved in MCM but not applied to Mosquitto, and offers the
+same review as the pending deploy banner, which covers every pending
+change, not only that user's. An auditor sees the rules but cannot change
+them.
+
 The rule of the journey is an ordinary MCM rule: the *ACLs* panel lists
 it, `GET /api/v1/acls/effective` resolves it, and the apply renders it
 into the Mosquitto ACL file.
@@ -178,7 +190,7 @@ card, and the *Deploy* panel shows its own preview and apply controls.
   the rule it created. A change saved elsewhere before the preview is
   applied by the same apply.
 - One rule per journey. A user that needs several topic filters gets one
-  rule here and the rest in the *ACLs* panel.
+  rule here and the rest from **Rules** in its row or the *ACLs* panel.
 - The verification proves that the broker serves the applied
   configuration. It does not prove the semantics of every directive; see
   [what the activation probe does not prove](./acl.md#what-the-activation-probe-does-not-prove).
