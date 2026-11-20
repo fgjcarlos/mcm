@@ -56,4 +56,13 @@ describe('ListControls', () => {
     expect(list.setFilter).toHaveBeenCalledWith('status', '')
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to load the list.')
   })
+
+  // A long option must not widen the page past a 320px viewport (#359 reflow).
+  it('never lets a filter select grow wider than its container', () => {
+    render(createElement(ListControls, { list: state(), noun, filterFields: [{ key: 'status', label: 'Filter by status', options: [{ value: '', label: 'All statuses' }] }] }))
+    const select = screen.getByRole('combobox', { name: 'Filter by status' })
+    expect(select).toHaveClass('max-w-full')
+    // Its row may shrink below the select's natural width, or max-w-full has nothing to resolve against.
+    expect(select.parentElement).toHaveClass('min-w-0')
+  })
 })

@@ -141,7 +141,8 @@ late subscriber, so run the test once the step says *Watching*.
 ## The pending deploy banner
 
 The banner that says **Pending deploy** still covers every change that
-is saved but not applied to Mosquitto, whoever made it: a rule edited in
+is saved but not applied to Mosquitto, whoever made it (on the dashboard
+home the same state shows in its *Pending changes* card instead): a rule edited in
 the *ACLs* panel, a user toggled in the *Users* panel, an adopted ACL
 source, a change made outside the journey. The journey does not replace
 it:

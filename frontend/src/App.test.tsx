@@ -2,6 +2,10 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { leverPrimary } from './features/ui/styles'
+
+// The buttons drawn as the primary lever (DESIGN.md: one per view).
+const primaryLevers = () => screen.queryAllByRole('button').filter((button) => button.className.includes(leverPrimary))
 
 type RouteHandler = (init?: RequestInit, url?: string) => Response | Promise<Response>
 
@@ -1597,7 +1601,7 @@ describe('App', () => {
     })
   })
 
-  it('restores the pending deploy banner from the reload-safe marker', async () => {
+  it('restores the pending deploy state from the reload-safe marker', async () => {
     window.localStorage.setItem('mcm_admin_token', 'reload-token')
     window.localStorage.setItem('mcm_deploy_pending', '1')
     vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('reload-token')))
@@ -1605,7 +1609,8 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText('Signed in')
-    expect(screen.getByText('Pending deploy')).toBeInTheDocument()
+    // On the dashboard home the restored state shows in the Pending changes card (#359).
+    expect(screen.getByText('Saved, not applied')).toBeInTheDocument()
   })
 
   it('keeps the pending deploy banner when apply fails', async () => {
@@ -1714,7 +1719,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Verify MFA' }))
     await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
-    await screen.findByText('Verified')
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Apply result' })).toHaveTextContent('Verified'))
     expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
 
     resolveCreate?.(jsonResponse({
@@ -1765,15 +1770,115 @@ describe('App', () => {
     await screen.findByText(/MFA confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
 
-    // The route result says in plain words that activation is not proven; the history pill keeps the raw status.
+    // The route result and the history say in the same plain words that activation is not proven (#359).
     const result = await screen.findByRole('status', { name: 'Apply result' })
     await waitFor(() => expect(result).toHaveTextContent('Applied — activation not proven'))
     expect(screen.getByRole('listitem', { name: 'Result: caution' })).toBeInTheDocument()
     // Both carry the route-amber token, never the verified green one.
-    for (const label of [result, within(screen.getByRole('table')).getByText('applied')]) {
+    for (const label of [result, within(screen.getByRole('table')).getByText('Applied — activation not proven')]) {
       expect(label).toHaveClass('text-lamp')
       expect(label.className).not.toMatch(/proceed/)
     }
+  })
+
+  describe('deploy hierarchy (#359)', () => {
+    function deployHierarchyRoutes(token: string, preview: RouteHandler): Record<string, RouteHandler> {
+      return {
+        ...authenticatedRoutes(token),
+        'GET /api/v1/auth/me': () => jsonResponse({ id: 9, username: 'hierarchy-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }),
+        'GET /api/v1/deployments': () => envelope('deployments', [{ id: 'dep-verified', status: 'active_verified', message: 'Configuration verified.', created_at: '2026-01-02T00:00:00Z' }]),
+        'POST /api/v1/deployments/preview': preview,
+      }
+    }
+
+    async function openDeploy(token: string, preview: RouteHandler) {
+      window.localStorage.setItem('mcm_admin_token', token)
+      vi.stubGlobal('fetch', installFetchMock(deployHierarchyRoutes(token, preview)))
+      render(<App />)
+      const user = userEvent.setup()
+      await screen.findByText('Signed in')
+      await user.click(screen.getByRole('link', { name: /deploy/i }))
+      await screen.findByRole('heading', { name: 'Mosquitto configuration deploy' })
+      return user
+    }
+
+    it('makes Preview the primary lever until a preview with changes hands it to Apply', async () => {
+      const user = await openDeploy('hierarchy-primary-token', () => jsonResponse({ revision_id: 'rev-1', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }))
+
+      expect(primaryLevers()).toEqual([screen.getByRole('button', { name: 'Preview Changes' })])
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+      const apply = await screen.findByRole('button', { name: 'Apply' })
+      expect(primaryLevers()).toEqual([apply])
+      expect(screen.getByRole('button', { name: 'Preview Changes' })).toBeEnabled()
+    })
+
+    it('keeps keyboard focus on Preview Changes while the preview is generating and after it arrives', async () => {
+      let resolvePreview: ((response: Response) => void) | undefined
+      const pending = new Promise<Response>((resolve) => { resolvePreview = resolve })
+      const user = await openDeploy('hierarchy-focus-token', () => pending)
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+      const generating = screen.getByRole('button', { name: 'Generating…' })
+      expect(generating).toHaveFocus()
+      expect(generating).toBeEnabled()
+      expect(generating).toHaveAttribute('aria-disabled', 'true')
+      await user.click(generating)
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/v1/deployments/preview')).toHaveLength(1)
+
+      resolvePreview?.(jsonResponse({ revision_id: 'rev-focus', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }))
+      await screen.findByRole('button', { name: 'Apply' })
+      expect(screen.getByRole('button', { name: 'Preview Changes' })).toHaveFocus()
+      expect(screen.getByRole('button', { name: 'Preview Changes' })).not.toHaveAttribute('aria-disabled')
+    })
+
+    it('moves focus to the MFA code field when Apply is pressed', async () => {
+      const user = await openDeploy('hierarchy-apply-focus-token', () => jsonResponse({ revision_id: 'rev-1', acl_diff: '+user device', passwd_diff: '', orphan_rules: [], has_changes: true }))
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+      await user.click(await screen.findByRole('button', { name: 'Apply' }))
+
+      expect(screen.getByLabelText('MFA code')).toHaveFocus()
+    })
+
+    it('announces a failed preview', async () => {
+      const user = await openDeploy('hierarchy-error-token', () => jsonResponse({ error: 'Rendering the ACL file failed.' }, { status: 500 }))
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Rendering the ACL file failed.')
+    })
+
+    it('names the severity of each preview block in words, not only by colour', async () => {
+      const user = await openDeploy('hierarchy-severity-token', () => jsonResponse({
+        revision_id: 'rev-2',
+        acl_diff: '+user device',
+        passwd_diff: '',
+        has_changes: true,
+        scope_issues: ['listener 8883 has no acl_file'],
+        orphan_rules: [{ id: 4, principal: 'ghost', topic_filter: 'old/#', permission: 'read' }],
+        scope_pending_activation: ['listener 1884'],
+      }))
+
+      await user.click(screen.getByRole('button', { name: 'Preview Changes' }))
+
+      const block = (name: string) => screen.getByRole('heading', { level: 4, name }).closest('section')
+      await screen.findByRole('heading', { level: 4, name: 'Listener scope problems' })
+      expect(block('Listener scope problems')).toHaveTextContent('Blocks apply')
+      expect(block('Orphan ACL rules')).toHaveTextContent('Review before applying')
+      expect(block('Pending listener activation')).toHaveTextContent('For information')
+    })
+
+    it('shows the history statuses in the words of the change route', async () => {
+      await openDeploy('hierarchy-history-token', () => jsonResponse({}))
+
+      const table = await screen.findByRole('table')
+      expect(await within(table).findByText('Verified')).toBeInTheDocument()
+      expect(within(table).queryByText('active_verified')).not.toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Verified' })).toBeInTheDocument()
+    })
   })
 
   it('keeps the pending deploy banner when a mutation starts during apply', async () => {
@@ -2002,7 +2107,7 @@ describe('App', () => {
     expect(heading).toBeVisible()
     expect(screen.getByText(/its scoped rules would never apply/)).toBeVisible()
     expect(heading.closest('details')).toBeNull()
-    expect(within(heading.parentElement as HTMLElement).getByText('1')).toBeInTheDocument()
+    expect(within(heading.closest('section') as HTMLElement).getByText('1')).toBeInTheDocument()
     expect(heading.compareDocumentPosition(screen.getByText('Orphan ACL rules')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(heading.compareDocumentPosition(screen.getByText('ACL diff')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
@@ -2081,8 +2186,9 @@ describe('App', () => {
     const user = userEvent.setup()
     await screen.findByText('Signed in')
 
-    // The dashboard home offers the pending action in its own card.
-    expect(await screen.findByText('Pending deploy')).toBeInTheDocument()
+    // The dashboard home shows the pending state and action in its own card only (#359).
+    expect(await screen.findByText('Saved, not applied')).toBeInTheDocument()
+    expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Pending changes' })).toBeInTheDocument()
     const dashboardActions = screen.getAllByRole('button', { name: 'Review and apply' })
     expect(dashboardActions).toHaveLength(1)
@@ -2227,6 +2333,16 @@ describe('App', () => {
       expect(within(broker).getByRole('link', { name: new RegExp(`^${name}`) })).toHaveAttribute('href', href)
     }
     expect(within(screen.getByRole('region', { name: 'MQTT Access' })).queryByRole('link', { name: /Listeners|Certificates/ })).not.toBeInTheDocument()
+  })
+
+  it('draws the focus ring of every nav link inside the link so a clipping group cannot hide it (#359)', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'focus-ring-token')
+    vi.stubGlobal('fetch', installFetchMock(authenticatedRoutes('focus-ring-token')))
+    render(<App />)
+    await screen.findByText('Signed in')
+    const links = within(screen.getByRole('navigation', { name: 'Primary navigation' })).getAllByRole('link')
+    expect(links.length).toBeGreaterThan(1)
+    for (const link of links) expect(link.className).toContain('focus-visible:outline-offset-[-2px]')
   })
 
   it('places the dashboard as the standalone home link above every group', async () => {
@@ -2561,6 +2677,42 @@ describe('App', () => {
       expect(within(health).queryByText('Disconnected')).not.toBeInTheDocument()
     })
 
+    // The frame (sidebar lamp and header Status metric) never claims a disconnection it did not read (#359).
+    const frameStatus = () => ({
+      sidebar: screen.getByText('Broker', { selector: 'p' }).nextElementSibling!,
+      metric: screen.getByText('Status', { selector: 'dt' }).parentElement!.querySelector('dd')!,
+    })
+
+    it('says checking in the frame while the broker status is still loading', async () => {
+      window.localStorage.setItem('mcm_admin_token', 'frame-checking-token')
+      vi.stubGlobal('fetch', installFetchMock({ ...homeRoutes(), 'GET /api/v1/status': () => new Promise<Response>(() => {}) }))
+      render(<App />)
+      await screen.findByText('Signed in')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(/^checking$/)
+      expect(metric).toHaveTextContent(/^checking$/)
+    })
+
+    it('says unknown with an amber lamp in the frame when the broker status cannot be read', async () => {
+      renderHome('frame-unknown-token', { statusFails: true })
+      await within(await screen.findByRole('region', { name: 'Broker health' })).findByText('Status unavailable')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(/^unknown$/)
+      expect(sidebar.querySelector('[aria-hidden="true"]')).toHaveClass('bg-lamp')
+      expect(metric).toHaveTextContent(/^unknown$/)
+    })
+
+    it.each(['connected', 'disconnected'] as const)('says %s in the frame once the broker status is loaded', async (broker) => {
+      renderHome(`frame-${broker}-token`, { broker })
+      await within(await screen.findByRole('region', { name: 'Broker health' })).findByText(broker === 'connected' ? 'Connected · no traffic' : 'Disconnected')
+
+      const { sidebar, metric } = frameStatus()
+      expect(sidebar).toHaveTextContent(new RegExp(`^${broker}$`))
+      expect(metric).toHaveTextContent(new RegExp(`^${broker}$`))
+    })
+
     it('reports recent traffic and the time of the last message when the broker is active', async () => {
       renderHome('active-token', { messageCount: 6, lastMessageAt: new Date(Date.now() - 30_000).toISOString() })
 
@@ -2616,6 +2768,32 @@ describe('App', () => {
 
       const pending = await screen.findByRole('region', { name: 'Pending changes' })
       expect(within(pending).getByText('Nothing pending in this browser')).toBeInTheDocument()
+    })
+
+    it('makes the pending review the one primary lever when an admin has pending changes, without a second pending banner (#359)', async () => {
+      window.localStorage.setItem('mcm_deploy_pending', '1')
+      renderHome('primary-pending-token', { role: 'admin' })
+
+      const pending = await screen.findByRole('region', { name: 'Pending changes' })
+      expect(primaryLevers()).toEqual([within(pending).getByRole('button', { name: 'Review and apply' })])
+      expect(screen.getByRole('button', { name: 'Connect an application' }).className).not.toContain(leverPrimary)
+      expect(screen.queryByText('Pending deploy')).not.toBeInTheDocument()
+    })
+
+    it('makes connecting an application the one primary lever when nothing is pending (#359)', async () => {
+      renderHome('primary-connect-token', { role: 'operator' })
+
+      await screen.findByRole('region', { name: 'Connect an application' })
+      expect(primaryLevers()).toEqual([screen.getByRole('button', { name: 'Connect an application' })])
+    })
+
+    it('groups recent traffic under its own heading below the summary (#359)', async () => {
+      renderHome('traffic-heading-token')
+
+      const traffic = await screen.findByRole('region', { name: 'Recent traffic' })
+      expect(within(traffic).getByRole('heading', { level: 3, name: 'Recent traffic' })).toBeInTheDocument()
+      expect(within(traffic).getByRole('heading', { level: 4, name: 'Message rate' })).toBeInTheDocument()
+      expect(within(traffic).getByRole('heading', { level: 4, name: 'Latest activity' })).toBeInTheDocument()
     })
 
     it('places broker health, pending changes and the connect action before recent traffic', async () => {

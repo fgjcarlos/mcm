@@ -5,7 +5,7 @@ import type { BrokerConnectionStatus, BrokerLog, BrokerStatusFacts, BrokerStream
 import { logsPath, matchesLogFilter, type LogFilter } from '../live-feed/logFilter'
 import { plural } from '../live-feed/feedText'
 import { Fact, Lamp, Section } from '../ui/primitives'
-import { bodyText, leverSecondary, notice, textLink, type LampTone } from '../ui/styles'
+import { bodyText, leverPrimary, leverSecondary, notice, textLink, type LampTone } from '../ui/styles'
 
 // The operational part of the dashboard home (issue #354): broker health and
 // how fresh it is, pending changes with the next allowed action, and the way
@@ -74,6 +74,9 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
   const mosquittoProblemCount = logs.filter((log) => matchesLogFilter(log, mosquittoProblems)).length
   const windowMinutes = Math.round(windowSeconds / 60)
   const address = statusFacts.address || 'the configured address'
+  // One primary lever per view (#359): reviewing pending changes when there are
+  // some this role can act on, otherwise connecting an application.
+  const reviewIsNext = deployPending && can(role, 'deploy.preview')
 
   return (
     <div className="mt-8 grid gap-y-6 lg:grid-cols-[1.2fr_1fr_1fr] lg:divide-x lg:divide-track">
@@ -113,7 +116,7 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
           <>
             <p className="mt-3"><Lamp tone="caution">Saved, not applied</Lamp></p>
             <p className={`mt-2 ${bodyText}`}>User or ACL changes are saved in MCM, but Mosquitto does not use them yet.</p>
-            <PendingChangesAction role={role} onReview={() => onOpenPanel('deploy')} />
+            <PendingChangesAction role={role} primary={reviewIsNext} onReview={() => onOpenPanel('deploy')} />
           </>
         ) : (
           <>
@@ -126,7 +129,7 @@ function DashboardHome({ role, brokerStatus, streamState, statusFacts, messageCo
       <HomeSection label="Connect an application">
         <p className={`mt-3 ${bodyText}`}>Create its MQTT user and access rule, apply them, and test the connection in one guided flow.</p>
         {can(role, 'mqttUser.write') ? (
-          <HomeAction onClick={onConnectApplication}>Connect an application</HomeAction>
+          <HomeAction primary={!reviewIsNext} onClick={onConnectApplication}>Connect an application</HomeAction>
         ) : (
           <p className={`mt-2 ${bodyText}`}>Connecting an application needs the {requiredRoleFor('mqttUser.write')} role or higher.</p>
         )}
@@ -160,9 +163,9 @@ function HomeWarning({ text, filter, onOpenLogs, children }: { text: string; fil
   )
 }
 
-function HomeAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+function HomeAction({ primary, onClick, children }: { primary: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={`mt-4 ${leverSecondary}`}>
+    <button type="button" onClick={onClick} className={`mt-4 ${primary ? leverPrimary : leverSecondary}`}>
       {children}
     </button>
   )

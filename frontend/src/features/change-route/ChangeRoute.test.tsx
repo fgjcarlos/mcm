@@ -18,3 +18,61 @@ it.each([
   await user.click(screen.getByRole('button', { name: 'Confirm Apply' }))
   expect(await within(screen.getByRole('list', { name: 'Change route' })).findByRole('listitem', { name: probe })).toBeInTheDocument()
 })
+
+// Arming the apply replaces the Apply button, so focus moves to the first control of the confirmation (#359).
+it.each([
+  ['without a recent MFA proof', { ...mfa, proof: '' }, () => screen.getByLabelText('MFA code')],
+  ['with a recent MFA proof', mfa, () => screen.getByRole('button', { name: 'Confirm Apply' })],
+])('moves focus into the confirmation when Apply is pressed %s', async (_, state, target) => {
+  const user = userEvent.setup()
+  render(<ChangeRoute hasChanges reviewKey="rev-1" mfa={state} applyLabel="Apply" onApply={async () => null} />)
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+  expect(target()).toHaveFocus()
+})
+
+it('moves focus to Confirm once the MFA proof arrives, since the verified form is replaced by text (#359)', async () => {
+  const user = userEvent.setup()
+  const route = (state: typeof mfa) => <ChangeRoute hasChanges reviewKey="rev-1" mfa={state} applyLabel="Apply" onApply={async () => null} />
+  const { rerender } = render(route({ ...mfa, proof: '' }))
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+  rerender(route(mfa))
+
+  expect(screen.getByRole('button', { name: 'Confirm Apply' })).toHaveFocus()
+})
+
+it('returns focus to Apply when the confirmation is cancelled (#359)', async () => {
+  const user = userEvent.setup()
+  render(<ChangeRoute hasChanges reviewKey="rev-1" mfa={mfa} applyLabel="Apply" onApply={async () => null} />)
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+  expect(screen.getByRole('button', { name: 'Apply' })).toHaveFocus()
+})
+
+const outsideRoute = (state: typeof mfa) => <div><input aria-label="outside" /><ChangeRoute hasChanges reviewKey="rev-1" mfa={state} applyLabel="Apply" onApply={async () => null} /></div>
+
+it('takes no focus on mount', () => {
+  render(outsideRoute(mfa))
+  expect(document.body).toHaveFocus()
+})
+
+it('leaves focus where it is when the MFA proof changes while the apply is not armed (#359)', () => {
+  const { rerender } = render(outsideRoute({ ...mfa, proof: '' }))
+  screen.getByLabelText('outside').focus()
+  rerender(outsideRoute(mfa))
+  rerender(outsideRoute({ ...mfa, proof: '' }))
+  expect(screen.getByLabelText('outside')).toHaveFocus()
+})
+
+it('leaves focus where it is when the MFA proof expires while the apply is armed (#359)', async () => {
+  const user = userEvent.setup()
+  const { rerender } = render(outsideRoute(mfa))
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+  screen.getByLabelText('outside').focus()
+
+  rerender(outsideRoute({ ...mfa, proof: '' }))
+
+  expect(screen.getByLabelText('outside')).toHaveFocus()
+})
