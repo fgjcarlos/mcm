@@ -344,9 +344,9 @@ write_file_to_volume "mosquitto/passwd"          "$MOSQ_VOLUME" "passwd" || true
 write_file_to_volume "mosquitto/acl"             "$MOSQ_VOLUME" "acl" || true
 write_file_to_volume "mosquitto/mosquitto.conf"  "$MOSQ_VOLUME" "mosquitto.conf" || true
 
-# Certificates directory (whole tree, if present). Owned by the
-# mosquitto UID (1883 by default for the eclipse-mosquitto image) so
-# the broker can read them. The volume's content root is the broker's
+# Certificates directory (whole tree, if present). Owned by the MCM
+# UID:GID, the user MCM writes certificate material as and the dev
+# broker runs as (issue #394), so both can read the 0600 keys. The volume's content root is the broker's
 # /mosquitto/config, so certs go directly under that root.
 if [ -d "${STAGING_DIR}/mosquitto/certs" ]; then
     echo "restore.sh: writing broker certificates …"
@@ -359,7 +359,7 @@ if [ -d "${STAGING_DIR}/mosquitto/certs" ]; then
             mkdir -p /data/certs
             find /data/certs -mindepth 1 -delete
             cp -rp /staging/mosquitto/certs/. /data/certs/
-            chown -R ${MOSQ_RESTORE_UID:-1883}:${MOSQ_RESTORE_GID:-1883} /data/certs
+            chown -R ${MOSQ_RESTORE_UID:-100}:${MOSQ_RESTORE_GID:-101} /data/certs
             echo wrote certs/
         "
 fi

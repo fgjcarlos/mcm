@@ -505,7 +505,7 @@ empty stack is the intended `--overwrite` case. The script:
 3. Resolves the volumes via `docker compose --project-name volume ls`.
 4. Writes each file to its original volume path using a helper
    container that sets the correct UID/GID (MCM runs as UID 100 in
-   the alpine-based image; the broker as UID 1883).
+   the alpine-based image; the dev broker runs as the same user).
 5. Preserves file modes (`0600` for sensitive files like mcm.db and
    .bootstrap.json; `0644` for the broker config).
 6. VERIFIES the restored database content: SQLite `integrity_check`

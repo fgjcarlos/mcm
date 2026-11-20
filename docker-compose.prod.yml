@@ -3,7 +3,8 @@
 # Mirrors the production managed flow without giving MCM access to the
 # Docker socket:
 #
-#   - mosquitto runs as the official `mosquitto` UID (NOT root).
+#   - mosquitto runs as root, the user MCM runs as here, so it owns the
+#     passwd/acl files MCM writes (issue #394).
 #   - The mcm service shares a NAMED VOLUME with mosquitto for the
 #     passwd/acl files but does NOT mount /var/run/docker.sock.
 #   - Reload is signalled via MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND
