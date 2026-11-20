@@ -1,11 +1,23 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AdminUser } from '../auth/useAuthSession'
 import type { BrokerConnectionStatus, BrokerStatusLoad, BrokerStreamState } from '../broker/useBrokerStream'
 import { lampDot } from '../ui/styles'
 
+// The navigation groups, in sidebar order, each with its name and hint defined once.
+// The hints say whose accounts each group manages, so broker clients and console operators never blur.
+const navGroups = [
+  { name: 'MQTT Access', hint: 'Broker clients · devices and apps' },
+  { name: 'Broker' },
+  { name: 'Changes' },
+  { name: 'Diagnostics', hint: 'Observation · read-only' },
+  { name: 'Panel administration', hint: 'MCM console · operator accounts' },
+] as const satisfies readonly { name: string; hint?: string }[]
+
+export type NavGroup = (typeof navGroups)[number]['name']
+
 export type NavItem = {
   id: string
-  group?: string
+  group?: NavGroup
   label: string
   title: string
   description: string
@@ -51,10 +63,23 @@ export function DashboardFrame({
 }: DashboardFrameProps) {
   // Connected or disconnected only once the status was read; an unread status is not a disconnection.
   const statusWord = statusLoad === 'loading' ? 'checking' : statusLoad === 'failed' ? 'unknown' : brokerStatus
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(['MQTT Access', 'Changes']))
+  const [expandedGroups, setExpandedGroups] = useState<Set<NavGroup>>(() => new Set<NavGroup>(['MQTT Access', 'Changes']))
   // Below lg the sidebar folds behind a menu button so the content comes first.
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+  // From lg the sidebar is always shown and the button hidden: an open menu closes so it
+  // never returns focus to the hidden button nor stays open when the window narrows again.
+  useEffect(() => {
+    if (!menuOpen) return
+    const desktop = window.matchMedia?.('(min-width: 64rem)')
+    if (!desktop) return
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMenuOpen(false)
+    }
+    closeOnDesktop()
+    desktop.addEventListener('change', closeOnDesktop)
+    return () => desktop.removeEventListener('change', closeOnDesktop)
+  }, [menuOpen])
   const closeMenu = () => {
     setMenuOpen(false)
     menuButtonRef.current?.focus()
@@ -149,13 +174,12 @@ export function DashboardFrame({
 
           <nav className="mt-2 divide-y divide-track" aria-label="Primary navigation">
             {navItems.filter((item) => !item.group).length ? <div className="py-3">{navItems.filter((item) => !item.group).map(navLink)}</div> : null}
-            {['MQTT Access', 'Broker', 'Changes', 'Diagnostics', 'Panel administration'].map((group) => {
+            {navGroups.map(({ name: group, hint }: { name: NavGroup; hint?: string }) => {
               const items = navItems.filter((item) => item.group === group)
               if (!items.length) return null
               const groupId = `navigation-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
               const hasActiveItem = items.some((item) => item.id === activeId)
               const expanded = hasActiveItem || expandedGroups.has(group)
-              const hint = group === 'Diagnostics' ? 'Observation · read-only' : groupHints[group]
               return (
                 <section key={group} className="py-3">
                   <div className="flex items-center justify-between gap-2">
@@ -242,12 +266,6 @@ export function DashboardFrame({
       </main>
     </div>
   )
-}
-
-// Says whose accounts each group manages, so broker clients and console operators never blur.
-const groupHints: Record<string, string> = {
-  'MQTT Access': 'Broker clients · devices and apps',
-  'Panel administration': 'MCM console · operator accounts',
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
