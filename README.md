@@ -227,7 +227,8 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task lint:site`  | Build the Astro site under `site/`.                       |
 | `task lint`       | Every linter.                                             |
 | `task format`     | `gofmt -l -w .`                                           |
-| `task clean`      | Remove the dev image, data volume, build artifacts.       |
+| `task clean`      | Remove the dev image, data volume, build artifacts. Keeps `backups/`. |
+| `task clean:backups` | Delete the local backup archives under `backups/` (asks first). |
 | `task help`       | Print the quick-start recipe.                             |
 
 Backend tests, frontend tests, four-platform builds, OpenAPI lint, frontend lint, and an image smoke run all live in CI ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)). A successful run takes ~6 min.
