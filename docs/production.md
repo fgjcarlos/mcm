@@ -505,20 +505,23 @@ empty stack is the intended `--overwrite` case. The script:
 2. Re-reads `manifest.json` and verifies every file's sha256 — every
    captured file is enumerated, including certificates and broker
    persistence when `--include-broker-data` was used.
-3. Resolves the volumes via `docker compose --project-name volume ls`.
-4. Writes each file to its original volume path using a helper
+3. VERIFIES the staged database before touching any volume: SQLite
+   `integrity_check` plus a non-empty schema read-back. A snapshot
+   that fails either check is rejected and the existing `mcm.db`, its
+   `-wal`/`-shm` sidecars and every other destination file stay
+   untouched.
+4. Resolves the volumes via `docker compose --project-name volume ls`.
+5. Writes each file to its original volume path using a helper
    container that sets the correct UID/GID (MCM runs as UID 100 in
    the alpine-based image; the dev broker runs as the same user).
    `.bootstrap.json`, `passwd`, `acl` and `mosquitto.conf` are
    optional: one missing from the archive is skipped, but one the
    archive contains that fails to write aborts the restore with a
    non-zero exit naming the file, and `SUCCESS` is never printed.
-5. Preserves file modes (`0600` for sensitive files like mcm.db and
-   .bootstrap.json; `0644` for the broker config).
-6. VERIFIES the restored database content: SQLite `integrity_check`
-   plus a non-empty schema read-back. Stale `mcm.db-wal`/`mcm.db-shm`
-   sidecars from older archives are ignored — the `sqlite3 .backup`
-   snapshot is self-contained.
+6. Preserves file modes (`0600` for sensitive files like mcm.db and
+   .bootstrap.json; `0644` for the broker config). Stale
+   `mcm.db-wal`/`mcm.db-shm` sidecars from older archives are
+   ignored — the `sqlite3 .backup` snapshot is self-contained.
 
 ### 6.4 Recovery validation
 

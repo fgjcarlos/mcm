@@ -47,13 +47,13 @@ Steps:
   1. Extract the archive to a private staging dir.
   2. Re-read manifest.json; verify each entry's sha256 matches the
      staged file (fails fast on tamper / corruption).
-  3. Resolve volumes via 'docker compose --project-name volume ls'.
-  4. Refuse to replace existing data unless --overwrite is given.
-  5. Copy each file to its original volume path via a helper
+  3. VERIFY the staged database content before touching any volume:
+     SQLite integrity_check plus a non-empty schema read-back
+     (issues #295, #399).
+  4. Resolve volumes via 'docker compose --project-name volume ls'.
+  5. Refuse to replace existing data unless --overwrite is given.
+  6. Copy each file to its original volume path via a helper
      container, preserving ownership and mode bits.
-  6. VERIFY the restored database content: SQLite integrity_check
-     plus a non-empty schema read-back (issue #295, "verificar
-     contenido").
 
 After restore, run 'docker compose restart mcm' so the new database
 and .bootstrap.json are picked up. The first deploy apply may need
@@ -116,15 +116,14 @@ volume_has_files() {
         sh -c 'find /data -type f -print -quit | grep -q .'
 }
 
-# verify_restored_db reads the restored database back: SQLite
-# integrity_check must report ok and the schema must contain tables.
-# This is the "verificar contenido" half of issue #295's first
-# criterion — the manifest sha256 proves transport integrity, this
-# proves the file is a usable database.
-verify_restored_db() {
-    local volume="$1"
+# verify_staged_db reads the staged snapshot: SQLite integrity_check
+# must report ok and the schema must contain tables. The manifest
+# sha256 proves transport integrity, this proves the file is a usable
+# database (issue #295). It runs on the staging copy so an unusable
+# snapshot is rejected before the destination is touched (issue #399).
+verify_staged_db() {
     docker run --rm \
-        -v "${volume}:/data:ro" \
+        -v "${STAGING_DIR}:/staging:ro" \
         "$ALPINE_IMAGE" \
         sh -c '
             if ! command -v sqlite3 >/dev/null 2>&1; then
@@ -135,20 +134,20 @@ verify_restored_db() {
             fi
             # The .backup artifact preserves WAL mode; immutable=1
             # prevents SQLite from trying to create a -shm file on the
-            # read-only mounted volume. The snapshot has no concurrent
+            # read-only mounted staging dir. The snapshot has no concurrent
             # writer, so immutable reads are correct here.
-            db="file:/data/mcm.db?mode=ro&immutable=1"
+            db="file:/staging/mcm/mcm.db?mode=ro&immutable=1"
             result="$(sqlite3 "$db" "PRAGMA integrity_check;")"
             if [ "$result" != "ok" ]; then
-                echo "restore.sh: integrity_check failed: $result" >&2
+                echo "restore.sh: snapshot mcm.db integrity_check failed: $result; refusing to restore" >&2
                 exit 1
             fi
             tables="$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master;")"
             if [ "$tables" -eq 0 ] 2>/dev/null; then
-                echo "restore.sh: restored database has an empty schema" >&2
+                echo "restore.sh: snapshot mcm.db has an empty schema; refusing to restore" >&2
                 exit 1
             fi
-            echo "restore.sh: restored mcm.db verified (integrity ok, $tables schema objects)"
+            echo "restore.sh: snapshot mcm.db verified (integrity ok, $tables schema objects)"
         '
 }
 
@@ -278,6 +277,13 @@ echo "restore.sh: extracted $(du -sh "$STAGING_DIR" | awk '{print $1}')"
 echo "restore.sh: verifying manifest …"
 verify_manifest "$STAGING_DIR"
 
+echo "restore.sh: verifying snapshot database content …"
+if [ ! -f "${STAGING_DIR}/mcm/mcm.db" ]; then
+    echo "restore.sh: mcm/mcm.db not found in archive; refusing to restore" >&2
+    exit 1
+fi
+verify_staged_db
+
 echo "restore.sh: resolving volumes …"
 MCM_VOLUME="$(mcm_data_volume)"
 MOSQ_VOLUME="$(mosquitto_config_volume)"
@@ -347,9 +353,6 @@ write_file_to_volume "mcm/mcm.db"           "$MCM_VOLUME" "mcm.db"
 # regenerates it on first boot, so its absence is not fatal.
 restore_optional_file "mcm/.bootstrap.json" "$MCM_VOLUME" ".bootstrap.json" \
     "no .bootstrap.json in archive; MCM will regenerate it on first boot"
-
-echo "restore.sh: verifying restored database content …"
-verify_restored_db "$MCM_VOLUME"
 
 echo "restore.sh: writing Mosquitto configuration …"
 # Same rule as the MCM database: dest_path is RELATIVE to the
