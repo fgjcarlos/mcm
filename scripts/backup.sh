@@ -42,6 +42,7 @@ source "${REPO_ROOT}/scripts/lib-backup.sh"
 ALPINE_IMAGE="${MCM_BACKUP_ALPINE_IMAGE:-alpine:3.21}"
 STAGING_DIR=""
 BACKUP_FILE=""
+TMP_ARCHIVE=""
 OPERATOR="${MCM_BACKUP_OPERATOR:-$(id -un 2>/dev/null || echo unknown)}"
 GIT_COMMIT="${MCM_BACKUP_GIT_COMMIT:-$(cd "$REPO_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 MCM_VERSION="${MCM_BACKUP_MCM_VERSION:-$(cd "$REPO_ROOT" && git describe --tags --always 2>/dev/null || echo unknown)}"
@@ -118,7 +119,7 @@ mosquitto_data_volume() {
 # trap so a failure mid-backup does not leak /tmp content.
 create_tmp_staging() {
     STAGING_DIR="$(mktemp -d -t mcm-backup-XXXXXX)"
-    trap 'rm -rf "$STAGING_DIR"' EXIT
+    trap 'rm -rf "$STAGING_DIR"; [ -z "$TMP_ARCHIVE" ] || rm -f "$TMP_ARCHIVE"' EXIT
 }
 
 # run_alpine_helper mounts the given volume (read-only by default) and
@@ -318,8 +319,15 @@ echo "backup.sh: packaging …"
 if [ "$BACKUP_FILE" = "-" ]; then
     tar czf - --mode=go-rwx -C "$STAGING_DIR" .
 else
-    mkdir -p "$(dirname "$BACKUP_FILE")"
-    tar czf "$BACKUP_FILE" --mode=go-rwx -C "$STAGING_DIR" .
-    chmod 0600 "$BACKUP_FILE"
+    out_dir="$(dirname "$BACKUP_FILE")"
+    mkdir -p "$out_dir"
+    # Package into a temporary file in the same directory and publish it
+    # with an atomic rename, so a failed or interrupted tar never
+    # truncates the previous good archive (issue #401).
+    TMP_ARCHIVE="$(mktemp "${out_dir}/.$(basename "$BACKUP_FILE").XXXXXX")"
+    tar czf "$TMP_ARCHIVE" --mode=go-rwx -C "$STAGING_DIR" .
+    chmod 0600 "$TMP_ARCHIVE"
+    mv -f "$TMP_ARCHIVE" "$BACKUP_FILE"
+    TMP_ARCHIVE=""
     echo "backup.sh: wrote $BACKUP_FILE (mode 0600; contains secrets, store securely)"
 fi
