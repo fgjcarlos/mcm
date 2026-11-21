@@ -221,6 +221,11 @@ jobs:
       - name: restore.sh write-failure tests
         run: bash scripts/tests/test-restore.sh
 
+      # Issue #401: a failed backup packaging must keep the previous
+      # archive intact. Docker is stubbed.
+      - name: backup.sh atomic-publish tests
+        run: bash scripts/tests/test-backup.sh
+
       # --- Astro site ---
       - name: npm ci (site)
         run: npm --prefix site ci
