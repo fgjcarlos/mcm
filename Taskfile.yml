@@ -162,11 +162,17 @@ tasks:
       - go run ./scripts/gen-support-matrix
 
   clean:
-    desc: Remove dev image, data volume, and build artifacts
+    desc: Remove dev image, data volume, and build artifacts; keeps {{.BACKUP_DIR}}/ (issue #398)
     cmds:
       - docker rmi {{.IMAGE}} 2>/dev/null || true
       - "{{.COMPOSE}} down -v --remove-orphans"
-      - rm -rf bin/ {{.BACKUP_DIR}}/
+      - rm -rf bin/
+
+  clean:backups:
+    desc: Delete the local backup archives under {{.BACKUP_DIR}}/ (asks first; irreversible)
+    prompt: Delete every backup under {{.BACKUP_DIR}}/? This cannot be undone.
+    cmds:
+      - rm -rf {{.BACKUP_DIR}}/
 
   help:
     desc: Print the quick-start recipe

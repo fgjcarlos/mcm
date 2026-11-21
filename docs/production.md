@@ -451,6 +451,9 @@ task backup                 # writes backups/mcm-data.tgz
 bash scripts/backup.sh /path/to/backup-$(date +%Y%m%d).tgz
 ```
 
+`task clean` keeps `backups/`. Deleting the local archives is a separate,
+confirmed step: `task clean:backups`.
+
 `scripts/backup.sh` accepts these flags:
 
 - `--include-broker-data`: also backup the `mosquitto_data` volume.
