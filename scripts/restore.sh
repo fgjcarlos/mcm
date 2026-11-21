@@ -51,7 +51,9 @@ Steps:
      SQLite integrity_check plus a non-empty schema read-back
      (issues #295, #399).
   4. Resolve volumes via 'docker compose --project-name volume ls'.
-  5. Refuse to replace existing data unless --overwrite is given.
+  5. Refuse to restore while MCM runs, or while Mosquitto runs when
+     the archive holds broker persistence (issue #400); refuse to
+     replace existing data unless --overwrite is given.
   6. Copy each file to its original volume path via a helper
      container, preserving ownership and mode bits.
 
@@ -299,6 +301,12 @@ if ! RUNNING_SERVICES="$(cd "$REPO_ROOT" && docker compose ps --status running -
 fi
 if printf '%s\n' "$RUNNING_SERVICES" | grep -qx 'mcm'; then
     echo "restore.sh: MCM is running; stop it with 'docker compose stop mcm' before restoring SQLite" >&2
+    exit 2
+fi
+# The same holds for broker persistence: a live Mosquitto keeps using
+# (and rewrites) the files this restore replaces (issue #400).
+if [ -d "${STAGING_DIR}/mosquitto-data" ] && printf '%s\n' "$RUNNING_SERVICES" | grep -qx 'mosquitto'; then
+    echo "restore.sh: Mosquitto is running; stop it with 'docker compose stop mosquitto' before restoring broker persistence" >&2
     exit 2
 fi
 
