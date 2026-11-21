@@ -82,10 +82,23 @@ mkdir -p "$WORK/keep"
 echo "previous good archive" > "$WORK/keep/mcm-data.tgz"
 run_backup "$WORK/keep/mcm-data.tgz" 1
 check "failed packaging exits non-zero (got $RC)" [ "$RC" -ne 0 ]
+check "failed packaging reached the packaging step" grep -qF "backup.sh: packaging" "$WORK/out"
+check "failed packaging surfaces the tar error" grep -qF "tar: write error" "$WORK/err"
 check "failed packaging keeps the previous archive" \
     [ "$(cat "$WORK/keep/mcm-data.tgz")" = "previous good archive" ]
 check "failed packaging leaves no temporary file" only_archive_in "$WORK/keep" mcm-data.tgz
 check "failed packaging does not report a written archive" \
+    bash -c "! grep -qF 'backup.sh: wrote' '$WORK/out'"
+
+# A directory as output is rejected before any work, instead of the
+# archive landing inside it under a hidden temporary name.
+mkdir -p "$WORK/adir"
+run_backup "$WORK/adir"
+check "directory output exits 2 (got $RC)" [ "$RC" -eq 2 ]
+check "directory output is reported" \
+    grep -qxF "backup.sh: $WORK/adir is a directory; pass the archive file path" "$WORK/err"
+check "directory output stays empty" [ -z "$(ls -A "$WORK/adir")" ]
+check "directory output does not report a written archive" \
     bash -c "! grep -qF 'backup.sh: wrote' '$WORK/out'"
 
 # A successful run replaces the previous archive.

@@ -101,6 +101,12 @@ if [ -z "$BACKUP_FILE" ]; then
     exit 2
 fi
 
+# mv would move the temporary archive into a directory and report success.
+if [ "$BACKUP_FILE" != "-" ] && [ -d "$BACKUP_FILE" ]; then
+    echo "backup.sh: $BACKUP_FILE is a directory; pass the archive file path" >&2
+    exit 2
+fi
+
 # --- helpers ------------------------------------------------------------------
 
 mcm_data_volume() {
