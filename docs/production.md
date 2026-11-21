@@ -510,7 +510,12 @@ empty stack is the intended `--overwrite` case. The script:
    that fails either check is rejected and the existing `mcm.db`, its
    `-wal`/`-shm` sidecars and every other destination file stay
    untouched.
-4. Resolves the volumes via `docker compose --project-name volume ls`.
+4. Resolves the volumes via `docker compose --project-name volume ls`
+   and refuses to restore while `mcm` is running. When the archive
+   holds broker persistence (`--include-broker-data`) it also refuses
+   while `mosquitto` is running; stop it with
+   `docker compose stop mosquitto` first. Both checks run before any
+   volume is touched.
 5. Writes each file to its original volume path using a helper
    container that sets the correct UID/GID (MCM runs as UID 100 in
    the alpine-based image; the dev broker runs as the same user).
