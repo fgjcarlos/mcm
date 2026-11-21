@@ -13,6 +13,8 @@
 # valid manifest.
 
 set -euo pipefail
+# Cases opt in to running services per call; never inherit them.
+unset FAKE_RUNNING_SERVICES
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib-backup.sh
@@ -39,10 +41,10 @@ check() {
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/docker" <<'STUB'
 #!/usr/bin/env bash
-# compose ps lists the services named in RUNNING (none by default);
+# compose ps lists the services named in FAKE_RUNNING_SERVICES (none by default);
 # volume ls prints nothing, i.e. no volumes listed.
 if [ "$1" != "run" ]; then
-    [ "${2:-}" = "ps" ] && [ -n "${RUNNING:-}" ] && printf '%s\n' $RUNNING
+    [ "${2:-}" = "ps" ] && [ -n "${FAKE_RUNNING_SERVICES:-}" ] && printf '%s\n' $FAKE_RUNNING_SERVICES
     exit 0
 fi
 script="${*: -1}"
@@ -89,7 +91,7 @@ make_archive() {
 run_restore() {
     : > "$WORK/docker.log"
     set +e
-    PATH="$WORK/bin:$PATH" DOCKER_LOG="$WORK/docker.log" FAIL_DEST="${2:-}" RUNNING="${RUNNING:-}" \
+    PATH="$WORK/bin:$PATH" DOCKER_LOG="$WORK/docker.log" FAIL_DEST="${2:-}" FAKE_RUNNING_SERVICES="${FAKE_RUNNING_SERVICES:-}" \
         FAKE_BIN="$WORK/fakebin" FAKE_TABLES="${FAKE_TABLES:-3}" \
         bash "$REPO_ROOT/scripts/restore.sh" --confirm "$WORK/$1.tar.gz" \
         > "$WORK/out" 2> "$WORK/err"
@@ -154,7 +156,7 @@ check "write failure of .bootstrap.json does not print SUCCESS" no_success
 # refused before any volume is touched.
 make_archive broker mcm/mcm.db mosquitto/passwd mosquitto-data/mosquitto.db
 no_volume_writes() { ! grep -qF '/data' "$WORK/docker.log"; }
-RUNNING=mosquitto run_restore broker
+FAKE_RUNNING_SERVICES=mosquitto run_restore broker
 check "broker data with Mosquitto running exits 2 (got $RC)" [ "$RC" -eq 2 ]
 check "broker data with Mosquitto running is reported" \
     err_has "restore.sh: Mosquitto is running; stop it with 'docker compose stop mosquitto' before restoring broker persistence"
@@ -164,11 +166,12 @@ check "broker data with Mosquitto running does not print SUCCESS" no_success
 # With both services stopped the broker persistence is restored.
 run_restore broker
 check "broker data with services stopped exits 0 (got $RC)" [ "$RC" -eq 0 ]
+check "broker data with services stopped prints SUCCESS" out_has "restore.sh: SUCCESS"
 check "broker data with services stopped writes persistence" \
     grep -qF 'cp -rp /staging/mosquitto-data/. /data/' "$WORK/docker.log"
 
 # Previous behaviour: a running MCM is still refused.
-RUNNING=mcm run_restore full
+FAKE_RUNNING_SERVICES=mcm run_restore full
 check "running MCM exits 2 (got $RC)" [ "$RC" -eq 2 ]
 check "running MCM is reported" \
     err_has "restore.sh: MCM is running; stop it with 'docker compose stop mcm' before restoring SQLite"
@@ -176,7 +179,7 @@ check "running MCM touches no volume" no_volume_writes
 
 # Previous behaviour: without broker persistence in the archive a running
 # Mosquitto does not block the restore (it is restarted afterwards).
-RUNNING=mosquitto run_restore full
+FAKE_RUNNING_SERVICES=mosquitto run_restore full
 check "no broker data with Mosquitto running exits 0 (got $RC)" [ "$RC" -eq 0 ]
 check "no broker data with Mosquitto running prints SUCCESS" out_has "restore.sh: SUCCESS"
 
