@@ -506,6 +506,10 @@ empty stack is the intended `--overwrite` case. The script:
 4. Writes each file to its original volume path using a helper
    container that sets the correct UID/GID (MCM runs as UID 100 in
    the alpine-based image; the dev broker runs as the same user).
+   `.bootstrap.json`, `passwd`, `acl` and `mosquitto.conf` are
+   optional: one missing from the archive is skipped, but one the
+   archive contains that fails to write aborts the restore with a
+   non-zero exit naming the file, and `SUCCESS` is never printed.
 5. Preserves file modes (`0600` for sensitive files like mcm.db and
    .bootstrap.json; `0644` for the broker config).
 6. VERIFIES the restored database content: SQLite `integrity_check`

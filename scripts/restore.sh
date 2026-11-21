@@ -249,6 +249,23 @@ write_file_to_volume() {
         "
 }
 
+# restore_optional_file <staging_relpath> <volume> <dest_path> [skip_note]
+# A file absent from the archive (older backups) is skipped. A file the
+# archive DOES contain must land in the volume: a write failure aborts
+# the restore naming the file, before SUCCESS is printed (issue #397).
+restore_optional_file() {
+    local staging_relpath="$1" volume="$2" dest_path="$3"
+    local skip_note="${4:-no ${staging_relpath} in archive; skipping}"
+    if [ ! -f "${STAGING_DIR}/${staging_relpath}" ]; then
+        echo "restore.sh: ${skip_note}"
+        return 0
+    fi
+    if ! write_file_to_volume "$staging_relpath" "$volume" "$dest_path"; then
+        echo "restore.sh: failed to write ${staging_relpath} to volume ${volume}; restore is incomplete" >&2
+        exit 1
+    fi
+}
+
 # --- main ---------------------------------------------------------------------
 
 STAGING_DIR="$(mktemp -d -t mcm-restore-XXXXXX)"
@@ -328,9 +345,8 @@ docker run --rm -v "${MCM_VOLUME}:/data" "$ALPINE_IMAGE" sh -c 'rm -f /data/mcm.
 write_file_to_volume "mcm/mcm.db"           "$MCM_VOLUME" "mcm.db"
 # .bootstrap.json may be absent from the archive (older volumes); MCM
 # regenerates it on first boot, so its absence is not fatal.
-if ! write_file_to_volume "mcm/.bootstrap.json" "$MCM_VOLUME" ".bootstrap.json"; then
-    echo "restore.sh: no .bootstrap.json in archive; MCM will regenerate it on first boot"
-fi
+restore_optional_file "mcm/.bootstrap.json" "$MCM_VOLUME" ".bootstrap.json" \
+    "no .bootstrap.json in archive; MCM will regenerate it on first boot"
 
 echo "restore.sh: verifying restored database content …"
 verify_restored_db "$MCM_VOLUME"
@@ -340,9 +356,9 @@ echo "restore.sh: writing Mosquitto configuration …"
 # volume's mount target. The volume is mounted at /mosquitto/config in
 # the broker container, so the file paths inside the volume are
 # exactly the broker-side paths (no leading "config/" prefix).
-write_file_to_volume "mosquitto/passwd"          "$MOSQ_VOLUME" "passwd" || true
-write_file_to_volume "mosquitto/acl"             "$MOSQ_VOLUME" "acl" || true
-write_file_to_volume "mosquitto/mosquitto.conf"  "$MOSQ_VOLUME" "mosquitto.conf" || true
+restore_optional_file "mosquitto/passwd"          "$MOSQ_VOLUME" "passwd"
+restore_optional_file "mosquitto/acl"             "$MOSQ_VOLUME" "acl"
+restore_optional_file "mosquitto/mosquitto.conf"  "$MOSQ_VOLUME" "mosquitto.conf"
 
 # Certificates directory (whole tree, if present). Owned by the MCM
 # UID:GID, the user MCM writes certificate material as and the dev
