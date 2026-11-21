@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Tests for scripts/restore.sh write-failure handling (issue #397).
+# Tests for scripts/restore.sh write-failure handling (issue #397) and
+# snapshot validation before any destination change (issue #399).
 #
 # Run from the repo root:
 #   bash scripts/tests/test-restore.sh
 #
 # No real docker is needed: a stub `docker` on PATH accepts every helper
 # container, reports empty destination volumes, and fails the copy into
-# the volume path named by FAIL_DEST. Each case runs restore.sh end to
-# end against a real archive with a valid manifest.
+# the volume path named by FAIL_DEST. The database check runs its real
+# script against a fake sqlite3 that reports FAKE_TABLES schema objects.
+# Each case runs restore.sh end to end against a real archive with a
+# valid manifest.
 
 set -euo pipefail
 
@@ -42,6 +45,7 @@ cat > "$WORK/bin/docker" <<'STUB'
 script="${*: -1}"
 case "$script" in
     *"-print -quit"*) exit 1 ;; # volume_has_files: destination is empty
+    *"PRAGMA integrity_check"*) PATH="$FAKE_BIN:$PATH" exec sh -c "$script" ;;
 esac
 if [ -n "${FAIL_DEST:-}" ] && [[ "$script" == *"cp -p '/staging/"*"' '/data/${FAIL_DEST}'"* ]]; then
     echo "cp: can't create '/data/${FAIL_DEST}': No space left on device" >&2
@@ -50,6 +54,17 @@ fi
 printf '%s\n' "$script" >> "$DOCKER_LOG"
 STUB
 chmod +x "$WORK/bin/docker"
+
+mkdir -p "$WORK/fakebin"
+cat > "$WORK/fakebin/sqlite3" <<'STUB'
+#!/bin/sh
+echo "sqlite3 $1" >> "$DOCKER_LOG"
+case "$2" in
+    *integrity_check*) echo ok ;;
+    *sqlite_master*) echo "${FAKE_TABLES:-3}" ;;
+esac
+STUB
+chmod +x "$WORK/fakebin/sqlite3"
 
 # make_archive <name> <staged relpath>... builds <name>.tar.gz with the
 # given files and a manifest covering them.
@@ -72,6 +87,7 @@ run_restore() {
     : > "$WORK/docker.log"
     set +e
     PATH="$WORK/bin:$PATH" DOCKER_LOG="$WORK/docker.log" FAIL_DEST="${2:-}" \
+        FAKE_BIN="$WORK/fakebin" FAKE_TABLES="${FAKE_TABLES:-3}" \
         bash "$REPO_ROOT/scripts/restore.sh" --confirm "$WORK/$1.tar.gz" \
         > "$WORK/out" 2> "$WORK/err"
     RC=$?
@@ -93,6 +109,23 @@ check "full archive prints SUCCESS" out_has "restore.sh: SUCCESS"
 for f in mcm.db .bootstrap.json passwd acl mosquitto.conf; do
     check "full archive writes $f" wrote "$f"
 done
+
+check "full archive verifies the staged mcm.db" \
+    grep -qF "sqlite3 file:/staging/mcm/mcm.db" "$WORK/docker.log"
+
+# Issue #399: a snapshot whose checksum matches but whose schema is empty
+# is rejected before the destination is touched: no sidecar removal and
+# no file written to any volume.
+FAKE_TABLES=0 run_restore full
+check "empty-schema snapshot exits 1 (got $RC)" [ "$RC" -eq 1 ]
+check "empty-schema snapshot is reported" \
+    err_has "restore.sh: snapshot mcm.db has an empty schema; refusing to restore"
+check "empty-schema snapshot keeps existing WAL/SHM" \
+    bash -c "! grep -qF 'rm -f /data/mcm.db-wal' '$WORK/docker.log'"
+for f in mcm.db .bootstrap.json passwd acl mosquitto.conf; do
+    check "empty-schema snapshot does not write $f" bash -c "! grep -qF \"'/data/$f'\" '$WORK/docker.log'"
+done
+check "empty-schema snapshot does not print SUCCESS" no_success
 
 # Issue #397: a Mosquitto file present in the archive that fails to write
 # aborts the restore, names the file and never reports SUCCESS.
