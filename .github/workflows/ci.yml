@@ -216,6 +216,11 @@ jobs:
       - name: docs lint (removed CLI / stale versions)
         run: bash scripts/lint-docs.sh
 
+      # Issue #397: restore.sh must fail (no SUCCESS) when a file the
+      # archive contains cannot be written. Docker is stubbed.
+      - name: restore.sh write-failure tests
+        run: bash scripts/tests/test-restore.sh
+
       # --- Astro site ---
       - name: npm ci (site)
         run: npm --prefix site ci
