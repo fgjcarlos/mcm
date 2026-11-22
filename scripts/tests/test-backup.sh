@@ -41,6 +41,8 @@ for arg in "$@"; do
         *:/backup) echo "fake sqlite snapshot" > "${arg%:/backup}/mcm.db" ;;
     esac
 done
+# Real helper containers print progress on their stdout.
+echo "sqlite3 .backup completed"
 STUB
 cat > "$WORK/bin/tar" <<'STUB'
 #!/usr/bin/env bash
@@ -100,6 +102,15 @@ check "directory output is reported" \
 check "directory output stays empty" [ -z "$(ls -A "$WORK/adir")" ]
 check "directory output does not report a written archive" \
     bash -c "! grep -qF 'backup.sh: wrote' '$WORK/out'"
+
+# Issue #402: '-' writes only the gzip archive to stdout; progress,
+# including helper-container output, goes to stderr.
+run_backup -
+check "stdout backup exits 0 (got $RC)" [ "$RC" -eq 0 ]
+check "stdout backup is a pure gzip stream" gzip -t "$WORK/out"
+check "stdout backup archive holds the manifest" \
+    bash -c "'$REAL_TAR' tzf '$WORK/out' | grep -qx './manifest.json'"
+check "stdout backup reports progress on stderr" grep -qF "backup.sh: packaging" "$WORK/err"
 
 # A successful run replaces the previous archive.
 run_backup "$WORK/keep/mcm-data.tgz"
