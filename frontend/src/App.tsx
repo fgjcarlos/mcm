@@ -374,7 +374,7 @@ function App() {
     )
   }
 
-  return <RecentMFAProvider><Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} onRefreshUser={refreshCurrentUser} /></RecentMFAProvider>
+  return <RecentMFAProvider mfaEnabled={currentUser.mfa_enabled}><Dashboard token={token} currentUser={currentUser} onLogout={handleLogout} onRefreshUser={refreshCurrentUser} /></RecentMFAProvider>
 }
 
 function Dashboard({ token, currentUser, onLogout, onRefreshUser }: { token: string; currentUser: AdminUser; onLogout: () => void; onRefreshUser: () => void }) {

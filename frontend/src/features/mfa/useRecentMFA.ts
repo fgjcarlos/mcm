@@ -10,6 +10,8 @@ const ACTION_MFA_TTL_MS = 5 * 60_000
 // One proof for the signed-in session, shared by every panel. Without a
 // provider (isolated panel tests) each hook keeps its own proof.
 export const RecentMFAContext = createContext<Store | null>(null)
+// The signed-in operator's MFA enrollment; unknown (no provider) is treated as enrolled.
+export const MFAEnrollmentContext = createContext<boolean | undefined>(undefined)
 
 // requireRecentMFA answers 403 "recent MFA verification required" (internal/server/recent_mfa.go).
 export function isMFARejection(err: unknown) {
@@ -18,6 +20,7 @@ export function isMFARejection(err: unknown) {
 
 export function useRecentMFA(token: string, onLogout: () => void) {
   const shared = useContext(RecentMFAContext)
+  const enrolled = useContext(MFAEnrollmentContext) !== false
   const local = useState<Proof | null>(null)
   const [confirmation, setConfirmation] = shared ?? local
   const [code, setCode] = useState('')
@@ -65,5 +68,5 @@ export function useRecentMFA(token: string, onLogout: () => void) {
     }
   }
 
-  return { proof, expires, code, setCode, busy, error, confirm, clear }
+  return { enrolled, proof, expires, code, setCode, busy, error, confirm, clear }
 }

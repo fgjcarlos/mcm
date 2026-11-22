@@ -69,3 +69,24 @@ it('treats a shared proof that expired while no panel was mounted as expired on 
   expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Confirm Apply' })).toBeDisabled()
 })
+
+it('sends an operator without MFA to Account in a new tab, keeping this review and applying nothing', () => {
+  const fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  render(<RecentMFAProvider mfaEnabled={false}><Confirmation token="first" onLogout={() => {}} /></RecentMFAProvider>)
+  expect(screen.getByText(/MFA is not enabled on your account/)).toBeInTheDocument()
+  const link = screen.getByRole('link', { name: /Open Panel administration → Account/ })
+  expect(link).toHaveAttribute('href', '/account')
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(screen.getByText(/come back to this tab/)).toBeInTheDocument()
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('asks an enrolled operator only for the code', () => {
+  render(<RecentMFAProvider mfaEnabled><Confirmation token="first" onLogout={() => {}} /></RecentMFAProvider>)
+  expect(screen.getByText('Sensitive operations require recent MFA. Enter an unused authenticator code.')).toBeInTheDocument()
+  expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Account/)).not.toBeInTheDocument()
+  expect(screen.getByLabelText('MFA code')).toBeInTheDocument()
+})
