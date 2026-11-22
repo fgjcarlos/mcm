@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest'
 import ChangeRoute from './ChangeRoute'
 import type { useRecentMFA } from '../mfa/useRecentMFA'
 
-const mfa = { proof: 'proof', expires: Date.now() + 300000, code: '', setCode: vi.fn(), busy: false, error: '', confirm: vi.fn(), clear: vi.fn() } as ReturnType<typeof useRecentMFA>
+const mfa = { enrolled: true, proof: 'proof', expires: Date.now() + 300000, code: '', setCode: vi.fn(), busy: false, error: '', confirm: vi.fn(), clear: vi.fn() } as ReturnType<typeof useRecentMFA>
 
 // The probe proves activation only for a verified result; otherwise it says what the result lamp says.
 it.each([

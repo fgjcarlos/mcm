@@ -1,4 +1,4 @@
-import { bodyText, fieldLabel, input, leverSecondary, notice } from '../ui/styles'
+import { bodyText, fieldLabel, input, leverSecondary, notice, textLink } from '../ui/styles'
 import type { useRecentMFA } from './useRecentMFA'
 
 export default function RecentMFAConfirmation({ state }: { state: ReturnType<typeof useRecentMFA> }) {
@@ -10,7 +10,16 @@ export default function RecentMFAConfirmation({ state }: { state: ReturnType<typ
   }
   return (
     <form className={`space-y-3 ${notice.neutral}`} onSubmit={(event) => { event.preventDefault(); void state.confirm() }}>
-      <p>Sensitive operations require recent MFA. Enable it under Administration → Account, then enter an unused authenticator code.</p>
+      {state.enrolled ? (
+        <p>Sensitive operations require recent MFA. Enter an unused authenticator code.</p>
+      ) : (
+        // A new tab keeps this panel mounted, so its review survives the trip to Account.
+        <p>
+          Sensitive operations require recent MFA, and MFA is not enabled on your account.{' '}
+          <a href="/account" target="_blank" rel="noopener noreferrer" className={textLink}>Open Panel administration → Account in a new tab</a>{' '}
+          to enable it, then come back to this tab and enter a code. This review stays as it is; nothing is applied until you confirm it.
+        </p>
+      )}
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-2">
           <span className={fieldLabel}>MFA code</span>
