@@ -69,7 +69,8 @@ Flags:
 
 Output:
   <output.tar.gz>        Path to the archive to write. Use '-' for
-                         stdout (used by tests).
+                         stdout (used by tests); progress then goes
+                         to stderr.
 
 The script writes to <output>.tgz-or-<output>.tar.gz depending on the
 suffix you pass; the path is created if it does not exist.
@@ -105,6 +106,12 @@ fi
 if [ "$BACKUP_FILE" != "-" ] && [ -d "$BACKUP_FILE" ]; then
     echo "backup.sh: $BACKUP_FILE is a directory; pass the archive file path" >&2
     exit 2
+fi
+
+# With '-' stdout carries only the gzip archive: keep it on fd 3 and send
+# all other output (progress, helper containers) to stderr (issue #402).
+if [ "$BACKUP_FILE" = "-" ]; then
+    exec 3>&1 1>&2
 fi
 
 # --- helpers ------------------------------------------------------------------
@@ -323,7 +330,7 @@ write_manifest "$STAGING_DIR" \
 
 echo "backup.sh: packaging …"
 if [ "$BACKUP_FILE" = "-" ]; then
-    tar czf - --mode=go-rwx -C "$STAGING_DIR" .
+    tar czf - --mode=go-rwx -C "$STAGING_DIR" . >&3
 else
     out_dir="$(dirname "$BACKUP_FILE")"
     mkdir -p "$out_dir"
