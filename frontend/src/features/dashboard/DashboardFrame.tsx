@@ -84,6 +84,14 @@ export function DashboardFrame({
     setMenuOpen(false)
     menuButtonRef.current?.focus()
   }
+  // Choosing a section from the menu lands on its title, focused once the new title rendered.
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const focusHeadingNext = useRef(false)
+  useEffect(() => {
+    if (!focusHeadingNext.current) return
+    focusHeadingNext.current = false
+    headingRef.current?.focus()
+  })
 
   const navLink = (item: NavItem) => {
     const isActive = item.id === activeId
@@ -95,7 +103,9 @@ export function DashboardFrame({
         onClick={(event) => {
           event.preventDefault()
           onSelectNav(item)
-          if (menuOpen) closeMenu()
+          if (!menuOpen) return
+          setMenuOpen(false)
+          focusHeadingNext.current = true
         }}
         // The focus ring is drawn inside: the collapsible group and the scrolling sidebar clip anything outside.
         className={`flex items-center gap-2.5 rounded-plate px-2 py-2.5 text-sm lg:py-2 transition-colors duration-150 focus-visible:outline-offset-[-2px] ${
@@ -243,7 +253,7 @@ export function DashboardFrame({
         <div className="mx-auto max-w-6xl">
           <header className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
             <div className="max-w-3xl">
-              <h2 className="font-display text-3xl font-bold uppercase leading-none tracking-[0.01em] text-enamel-bright sm:text-4xl">{activeItem.title}</h2>
+              <h2 ref={headingRef} tabIndex={-1} className="font-display text-3xl focus:outline-none font-bold uppercase leading-none tracking-[0.01em] text-enamel-bright sm:text-4xl">{activeItem.title}</h2>
               <p className="mt-3 max-w-[68ch] text-base leading-relaxed text-enamel-soft">{activeItem.description}</p>
             </div>
 

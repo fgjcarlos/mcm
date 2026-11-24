@@ -2514,6 +2514,15 @@ describe('App', () => {
     await user.click(logs)
     expect(window.location.pathname).toBe('/logs')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Choosing a section moves focus to its title, not back to Menu (#404).
+    const heading = screen.getByRole('heading', { level: 2, name: 'Realtime broker and MCM events' })
+    expect(heading).toHaveFocus()
+    expect(heading).toHaveAttribute('tabindex', '-1')
+
+    // Escape still hands focus back to Menu.
+    await user.click(toggle)
+    screen.getByRole('link', { name: /^Dashboard/ }).focus()
+    await user.keyboard('{Escape}')
     expect(toggle).toHaveFocus()
   })
 
