@@ -57,12 +57,26 @@ describe('ListControls', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to load the list.')
   })
 
+  // A placeholder disappears once a value is typed and a select shows only its option (#406).
+  it('keeps a visible label beside every filled-in control', () => {
+    render(createElement(ListControls, {
+      list: state({ search: 'abc', filters: { user: 'gw', status: 'failed' } }), noun, searchLabel: 'Search rules',
+      filterFields: [{ key: 'user', label: 'Filter by user' }, { key: 'status', label: 'Filter by status', options: [{ value: '', label: 'All' }, { value: 'failed', label: 'failed' }] }],
+    }))
+
+    for (const [role, name] of [['searchbox', 'Search rules'], ['textbox', 'Filter by user'], ['combobox', 'Filter by status']] as const) {
+      const control = screen.getByRole(role, { name })
+      expect(control.closest('label')).toHaveTextContent(name)
+    }
+  })
+
   // A long option must not widen the page past a 320px viewport (#359 reflow).
   it('never lets a filter select grow wider than its container', () => {
     render(createElement(ListControls, { list: state(), noun, filterFields: [{ key: 'status', label: 'Filter by status', options: [{ value: '', label: 'All statuses' }] }] }))
     const select = screen.getByRole('combobox', { name: 'Filter by status' })
     expect(select).toHaveClass('max-w-full')
-    // Its row may shrink below the select's natural width, or max-w-full has nothing to resolve against.
+    // Its label and row may shrink below the select's natural width, or max-w-full has nothing to resolve against.
     expect(select.parentElement).toHaveClass('min-w-0')
+    expect(select.parentElement?.parentElement).toHaveClass('min-w-0')
   })
 })
