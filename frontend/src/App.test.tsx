@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -1026,6 +1026,27 @@ describe('App', () => {
     expect(window.location.pathname).toBe('/topics')
     expect(screen.getByRole('link', { name: /topics/i })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: /dashboard/i })).toHaveAttribute('href', '/dashboard')
+  })
+
+  it('leaves modified sidebar clicks to the browser so a section opens in another tab', async () => {
+    window.localStorage.setItem('mcm_admin_token', 'tab-token')
+    window.history.replaceState(null, '', '/dashboard')
+    vi.stubGlobal('fetch', installFetchMock({ ...authenticatedRoutes('tab-token') }))
+    window.localStorage.setItem('mcm_nav_mode', 'advanced')
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Live broker snapshot' })
+    const topics = screen.getByRole('link', { name: /topics/i })
+    for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+      // fireEvent returns false only when the handler called preventDefault.
+      expect(fireEvent.click(topics, init)).toBe(true)
+      expect(window.location.pathname).toBe('/dashboard')
+      expect(topics).not.toHaveAttribute('aria-current')
+    }
+
+    expect(fireEvent.click(topics)).toBe(false)
+    expect(window.location.pathname).toBe('/topics')
   })
 
   it('shows the Status, Topics and Logs counts on the dashboard home only', async () => {

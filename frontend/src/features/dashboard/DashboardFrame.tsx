@@ -101,6 +101,8 @@ export function DashboardFrame({
         href={item.path}
         aria-current={isActive ? 'page' : undefined}
         onClick={(event) => {
+          // Leave modified or non-primary clicks (new tab, new window) to the browser.
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
           event.preventDefault()
           onSelectNav(item)
           if (!menuOpen) return
