@@ -132,15 +132,23 @@ Configure MCM through `MCM_*` environment variables. The supported pattern
 is to commit a `docker-compose.override.yml` (gitignored) with the real
 secrets, or supply them via your orchestrator's secret store.
 
-Two values must be set explicitly so the server can boot:
+Set `MCM_AUTH_JWT_SECRET` explicitly in production; if unset, the server
+generates one and persists it to `<MCM_DATABASE_PATH's dir>/.bootstrap.json`
+(mode 0600). Choose one first-admin method:
 
-- `MCM_AUTH_JWT_SECRET` — at least 32 random characters. If unset, the
-  server generates one and persists it to
-  `<MCM_DATABASE_PATH's dir>/.bootstrap.json` (mode 0600).
-- `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — the
-  first-boot admin. If both are unset, the server creates `admin` with a
-  random 24-char password and logs it once.
-- `MCM_AUTH_TOKEN_TTL` — JWT lifetime, Go duration (default `24h`).
+- **Interactive (recommended for Docker and reverse-proxy deployments):**
+  configure `MCM_SETUP_TOKEN` in the deployment secret store before making
+the instance reachable. Enter it once in the first-admin setup form, then
+  choose the username and password. The token is not the administrator
+  password or the separate MQTT broker password. Never put it in a URL or
+  logs. Without it, interactive setup is locked; completing setup remains
+  closed across restarts and token changes.
+- **Automated:** explicitly set both `MCM_BOOTSTRAP_ADMIN_USERNAME` and
+  `MCM_BOOTSTRAP_ADMIN_PASSWORD`. This non-interactive first-boot path is
+  unchanged and does not require the setup token.
+
+Neither method retrieves an interactive password from logs. `MCM_AUTH_TOKEN_TTL`
+sets the JWT lifetime, Go duration (default `24h`).
 
 Generate a strong JWT secret with:
 
@@ -191,6 +199,7 @@ then the env vars override it field-by-field.
 #### Auth
 
 - `MCM_AUTH_JWT_SECRET` — see [§3 Secrets management](#3-secrets-management).
+- `MCM_SETUP_TOKEN` — required for interactive first-admin setup; supply through a secret store before exposing the instance. Unset means setup remains unavailable.
 - `MCM_AUTH_TOKEN_TTL` (default `24h`) — JWT lifetime.
 - `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` (default `15m`) — sliding window for
   failed-login counting.
@@ -337,7 +346,7 @@ The supported daily workflow uses the [`Taskfile.yml`](../Taskfile.yml):
 
 ```bash
 task up                  # start mcm + mosquitto
-task logs                # tail logs; bootstrap admin prints here on first boot
+task logs                # inspect operational startup logs; no admin credentials are emitted
 task ps                  # confirm both services healthy
 task smoke               # curl /healthz, /readyz, /api/v1/status
 task ready               # block until /healthz returns 200
@@ -605,8 +614,7 @@ Recommended alerts:
 
 - [ ] `MCM_AUTH_JWT_SECRET` is at least 32 random characters, rotated on
       suspected compromise.
-- [ ] `MCM_BOOTSTRAP_ADMIN_PASSWORD` is set to a unique value, the default
-      account is renamed or disabled after first login.
+- [ ] Either `MCM_SETUP_TOKEN` is set through the deployment secret store for interactive first-admin setup, or both `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` are explicitly set for automated provisioning.
 - [ ] `MCM_AUTH_TOKEN_TTL` is pinned to your session policy (default
       `24h`).
 - [ ] `MCM_AUTH_LOGIN_LOCKOUT_WINDOW`, `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS`,

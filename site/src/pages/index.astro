@@ -22,8 +22,8 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
 
 const quickStart = [
   { label: "Clone and build", code: "git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build" },
+  { label: "Configure a private setup token", code: "export MCM_SETUP_TOKEN=\"$(openssl rand -hex 32)\"" },
   { label: "Start the development stack", code: "task up" },
-  { label: "Find the initial administrator sign-in", code: "task logs    # first-boot credentials are printed here when generated" },
 ];
 
 const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + WebSocket API"];
@@ -159,14 +159,14 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
                     <h3 class="text-xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Success checkpoint</h3>
                     <ol class="mt-3 max-w-[68ch] list-inside list-decimal space-y-2 leading-relaxed text-enamel-soft marker:font-mono marker:text-enamel-muted">
                       <li>After <code>task up</code> succeeds, open <code>http://localhost:8080</code> in your browser.</li>
-                      <li>Sign in with the generated credentials from the first-start logs, or the administrator credentials configured before first start.</li>
+                      <li>Create the first administrator with a chosen username and password, entering the setup token once. The setup token is separate from the MQTT broker password and is never sent in a URL or retrieved from logs.</li>
                       <li>Confirm the dashboard shows the broker as connected.</li>
                     </ol>
                   </div>
                   <div class="mt-10 grid gap-8 border-t border-track pt-6 md:grid-cols-3">
                     <div>
-                      <h3 class="text-xl font-semibold text-enamel-bright">No bootstrap credentials in the logs?</h3>
-                      <p class="mt-2 text-sm leading-relaxed text-enamel-soft">There is no default password. If no generated credentials appear, check whether <code class="wrap-anywhere">MCM_BOOTSTRAP_ADMIN_USERNAME</code> and <code class="wrap-anywhere">MCM_BOOTSTRAP_ADMIN_PASSWORD</code> were set before first start, then use those values. Do not guess or reuse a broker password.</p>
+                      <h3 class="text-xl font-semibold text-enamel-bright">Setup is unavailable?</h3>
+                      <p class="mt-2 text-sm leading-relaxed text-enamel-soft">The operator must configure <code class="wrap-anywhere">MCM_SETUP_TOKEN</code> before interactive first-admin setup. For automated provisioning, explicitly set both <code class="wrap-anywhere">MCM_BOOTSTRAP_ADMIN_USERNAME</code> and <code class="wrap-anywhere">MCM_BOOTSTRAP_ADMIN_PASSWORD</code>. Do not reuse the MQTT broker password.</p>
                     </div>
                     <div>
                       <h3 class="text-xl font-semibold text-enamel-bright">Signed in, but the broker shows disconnected?</h3>

@@ -16,30 +16,26 @@ From the repository root:
 
 ```bash
 task build               # build the mcm:dev image
+export MCM_SETUP_TOKEN="$(openssl rand -hex 32)" # keep private; never put in a URL
 task up                  # start the mcm + mosquitto stack
-task logs                # capture the auto-generated bootstrap admin password
 curl http://localhost:8080/healthz
 ```
 
-On first boot, the MCM container:
+On first boot, open `http://localhost:8080`, choose the administrator
+username and password, and enter the setup token once. The token
+authorizes setup; it is not the admin password or the separate
+`MCM_MOSQUITTO_PASSWORD` used to connect to the bundled broker. MCM does
+not log either the setup token or interactive credentials. Keep the
+configured token in a secret store and use TLS before exposing a remote
+instance through a reverse proxy. If `MCM_SETUP_TOKEN` is unset,
+interactive setup remains locked and the UI explains how the operator
+can configure it. Once the first administrator exists, the setup stays
+closed across restarts and changing the token does not reopen it.
 
-- Generates a 32-byte JWT secret and writes it to
-  `/var/lib/mcm/.bootstrap.json` (mode 0600). It is reused on every
-  subsequent restart, so existing tokens survive.
-- Generates a 24-char bootstrap admin password and logs it once on
-  first boot. Grab it from `task logs` or `docker compose logs mcm` —
-  the log line is:
-
-  ```
-  level=WARN msg="bootstrap admin created; capture these credentials now — they will not be logged again" username=admin password=<...>
-  ```
-
-- Open `http://localhost:8080` and sign in with `admin` + the
-  password from the logs. The admin is then persisted in SQLite, so
-  later restarts do not regenerate it.
-
-You do not need to edit `config.yaml` or set any environment variable
-for the dev flow. Compose will not block first boot.
+For automated provisioning, explicitly set both
+`MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD`; that
+first-boot path is unchanged and shows the regular login after creating
+the account. No generated interactive password is retrieved from logs.
 
 ## Production deployment
 
@@ -48,19 +44,24 @@ supported options:
 
 ### Option A — use the secrets override
 
-The repo ships `docker-compose.secrets.yml` at the root, which layers
-`:?required` semantics for the JWT secret and the bootstrap admin
-password back into the `mcm` service. Set the values in your shell or
-in a gitignored `.env` file, then:
+The repo ships `docker-compose.secrets.yml` at the root. It requires the
+JWT secret and passes through either `MCM_SETUP_TOKEN` for interactive
+first-admin setup or both explicit bootstrap admin variables for
+automated provisioning. Set the values in your shell or a gitignored
+`.env` file. The setup token is separate from the MQTT broker password.
+For interactive setup:
 
 ```bash
-MCM_AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
-MCM_BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
+export MCM_AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+export MCM_SETUP_TOKEN="$(openssl rand -hex 32)"
 docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ```
 
-If you forget to set either variable, Compose will refuse to start the
-stack with the same `:?required` error the dev compose used to raise.
+Use the configured setup token in the browser; keep it private. Compose
+refuses to start without the JWT secret. For automated
+provisioning instead, set both bootstrap admin variables and leave the
+setup token unset; the interactive setup token is not required in that
+case.
 
 This is a **secrets-only override**. It does not by itself harden the
 runtime: the dev compose it layers on top of still exposes
@@ -92,7 +93,9 @@ Without `MCM_CONFIG_FILE`, the YAML is silently ignored — the container
 runs with `Default()` plus the env vars. The env vars replace
 `auth.jwt_secret` and `auth.bootstrap_admin.password` before validation
 runs; without them, the validator rejects the shipped placeholder
-values.
+values. To use the interactive path with this template instead, clear both
+`auth.bootstrap_admin` fields and set `MCM_SETUP_TOKEN` in place of
+`MCM_BOOTSTRAP_ADMIN_PASSWORD`.
 
 The `mcm_data` Docker volume must be kept across restarts so the
 generated `.bootstrap.json` survives. A fresh `docker volume rm`
@@ -138,7 +141,8 @@ The MCM container:
 - Persists the auto-generated JWT secret to `/var/lib/mcm/.bootstrap.json` (mode 0600) so it survives restarts.
 - Honors every `MCM_*` environment variable in the strict-parser table at startup (see [`../../internal/config/env_bindings.go`](../../internal/config/env_bindings.go)). The required secrets are:
   - `MCM_AUTH_JWT_SECRET` — at least 32 random characters; persisted to `.bootstrap.json` only when unset.
-  - `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — first-boot admin; both empty triggers auto-generation.
+  - `MCM_SETUP_TOKEN` — required for interactive first-admin setup through the UI. Supply it through a secret store when deploying behind a proxy or remotely; do not put it in a URL or logs.
+- `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD` — explicit first-boot admin provisioning; set both to retain automated provisioning.
 - Other fields come from the mounted YAML or `internal/config.Default()`. A typo in a `MCM_*` name or a malformed value aborts startup with an actionable error (issue #279 contract).
 - Exposes port `8080` for the HTTP API.
 - Includes a healthcheck via `/livez`.
@@ -155,9 +159,12 @@ docker build -t mcm:latest .
 docker run --rm -p 8080:8080 mcm:dev
 ```
 
-The standalone container will auto-generate credentials on first boot
-and log the bootstrap admin password to stdout. Capture it before
-discarding the container logs.
+For interactive first-admin setup, configure `MCM_SETUP_TOKEN` through
+a secret store and enter it in the setup form; without it, account
+creation stays locked. To provision non-interactively, explicitly set
+both `MCM_BOOTSTRAP_ADMIN_USERNAME` and
+`MCM_BOOTSTRAP_ADMIN_PASSWORD`. Neither path retrieves an admin password
+from logs.
 
 ## Smoke test
 
@@ -168,10 +175,8 @@ After starting the stack:
 curl -s http://localhost:8080/healthz | jq .
 curl -s http://localhost:8080/readyz | jq .
 
-# Login — use the password from `task logs` / `docker compose logs mcm`
-curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<password from logs>"}' | jq .
+# Create the first administrator in the web UI using the configured setup token,
+# then sign in with the username and password you chose.
 
 # Check broker/MCM operational status
 curl -s http://localhost:8080/api/v1/status | jq .
@@ -179,9 +184,9 @@ curl -s http://localhost:8080/api/v1/status | jq .
 
 ## Security note
 
-The dev Compose stack relies on auto-generated credentials stored
-inside the `mcm_data` Docker volume. Treat that volume as
-sensitive — anyone who can read it can mint JWTs. Production
+The dev Compose stack stores administrator state inside the `mcm_data`
+Docker volume. Treat that volume as sensitive — anyone who can read it
+can mint JWTs. Production
 deployments must use the prod override (or mount `config.yaml` with
 explicit env vars), use strong secrets, terminate HTTPS in front of
 MCM, and follow the [production TLS checklist](../mosquitto/README.md#production-tls-checklist).

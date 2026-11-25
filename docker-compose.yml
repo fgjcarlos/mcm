@@ -19,12 +19,8 @@
 #      writes to and the path Mosquitto reads from point at the same
 #      filesystem.
 #
-# Dev-only caveat: the bootstrap admin password is hardcoded in this
-# file AND in the bootstrap script for the dev stack to be usable on a
-# clean clone without operator input. The production pattern
-# (deploy/mosquitto/config/mosquitto.prod.conf) reads the password from
-# a secret manager and never embeds it in source. See
-# deploy/mosquitto/README.md for the production checklist.
+# First-admin setup is interactive unless explicit bootstrap credentials
+# are supplied. E2E scripts inject isolated test credentials at startup.
 
 services:
   mosquitto:
@@ -131,14 +127,11 @@ services:
     # `docker compose up` when the host does not use GID 999.
     group_add:
       - "${DOCKER_HOST_GID:-999}"
-    # Dev defaults: MCM_AUTH_JWT_SECRET and MCM_BOOTSTRAP_ADMIN_PASSWORD
-    # are left unset so the Go runtime auto-generates them on first boot.
-    # The JWT secret is persisted to <db dir>/.bootstrap.json (mode 0600)
-    # and reused on subsequent restarts. The bootstrap admin password is
-    # logged once on first boot — recover it via `task logs` / `docker
-    # compose logs mcm`. Operators that want explicit credentials (e.g.
-    # production) should layer in `docker-compose.secrets.yml` instead of
-    # editing this file; see deploy/mcm/README.md for the override shape.
+    # Dev defaults: the JWT secret is generated and persisted to
+    # <db dir>/.bootstrap.json (mode 0600). Interactive first-admin setup
+    # requires MCM_SETUP_TOKEN, passed through below; the token is not
+    # logged. Explicit bootstrap username/password retain automated
+    # provisioning. See deploy/mcm/README.md.
     #
     # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
     # validator rejects the "username set, password empty" combination,
@@ -183,6 +176,10 @@ services:
       # identical.
       MCM_MOSQUITTO_CONFIG_DIR: ${MCM_MOSQUITTO_CONFIG_DIR:-}
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
+      # Required for interactive first-admin setup; distinct from the broker password.
+      MCM_SETUP_TOKEN: ${MCM_SETUP_TOKEN:-}
+      MCM_BOOTSTRAP_ADMIN_USERNAME: ${MCM_BOOTSTRAP_ADMIN_USERNAME:-}
+      MCM_BOOTSTRAP_ADMIN_PASSWORD: ${MCM_BOOTSTRAP_ADMIN_PASSWORD:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/livez || exit 1"]
       interval: 30s

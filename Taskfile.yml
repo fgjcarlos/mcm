@@ -9,8 +9,8 @@ version: '3'
 #
 # Quick start:
 #   task build       build the mcm:dev image
-#   task up          start the mcm + mosquitto stack
-#   task logs        tail mcm logs (bootstrap admin password is here)
+#   task up          start the mcm + mosquitto stack (set MCM_SETUP_TOKEN first for interactive setup)
+#   task logs        tail mcm service logs
 #   task smoke       hit /healthz /readyz /api/v1/status
 #   task down        stop the stack
 #
