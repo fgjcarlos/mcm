@@ -194,6 +194,7 @@ describe('App', () => {
 
   it('signs in and persists the admin token', async () => {
     const fetchMock = installFetchMock({
+      'GET /api/v1/auth/setup': () => jsonResponse({ status: 'complete' }),
       'POST /api/v1/auth/login': () =>
         jsonResponse({
           token: 'token-123',
@@ -255,6 +256,119 @@ describe('App', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
       }),
     )
+  })
+
+  it('creates the first administrator with the setup token and opens a session directly', async () => {
+    const userRecord = { id: 7, username: 'first-admin', disabled: false, role: 'admin', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
+    const fetchMock = installFetchMock({
+      ...authenticatedRoutes('setup-session-token'),
+      'GET /api/v1/auth/setup': () => jsonResponse({ status: 'required' }),
+      'GET /api/v1/auth/me': () => jsonResponse(userRecord),
+      'POST /api/v1/auth/setup': (init) => {
+        expect(init?.method).toBe('POST')
+        expect(init?.headers).toEqual({ 'Content-Type': 'application/json' })
+        expect(JSON.parse(String(init?.body))).toEqual({ username: 'first-admin', password: 'Strong-pass-123', password_confirmation: 'Strong-pass-123', setup_token: 'one-time-setup-token' })
+        return jsonResponse({ token: 'setup-session-token', user: userRecord }, { status: 201 })
+      },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Create administrator account' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('Confirm password')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('Setup code')).toHaveAttribute('type', 'password')
+    await userEvent.setup().type(screen.getByLabelText('Username'), 'first-admin')
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Password'), 'Strong-pass-123')
+    await user.type(screen.getByLabelText('Confirm password'), 'Strong-pass-123')
+    await user.type(screen.getByLabelText('Setup code'), 'one-time-setup-token')
+    await user.click(screen.getByRole('button', { name: 'Create administrator' }))
+
+    expect(await screen.findByText('Signed in')).toBeInTheDocument()
+    expect(window.localStorage.getItem('mcm_admin_token')).toBe('setup-session-token')
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/setup', expect.objectContaining({ method: 'POST' }))
+    expect(MockWebSocket.instances[0]?.protocols).toEqual(['mcm.v1', 'Bearer.setup-session-token'])
+  })
+
+  it('shows a visible confirmation error without sending a setup request', async () => {
+    const fetchMock = installFetchMock({ 'GET /api/v1/auth/setup': () => jsonResponse({ status: 'required' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Create administrator account' })
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Username'), 'first-admin')
+    await user.type(screen.getByLabelText('Password'), 'Strong-pass-123')
+    await user.type(screen.getByLabelText('Confirm password'), 'Different-pass-123')
+    await user.type(screen.getByLabelText('Setup code'), 'setup-token')
+    await user.click(screen.getByRole('button', { name: 'Create administrator' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Passwords do not match.')
+    expect(screen.getByLabelText(/^Confirm password/)).toHaveAttribute('aria-invalid', 'true')
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === '/api/v1/auth/setup' && init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('explains setup token configuration without showing a setup form when no token is configured', async () => {
+    vi.stubGlobal('fetch', installFetchMock({ 'GET /api/v1/auth/setup': () => jsonResponse({ status: 'token_not_configured' }) }))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Setup unavailable' })).toBeInTheDocument()
+    expect(screen.getByText(/configures MCM_SETUP_TOKEN/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Setup code')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
+  })
+
+  it('sends an already-configured conflict to regular login with guidance', async () => {
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/setup': () => jsonResponse({ status: 'required' }),
+      'POST /api/v1/auth/setup': () => jsonResponse({ error: 'setup is complete; please log in' }, { status: 409 }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Create administrator account' })
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Username'), 'first-admin')
+    await user.type(screen.getByLabelText('Password'), 'Strong-pass-123')
+    await user.type(screen.getByLabelText('Confirm password'), 'Strong-pass-123')
+    await user.type(screen.getByLabelText('Setup code'), 'setup-token')
+    await user.click(screen.getByRole('button', { name: 'Create administrator' }))
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/already configured/i)
+    expect(screen.getByLabelText('Password')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Setup code')).not.toBeInTheDocument()
+  })
+
+  it('keeps regular login usable when setup status cannot be read', async () => {
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/setup': () => { throw new Error('offline') },
+      'POST /api/v1/auth/login': () => jsonResponse({ token: 'ordinary-login-token', user: { id: 7, username: 'operator', disabled: false, role: 'operator', created_at: '', updated_at: '' } }),
+      ...authenticatedRoutes('ordinary-login-token'),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText(/username/i), 'operator')
+    await user.type(screen.getByLabelText(/password/i), 'secret-pass')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByText('Signed in')).toBeInTheDocument()
+  })
+
+  it('keeps the existing MFA login challenge flow available', async () => {
+    const fetchMock = installFetchMock({
+      'GET /api/v1/auth/setup': () => jsonResponse({ status: 'complete' }),
+      'POST /api/v1/auth/login': () => jsonResponse({ mfa_required: true, mfa_challenge: 'challenge-1' }),
+      'POST /api/v1/auth/login/mfa': () => jsonResponse({ token: 'mfa-login-token', user: { id: 7, username: 'operator', disabled: false, role: 'operator', created_at: '', updated_at: '' } }),
+      ...authenticatedRoutes('mfa-login-token'),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText(/username/i), 'operator')
+    await user.type(screen.getByLabelText(/password/i), 'secret-pass')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    await user.type(await screen.findByLabelText('Code'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Verify and sign in' }))
+    expect(await screen.findByText('Signed in')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/login/mfa', expect.objectContaining({ method: 'POST' }))
   })
 
   it('clears a stale token when session restore is unauthorized', async () => {
