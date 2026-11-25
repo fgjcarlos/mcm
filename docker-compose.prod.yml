@@ -77,9 +77,9 @@ services:
     environment:
       MCM_HTTP_BIND_ADDRESS: 0.0.0.0
       # Interactive first-admin setup token; supply through the deployment secret store.
-      MCM_SETUP_TOKEN: ${MCM_SETUP_TOKEN:-}
-      MCM_BOOTSTRAP_ADMIN_USERNAME: ${MCM_BOOTSTRAP_ADMIN_USERNAME:-}
-      MCM_BOOTSTRAP_ADMIN_PASSWORD: ${MCM_BOOTSTRAP_ADMIN_PASSWORD:-}
+      MCM_SETUP_TOKEN:
+      MCM_BOOTSTRAP_ADMIN_USERNAME:
+      MCM_BOOTSTRAP_ADMIN_PASSWORD:
       # Production deploy configuration — issue #294.
       MCM_MOSQUITTO_DEPLOY_MODE: file
       MCM_MOSQUITTO_DEPLOY_ACL_PATH: /var/lib/mosquitto-config/acl
