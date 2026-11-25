@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -203,7 +204,8 @@ func TestConcurrentSetupAcrossDatabaseHandlesCreatesOneAdmin(t *testing.T) {
 		}(i, app)
 	}
 	wg.Wait()
-	if !((results[0] == http.StatusCreated && results[1] == http.StatusConflict) || (results[1] == http.StatusCreated && results[0] == http.StatusConflict)) {
+	slices.Sort(results)
+	if !slices.Equal(results, []int{http.StatusCreated, http.StatusConflict}) {
 		t.Fatalf("concurrent setup statuses = %v, want one 201 and one 409", results)
 	}
 	count, err := store1.CountAdminUsers(t.Context())
