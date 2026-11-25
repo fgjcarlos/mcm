@@ -8,16 +8,15 @@
 #   2. Login + create a known MQTT user + ACL + apply.
 #   3. Run scripts/backup.sh — produces an archive.
 #   4. Wipe EVERYTHING: docker compose down -v.
-#   5. Re-up fresh. MCM bootstraps a NEW admin (in-memory), but the
-#      volume is now empty.
+#   5. Re-up fresh with a distinct test admin credential; the volume is empty.
 #   6. Run scripts/restore.sh --confirm --overwrite — replaces the
 #      freshly-bootstrapped (empty) volume with the captured archive
 #      contents; --overwrite is required because the destination
 #      already contains the just-bootstrapped mcm.db.
 #      the captured archive contents.
 #   7. Restart mcm so the restored DB is loaded.
-#   8. Verify the OLD admin password (from the original bootstrap)
-#      authenticates — proving the .bootstrap.json + SQLite were
+#   8. Verify the ORIGINAL fixture admin password authenticates —
+#      proving the .bootstrap.json + SQLite were
 #      restored faithfully.
 #   9. Verify the user created in step 2 still exists, with the
 #      original cleartext password — proving users/auth round-tripped.
@@ -32,9 +31,8 @@
 #      test on any mismatch).
 #  12. docker compose down -v cleans up.
 #
-# The "OLD admin password" check is the core invariant. If the
-# SQLite + .bootstrap.json round-trip is broken, the original admin
-# password is gone (MCM regenerates a new one) and the login fails.
+# The original-admin login after restore proves the SQLite + .bootstrap.json
+# round-trip; the distinct pre-restore fixture proves the wipe was fresh.
 # The "user still present" check is the second core invariant — it
 # proves users/auth persisted across the wipe.
 #
@@ -51,6 +49,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib-docker-host-gid.sh
 source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
 export_docker_host_gid
+source "${REPO_ROOT}/scripts/lib-e2e-admin.sh"
 
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
@@ -96,10 +95,9 @@ fi
 # --- 1. Initial setup -----------------------------------------------------------
 
 echo "--- e2e-recovery: phase 1 (initial setup) ---"
-# Start from a CLEAN stack: the test needs a FRESH bootstrap (it reads
-# the "bootstrap admin created" log line), and phase 4 wipes everything
-# anyway — cleaning up front only makes the run deterministic against
-# a dev environment that was left running.
+# Start from a CLEAN stack; phase 4 wipes it again to prove restore semantics.
+e2e_admin_provisioning
+ADMIN_PASSWORD_ORIG="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 $COMPOSE down -v --remove-orphans >/dev/null 2>&1 || true
 $COMPOSE up -d --no-build
 
@@ -119,22 +117,7 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-# Capture the ORIGINAL admin password from the bootstrap log.
-LOG_FILE="$(mktemp)"
-$COMPOSE logs --no-color mcm > "$LOG_FILE" || true
-if ! grep -q 'bootstrap admin created' "$LOG_FILE"; then
-    echo "Expected bootstrap admin warn log line not found in mcm logs:" >&2
-    cat "$LOG_FILE" >&2
-    rm -f "$LOG_FILE"
-    exit 1
-fi
-ADMIN_PASSWORD_ORIG="$(grep 'bootstrap admin created' "$LOG_FILE" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' | head -n1)"
-rm -f "$LOG_FILE"
-if [ -z "$ADMIN_PASSWORD_ORIG" ]; then
-    echo "Could not extract bootstrap admin password from mcm logs" >&2
-    exit 1
-fi
-echo "captured original admin password (length=${#ADMIN_PASSWORD_ORIG})"
+echo "using isolated original admin fixture"
 
 auth_curl() {
     local method="$1" path="$2" body="${3:-}"
@@ -255,6 +238,8 @@ echo "wiped all mcm_* and mosquitto_* volumes"
 
 echo
 echo "--- e2e-recovery: phase 4 (re-up empty stack) ---"
+e2e_admin_provisioning e2e-recovery-fresh-password-5678
+ADMIN_PASSWORD_NEW="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 $COMPOSE up -d --no-build
 for i in $(seq 1 "$WAIT_SECONDS"); do
     if curl -fsS "${HOST_URL}/livez" >/dev/null 2>&1; then
@@ -265,24 +250,23 @@ for i in $(seq 1 "$WAIT_SECONDS"); do
 done
 sleep 2
 
-# A new admin must have been generated. Capture it for the
-# "this is gone after restore" assertion path.
-LOG_FILE="$(mktemp)"
-$COMPOSE logs --no-color mcm > "$LOG_FILE" || true
-if ! grep -q 'bootstrap admin created' "$LOG_FILE"; then
-    # mcm may not have logged bootstrap if persistence did not bootstrap.
-    echo "DEBUG: mcm log after wipe — no bootstrap admin line" >&2
-fi
-ADMIN_PASSWORD_NEW="$(grep 'bootstrap admin created' "$LOG_FILE" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' | head -n1)"
-rm -f "$LOG_FILE"
-
-# Verify the bootstrap generated a DIFFERENT password (proves the
-# fresh DB is truly empty — no leftover from backup).
-if [ -n "$ADMIN_PASSWORD_NEW" ] && [ "$ADMIN_PASSWORD_NEW" = "$ADMIN_PASSWORD_ORIG" ]; then
-    echo "Fresh DB appears to retain the old admin — wipe incomplete" >&2
+# Confirm the post-wipe fixture is distinct, then prove it replaced the
+# original account before restoring the original database.
+if [ "$ADMIN_PASSWORD_NEW" = "$ADMIN_PASSWORD_ORIG" ]; then
+    echo "Fresh admin fixture must differ from the restored admin" >&2
     exit 1
 fi
-echo "fresh DB is empty (new admin generated)"
+FRESH_LOGIN="$(login "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD_NEW}\"}")"
+if ! printf '%s' "$FRESH_LOGIN" | jq -e '.token' >/dev/null; then
+    echo "Fresh admin fixture did not authenticate after wipe" >&2
+    exit 1
+fi
+OLD_LOGIN_ON_FRESH="$(login "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD_ORIG}\"}")"
+if printf '%s' "$OLD_LOGIN_ON_FRESH" | jq -e '.token' >/dev/null; then
+    echo "Original admin unexpectedly authenticated after volume wipe" >&2
+    exit 1
+fi
+echo "fresh DB accepts only the new admin fixture"
 
 # --- 5. Restore ---------------------------------------------------------------
 
@@ -340,7 +324,7 @@ sleep "$RELOAD_SETTLE_SECONDS"
 echo
 echo "--- e2e-recovery: phase 6 (verify) ---"
 
-# (8) The OLD admin password must work — proves .bootstrap.json +
+# (8) The original fixture admin must work — proves .bootstrap.json +
 #     SQLite were faithfully restored.
 echo "--- verifying old admin login restored (original JWT secret) ---"
 RESTORED_LOGIN="$(login "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD_ORIG}\"}")"

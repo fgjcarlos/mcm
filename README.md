@@ -56,11 +56,11 @@ MCM ships as one application image alongside a separate Mosquitto container. Loc
 git clone https://github.com/fgjcarlos/mcm.git
 cd mcm
 task build               # build the mcm:dev image
+export MCM_SETUP_TOKEN="$(openssl rand -hex 32)" # keep this value private; do not put it in a URL
 task up                  # start the mcm + mosquitto stack
-task logs                # tail mcm logs; the bootstrap admin password prints here
 ```
 
-Open <http://localhost:8080> and sign in with `admin` + the password from `task logs`. Stop the stack with `task down`.
+Open <http://localhost:8080>, choose a username and password, and enter the setup token once to create the first administrator. The token is separate from the MQTT broker password and is not logged. Without a configured token, interactive setup is locked. For a remote or reverse-proxy deployment, configure `MCM_SETUP_TOKEN` through the deployment's secret store before exposing MCM; never send it in a URL. Automated provisioning remains available by explicitly setting both `MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD`. Stop the stack with `task down`.
 
 > The dev stack now ships with Mosquitto authentication **enabled** (no anonymous clients). The bundled broker is seeded with a single dev admin user by `deploy/mosquitto/config/mosquitto-bootstrap.sh`; the matching credentials are hardcoded in `docker-compose.yml` so MCM can connect at startup. MCM's deploy service then writes the canonical passwd/acl files into a shared named volume (`mosquitto_config`) and SIGHUPs the broker on every successful apply, so user/ACL changes created via the UI/API reach the live broker without an operator running `mosquitto_passwd` by hand. This is a **dev-only** convenience — production requires adapting the [broker template](./deploy/mosquitto/config/mosquitto.prod.conf), aligning file paths and permissions, and providing a verified activation mechanism. Read the [known production limitations](./docs/production.md#current-limitations) first.
 
@@ -104,8 +104,9 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | --- | --- | --- |
 | `MCM_AUTH_JWT_SECRET` | *(auto-generated)* | 64-hex-char random secret persisted to `<db dir>/.bootstrap.json` (mode 0600). Set explicitly to control across restarts. |
 | `MCM_AUTH_TOKEN_TTL` | `24h` | Go duration (e.g. `"24h"`, `"30m"`). |
-| `MCM_BOOTSTRAP_ADMIN_USERNAME` | `admin` | First-boot only. Leave both empty to auto-generate. |
-| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | *(auto-generated)* | 24-char random password logged once on first boot. |
+| `MCM_SETUP_TOKEN` | *(unset)* | Required for interactive first-admin setup; configure it before claiming a new instance. |
+| `MCM_BOOTSTRAP_ADMIN_USERNAME` | *(unset)* | Optional explicit username for automated first-admin provisioning. |
+| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | *(unset)* | Optional explicit password for automated first-admin provisioning (>=8 chars, non-trivial). |
 | `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` | `15m` | Sliding window for failed-login counting. Go duration. |
 | `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` | `6` | Maximum failed logins within window before the source is locked out. `>=1`. |
 | `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` | `15m` | How long a source remains blocked after the lockout window expires. Go duration. |
@@ -213,7 +214,7 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task up`         | Start `mcm` + `mosquitto` in the background.              |
 | `task down`       | Stop the stack.                                           |
 | `task ps`         | List running services.                                    |
-| `task logs`       | Tail `mcm` logs (bootstrap admin prints here).            |
+| `task logs`       | Tail operational `mcm` logs; administrator credentials are not printed. |
 | `task ready`      | Block until `/healthz` returns 200.                       |
 | `task smoke`      | Curl `/healthz`, `/readyz`, `/api/v1/status`.             |
 | `task backup`     | Capture an MCM + Mosquitto configuration archive; see [backup and restore](./docs/production.md#6-backup-and-restore). |

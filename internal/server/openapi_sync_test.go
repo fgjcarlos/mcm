@@ -184,6 +184,53 @@ func TestDeploymentOpenAPIContract(t *testing.T) {
 	}
 }
 
+func TestSetupOpenAPIContract(t *testing.T) {
+	cfg := defaultOpenAPISyncConfig(t)
+	data, err := os.ReadFile(cfg.openAPIPath)
+	if err != nil {
+		t.Fatalf("read openapi: %v", err)
+	}
+	var doc struct {
+		Paths      map[string]map[string]any `yaml:"paths"`
+		Components struct {
+			Schemas map[string]map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse openapi: %v", err)
+	}
+	path := doc.Paths["/api/v1/auth/setup"]
+	get := path["get"].(map[string]any)
+	post := path["post"].(map[string]any)
+	getResponse := get["responses"].(map[string]any)["200"].(map[string]any)
+	if getResponse["headers"].(map[string]any)["Cache-Control"] == nil {
+		t.Fatal("setup GET must document Cache-Control: no-store")
+	}
+	if security, ok := get["security"].([]any); !ok || len(security) != 0 {
+		t.Fatalf("setup GET must be public, security=%v", get["security"])
+	}
+	if security, ok := post["security"].([]any); !ok || len(security) != 0 {
+		t.Fatalf("setup POST must be public, security=%v", post["security"])
+	}
+	for _, field := range []string{"username", "password", "password_confirmation", "setup_token"} {
+		if !containsOpenAPIRequired(doc.Components.Schemas["SetupRequest"]["required"], field) {
+			t.Errorf("SetupRequest.required missing %q", field)
+		}
+	}
+	for _, status := range []string{"required", "token_not_configured", "complete"} {
+		if !containsOpenAPIRequired(doc.Components.Schemas["SetupStatus"]["properties"].(map[string]any)["status"].(map[string]any)["enum"], status) {
+			t.Errorf("SetupStatus.status enum missing %q", status)
+		}
+	}
+	postResponses := post["responses"].(map[string]any)
+	for _, code := range []string{"201", "400", "403", "409", "413", "500"} {
+		response, ok := postResponses[code].(map[string]any)
+		if !ok || response["headers"].(map[string]any)["Cache-Control"] == nil {
+			t.Errorf("setup POST response %s must document Cache-Control: no-store", code)
+		}
+	}
+}
+
 func containsOpenAPIRequired(value any, want string) bool {
 	values, ok := value.([]any)
 	if !ok {

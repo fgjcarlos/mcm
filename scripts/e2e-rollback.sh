@@ -49,6 +49,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib-docker-host-gid.sh
 source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
 export_docker_host_gid
+source "${REPO_ROOT}/scripts/lib-e2e-admin.sh"
 
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
@@ -90,6 +91,8 @@ if [ -f ".env" ]; then
     exit 1
 fi
 
+e2e_admin_provisioning
+
 echo "--- e2e-rollback: up ---"
 $COMPOSE up -d --no-build
 
@@ -109,21 +112,7 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-echo "--- e2e-rollback: extracting bootstrap admin password from mcm logs ---"
-LOG_FILE="$(mktemp)"
-$COMPOSE logs --no-color mcm > "$LOG_FILE" || true
-if ! grep -q 'bootstrap admin created' "$LOG_FILE"; then
-    echo "Expected bootstrap admin warn log line not found in mcm logs:" >&2
-    cat "$LOG_FILE" >&2
-    rm -f "$LOG_FILE"
-    exit 1
-fi
-ADMIN_PASSWORD="$(grep 'bootstrap admin created' "$LOG_FILE" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' | head -n1)"
-rm -f "$LOG_FILE"
-if [ -z "$ADMIN_PASSWORD" ]; then
-    echo "Could not extract bootstrap admin password from mcm logs" >&2
-    exit 1
-fi
+ADMIN_PASSWORD="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 
 echo "--- e2e-rollback: POST /api/v1/auth/login ---"
 login_body="$(mktemp)"

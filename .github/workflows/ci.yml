@@ -149,11 +149,9 @@ jobs:
           path: /tmp/mcm-dev
           retention-days: 1
 
-      # Quickstart smoke (issue #274): prove the dev Compose stack brings
-      # up MCM + Mosquitto with NO env vars, the auto-generated bootstrap
-      # admin password is recoverable from the logs, and it authenticates
-      # against /api/v1/auth/login. Runs in a separate Compose project so
-      # it does not collide with the mcm-smoke container above.
+      # Quickstart smoke (issue #274): prove the dev Compose stack supports
+      # interactive first-admin setup without bootstrap credentials. Runs in
+      # a separate Compose project so it does not collide with mcm-smoke.
       - name: Quickstart smoke (clean clone, no env)
         run: |
           # Reuse the already-built mcm:dev image from the smoke step.
@@ -462,6 +460,8 @@ jobs:
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          MCM_BOOTSTRAP_ADMIN_USERNAME: admin
+          MCM_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-1234
           # Issue #299: enable the listener conf writer so the listener
           # preview/apply flow can splice new listener directives into
           # the shared /mosquitto/config/mosquitto.conf. Without this
@@ -475,17 +475,12 @@ jobs:
           export DOCKER_HOST_GID=$(stat -c '%g' /var/run/docker.sock)
           docker compose -f docker-compose.yml -p mcm \
             -f /tmp/docker-compose.e2e.yml up --no-build -d
-          # wait for mcm and extract bootstrap password
+          # wait for mcm; authenticate with the explicit CI fixture credentials
           for i in $(seq 1 30); do
             sleep 1
             if curl -fsS http://127.0.0.1:8080/livez >/dev/null; then break; fi
           done
-          LOG_FILE=$(docker compose logs mcm 2>&1 | tail -200)
-          ADMIN_PASS=$(echo "$LOG_FILE" | grep -oE '"password":"[^"]+"' | \
-            head -1 | sed 's/.*:"\(.*\)"/\1/')
-          if [ -z "$ADMIN_PASS" ]; then
-            echo "Could not extract bootstrap admin password"; exit 1
-          fi
+          ADMIN_PASS="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
           LOGIN=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
             -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}")
@@ -522,6 +517,8 @@ jobs:
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          MCM_BOOTSTRAP_ADMIN_USERNAME: admin
+          MCM_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-1234
           # Issue #302: the settings editor writes mosquitto.conf, so MCM
           # must know where the broker keeps it. The variable points at
           # the named volume the broker reads.
@@ -536,12 +533,7 @@ jobs:
             sleep 1
             if curl -fsS http://127.0.0.1:8080/livez >/dev/null; then break; fi
           done
-          LOG_FILE=$(docker compose logs mcm 2>&1 | tail -200)
-          ADMIN_PASS=$(echo "$LOG_FILE" | grep -oE '"password":"[^"]+"' | \
-            head -1 | sed 's/.*:"\(.*\)"/\1/')
-          if [ -z "$ADMIN_PASS" ]; then
-            echo "Could not extract bootstrap admin password"; exit 1
-          fi
+          ADMIN_PASS="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
           LOGIN=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
             -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}")
@@ -641,6 +633,8 @@ jobs:
       - name: Start mcm + mosquitto
         env:
           MCM_AUTH_JWT_SECRET: ci-smoke-jwt-secret-at-least-32-chars-long
+          MCM_BOOTSTRAP_ADMIN_USERNAME: admin
+          MCM_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password-1234
         run: |
           # The MCM container reaches the Docker daemon through the host's
           # socket group. The image bakes the conventional GID 999 at build
@@ -652,12 +646,7 @@ jobs:
             sleep 1
             if curl -fsS http://127.0.0.1:8080/livez >/dev/null; then break; fi
           done
-          LOG_FILE=$(docker compose logs mcm 2>&1 | tail -200)
-          ADMIN_PASS=$(echo "$LOG_FILE" | grep -oE '"password":"[^"]+"' | \
-            head -1 | sed 's/.*:"\(.*\)"/\1/')
-          if [ -z "$ADMIN_PASS" ]; then
-            echo "Could not extract bootstrap admin password"; exit 1
-          fi
+          ADMIN_PASS="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
           LOGIN=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
             -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}")

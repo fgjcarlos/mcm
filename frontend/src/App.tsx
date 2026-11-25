@@ -1934,10 +1934,31 @@ const deploymentStatusOptions = [
 function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) => void }) {
   const [username, setUsername] = useState<string>('')
   const [password, setPassword] = useState<string>('')
+  const [confirmation, setConfirmation] = useState<string>('')
+  const [setupToken, setSetupToken] = useState<string>('')
+  const [setupStatus, setSetupStatus] = useState<'required' | 'token_not_configured' | 'complete'>('complete')
+  const [confirmationError, setConfirmationError] = useState<string>('')
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
   const [mfaChallenge, setMfaChallenge] = useState<string>('')
   const [mfaCode, setMfaCode] = useState<string>('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/auth/setup', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Unable to read setup status.')
+        return response.json() as Promise<{ status?: string }>
+      })
+      .then((body) => {
+        if (cancelled) return
+        if (body.status === 'required' || body.status === 'token_not_configured') setSetupStatus(body.status)
+      })
+      .catch(() => {
+        // Setup status is advisory; a failure must never prevent ordinary login.
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const completeMFA = async (challenge: string, code: string) => {
     const response = await fetch('/api/v1/auth/login/mfa', {
@@ -1999,6 +2020,44 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
     }
   }
 
+  const handleSetupSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submitting) return
+    if (password !== confirmation) {
+      setConfirmationError('Passwords do not match.')
+      return
+    }
+    setConfirmationError('')
+    setSubmitting(true)
+    setError('')
+    try {
+      const response = await fetch('/api/v1/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password, password_confirmation: confirmation, setup_token: setupToken }),
+      })
+      const body = (await response.json().catch(() => null)) as (LoginResponse & { error?: string }) | null
+      if (response.status === 409) {
+        setSetupStatus('complete')
+        setError('This instance is already configured. Sign in with an existing account.')
+        return
+      }
+      if (!response.ok) {
+        setError(body?.error ?? 'Administrator setup failed. Please try again.')
+        return
+      }
+      if (body?.token && body.user) {
+        onLogin(body.token, body.user)
+        return
+      }
+      setError('Setup response was incomplete. Please retry.')
+    } catch {
+      setError('Could not reach the server. Check the MCM service and try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const handleMFASubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (submitting) return
@@ -2022,7 +2081,7 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
         </p>
         <div className="mt-10">
           <h1 className="font-display text-4xl font-bold uppercase leading-none text-enamel-bright">
-            {mfaChallenge ? 'Verify MFA' : 'Sign in'}
+            {mfaChallenge ? 'Verify MFA' : setupStatus === 'required' ? 'Create administrator account' : setupStatus === 'token_not_configured' ? 'Setup unavailable' : 'Sign in'}
           </h1>
           <div aria-hidden="true" className="relative mt-4 h-px bg-track-strong">
             <span className="absolute -top-px left-0 h-[3px] w-12 bg-enamel" />
@@ -2030,7 +2089,11 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
           <p className="mt-4 text-sm leading-relaxed text-enamel-soft">
             {mfaChallenge
               ? 'Enter the 6-digit code from your authenticator app, or one of your recovery codes.'
-              : 'Authenticate with an admin user to access the Mosquitto Control Manager dashboard.'}
+              : setupStatus === 'required'
+                ? 'Choose a username and password for the first administrator. Configure MCM_SETUP_TOKEN on the server and enter it here; the setup code is not your password.'
+                : setupStatus === 'token_not_configured'
+                  ? 'First-admin setup is locked until the operator configures MCM_SETUP_TOKEN on the server. No account can be created from this screen.'
+                  : 'Authenticate with an admin user to access the Mosquitto Control Manager dashboard.'}
           </p>
         </div>
 
@@ -2073,6 +2136,30 @@ function LoginScreen({ onLogin }: { onLogin: (token: string, user: AdminUser) =>
               className="w-full py-2 text-sm text-enamel-soft underline decoration-track-bright underline-offset-4 transition-colors duration-150 hover:text-enamel-bright"
             >
               ← Back to sign in
+            </button>
+          </form>
+        ) : setupStatus === 'token_not_configured' ? null : setupStatus === 'required' ? (
+          <form onSubmit={handleSetupSubmit} className="mt-6 space-y-4">
+            <label className="block">
+              <span className="text-sm font-semibold text-enamel">Username</span>
+              <input type="text" autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright" />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-enamel">Password</span>
+              <input type="password" autoComplete="new-password" required value={password} onChange={(event) => { setPassword(event.target.value); setConfirmationError('') }} className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright" />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-enamel">Confirm password</span>
+              <input type="password" autoComplete="new-password" required value={confirmation} aria-invalid={confirmationError ? true : undefined} aria-describedby={confirmationError ? 'confirm-password-error' : undefined} onChange={(event) => { setConfirmation(event.target.value); setConfirmationError('') }} className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright" />
+              {confirmationError ? <span id="confirm-password-error" role="alert" className="mt-1 block text-sm text-danger-text">{confirmationError}</span> : null}
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold text-enamel">Setup code</span>
+              <input type="password" autoComplete="off" required value={setupToken} onChange={(event) => setSetupToken(event.target.value)} className="mt-2 w-full rounded-plate border border-track-bright bg-frame-raised px-3 py-2.5 font-mono text-sm text-enamel-bright transition-colors duration-150 hover:border-enamel-muted focus-visible:border-enamel-bright" />
+            </label>
+            {error ? <div role="alert" className="border border-danger/60 px-4 py-3 text-sm text-danger-text">{error}</div> : null}
+            <button type="submit" disabled={submitting} className={`w-full ${leverPrimary}`}>
+              {submitting ? 'Creating…' : 'Create administrator'}
             </button>
           </form>
         ) : (

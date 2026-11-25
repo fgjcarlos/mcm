@@ -55,6 +55,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib-docker-host-gid.sh
 source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
 export_docker_host_gid
+source "${REPO_ROOT}/scripts/lib-e2e-admin.sh"
 
 PORT="${MCM_PORT:-8080}"
 HOST_URL="http://localhost:${PORT}"
@@ -162,8 +163,8 @@ EOF
 # is how the acl_file of the listener reaches the broker.
 export MCM_MOSQUITTO_CONFIG_DIR=/var/lib/mosquitto-config
 
-# The stack starts from a clean slate: the bootstrap admin password is
-# logged once, on the first boot of an empty database.
+# The stack starts from a clean slate with explicit test-only admin credentials.
+e2e_admin_provisioning
 "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 
 echo "--- e2e-acl-scoped-listener: up (image already loaded) ---"
@@ -191,21 +192,7 @@ if ! curl -fsS "$HEALTH_URL" >/dev/null; then
 fi
 pass 1 'the stack is up'
 
-echo "--- e2e-acl-scoped-listener: extracting bootstrap admin password ---"
-LOG_FILE="$(mktemp)"
-"${COMPOSE[@]}" logs --no-color mcm > "$LOG_FILE" || true
-if ! grep -q 'bootstrap admin created' "$LOG_FILE"; then
-    echo "Expected bootstrap admin warn log line not found in mcm logs:" >&2
-    cat "$LOG_FILE" >&2
-    rm -f "$LOG_FILE"
-    exit 1
-fi
-ADMIN_PASSWORD="$(grep 'bootstrap admin created' "$LOG_FILE" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' | head -n1)"
-rm -f "$LOG_FILE"
-if [ -z "$ADMIN_PASSWORD" ]; then
-    echo "Could not extract bootstrap admin password from mcm logs" >&2
-    exit 1
-fi
+ADMIN_PASSWORD="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 
 echo "--- e2e-acl-scoped-listener: POST /api/v1/auth/login ---"
 login_code="$(curl -sS -o "$BODY_FILE" -w '%{http_code}' \

@@ -2,22 +2,18 @@
 #
 # This file is a PRODUCTION-READY template showing the full file-based
 # config path. The dev Compose stack does NOT mount this file — the
-# dev Quickstart (task build && task up) relies on the Go runtime
-# auto-generating the JWT secret and the bootstrap admin password and
-# persisting the secret to <db dir>/.bootstrap.json.
+# dev quickstart generates only the JWT secret and persists it to
+# <db dir>/.bootstrap.json. The operator creates the first account.
 #
-# For production deployments you have two options:
-#   1. Layer `docker-compose.secrets.yml` on top of `docker-compose.yml`
-#      and supply MCM_AUTH_JWT_SECRET + MCM_BOOTSTRAP_ADMIN_PASSWORD
-#      via env vars or a .env file. See `docker-compose.secrets.yml` for
-#      the exact contract.
-#   2. Mount THIS file at /etc/mcm/config.yaml and set the same two
-#      env vars to override the placeholder values below.
-#
-# REQUIRED before deploying: replace the jwt_secret and
-# bootstrap_admin.password placeholders below with strong, unique
-# secrets. The config validator rejects these placeholder values, so
-# MCM will not start until you replace them.
+# For production, set a strong, unique JWT secret and choose one route:
+#   - With docker-compose.secrets.yml, set MCM_SETUP_TOKEN for interactive
+#     setup, or both MCM_BOOTSTRAP_ADMIN_USERNAME and
+#     MCM_BOOTSTRAP_ADMIN_PASSWORD for automated provisioning.
+#   - With this file mounted at /etc/mcm/config.yaml, set setup_token and
+#     clear both bootstrap_admin fields for interactive setup. For automated
+#     provisioning, replace the placeholder bootstrap_admin password.
+# Supply sensitive values through your secret configuration; the validator
+# rejects the shipped placeholder credentials.
 
 http:
   bind_address: "0.0.0.0"
@@ -33,6 +29,8 @@ database:
 auth:
   jwt_secret: "replace-this-secret-with-at-least-32-characters"
   token_ttl: "24h"
+  # Required for interactive first-admin setup; configure separately from broker credentials.
+  setup_token: ""
   bootstrap_admin:
     username: "admin"
     password: "change-this-admin-password"

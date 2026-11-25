@@ -13,6 +13,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib-docker-host-gid.sh
 source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
 export_docker_host_gid
+source "${REPO_ROOT}/scripts/lib-e2e-admin.sh"
 
 HOST_URL="${MCM_BASE_URL:-http://127.0.0.1:8080}"
 WAIT_SECONDS="${E2E_BROKER_OBSERVABILITY_WAIT_SECONDS:-60}"
@@ -42,6 +43,8 @@ for tool in curl jq docker; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Required tool is unavailable: $tool" >&2; exit 2; }
 done
 
+e2e_admin_provisioning
+
 echo "--- e2e-broker-observability: compose up ---"
 # The MCM container reaches the Docker daemon through the host's socket
 # group. The image bakes the conventional GID 999 at build time, but the
@@ -61,21 +64,7 @@ if ! curl -fsS "${HOST_URL}/livez" >/dev/null 2>&1; then
     exit 1
 fi
 
-# The bootstrap administrator's generated password is available only in the
-# fresh stack's logs; keep it in shell memory and never print it.
-BOOTSTRAP_PASSWORD=""
-for _ in $(seq 1 30); do
-    BOOTSTRAP_PASSWORD="$(compose logs --no-color mcm 2>/dev/null \
-        | grep '"msg":"bootstrap admin created' \
-        | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' \
-        | tail -1 || true)"
-    [ -n "$BOOTSTRAP_PASSWORD" ] && break
-    sleep 1
-done
-if [ -z "$BOOTSTRAP_PASSWORD" ]; then
-    echo "could not extract bootstrap admin password from MCM logs" >&2
-    exit 1
-fi
+BOOTSTRAP_PASSWORD="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 login_file="$(mktemp)"
 trap cleanup EXIT
 login_code="$(curl -sS -o "$login_file" -w '%{http_code}' \

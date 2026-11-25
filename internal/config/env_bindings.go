@@ -238,9 +238,19 @@ var envBindings = []envBinding{
 		},
 	},
 	{
+		Name:   "MCM_SETUP_TOKEN",
+		Path:   "auth.setup_token",
+		Doc:    "Required token for interactive first-admin setup. No setup is allowed when unset.",
+		Secret: true,
+		Apply: func(cfg *Config, raw string) error {
+			cfg.Auth.SetupToken = raw
+			return nil
+		},
+	},
+	{
 		Name: "MCM_BOOTSTRAP_ADMIN_USERNAME",
 		Path: "auth.bootstrap_admin.username",
-		Doc:  "First-boot admin username. Leave empty (with _PASSWORD) to auto-generate admin/<random 24-char pw>.",
+		Doc:  "Explicit first-boot admin username for automated provisioning.",
 		Apply: func(cfg *Config, raw string) error {
 			cfg.Auth.BootstrapAdmin.Username = raw
 			return nil
@@ -249,7 +259,7 @@ var envBindings = []envBinding{
 	{
 		Name:   "MCM_BOOTSTRAP_ADMIN_PASSWORD",
 		Path:   "auth.bootstrap_admin.password",
-		Doc:    "First-boot admin password. >=8 chars, non-trivial. Auto-generated if both this and _USERNAME are empty.",
+		Doc:    "Explicit first-boot admin password for automated provisioning. >=8 chars, non-trivial.",
 		Secret: true,
 		Apply: func(cfg *Config, raw string) error {
 			cfg.Auth.BootstrapAdmin.Password = raw

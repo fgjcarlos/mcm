@@ -45,6 +45,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib-docker-host-gid.sh
 source "${REPO_ROOT}/scripts/lib-docker-host-gid.sh"
 export_docker_host_gid
+source "${REPO_ROOT}/scripts/lib-e2e-admin.sh"
 
 COMPOSE="docker compose"
 PORT="${MCM_PORT:-8080}"
@@ -91,6 +92,8 @@ if ! command -v jq >/dev/null 2>&1; then
     fi
 fi
 
+e2e_admin_provisioning
+
 echo "--- e2e-broker-config: compose up (ConfigDir=${MCM_MOSQUITTO_CONFIG_DIR}) ---"
 # CI loads mcm:dev built with the host Docker socket GID; rebuilding here
 # would use Compose's default GID and break socket access during apply.
@@ -111,25 +114,7 @@ while true; do
     sleep 3
 done
 
-# The bootstrap admin password is logged once on first boot, but the line
-# lands in `docker compose logs mcm` slightly after /livez returns 200.
-# Retry until it appears or we exhaust the budget (the same approach as
-# scripts/e2e-deploy.sh:138 but with the regex corrected to match the
-# actual JSON log payload).
-BOOTSTRAP_PASSWORD=""
-for _ in $(seq 1 30); do
-    BOOTSTRAP_PASSWORD="$($COMPOSE logs --no-color mcm 2>/dev/null \
-        | grep '"msg":"bootstrap admin created' \
-        | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' \
-        | tail -1 || true)"
-    [ -n "$BOOTSTRAP_PASSWORD" ] && break
-    sleep 1
-done
-if [ -z "$BOOTSTRAP_PASSWORD" ]; then
-    echo "could not extract bootstrap admin password from mcm logs" >&2
-    $COMPOSE logs mcm --tail 50 >&2 || true
-    exit 1
-fi
+BOOTSTRAP_PASSWORD="$MCM_BOOTSTRAP_ADMIN_PASSWORD"
 
 login_body="$(mktemp)"
 login_code="$(curl -sS -o "$login_body" -w '%{http_code}' \
