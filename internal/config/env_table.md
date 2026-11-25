@@ -20,8 +20,9 @@ Regenerate with `go run ./scripts/gen-env-table`.
 | `MCM_DATABASE_DSN` | `database.dsn` | Postgres connection string. Required when database.backend is "postgres"; postgres is accepted by validation for forward-compatibility but is not implemented and aborts startup with an error directing the operator to use "sqlite". |
 | `MCM_AUTH_JWT_SECRET` | `auth.jwt_secret` | HMAC secret for signing JWTs. >=32 chars. If unset, a random one is generated and persisted to <db dir>/.bootstrap.json (mode 0600). |
 | `MCM_AUTH_TOKEN_TTL` | `auth.token_ttl` | JWT lifetime. Go duration (e.g. "24h"). |
-| `MCM_BOOTSTRAP_ADMIN_USERNAME` | `auth.bootstrap_admin.username` | First-boot admin username. Leave empty (with _PASSWORD) to auto-generate admin/<random 24-char pw>. |
-| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | `auth.bootstrap_admin.password` | First-boot admin password. >=8 chars, non-trivial. Auto-generated if both this and _USERNAME are empty. |
+| `MCM_SETUP_TOKEN` | `auth.setup_token` | Required token for interactive first-admin setup. No setup is allowed when unset. |
+| `MCM_BOOTSTRAP_ADMIN_USERNAME` | `auth.bootstrap_admin.username` | Explicit first-boot admin username for automated provisioning. |
+| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | `auth.bootstrap_admin.password` | Explicit first-boot admin password for automated provisioning. >=8 chars, non-trivial. |
 | `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` | `auth.login_lockout.window` | Sliding window for failed-login counting. Go duration. Default 15m. |
 | `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` | `auth.login_lockout.max_attempts` | Maximum failed logins within window before the source is locked out. >=1. Default 6. |
 | `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` | `auth.login_lockout.cooldown` | After the lockout window expires, how long the source remains blocked before retry is allowed. Go duration. Default 15m. |

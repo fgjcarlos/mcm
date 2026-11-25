@@ -23,6 +23,8 @@ var (
 	ErrUserNotFound = errors.New("admin user not found")
 	// ErrLastActiveAdmin is returned when mutating the last active admin would lock out the system.
 	ErrLastActiveAdmin = errors.New("cannot disable or delete the last active admin")
+	// ErrAdminSetupComplete is returned when an admin already exists during first-admin setup.
+	ErrAdminSetupComplete = errors.New("first admin setup is already complete")
 )
 
 type migration struct {
@@ -838,6 +840,55 @@ func (s *Store) CountActiveAdminUsers(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// CreateFirstAdminUser conditionally creates the first stored admin user. The
+// issueSession callback runs inside the transaction so a token-signing failure
+// rolls back the insert; callers must not perform external side effects in it.
+func (s *Store) CreateFirstAdminUser(ctx context.Context, params CreateAdminUserParams, issueSession func(AdminUser) error) (AdminUser, error) {
+	role := strings.TrimSpace(params.Role)
+	if role == "" {
+		role = "admin"
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("begin first admin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	result, err := tx.ExecContext(ctx, `
+INSERT INTO admin_users(username, password_hash, disabled, role, mfa_enabled, mfa_secret, created_at, updated_at)
+SELECT ?, ?, 0, ?, 0, '', ?, ?
+WHERE NOT EXISTS (SELECT 1 FROM admin_users)`,
+		strings.TrimSpace(params.Username), params.PasswordHash, role, now, now)
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("create first admin user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("get first admin insert count: %w", err)
+	}
+	if rows == 0 {
+		return AdminUser{}, ErrAdminSetupComplete
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return AdminUser{}, fmt.Errorf("get first admin user id: %w", err)
+	}
+	user, err := scanAdminUser(tx.QueryRowContext(ctx, `SELECT id, username, password_hash, disabled, role, mfa_enabled, mfa_secret, mfa_last_totp_step, created_at, updated_at FROM admin_users WHERE id = ?`, id))
+	if err != nil {
+		return AdminUser{}, err
+	}
+	if issueSession != nil {
+		if err := issueSession(user); err != nil {
+			return AdminUser{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminUser{}, fmt.Errorf("commit first admin user: %w", err)
+	}
+	return user, nil
+}
+
 // CreateAdminUser creates a new admin user.
 func (s *Store) CreateAdminUser(ctx context.Context, params CreateAdminUserParams) (AdminUser, error) {
 	role := strings.TrimSpace(params.Role)
@@ -878,13 +929,17 @@ func (s *Store) GetAdminUserByUsername(ctx context.Context, username string) (Ad
 }
 
 func (s *Store) getAdminUser(ctx context.Context, query string, arg any) (AdminUser, error) {
+	return scanAdminUser(s.db.QueryRowContext(ctx, query, arg))
+}
+
+func scanAdminUser(row interface{ Scan(dest ...any) error }) (AdminUser, error) {
 	var user AdminUser
 	var disabled int
 	var mfaEnabled int
 	var createdAt string
 	var updatedAt string
 
-	err := s.db.QueryRowContext(ctx, query, arg).Scan(
+	err := row.Scan(
 		&user.ID,
 		&user.Username,
 		&user.PasswordHash,

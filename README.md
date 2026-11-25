@@ -104,8 +104,9 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | --- | --- | --- |
 | `MCM_AUTH_JWT_SECRET` | *(auto-generated)* | 64-hex-char random secret persisted to `<db dir>/.bootstrap.json` (mode 0600). Set explicitly to control across restarts. |
 | `MCM_AUTH_TOKEN_TTL` | `24h` | Go duration (e.g. `"24h"`, `"30m"`). |
-| `MCM_BOOTSTRAP_ADMIN_USERNAME` | `admin` | First-boot only. Leave both empty to auto-generate. |
-| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | *(auto-generated)* | 24-char random password logged once on first boot. |
+| `MCM_SETUP_TOKEN` | *(unset)* | Required for interactive first-admin setup; configure it before claiming a new instance. |
+| `MCM_BOOTSTRAP_ADMIN_USERNAME` | *(unset)* | Optional explicit username for automated first-admin provisioning. |
+| `MCM_BOOTSTRAP_ADMIN_PASSWORD` | *(unset)* | Optional explicit password for automated first-admin provisioning (>=8 chars, non-trivial). |
 | `MCM_AUTH_LOGIN_LOCKOUT_WINDOW` | `15m` | Sliding window for failed-login counting. Go duration. |
 | `MCM_AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` | `6` | Maximum failed logins within window before the source is locked out. `>=1`. |
 | `MCM_AUTH_LOGIN_LOCKOUT_COOLDOWN` | `15m` | How long a source remains blocked after the lockout window expires. Go duration. |
