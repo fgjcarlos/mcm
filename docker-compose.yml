@@ -6,7 +6,7 @@
 #
 # File ownership of the deploy flow:
 #   1. On first boot, deploy/mosquitto/config/mosquitto-bootstrap.sh
-#      (invoked via the mosquitto service command override) seeds
+#      (invoked via the mosquitto service entrypoint override) seeds
 #      /mosquitto/config/mosquitto.conf and /mosquitto/config/passwd
 #      from the bind-mounted /mosquitto-init/ source.
 #   2. MCM connects to Mosquitto with the dev admin user
@@ -133,11 +133,9 @@ services:
     # logged. Explicit bootstrap username/password retain automated
     # provisioning. See deploy/mcm/README.md.
     #
-    # MCM_BOOTSTRAP_ADMIN_USERNAME is also left unset on purpose: the
-    # validator rejects the "username set, password empty" combination,
-    # and the auto-generation path only fires when both are unset. The
-    # default username "admin" is applied by internal/config.Load() when
-    # the env var is absent.
+    # MCM_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD stay empty unless exported in
+    # the shell, and must be set together. No administrator is generated when
+    # both are unset: the first one is created in the setup UI.
     #
     # MCM_MOSQUITTO_USERNAME / MCM_MOSQUITTO_PASSWORD below are the
     # credentials MCM uses to connect to the bundled Mosquitto broker;

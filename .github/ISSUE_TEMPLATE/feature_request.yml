@@ -39,7 +39,6 @@ body:
         - acl
         - mosquitto integration
         - frontend
-        - cli
         - deployment
         - documentation
         - other

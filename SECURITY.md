@@ -4,8 +4,7 @@ MCM is an open source control plane for Eclipse Mosquitto. We take reports
 of security vulnerabilities seriously and will work with reporters on
 coordinated disclosure.
 
-> MCM is pre-1.0 software. The security model is still maturing; please
-> treat releases within the latest minor as the supported line and plan
+> MCM is pre-1.0 software. The security model is still maturing; plan
 > for breaking changes between minor versions. The current project
 > status is documented in the top-level [README](./README.md#project-status).
 
@@ -68,20 +67,17 @@ record unless you prefer to remain anonymous.
 
 ## Supported versions
 
-The current supported line is `v0.1.x`. Commits on `main` before `v0.1.0` are
-best-effort; production deployments should pin a tagged release, not a branch
-or `latest`.
+MCM has no tagged release yet. Until the first one ships, the only
+supported line is the latest commit on `main`: security fixes land there,
+and older commits are not patched. Build from a recent `main` commit and
+record the commit you deployed.
 
 | Version line            | Support status                  | Security fixes         |
 | ----------------------- | ------------------------------- | ---------------------- |
-| `v0.1.x` (latest)       | **Active support**              | Yes                    |
-| Pre-`v0.1.0` commits    | **End of life**                 | No — please upgrade to `v0.1.x` |
-| Older minor releases    | **End of life**                 | No — please upgrade    |
+| Latest `main` commit    | **Active support**              | Yes                    |
+| Older `main` commits    | **End of life**                 | No — please update     |
 
-When a new minor line ships (e.g. `v0.2.x`), the previous line moves to
-critical / high fixes only for a 30-day overlap window.
-
-Concretely:
+Once tagged releases exist, this policy applies:
 
 - **Critical and high-severity vulnerabilities** are fixed in the latest
   minor and backported to the previous minor for a 30-day overlap window.
@@ -89,9 +85,8 @@ Concretely:
 - **The `main` branch** may contain unreleased fixes; production
   deployments should pin a tagged release, not a branch.
 
-The first tagged release will be announced in
-[docs/releasing.md](./docs/releasing.md); this table will be updated at
-that point with concrete version numbers.
+This table will be updated with concrete version numbers when the first
+release is tagged.
 
 ---
 
@@ -133,8 +128,9 @@ The production deployment guide covers TLS termination, secrets,
 firewalling, and a hardening checklist; see
 [`docs/production.md`](./docs/production.md).
 
-The HTTP API and security headers baseline is documented in the
-top-level [README](./README.md#security-baseline).
+The HTTP endpoints and health probes are listed in the top-level
+[README](./README.md#reference), and the full API contract in
+[`docs/openapi.yaml`](./docs/openapi.yaml).
 
 ---
 

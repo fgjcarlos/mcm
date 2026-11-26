@@ -11,12 +11,12 @@ This is the agreed target, implemented by [epic #308](https://github.com/fgjcarl
 | Area | Current implementation | Target |
 | --- | --- | --- |
 | Users | Create, remove, disable and rotate generated passwords | Coherent identity lifecycle with ACL references and pending/active state |
-| ACL | User/topic rules with read, write and readwrite | Native patterns, deny and listener scope supported by each version |
+| ACL | User, anonymous and pattern rules (`%u`/`%c` placeholders) with read, write, readwrite and deny | Native patterns, deny and listener scope supported by each version |
 | Apply | Password/ACL file diff, write, SIGHUP and limited recovery | Immutable revision, validation, reload/restart selection, verification and recovery |
 | Configuration | Versioned import, advanced root-file editor, catalog preview, explicit adoption, apply and revision recovery; includes are inspected but not edited | Import and graphical editing of mosquitto.conf and includes |
 | General settings | Catalog-driven forms for persistence, queues, sessions and logging with a preview and a reload/restart distinction (issue #302) | Every supported general setting of every supported version |
-| Network | Static listeners | MQTT/WebSocket listeners, binding and deployment port compatibility |
-| TLS | MCM HTTP TLS and outbound MQTT TLS | Broker certificate lifecycle and listener TLS/mTLS |
+| Network | MQTT and WebSocket listener CRUD through reviewed revisions, applied with a broker restart (issue #299); Compose port mappings stay operator-managed | MQTT/WebSocket listeners, binding and deployment port compatibility |
+| TLS | MCM HTTP TLS, outbound MQTT TLS and the broker's certificate material managed from MCM | Broker certificate lifecycle and listener TLS/mTLS |
 | Bridges and plugins | Bridge editor for the connections between brokers: destinations, client ids, credentials, TLS, reconnection and topic rules with a direction, a quality of service and local/remote prefixes, validated against names, dependencies and message loops and activated through a reviewed revision (issue #303). Plugin catalog per broker version with the supported plugins and their options, a lossless editor of the plugin directives of the managed file and a Dynamic Security editor that reads the security database of the plugin from the broker itself (issue #304). | Bridge editor and supported plugins, including Dynamic Security |
 | Diagnostics | Wildcard-observed traffic, broker `$SYS` metrics, broker log entries and MCM events | Explicit broker metrics/log sources with stated limitations |
 | Recovery | Root-configuration copy/revision recovery from UI; a verified backup and restore of the MCM database, the broker configuration and its certificate material | Consistent, complete, tested backups and UI restore |
@@ -75,8 +75,6 @@ The Dashboard is the home and sits above the groups: MQTT Access (MQTT users, AC
 These gaps are the state after epic #308 was implemented and verified. They are stated so no
 consumer assumes coverage MCM does not deliver.
 
-- Native ACL coverage is partial: the directive-level editing of `deny` rules and of the `%u`
-  and `%c` pattern forms is not exposed through the graphical editor.
 - Five directives per supported version are validated and preserved but have no dedicated
   graphical control, so the operator edits them in the advanced root editor: `memory_limit`,
   `message_size_limit`, `port`, `sys_interval` and `user`. Every other upstream directive is

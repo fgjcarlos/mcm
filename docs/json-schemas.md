@@ -7,7 +7,7 @@ MCM supports a bounded JSON Schema MVP for validating observed MQTT JSON payload
 ## Scope
 
 - Schema definitions are stored in SQLite and tied to MQTT topic filters (`+` and terminal `#` wildcards).
-- CRUD endpoints live under `/api/v1/json-schemas` and require admin authentication.
+- CRUD endpoints live under `/api/v1/json-schemas` and require the `auditor` role to read and `operator` to create, update or delete.
 - Incoming JSON topic messages are validated against the first enabled schema whose topic filter matches the topic.
 - Validation results are exposed on broker topic events as `schema_validation` and shown in the topic explorer.
 - Raw MQTT payloads are not persisted; only bounded validation status/errors and payload metadata are surfaced.
@@ -67,7 +67,7 @@ This edge-safe subset is intentionally bounded so the validator stays cheap on e
 
 ### Non-goals (current release)
 
-These are intentionally not implemented and are rejected silently (ignored) if present on a schema, but new schemas should not rely on them:
+These are intentionally not implemented. The keywords below are ignored if present on a schema, so new schemas should not rely on them (a tuple-style `items` array is the exception: it is rejected when the schema is saved):
 
 - `$ref` and any form of remote schema reference.
 - Composition keywords (`allOf`, `anyOf`, `oneOf`, `not`).

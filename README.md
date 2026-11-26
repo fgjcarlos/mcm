@@ -117,8 +117,8 @@ MCM is configured through `MCM_*` environment variables. A YAML file can be moun
 | --- | --- | --- |
 | `MCM_MOSQUITTO_HOST` | `mosquitto` | Broker hostname or IP. Default matches the bundled compose service. |
 | `MCM_MOSQUITTO_PORT` | `1883` | Broker TCP port. 1..65535. Use `8883` for TLS. |
-| `MCM_MOSQUITTO_USERNAME` | `admin` | Broker service user. Both `_USERNAME` and `_PASSWORD` must be set or both empty. Dev default matches the Mosquitto bootstrap script. |
-| `MCM_MOSQUITTO_PASSWORD` | `mcm-dev-broker-password` | Broker service user password. Read from a secret manager in production. Dev-only. |
+| `MCM_MOSQUITTO_USERNAME` | *(unset)* | Broker service user. Both `_USERNAME` and `_PASSWORD` must be set or both empty. The dev `docker-compose.yml` sets `admin` to match the Mosquitto bootstrap script. |
+| `MCM_MOSQUITTO_PASSWORD` | *(unset)* | Broker service user password. Read from a secret manager in production. The dev `docker-compose.yml` hardcodes `mcm-dev-broker-password`; never reuse it outside dev. |
 | `MCM_MOSQUITTO_CONFIG_DIR` | *(unset)* | Directory containing the Mosquitto configuration. |
 | `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | *(unset)* | Broker-side path of the configuration directory that holds the broker certificate material. It must point at the same volume as `MCM_MOSQUITTO_CONFIG_DIR`. |
 | `MCM_MOSQUITTO_DATA_DIR` | *(unset)* | Directory for Mosquitto persistent data (retained messages, persistence file). |
@@ -206,7 +206,7 @@ Full field documentation lives at the top of [`internal/config/config.go`](./int
 
 ## Development
 
-The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` with no arguments to list every recipe.
+The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` with no arguments to list every recipe; the table covers the common ones.
 
 | Command           | Purpose                                                   |
 | ----------------- | --------------------------------------------------------- |
@@ -218,7 +218,7 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task ready`      | Block until `/healthz` returns 200.                       |
 | `task smoke`      | Curl `/healthz`, `/readyz`, `/api/v1/status`.             |
 | `task backup`     | Capture an MCM + Mosquitto configuration archive; see [backup and restore](./docs/production.md#6-backup-and-restore). |
-| `task restore`    | Restore an archive after verifying its manifest; requires `--overwrite` to replace existing data. |
+| `task restore`    | Restore an archive after verifying its manifest; stop MCM first, and pass `RESTORE_FLAGS=--overwrite` when the volumes already hold data; see [running a restore](./docs/production.md#63-running-a-restore). |
 | `task test:go`    | `go test ./... -race -count=1`.                           |
 | `task test:frontend` | Install `frontend/` deps and run Vitest.              |
 | `task test`       | Both test suites.                                         |

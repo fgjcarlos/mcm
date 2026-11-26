@@ -5,7 +5,7 @@ This directory contains the local Eclipse Mosquitto configuration used by the MC
 ## Files
 
 - `config/mosquitto.conf`: dev-stack Mosquitto configuration with auth + ACL enabled. The dev stack shares this dir with MCM via a named volume; see [Integration with MCM](#integration-with-mcm) below for the deploy flow.
-- `config/mosquitto.prod.conf`: operator-adapted starting template. Disables anonymous access, uses `passwords`, binds plain MQTT to `0.0.0.0`, and defines a TLS listener on `8883`. It does not reference `acl_file`; mTLS is commented out by default. Review the comments inside the file and this README's TLS checklist before use.
+- `config/mosquitto.prod.conf`: operator-adapted starting template. Disables anonymous access, uses `passwords`, binds plain MQTT to `0.0.0.0`, and defines a TLS listener on `8883`. It references `acl_file /mosquitto/config/acl`; mTLS is commented out by default. Review the comments inside the file and this README's TLS checklist before use.
 - `config/mosquitto-bootstrap.sh`: dev-only init script that seeds the shared config volume on first boot (see [Integration with MCM](#integration-with-mcm)).
 
 ## Exposed ports
@@ -54,7 +54,7 @@ The end-to-end flow on every successful deploy apply:
 4. `docker exec mcm-mosquitto kill -HUP 1` signals the broker to reload the passwd/acl without a container restart.
 5. MCM runs a healthcheck (`diagnostics.CheckMQTTConnectivity`) that does a real MQTT CONNECT/CONNACK exchange. If it fails, the deploy service reverts to the snapshot it took before applying and emits an audit event — see `internal/deploy/service.go` and the `TestApply_HealthcheckFailure_AuditAndFilesReverted` / `TestApply_RollbackFailure_AuditEmitted` tests.
 
-This flow is limited to password/ACL files. A successful CONNECT does not verify ACL changes, and an applier failure after a partial write does not currently trigger recovery. These gaps are tracked in [#292](https://github.com/fgjcarlos/mcm/issues/292) and [#293](https://github.com/fgjcarlos/mcm/issues/293).
+This flow is limited to password/ACL files, and a successful CONNECT does not verify ACL changes. Before replacing any file, the applier writes a recovery journal with fsynced backups; a failure after a partial write rolls the files back from that journal, and a failed rollback keeps the journal for the next start (`internal/mosquitto/applier.go`, `recovery.go`).
 
 #### Shared config ownership and listener restarts
 
@@ -62,7 +62,7 @@ This flow is limited to password/ACL files. A successful CONNECT does not verify
 
 Listener changes still require the full Compose container restart managed by MCM. Do not replace it with SIGHUP: Mosquitto 2.0 does not reload listener definitions on SIGHUP. The initialization template is therefore only the seed for a new config volume (or a missing config file), while the shared volume is the runtime source of truth.
 
-The production template is not a drop-in version of this managed flow. Align its password/ACL paths, ownership and reload mechanism with MCM first; see [production limitations](../../docs/production.md#current-limitations) and [#294](https://github.com/fgjcarlos/mcm/issues/294). Do not switch an existing broker to MCM-generated files before reviewing how its existing users and rules will be imported.
+The production template is not a drop-in version of this managed flow. Align its password/ACL paths, ownership and reload mechanism with MCM first; see [production limitations](../../docs/production.md#current-limitations). Do not switch an existing broker to MCM-generated files before reviewing how its existing users and rules will be imported.
 
 ### Dev-only knobs (don't carry to production)
 
@@ -71,7 +71,7 @@ The production template is not a drop-in version of this managed flow. Align its
 | `MCM_MOSQUITTO_PASSWORD` | Hardcoded `mcm-dev-broker-password` in `docker-compose.yml` and `mosquitto-bootstrap.sh` | Production reads the broker password from a secret manager; never embed it in source. |
 | Broker runs as the `mcm` UID (`MCM_SERVICE_UID`/`MCM_SERVICE_GID`, default `100`/`101`) | Set by `mosquitto-bootstrap.sh` | MCM writes `passwd`/`acl` as `0600` files owned by its own user, and Mosquitto warns (future versions refuse to load) a password or ACL file whose owner or group is not the broker's user, or that is world readable. The bootstrap starts as root, hands `passwd`, `acl`, the data directory and the log to that user, and runs the broker as it, so the broker owns every file MCM writes. The `user root` in `mosquitto.conf` is ignored by a non-root broker. Production should run the broker and MCM as the same user. |
 | `chmod 777` on the shared config dir | Set by `mosquitto-bootstrap.sh` | Same UID-mismatch workaround. Production matches UIDs, no chmod needed. |
-| Mount of `/var/run/docker.sock` into mcm | Set | Lets MCM run `docker exec … kill -HUP 1` against the host daemon. **Do NOT do this in production.** File mode needs compatible ownership and a configured PID/signal path. Any broker-side reload trigger is operator-provided; the production adapter remains tracked in #294. |
+| Mount of `/var/run/docker.sock` into mcm | Set | Lets MCM run `docker exec … kill -HUP 1` against the host daemon. **Do NOT do this in production.** File mode needs compatible ownership and a configured PID/signal path. Any broker-side reload trigger is operator-provided through `MCM_MOSQUITTO_DEPLOY_RELOAD_COMMAND` / `MCM_MOSQUITTO_DEPLOY_RESTART_COMMAND`; `docker-compose.prod.yml` shows one way to do it without the socket. |
 | `docker-cli` installed in the mcm image | Set | Companion to the docker socket mount; the `DockerApplier` shells out to `docker exec`. Production does not need the docker CLI. |
 | Bootstrap `admin` user seeded by the script | `admin` / `mcm-dev-broker-password` | Production creates the broker user with `mosquitto_passwd -c` on the host as the mosquitto user before the first broker boot. |
 
@@ -81,16 +81,9 @@ The production template is not a drop-in version of this managed flow. Align its
 task build && task up
 docker compose exec mosquitto mosquitto_pub -h 127.0.0.1 -p 1883 \
     -u admin -P mcm-dev-broker-password -t mcm/healthcheck -m "ping"
-# Then exercise the API:
-ADMIN_PW=$(docker compose logs --no-color mcm | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' | head -1)
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-    -H 'Content-Type: application/json' \
-    -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PW\"}" | jq -r .token)
-curl -s -X POST http://localhost:8080/api/v1/deployments/preview \
-    -H "Authorization: Bearer $TOKEN" | jq .
-curl -s -X POST http://localhost:8080/api/v1/deployments/apply \
-    -H "Authorization: Bearer $TOKEN" | jq .
 ```
+
+MCM never logs administrator credentials. Create the first administrator in the web UI (see the [Quickstart](../../README.md#quickstart-docker)), then create an MQTT user, review the pending change and apply it. Applying requires a recent MFA step-up, so the API path is longer than a few `curl` calls; [`scripts/e2e-deploy.sh`](../../scripts/e2e-deploy.sh) is the executable reference for it (login, MFA step-up, preview, apply bound to the previewed revision, broker verification) and runs in CI.
 
 `scripts/e2e-deploy.sh` exercises this end-to-end and is invoked from CI (`.github/workflows/ci.yml::e2e-deploy` job).
 
@@ -197,7 +190,7 @@ The material has to be visible to both processes, and each one sees the shared v
 | `MCM_MOSQUITTO_CONFIG_DIR` | Where MCM writes the material. The certificate surface stays disabled while this is unset. |
 | `MCM_MOSQUITTO_BROKER_CONFIG_DIR` | The path the **broker** uses for the same directory. It is the path that ends up in the rendered `mosquitto.conf`, so it must match the broker's mount, not MCM's. Defaults to `/mosquitto/config`. |
 
-Both settings must point at the same volume. In the dev stack the `mosquitto_config` volume is mounted twice — `/mosquitto/config` in the broker and `/var/lib/mosquitto-config` in MCM — which is why both variables are required.
+Both settings must point at the same volume. In the dev stack the `mosquitto_config` volume is mounted twice — `/mosquitto/config` in the broker and `/var/lib/mosquitto-config` in MCM — so enabling the certificate surface there means setting `MCM_MOSQUITTO_CONFIG_DIR=/var/lib/mosquitto-config`; `docker-compose.yml` leaves it empty by default, and the broker-side default `/mosquitto/config` already matches.
 
 ```text
 # MCM view: $MCM_MOSQUITTO_CONFIG_DIR

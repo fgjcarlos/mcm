@@ -12,7 +12,10 @@ ADRs document important technical and product architecture choices so future con
 - [ADR-0004: Use React, Vite, and TypeScript for the web UI](./0004-react-vite-typescript-frontend.md)
 - [ADR-0005: Embed built frontend assets into the Go binary](./0005-embed-frontend-assets.md)
 - [ADR-0006: Keep Mosquitto external to MCM for the MVP](./0006-external-mosquitto-broker.md)
-- [ADR-0007: Use a YAML configuration file for server runtime configuration](./0007-yaml-configuration-with-env-overrides.md)
+- [ADR-0007: Use a YAML configuration file for server runtime configuration](./0007-yaml-configuration-with-env-overrides.md) — Superseded
+- [ADR-0008: Optional PostgreSQL storage backend](./0008-optional-postgresql-backend.md) — Superseded
+
+ADR-0001 to ADR-0006 are Accepted. ADRs are historical records: when one disagrees with the current docs, the README and `docs/` guides describe the current behaviour.
 
 ## ADR format
 

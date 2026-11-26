@@ -70,8 +70,7 @@ mcm.example.com {
 
 `trusted_proxies` must list the proxy's source address. Set
 `MCM_HTTP_TRUSTED_PROXIES=127.0.0.1/32` for a same-host proxy, or the
-remote proxy's CIDR for a remote one. (If the env var name for your build
-differs, check [`internal/config/config.go`](../internal/config/config.go).)
+remote proxy's CIDR for a remote one.
 
 ### nginx
 
@@ -114,7 +113,6 @@ labels:
   - "traefik.http.routers.mcm.tls=true"
   - "traefik.http.routers.mcm.tls.certresolver=letsencrypt"
   - "traefik.http.services.mcm.loadbalancer.server.port=8080"
-  - "traefik.http.middlewares.mcm-headers.headers.customrequestheaders.X-Forwarded-For={{.RemoteAddr}}"
 ```
 
 If you terminate TLS at the proxy, leave MCM's built-in HTTPS off (default).
@@ -147,7 +145,7 @@ the instance reachable. Enter it once in the first-admin setup form, then
   `MCM_BOOTSTRAP_ADMIN_PASSWORD`. This non-interactive first-boot path is
   unchanged and does not require the setup token.
 
-Neither method retrieves an interactive password from logs. `MCM_AUTH_TOKEN_TTL`
+Neither method writes an administrator password to the logs. `MCM_AUTH_TOKEN_TTL`
 sets the JWT lifetime, Go duration (default `24h`).
 
 Generate a strong JWT secret with:
@@ -367,11 +365,18 @@ MCM tracks its schema with an internal `schema_migrations` table. The server
 applies pending migrations on startup, so the upgrade is a stop → replace
 image → start cycle.
 
-### Pulling a tagged release
+### Choosing the image
 
-Published images live at `ghcr.io/fgjcarlos/mcm`. Pin a specific tag in
-production — the `latest` tag moves on every release and is convenient for
-home labs, not for production stability:
+**Today:** there is no tagged release or published image yet. Build the
+`prod` target from a recorded `main` commit
+(`docker build --target prod -t mcm:<commit> .`), point the `mcm` service's
+`image:` at that tag, and in the upgrade steps below rebuild instead of
+`docker compose pull`.
+
+**Once releases are published** (not yet), images will live at
+`ghcr.io/fgjcarlos/mcm`. Pin a specific tag in production — the `latest`
+tag moves on every release and is convenient for home labs, not for
+production stability:
 
 ```bash
 # Replace the mcm service's `build:` and `image:` lines in docker-compose.yml
@@ -386,7 +391,7 @@ docker compose pull mcm
 docker compose up -d
 ```
 
-Each release ships multi-arch (`linux/amd64`, `linux/arm64`) with provenance
+The release workflow builds multi-arch (`linux/amd64`, `linux/arm64`) with provenance
 attestations and an SBOM. Inspect the manifest digest from the GitHub Release
 page or with `docker buildx imagetools inspect --raw`.
 
@@ -396,7 +401,8 @@ page or with `docker buildx imagetools inspect --raw`.
 # First obtain and verify a consistent backup using the process in section 6.
 # Verify the restore path on a disposable deployment before you need it.
 
-# 2. Pull the new image and recreate the container.
+# 2. Pull (or rebuild, before the first release) the new image and
+#    recreate the container.
 docker compose pull mcm
 docker compose up -d
 
@@ -439,7 +445,8 @@ three defects the legacy Taskfile recipes had:
 By default (without `--include-broker-data`):
 
 - `mcm_data` volume:
-  - `mcm.db`, `mcm.db-shm`, `mcm.db-wal` — the SQLite database + WAL.
+  - `mcm.db` — a consistent `sqlite3 .backup` snapshot of the database
+    (the `-wal`/`-shm` sidecars are not copied; the snapshot is self-contained).
   - `.bootstrap.json` — the JWT secret.
 - `mosquitto_config` volume:
   - `passwd` — broker password file.
@@ -532,8 +539,9 @@ empty stack is the intended `--overwrite` case. The script:
    optional: one missing from the archive is skipped, but one the
    archive contains that fails to write aborts the restore with a
    non-zero exit naming the file, and `SUCCESS` is never printed.
-6. Preserves file modes (`0600` for sensitive files like mcm.db and
-   .bootstrap.json; `0644` for the broker config). Stale
+6. Writes every restored file with mode `0600`, including the broker
+   config, so the broker must run as the same user as MCM (the dev
+   stack does). Stale
    `mcm.db-wal`/`mcm.db-shm` sidecars from older archives are
    ignored — the `sqlite3 .backup` snapshot is self-contained.
 
@@ -547,8 +555,10 @@ flow end-to-end:
 1. Apply a known-good config (creates an MQTT user + ACL).
 2. Run `scripts/backup.sh` to capture the state.
 3. `docker compose down -v` (wipe EVERYTHING).
-4. `docker compose up -d` (re-up empty; MCM bootstraps a new admin).
-5. Run `scripts/restore.sh --confirm --overwrite` to replace the
+4. `docker compose up -d` (re-up empty; the drill provisions a new admin
+   through `MCM_BOOTSTRAP_ADMIN_*`).
+5. `docker compose stop mcm` (restore refuses while MCM runs), then run
+   `scripts/restore.sh --confirm --overwrite` to replace the
    freshly-bootstrapped files with the captured ones.
 6. Restart mosquitto (so it reads the restored passwd/acl).
 7. Verify: the original admin password works (proves .bootstrap.json
@@ -604,9 +614,11 @@ Recommended alerts:
 - `mcm_broker_status == 0` for more than 2 minutes.
 - `rate(mcm_login_attempts_total{result="failure"}[5m]) > 5` sustained
   (possible credential stuffing).
-- `mcm_http_request_duration_seconds:rate5m` p95 above your SLO.
-- `mcm_up == 0` (add a `probe` job that hits `/api/v1/status` from outside
-  the proxy to catch proxy outages).
+- `histogram_quantile(0.95, sum by (le) (rate(mcm_http_request_duration_seconds_bucket[5m])))`
+  above your SLO.
+- `up{job="mcm"} == 0` for the scrape job, plus an external probe (for
+  example blackbox exporter) that hits `/livez` from outside the proxy to
+  catch proxy outages.
 
 ---
 
