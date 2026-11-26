@@ -209,7 +209,9 @@ for pattern entries.
 ## REST endpoints
 
 - `GET /api/v1/acls`: list ACL rules. Accepts `user` and `topic` (case-insensitive
-  substring filters on the principal and the topic filter), plus `limit`
+  substring filters on the principal and the topic filter), and optional `principal`
+  (exact, case-sensitive match restricted to `user`-selector rules). Nonempty filters
+  combine with AND; an empty `principal` adds no filter. Also accepts `limit`
   (default 50, max 100) and `offset`. Returns
   `{"rules": [...], "total": N, "limit": L, "offset": O}`, where `total` counts
   the rules matching the filters.

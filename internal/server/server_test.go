@@ -291,3 +291,59 @@ func TestACLAPI_ListRulesPaged(t *testing.T) {
 		})
 	}
 }
+
+// TestACLAPI_ListRulesPrincipal pins the exact, case-sensitive principal
+// filter of GET /api/v1/acls through the real handler, and that user= is unchanged.
+func TestACLAPI_ListRulesPrincipal(t *testing.T) {
+	t.Parallel()
+
+	store := acl.NewMemoryStore()
+	ctx := context.Background()
+	for _, r := range []acl.Rule{
+		{Principal: "sensor", TopicFilter: "plant/temp", Permission: acl.PermissionRead},
+		{Principal: "SENSOR", TopicFilter: "plant/temp", Permission: acl.PermissionRead},
+		{Principal: "sensor-01", TopicFilter: "plant/temp", Permission: acl.PermissionRead},
+		{Selector: acl.SelectorPattern, TopicFilter: "devices/%u/#", Permission: acl.PermissionRead},
+		{Selector: acl.SelectorAnonymous, TopicFilter: "public/#", Permission: acl.PermissionRead},
+	} {
+		if _, err := store.CreateRule(ctx, r); err != nil {
+			t.Fatalf("CreateRule(%q) returned error: %v", r.Principal, err)
+		}
+	}
+	handler := NewHandler(store)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIDs   []string
+		wantTotal int
+	}{
+		{"principal is exact: no sensor-01, SENSOR, pattern or anonymous", "?principal=sensor", []string{"1"}, 1},
+		{"principal is case-sensitive", "?principal=SENSOR", []string{"2"}, 1},
+		{"user filter is still a substring match", "?user=sensor", []string{"1", "2", "3"}, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/acls"+tt.query, nil))
+			if resp.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+			}
+			var payload struct {
+				Rules []acl.Rule `json:"rules"`
+				Total int        `json:"total"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("Unmarshal returned error: %v", err)
+			}
+			ids := make([]string, 0, len(payload.Rules))
+			for _, r := range payload.Rules {
+				ids = append(ids, r.ID)
+			}
+			if !slices.Equal(ids, tt.wantIDs) || payload.Total != tt.wantTotal {
+				t.Fatalf("ids = %v total = %d, want %v total %d", ids, payload.Total, tt.wantIDs, tt.wantTotal)
+			}
+		})
+	}
+}

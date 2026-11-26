@@ -12,11 +12,12 @@ import (
 // Store abstracts ACL persistence.
 type Store interface {
 	ListRules(ctx context.Context) ([]Rule, error)
-	// ListRulesPaged returns one page of the rules whose principal contains
-	// user and whose topic filter contains topic (case-insensitive substring;
-	// an empty value matches everything), ordered by numeric ID, plus the
-	// number of rules matching the filters.
-	ListRulesPaged(ctx context.Context, user, topic string, limit, offset int) ([]Rule, int, error)
+	// ListRulesPaged returns one page of the rules matching the filters, ordered
+	// by numeric ID, plus the number of matching rules. user and topic are
+	// case-insensitive substring filters on the principal and the topic filter;
+	// an empty value matches everything. A non-empty principal requires exactly
+	// that principal, case-sensitive like Mosquitto, on a user-scoped rule.
+	ListRulesPaged(ctx context.Context, user, principal, topic string, limit, offset int) ([]Rule, int, error)
 	CreateRule(ctx context.Context, rule Rule) (Rule, error)
 	UpdateRule(ctx context.Context, id string, rule Rule) (Rule, error)
 	DeleteRule(ctx context.Context, id string) error
@@ -60,7 +61,7 @@ func (s *MemoryStore) ListRules(_ context.Context) ([]Rule, error) {
 }
 
 // ListRulesPaged implements Store.ListRulesPaged.
-func (s *MemoryStore) ListRulesPaged(ctx context.Context, user, topic string, limit, offset int) ([]Rule, int, error) {
+func (s *MemoryStore) ListRulesPaged(ctx context.Context, user, principal, topic string, limit, offset int) ([]Rule, int, error) {
 	all, err := s.ListRules(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -68,7 +69,7 @@ func (s *MemoryStore) ListRulesPaged(ctx context.Context, user, topic string, li
 	user, topic = strings.ToLower(user), strings.ToLower(topic)
 	matched := all[:0]
 	for _, rule := range all {
-		if strings.Contains(strings.ToLower(rule.Principal), user) && strings.Contains(strings.ToLower(rule.TopicFilter), topic) {
+		if strings.Contains(strings.ToLower(rule.Principal), user) && (principal == "" || (rule.IsUserScoped() && rule.Principal == principal)) && strings.Contains(strings.ToLower(rule.TopicFilter), topic) {
 			matched = append(matched, rule)
 		}
 	}

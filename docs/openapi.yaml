@@ -524,6 +524,10 @@ paths:
           description: Case-insensitive substring match on the rule principal. Empty matches every rule.
           schema: { type: string }
         - in: query
+          name: principal
+          description: Exact, case-sensitive principal match, restricted to user-selector rules. Combines with user and topic using AND. Empty matches every rule.
+          schema: { type: string }
+        - in: query
           name: topic
           description: Case-insensitive substring match on the rule topic filter. Empty matches every rule.
           schema: { type: string }
