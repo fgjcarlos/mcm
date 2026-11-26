@@ -18,7 +18,7 @@
 
 <!-- List the commands you ran and the result. -->
 
-- [ ] `go test ./...`
+- [ ] `task test`
 
 ## Checklist
 

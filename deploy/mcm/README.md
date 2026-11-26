@@ -6,36 +6,20 @@ This directory contains the MCM configuration used by the Docker Compose stack.
 
 - `config.yaml`: PRODUCTION template for the MCM container. The dev
   Compose stack does NOT mount this file — it relies on the Go
-  runtime's auto-generation/persistence contract (see "Quick start"
-  below). This template is shipped for production deployments that
+  defaults plus the `MCM_*` variables in `docker-compose.yml`. This template is shipped for production deployments that
   want to pin every field explicitly.
 
 ## Quick start (dev)
 
-From the repository root:
-
-```bash
-task build               # build the mcm:dev image
-export MCM_SETUP_TOKEN="$(openssl rand -hex 32)" # keep private; never put in a URL
-task up                  # start the mcm + mosquitto stack
-curl http://localhost:8080/healthz
-```
-
-On first boot, open `http://localhost:8080`, choose the administrator
-username and password, and enter the setup token once. The token
-authorizes setup; it is not the admin password or the separate
-`MCM_MOSQUITTO_PASSWORD` used to connect to the bundled broker. MCM does
-not log either the setup token or interactive credentials. Keep the
-configured token in a secret store and use TLS before exposing a remote
-instance through a reverse proxy. If `MCM_SETUP_TOKEN` is unset,
-interactive setup remains locked and the UI explains how the operator
-can configure it. Once the first administrator exists, the setup stays
-closed across restarts and changing the token does not reopen it.
-
-For automated provisioning, explicitly set both
-`MCM_BOOTSTRAP_ADMIN_USERNAME` and `MCM_BOOTSTRAP_ADMIN_PASSWORD`; that
-first-boot path is unchanged and shows the regular login after creating
-the account. No generated interactive password is retrieved from logs.
+Follow the [Quickstart in the top-level README](../../README.md#quickstart-docker):
+`task build`, export `MCM_SETUP_TOKEN`, `task up`, then create the first
+administrator at `http://localhost:8080`. The token only authorizes that
+setup; it is not the administrator password or `MCM_MOSQUITTO_PASSWORD`,
+and MCM logs neither. Once the first administrator exists, setup stays
+closed across restarts and changing the token does not reopen it. For
+automated provisioning, set both `MCM_BOOTSTRAP_ADMIN_USERNAME` and
+`MCM_BOOTSTRAP_ADMIN_PASSWORD` instead; the secret-handling rules for
+production are in [production section 3](../../docs/production.md#3-secrets-management).
 
 ## Production deployment
 
@@ -77,7 +61,7 @@ this file's production checklist. The override is meant to be the
 If you want full control over every config field, mount this file and
 override the secrets via env vars. The image's `ENTRYPOINT` is a bare
 `mcm`, so the YAML is read **only** when `MCM_CONFIG_FILE` is set
-(this is the contract documented in `cmd/mcm/main.go`):
+(see `Load` in `internal/config/config.go`):
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -115,7 +99,7 @@ For production:
    - Create a password file with `mosquitto_passwd` as the broker user (UID 1883).
    - Supply TLS certificates on port `8883`.
 2. Mount `mosquitto.prod.conf` as `/mosquitto/config/mosquitto.conf` in your Mosquitto container (update the volume binding in `docker-compose.yml`).
-3. Align the broker password and ACL references with MCM deploy paths, then verify filesystem ownership and signaling. The template does not set `acl_file`; file mode without a PID path does not signal the broker. See #294.
+3. Align the broker password and ACL references with MCM deploy paths, then verify filesystem ownership and signaling. File mode without a PID path does not signal the broker; configure the reload and restart commands described in [production section 3](../../docs/production.md#3-secrets-management).
 4. Configure MCM's `mosquitto.tls` settings to connect on port `8883` and verify authentication plus allowed/denied operations.
 
 See [deploy/mosquitto/README.md](../mosquitto/README.md) for the full TLS checklist, the MCM-side config fields, and the integration model.
@@ -150,8 +134,11 @@ The MCM container:
 ## Building the image standalone
 
 ```bash
-docker build -t mcm:latest .
+docker build --target prod -t mcm:latest .   # production image
+docker build -t mcm:dev .                    # dev image (last stage; adds docker-cli)
 ```
+
+The Dockerfile's last stage is `dev`, so a build without `--target` produces the dev image.
 
 ## Running standalone
 

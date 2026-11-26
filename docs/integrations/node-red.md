@@ -13,7 +13,7 @@ Node-RED.
 
 - A running Mosquitto broker managed by MCM (see [deploy/mosquitto](../../deploy/mosquitto/README.md)).
 - Node-RED installed locally or running in Docker. See [nodered.org/docs/getting-started](https://nodered.org/docs/getting-started/).
-- The `node-red-contrib-mqtt` nodes (included by default in Node-RED).
+- The core `mqtt in` / `mqtt out` nodes and the `mqtt-broker` config node (built into Node-RED).
 
 ## Broker connection settings
 
@@ -26,8 +26,8 @@ The MCM development stack exposes Mosquitto on the host:
 | Broker host | `localhost` (or `mosquitto` from within Compose) |
 | MQTT port | `1883` |
 | WebSocket port | `9001` |
-| Username | _(empty — anonymous access)_ |
-| Password | _(empty)_ |
+| Username | An MQTT user created in MCM (the dev broker rejects anonymous clients) |
+| Password | That user's password |
 | TLS | Disabled |
 
 ### Production / edge deployment
@@ -48,8 +48,8 @@ Import the example flows from [`node-red-flow-example.json`](./node-red-flow-exa
 
 1. Open the Node-RED editor.
 2. Click the hamburger menu (top-right) and select **Import**.
-3. Choose **select a file to import** and pick `node-red-flow-example.json`.
-4. Click **Import** and then **Deploy**.
+3. Choose **select a file to import**, pick `node-red-flow-example.json` and click **Import**.
+4. Open the imported `mcm-broker` config node, enter the MQTT user and password created in MCM (the example ships without credentials), then click **Deploy**.
 
 The imported tab, **MCM Mosquitto Examples**, contains three flows.
 
@@ -99,7 +99,7 @@ Click the inject button manually. When ACLs are enforced:
 - Check the Mosquitto log for a denial entry. With the development stack: `docker compose logs mosquitto | grep -i denied`.
 - The MCM dashboard (when available) shows the denial in the audit trail.
 
-When running with the development config (anonymous access, no ACL file), the publish will succeed. This is expected — the test is meaningful only after MCM deploys an ACL configuration to the broker.
+The test is meaningful only after MCM has applied an ACL configuration that does not grant the user write access to that topic.
 
 ## Configuring credentials
 
@@ -110,13 +110,13 @@ Never commit real credentials into Node-RED flows. Use one of these approaches:
 Set broker credentials as environment variables and reference them in the MQTT broker node:
 
 ```
-MCM_MQTT_HOST=mosquitto.example.internal
-MCM_MQTT_PORT=8883
-MCM_MQTT_USER=nodered-client
-MCM_MQTT_PASS=changeme
+NODERED_MQTT_HOST=mosquitto.example.internal
+NODERED_MQTT_PORT=8883
+NODERED_MQTT_USER=nodered-client
+NODERED_MQTT_PASS=changeme
 ```
 
-In the Node-RED MQTT broker node, use `${MCM_MQTT_HOST}` syntax in the server field (supported since Node-RED 2.x).
+In the Node-RED MQTT broker node, use `${NODERED_MQTT_HOST}` syntax in the server field. These are Node-RED variables, not MCM settings.
 
 **Node-RED credentials file**:
 
@@ -141,5 +141,5 @@ Examples: `plant/area-1/sensor-01/telemetry`, `plant/area-1/plc-03/status`.
 | Node-RED shows "connection refused" | Verify Mosquitto is running and the host/port are correct. For Docker Compose, ensure Node-RED can reach the Mosquitto container (use the service name `mosquitto` if both are in the same Compose network). |
 | "Not authorized" on connect | Check the MQTT username and password in the broker node. Verify the user exists in MCM. |
 | Messages published but not received | Check topic spelling and wildcards. Verify ACL grants read access on the subscribed topic for the connecting user. |
-| TLS handshake failure | Verify the CA certificate matches the broker's server certificate. Check certificate expiry. See [MQTT readiness diagnostics](../../deploy/mosquitto/README.md#mqtt-readiness-diagnostics) — `GET /readyz` runs the TLS probe and reports the failure phase. |
+| TLS handshake failure | Verify the CA certificate matches the broker's server certificate. Check certificate expiry. See [MQTT readiness diagnostics](../../deploy/mosquitto/README.md#mqtt-readiness-diagnostics) for how MCM reports the broker connection; `GET /readyz` does not run a fresh MQTT probe. |
 | ACL denial not visible | Check Mosquitto log level includes `log_type notice`. Mosquitto silently drops denied publishes without notifying the client. |

@@ -42,7 +42,7 @@ body:
     id: version
     attributes:
       label: Version or commit
-      placeholder: v0.1.0 or commit SHA
+      placeholder: commit SHA (or release tag once one exists)
     validations:
       required: false
   - type: textarea

@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /mcm ./cmd/mcm
 
-# Stage 3: Production image (default target)
+# Stage 3: Production image (build with --target prod; the last stage, dev, is the default)
 #
 # The production image is intentionally minimal: no docker-cli, no
 # fixed GID 997, no socket-mounting helpers. It runs the mcm binary

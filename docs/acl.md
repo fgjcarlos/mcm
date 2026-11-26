@@ -180,8 +180,9 @@ subscription itself: the ACL file of Mosquitto accepts a subscription and
 filters the messages the subscriber receives. The integration test in
 `internal/acl` proves this against a real broker.
 
-MCM supports Mosquitto **2.0**. The `deny` permission is validated
-against that version, so a rule that needs a newer broker is rejected at
+ACL rules are validated against Mosquitto **2.0**, even though the
+configuration catalog also covers 2.1 ([support matrix](support-matrix.md)).
+The `deny` permission is validated against that version, so a rule that needs a newer broker is rejected at
 creation time instead of failing silently at runtime. MCM does not
 discover the running broker version; the supported version is a
 compile-time constant (`acl.SupportedMosquittoVersion`).
