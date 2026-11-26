@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /mcm ./cmd/mcm
 
-# Stage 3: Production image (build with --target prod; the last stage, dev, is the default)
+# Stage 3: Production image (select it with --target prod)
 #
 # The production image is intentionally minimal: no docker-cli, no
 # fixed GID 997, no socket-mounting helpers. It runs the mcm binary
@@ -51,7 +51,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8080/livez || exit 1
 ENTRYPOINT ["mcm"]
 
-# Stage 4: Dev image (Dockerfile.dev target)
+# Stage 4: Dev image (last stage, so a build without --target produces it)
 #
 # Layers docker-cli and its Compose plugin on top of the production
 # image so the MCM deploy service can run `docker exec … kill -HUP 1`

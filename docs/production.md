@@ -365,14 +365,18 @@ MCM tracks its schema with an internal `schema_migrations` table. The server
 applies pending migrations on startup, so the upgrade is a stop → replace
 image → start cycle.
 
-### Pulling a tagged release
+### Choosing the image
 
-There is no tagged release or published image yet; until there is, build
-the `prod` target from a recorded `main` commit
-(`docker build --target prod -t mcm:<commit> .`) and follow the upgrade
-steps below. Once releases are published, images will live at
-`ghcr.io/fgjcarlos/mcm`. Pin a specific tag in production — the `latest` tag moves on every release and is convenient for
-home labs, not for production stability:
+**Today:** there is no tagged release or published image yet. Build the
+`prod` target from a recorded `main` commit
+(`docker build --target prod -t mcm:<commit> .`), point the `mcm` service's
+`image:` at that tag, and in the upgrade steps below rebuild instead of
+`docker compose pull`.
+
+**Once releases are published** (not yet), images will live at
+`ghcr.io/fgjcarlos/mcm`. Pin a specific tag in production — the `latest`
+tag moves on every release and is convenient for home labs, not for
+production stability:
 
 ```bash
 # Replace the mcm service's `build:` and `image:` lines in docker-compose.yml
@@ -397,7 +401,8 @@ page or with `docker buildx imagetools inspect --raw`.
 # First obtain and verify a consistent backup using the process in section 6.
 # Verify the restore path on a disposable deployment before you need it.
 
-# 2. Pull the new image and recreate the container.
+# 2. Pull (or rebuild, before the first release) the new image and
+#    recreate the container.
 docker compose pull mcm
 docker compose up -d
 

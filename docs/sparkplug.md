@@ -95,11 +95,9 @@ Sparkplug payloads on edge devices can be large (thousands of metrics in a singl
 
 ### Implementation plan
 
-1. Done differently: the decoder reads the protobuf wire format directly (`protowire`), without generated types.
-2. Done: `sparkplug.DecodePayload(data, maxMetrics)` with bounded metric parsing.
-3. Done: broker events carry `sparkplug_metrics` when decoding is enabled.
-4. Add a dashboard panel for Sparkplug metric inspection (expand a message to see decoded fields).
-5. Add optional metric history storage with retention policy.
-6. Add NBIRTH/DBIRTH session tracking (per-node birth state, alias map, session sequence number).
+Delivered (see [Optional payload decoding](#optional-payload-decoding)): bounded decoding through `sparkplug.DecodePayload(data, maxMetrics)`, which reads the protobuf wire format directly instead of generated Tahu types, `sparkplug_metrics` on broker events, and the decoded metrics in the topic detail of the dashboard. Remaining:
 
-Steps 4-6 remain; each can be delivered independently.
+1. Add optional metric history storage with retention policy.
+2. Add NBIRTH/DBIRTH session tracking (per-node birth state, alias map, session sequence number).
+
+Each step can be delivered independently.

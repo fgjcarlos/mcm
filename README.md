@@ -218,7 +218,7 @@ The local workflow is driven by [`Taskfile.yml`](./Taskfile.yml). Run `task` wit
 | `task ready`      | Block until `/healthz` returns 200.                       |
 | `task smoke`      | Curl `/healthz`, `/readyz`, `/api/v1/status`.             |
 | `task backup`     | Capture an MCM + Mosquitto configuration archive; see [backup and restore](./docs/production.md#6-backup-and-restore). |
-| `task restore`    | Restore an archive after verifying its manifest; stop MCM first, and pass `RESTORE_FLAGS=--overwrite` when the volumes already hold data. |
+| `task restore`    | Restore an archive after verifying its manifest; stop MCM first, and pass `RESTORE_FLAGS=--overwrite` when the volumes already hold data; see [running a restore](./docs/production.md#63-running-a-restore). |
 | `task test:go`    | `go test ./... -race -count=1`.                           |
 | `task test:frontend` | Install `frontend/` deps and run Vitest.              |
 | `task test`       | Both test suites.                                         |
