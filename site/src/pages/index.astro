@@ -149,7 +149,7 @@ const stack = ["Go 1.25", "SQLite", "Mosquitto", "React 19 + Vite 8", "REST + We
       </details>
 
       <TrackSection class="mt-28 sm:mt-36" id="quick-start" titleId="quick-start-title" title="Run MCM locally.">
-        <p slot="lede">For this local development setup, install <a class="link" href="https://git-scm.com/downloads">Git</a> to clone the source, <a class="link" href="https://docs.docker.com/compose/install/">Docker Compose</a> to run the containers, and <a class="link" href="https://taskfile.dev/installation/">Task</a> to run the project commands. These steps start a development stack, not a production deployment.</p>
+        <p slot="lede">MCM has no tagged release or published container image yet, so these steps build the current <code>main</code> branch from source. Install <a class="link" href="https://git-scm.com/downloads">Git</a> to clone the source, <a class="link" href="https://docs.docker.com/compose/install/">Docker Compose</a> to run the containers, <a class="link" href="https://taskfile.dev/installation/">Task</a> to run the project commands, and OpenSSL to generate the setup token. These steps start a development stack, not a production deployment.</p>
         <ol>
           {quickStart.map((step, idx) => (
             <CommandStep n={idx + 1} label={step.label} code={step.code}>
