@@ -94,7 +94,7 @@ const typeScale = [
     name: "Mono",
     spec: "Overpass Mono 400 · 0.875rem · commands and data only",
     class: "whitespace-pre-wrap font-mono text-sm text-enamel-bright",
-    sample: "task logs    # first-boot credentials are printed here when generated",
+    sample: "export MCM_SETUP_TOKEN=\"$(openssl rand -hex 32)\"",
   },
 ];
 
@@ -248,7 +248,7 @@ const label = "font-mono text-xs text-enamel-muted";
           <p class="mt-2 max-w-[68ch] text-enamel-soft">A numbered lever with its command. Long commands scroll sideways and the block takes keyboard focus. The last step can carry a success or recovery slot.</p>
           <ol class="mt-8">
             <CommandStep n={1} label="Clone and build" code="git clone https://github.com/fgjcarlos/mcm.git && cd mcm && task build" />
-            <CommandStep n={2} label="Find the initial administrator sign-in" code="task logs    # first-boot credentials are printed here when generated">
+            <CommandStep n={2} label="Configure a private setup token" code="export MCM_SETUP_TOKEN=&quot;$(openssl rand -hex 32)&quot;">
               <div class="border-t border-track pt-6">
                 <h4 class="font-display text-xl font-semibold uppercase tracking-[0.04em] text-enamel-bright">Success checkpoint</h4>
                 <p class="mt-2 text-enamel-soft">Confirm the dashboard shows the broker as connected.</p>
