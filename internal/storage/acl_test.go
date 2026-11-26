@@ -194,26 +194,30 @@ func TestACLListRulesPaged(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		user, topic   string
-		limit, offset int
-		want          []string
-		wantTotal     int
+		name                   string
+		user, principal, topic string
+		limit, offset          int
+		want                   []string
+		wantTotal              int
 	}{
-		{"empty filters match everything in id order", "", "", 50, 0, all, 12},
-		{"page past id 9 keeps numeric order", "", "", 5, 10, all[10:], 12},
-		{"user filter matches one rule", "bob", "", 50, 0, []string{"bob factory/#"}, 1},
-		{"user filter is case-insensitive substring", "ALICE", "", 50, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity", "alice factory/alice"}, 3},
-		{"total counts all matches beyond the page", "alice", "", 2, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity"}, 3},
-		{"offset returns the next slice", "alice", "", 2, 2, []string{"alice factory/alice"}, 3},
-		{"offset past the end returns no rows", "alice", "", 2, 9, []string{}, 3},
-		{"topic filter matches one rule", "", "humid", 50, 0, []string{"Alice-Admin sensors/+/humidity"}, 1},
-		{"topic filter matches several rules", "", "FACTORY", 50, 0, []string{"bob factory/#", "carol factory/line1/#", "alice factory/alice"}, 3},
-		{"user and topic combine with AND", "alice", "factory", 50, 0, []string{"alice factory/alice"}, 1},
-		{"percent in user matches literally", "%", "", 50, 0, []string{"pct%user sensors/x"}, 1},
-		{"underscore in user matches literally", "under_", "", 50, 0, []string{"under_score a/b"}, 1},
-		{"percent in topic is not a match-all", "", "%", 50, 0, []string{}, 0},
-		{"no match returns no rows", "nobody", "", 50, 0, []string{}, 0},
+		{"empty filters match everything in id order", "", "", "", 50, 0, all, 12},
+		{"page past id 9 keeps numeric order", "", "", "", 5, 10, all[10:], 12},
+		{"user filter matches one rule", "bob", "", "", 50, 0, []string{"bob factory/#"}, 1},
+		{"user filter is case-insensitive substring", "ALICE", "", "", 50, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity", "alice factory/alice"}, 3},
+		{"total counts all matches beyond the page", "alice", "", "", 2, 0, []string{"alice sensors/temp", "Alice-Admin sensors/+/humidity"}, 3},
+		{"offset returns the next slice", "alice", "", "", 2, 2, []string{"alice factory/alice"}, 3},
+		{"offset past the end returns no rows", "alice", "", "", 2, 9, []string{}, 3},
+		{"topic filter matches one rule", "", "", "humid", 50, 0, []string{"Alice-Admin sensors/+/humidity"}, 1},
+		{"topic filter matches several rules", "", "", "FACTORY", 50, 0, []string{"bob factory/#", "carol factory/line1/#", "alice factory/alice"}, 3},
+		{"user and topic combine with AND", "alice", "", "factory", 50, 0, []string{"alice factory/alice"}, 1},
+		{"percent in user matches literally", "%", "", "", 50, 0, []string{"pct%user sensors/x"}, 1},
+		{"underscore in user matches literally", "under_", "", "", 50, 0, []string{"under_score a/b"}, 1},
+		{"percent in topic is not a match-all", "", "", "%", 50, 0, []string{}, 0},
+		{"no match returns no rows", "nobody", "", "", 50, 0, []string{}, 0},
+		{"principal alone is exact", "", "alice", "", 50, 0, []string{"alice sensors/temp", "alice factory/alice"}, 2},
+		{"principal is case-sensitive", "", "ALICE", "", 50, 0, []string{}, 0},
+		{"principal keeps the case of a mixed-case rule", "", "Alice-Admin", "", 50, 0, []string{"Alice-Admin sensors/+/humidity"}, 1},
+		{"principal combines with user and topic", "alice", "alice", "temp", 50, 0, []string{"alice sensors/temp"}, 1},
 	}
 
 	ctx := context.Background()
@@ -229,7 +233,7 @@ func TestACLListRulesPaged(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(storeName+"/"+tt.name, func(t *testing.T) {
-				rules, total, err := store.ListRulesPaged(ctx, tt.user, tt.topic, tt.limit, tt.offset)
+				rules, total, err := store.ListRulesPaged(ctx, tt.user, tt.principal, tt.topic, tt.limit, tt.offset)
 				if err != nil {
 					t.Fatalf("ListRulesPaged returned error: %v", err)
 				}

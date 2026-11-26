@@ -31,7 +31,7 @@ func (f *fakeDeployACLStore) ListRules(_ context.Context) ([]acl.Rule, error) {
 	return f.rules, nil
 }
 
-func (f *fakeDeployACLStore) ListRulesPaged(_ context.Context, _, _ string, _, _ int) ([]acl.Rule, int, error) {
+func (f *fakeDeployACLStore) ListRulesPaged(_ context.Context, _, _, _ string, _, _ int) ([]acl.Rule, int, error) {
 	return f.rules, len(f.rules), nil
 }
 

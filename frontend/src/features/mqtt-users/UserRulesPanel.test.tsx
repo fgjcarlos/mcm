@@ -24,12 +24,12 @@ const users = [
   { id: 1, username: 'sensor', disabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
 ]
 
-// Answers like GET /api/v1/acls: `user` is a case-insensitive substring of the principal, paged by limit/offset.
+// Answers GET /api/v1/acls, including exact principal filtering and limit/offset pagination.
 function pagedRules(all: ACLRule[]): RouteHandler {
   return (_init, url) => {
     const params = new URL(url ?? '', 'http://localhost').searchParams
-    const user = (params.get('user') ?? '').toLowerCase()
-    const matches = all.filter((rule) => rule.principal.toLowerCase().includes(user))
+    const principal = params.get('principal')
+    const matches = all.filter((rule) => principal ? rule.selector === 'user' && rule.principal === principal : rule.principal.toLowerCase().includes((params.get('user') ?? '').toLowerCase()))
     const limit = Number(params.get('limit') ?? 50)
     const offset = Number(params.get('offset') ?? 0)
     return jsonResponse({ rules: matches.slice(offset, offset + limit), total: matches.length, limit, offset })
@@ -79,8 +79,17 @@ describe('direct ACL rules from the account of an existing MQTT user (#360)', ()
     expect(within(panel).getByText('tls')).toBeInTheDocument()
     expect(within(panel).getByText(/not its effective permissions/i)).toBeInTheDocument()
     const urls = fetchMock.mock.calls.map(([input]) => String(input))
-    expect(urls).toContain('/api/v1/acls?user=sensor&limit=100&offset=0')
-    expect(urls).toContain('/api/v1/acls?user=sensor&limit=100&offset=100')
+    expect(urls).toContain('/api/v1/acls?principal=sensor&limit=100&offset=0')
+    expect(urls.filter((url) => url.includes('/api/v1/acls?principal=sensor'))).toHaveLength(1)
+  })
+
+  it('keeps reading further pages when the user itself has more than one page of direct rules', async () => {
+    const own = Array.from({ length: 150 }, (_, i) => rule(String(i + 1), 'sensor', `plant/${i}`))
+    const { panel, fetchMock } = await openRules('auditor', { 'GET /api/v1/acls': pagedRules(own) })
+
+    expect(await within(panel).findByText('plant/149')).toBeInTheDocument()
+    const urls = fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => url.includes('/api/v1/acls?principal=sensor'))
+    expect(urls).toEqual(['/api/v1/acls?principal=sensor&limit=100&offset=0', '/api/v1/acls?principal=sensor&limit=100&offset=100'])
   })
 
   it('shows an empty state when the account has no direct rule', async () => {

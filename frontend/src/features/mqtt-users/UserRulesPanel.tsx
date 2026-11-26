@@ -12,26 +12,20 @@ type Draft = { id: string | null; topic: string; permission: ACLPermission; scop
 
 const emptyDraft: Draft = { id: null, topic: '', permission: 'read', scope: 'global', listenerID: '', description: '' }
 
-// The `user` filter of GET /api/v1/acls is a case-insensitive substring of
-// the principal, so only an exact, user-selector match is a direct rule of this account.
-function isDirectRuleOf(rule: ACLRule, username: string) {
-  return (rule.selector ?? 'user') === 'user' && rule.principal === username
-}
-
-// Reads every page of the substring match and keeps the direct rules of the username.
+// Reads every page of this username's exact principal match.
 async function fetchDirectRules(token: string, onLogout: () => void, username: string) {
   const direct: ACLRule[] = []
   for (let offset = 0; ; offset += PAGE) {
     let response: Response
     try {
-      response = await authenticatedFetch(`/api/v1/acls?user=${encodeURIComponent(username)}&limit=${PAGE}&offset=${offset}`, { token, onUnauthorized: onLogout })
+      response = await authenticatedFetch(`/api/v1/acls?principal=${encodeURIComponent(username)}&limit=${PAGE}&offset=${offset}`, { token, onUnauthorized: onLogout })
     } catch (err) {
       if (isUnauthorizedResponseError(err) || isForbiddenResponseError(err)) throw err
       throw new Error('Could not reach the server.', { cause: err })
     }
     if (!response.ok) throw new Error(await errorText(response, 'Could not load the rules.'))
     const page = (await response.json()) as { rules: ACLRule[]; total: number }
-    direct.push(...page.rules.filter((rule) => isDirectRuleOf(rule, username)))
+    direct.push(...page.rules)
     if (page.rules.length === 0 || offset + page.rules.length >= page.total) return direct
   }
 }

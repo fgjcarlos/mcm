@@ -31,17 +31,23 @@ func (s *aclSQLStore) ListRules(ctx context.Context) ([]acl.Rule, error) {
 
 // ListRulesPaged implements acl.Store.ListRulesPaged. The total comes from
 // its own COUNT query, never from the page.
-func (s *aclSQLStore) ListRulesPaged(ctx context.Context, user, topic string, limit, offset int) ([]acl.Rule, int, error) {
-	const where = ` FROM acl_rules WHERE principal LIKE ? ESCAPE '\' AND topic_filter LIKE ? ESCAPE '\'`
+func (s *aclSQLStore) ListRulesPaged(ctx context.Context, user, principal, topic string, limit, offset int) ([]acl.Rule, int, error) {
+	where := ` FROM acl_rules WHERE principal LIKE ? ESCAPE '\' AND topic_filter LIKE ? ESCAPE '\'`
 	userPattern := "%" + escapeLike(user) + "%"
 	topicPattern := "%" + escapeLike(topic) + "%"
+	args := []any{userPattern, topicPattern}
+	if principal != "" {
+		where += ` AND selector = 'user' AND principal = ?`
+		args = append(args, principal)
+	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, userPattern, topicPattern).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)`+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count acl rules: %w", err)
 	}
+	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, principal, topic_filter, permission, description, selector, scope, listener_id`+where+` ORDER BY id ASC LIMIT ? OFFSET ?`,
-		userPattern, topicPattern, limit, offset)
+		args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list acl rules page: %w", err)
 	}
