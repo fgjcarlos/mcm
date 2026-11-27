@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -172,6 +173,47 @@ func TestACLAPI_UpdateRuleSupportsWritePermission(t *testing.T) {
 	}
 	if updated.Description != "line supervisor" {
 		t.Fatalf("updated description = %q, want %q", updated.Description, "line supervisor")
+	}
+}
+
+func TestACLAPI_CreateRejectsExpectedPrincipal(t *testing.T) {
+	handler := NewHandler(acl.NewMemoryStore())
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/acls", strings.NewReader(`{"principal":"writer","topic_filter":"factory/#","permission":"write","expected_principal":"writer"}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, create)
+	if response.Code != http.StatusBadRequest || response.Body.String() != "{\"error\":\"decode request body: json: unknown field \\\"expected_principal\\\"\"}\n" {
+		t.Fatalf("create response = %d %q", response.Code, response.Body.String())
+	}
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/acls", nil))
+	if list.Code != http.StatusOK || list.Body.String() != "{\"limit\":50,\"offset\":0,\"rules\":[],\"total\":0}\n" {
+		t.Fatalf("list response = %d %q", list.Code, list.Body.String())
+	}
+}
+
+func TestACLAPI_ExpectedPrincipalMismatchConflicts(t *testing.T) {
+	t.Parallel()
+
+	store := acl.NewMemoryStore()
+	handler := NewHandler(store)
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/acls", strings.NewReader(`{"principal":"writer","topic_filter":"factory/#","permission":"write"}`))
+	createdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createdResponse, create)
+	var created acl.Rule
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	update := httptest.NewRequest(http.MethodPut, "/api/v1/acls/"+created.ID, strings.NewReader(`{"principal":"other","topic_filter":"factory/#","permission":"read","expected_principal":"WRITER"}`))
+	updateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusConflict || updateResponse.Body.String() != "{\"error\":\"acl principal precondition failed\"}\n" {
+		t.Fatalf("update response = %d %q", updateResponse.Code, updateResponse.Body.String())
+	}
+
+	storedRules, err := store.ListRules(context.Background())
+	if err != nil || len(storedRules) != 1 || storedRules[0].Principal != "writer" {
+		t.Fatalf("rule changed after conflict: %+v, err=%v", storedRules, err)
 	}
 }
 

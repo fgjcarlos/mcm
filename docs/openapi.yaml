@@ -580,12 +580,16 @@ paths:
     put:
       tags: [ACLs]
       summary: Update ACL rule
-      description: Requires operator or higher.
+      description: |
+        Requires operator or higher. `expected_principal` is optional; when
+        supplied, it must exactly and case-sensitively match the rule's stored
+        principal. A mismatch returns 409 without modifying the rule. Omitting
+        it preserves legacy behavior, including global reassignment.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ACLRuleRequest" }
+            schema: { $ref: "#/components/schemas/ACLRuleUpdateRequest" }
       responses:
         "200":
           description: Updated rule.
@@ -596,12 +600,24 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/ACLPrincipalPrecondition" }
     delete:
       tags: [ACLs]
       summary: Delete ACL rule
-      description: Requires operator or higher.
+      description: |
+        Requires operator or higher. Optional `expected_principal` must exactly
+        and case-sensitively match the rule's stored principal. A mismatch
+        returns 409 without modifying the rule. Omitting it preserves legacy
+        behavior.
+      parameters:
+        - in: query
+          name: expected_principal
+          required: false
+          description: Exact, case-sensitive expected current principal.
+          schema: { type: string }
       responses:
         "204": { description: Rule deleted. }
+        "409": { $ref: "#/components/responses/ACLPrincipalPrecondition" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -2191,6 +2207,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ACLError" }
+    ACLPrincipalPrecondition:
+      description: The expected principal did not match the stored principal; no rule modification is made and the failed attempt is audited.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   schemas:
     Error:
       type: object
@@ -2353,6 +2374,33 @@ components:
         topic_filter: { type: string }
         permission: { $ref: "#/components/schemas/ACLPermission" }
         description: { type: string }
+      required: [topic_filter, permission]
+      additionalProperties: false
+    ACLRuleUpdateRequest:
+      type: object
+      description: ACL rule update request with an optional current-principal precondition.
+      properties:
+        selector: { $ref: "#/components/schemas/ACLSelector" }
+        scope: { $ref: "#/components/schemas/ACLScope" }
+        listener_id:
+          type: string
+          description: |
+            The listener whose ACL file carries the rule. It is required for
+            the `listener` scope and must be empty for the `global` scope.
+        principal:
+          type: string
+          description: |
+            The MQTT username the rule applies to. Required and non-empty for
+            the `user` selector; must be empty or omitted for the
+            `anonymous` and `pattern` selectors. A request without a
+            principal and without a `selector` is rejected, never treated as
+            an anonymous rule.
+        topic_filter: { type: string }
+        permission: { $ref: "#/components/schemas/ACLPermission" }
+        description: { type: string }
+        expected_principal:
+          type: string
+          description: Optional exact, case-sensitive precondition on the currently stored principal. Independent of the new principal in this update.
       required: [topic_filter, permission]
       additionalProperties: false
     ACLSelector:

@@ -216,8 +216,19 @@ for pattern entries.
   `{"rules": [...], "total": N, "limit": L, "offset": O}`, where `total` counts
   the rules matching the filters.
 - `POST /api/v1/acls`: create a rule.
-- `PUT /api/v1/acls/{id}`: update a rule.
-- `DELETE /api/v1/acls/{id}`: delete a rule.
+- `PUT /api/v1/acls/{id}`: update a rule. The optional body field
+  `expected_principal` is an exact, case-sensitive precondition on the
+  currently stored principal; it is independent of the new `principal` in
+  the update. A mismatch returns HTTP `409` with
+  `{"error":"acl principal precondition failed"}`, leaves the rule
+  unchanged, and records the failed attempt in the security audit. Omitting
+  the field preserves legacy behavior, including global reassignment.
+- `DELETE /api/v1/acls/{id}`: delete a rule. The optional query parameter
+  `expected_principal` applies the same exact, case-sensitive check against
+  the stored principal. A mismatch returns HTTP `409` with
+  `{"error":"acl principal precondition failed"}`, leaves the rule
+  unchanged, and records the failed attempt in the security audit. Omitting
+  it preserves legacy behavior.
 - `GET /api/v1/acls/scopes`: list the ACL files MCM manages and whether the
   broker configuration applies them.
 - `GET /api/v1/acls/source`: read the adopted ACL source.
@@ -228,6 +239,20 @@ for pattern entries.
 
 Role requirements are unchanged: `auditor` may list, `operator` may
 create, update and delete.
+
+For example, an update can include both the expected current principal and
+its replacement:
+
+```json
+{
+  "expected_principal": "old-user",
+  "principal": "new-user",
+  "topic_filter": "factory/+/temperature",
+  "permission": "read"
+}
+```
+
+A delete may use `DELETE /api/v1/acls/1?expected_principal=old-user`.
 
 Example create request:
 

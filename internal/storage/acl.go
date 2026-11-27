@@ -110,7 +110,7 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return rule, nil
 }
 
-func (s *aclSQLStore) UpdateRule(ctx context.Context, id string, rule acl.Rule) (acl.Rule, error) {
+func (s *aclSQLStore) UpdateRule(ctx context.Context, id string, rule acl.Rule, expectedPrincipal *string) (acl.Rule, error) {
 	if err := acl.ValidateRule(rule); err != nil {
 		return acl.Rule{}, err
 	}
@@ -124,7 +124,7 @@ func (s *aclSQLStore) UpdateRule(ctx context.Context, id string, rule acl.Rule) 
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, description = ?, selector = ?, scope = ?, listener_id = ?, updated_at = ? WHERE id = ?`,
+UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, description = ?, selector = ?, scope = ?, listener_id = ?, updated_at = ? WHERE id = ? AND (? IS NULL OR principal = ?)`,
 		rule.Principal,
 		rule.TopicFilter,
 		string(rule.Permission),
@@ -134,6 +134,8 @@ UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, descriptio
 		rule.ListenerID,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		numericID,
+		expectedPrincipal,
+		expectedPrincipal,
 	)
 	if err != nil {
 		return acl.Rule{}, fmt.Errorf("update acl rule: %w", err)
@@ -143,6 +145,15 @@ UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, descriptio
 		return acl.Rule{}, fmt.Errorf("get updated acl rule row count: %w", err)
 	}
 	if affected == 0 {
+		if expectedPrincipal != nil {
+			var exists int
+			if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM acl_rules WHERE id = ?`, numericID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+				return acl.Rule{}, acl.ErrRuleNotFound
+			} else if err != nil {
+				return acl.Rule{}, fmt.Errorf("check acl rule after update: %w", err)
+			}
+			return acl.Rule{}, acl.ErrPrincipalMismatch
+		}
 		return acl.Rule{}, acl.ErrRuleNotFound
 	}
 
@@ -150,7 +161,7 @@ UPDATE acl_rules SET principal = ?, topic_filter = ?, permission = ?, descriptio
 	return rule, nil
 }
 
-func (s *aclSQLStore) DeleteRule(ctx context.Context, id string) error {
+func (s *aclSQLStore) DeleteRule(ctx context.Context, id string, expectedPrincipal *string) error {
 	numericID, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return acl.ErrRuleNotFound
@@ -158,7 +169,7 @@ func (s *aclSQLStore) DeleteRule(ctx context.Context, id string) error {
 	s.store.LockMutations()
 	defer s.store.UnlockMutations()
 
-	result, err := s.db.ExecContext(ctx, `DELETE FROM acl_rules WHERE id = ?`, numericID)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM acl_rules WHERE id = ? AND (? IS NULL OR principal = ?)`, numericID, expectedPrincipal, expectedPrincipal)
 	if err != nil {
 		return fmt.Errorf("delete acl rule: %w", err)
 	}
@@ -167,6 +178,15 @@ func (s *aclSQLStore) DeleteRule(ctx context.Context, id string) error {
 		return fmt.Errorf("get deleted acl rule row count: %w", err)
 	}
 	if affected == 0 {
+		if expectedPrincipal != nil {
+			var exists int
+			if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM acl_rules WHERE id = ?`, numericID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+				return acl.ErrRuleNotFound
+			} else if err != nil {
+				return fmt.Errorf("check acl rule after delete: %w", err)
+			}
+			return acl.ErrPrincipalMismatch
+		}
 		return acl.ErrRuleNotFound
 	}
 	return nil

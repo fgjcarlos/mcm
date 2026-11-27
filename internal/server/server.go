@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/fgjcarlos/mcm/internal/acl"
@@ -133,7 +134,7 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rule, err := decodeRuleRequest(r)
+	rule, expectedPrincipal, err := decodeUpdateRuleRequest(r)
 	if err != nil {
 		api.recordAudit(r, "acl.update", "acl_rule", id, "failure", map[string]any{"reason": "invalid_request"})
 		api.recordACLSecurityFailure(r, "acl_update_failed", "invalid_request", id)
@@ -141,7 +142,7 @@ func (api *aclAPI) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := api.store.UpdateRule(r.Context(), id, rule)
+	updated, err := api.store.UpdateRule(r.Context(), id, rule, expectedPrincipal)
 	if err != nil {
 		api.recordAudit(r, "acl.update", "acl_rule", id, "failure", map[string]any{"principal": rule.Principal, "topic_filter": rule.TopicFilter, "permission": string(rule.Permission), "reason": err.Error()})
 		api.recordACLSecurityFailure(r, "acl_update_failed", reasonForACLError(err), id)
@@ -163,7 +164,14 @@ func (api *aclAPI) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := api.store.DeleteRule(r.Context(), id); err != nil {
+	expectedPrincipal, err := expectedPrincipalQuery(r)
+	if err != nil {
+		api.recordAudit(r, "acl.delete", "acl_rule", id, "failure", map[string]any{"reason": "invalid_request"})
+		api.recordACLSecurityFailure(r, "acl_delete_failed", "invalid_request", id)
+		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: "invalid expected_principal"})
+		return
+	}
+	if err := api.store.DeleteRule(r.Context(), id, expectedPrincipal); err != nil {
 		api.recordAudit(r, "acl.delete", "acl_rule", id, "failure", map[string]any{"reason": err.Error()})
 		api.recordACLSecurityFailure(r, "acl_delete_failed", reasonForACLError(err), id)
 		writeAPIError(w, err)
@@ -183,21 +191,58 @@ func (api *aclAPI) recordAudit(r *http.Request, action string, resourceType stri
 }
 
 func decodeRuleRequest(r *http.Request) (acl.Rule, error) {
-	defer r.Body.Close() //nolint:errcheck
-
 	var input aclRuleRequest
+	if err := decodeStrictJSON(r, &input); err != nil {
+		return acl.Rule{}, err
+	}
+	return ruleFromRequest(input), nil
+}
+
+type aclUpdateRequest struct {
+	aclRuleRequest
+	ExpectedPrincipal *string `json:"expected_principal"`
+}
+
+func decodeUpdateRuleRequest(r *http.Request) (acl.Rule, *string, error) {
+	var input aclUpdateRequest
+	if err := decodeStrictJSON(r, &input); err != nil {
+		return acl.Rule{}, nil, err
+	}
+	return ruleFromRequest(input.aclRuleRequest), input.ExpectedPrincipal, nil
+}
+
+func expectedPrincipalQuery(r *http.Request) (*string, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	values, supplied := query["expected_principal"]
+	if !supplied {
+		return nil, nil
+	}
+	if len(values) != 1 {
+		return nil, fmt.Errorf("expected_principal must be supplied once")
+	}
+	return &values[0], nil
+}
+
+func decodeStrictJSON(r *http.Request, target any) error {
+	defer r.Body.Close() //nolint:errcheck
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&input); err != nil {
-		return acl.Rule{}, fmt.Errorf("decode request body: %w", err)
+	if err := dec.Decode(target); err != nil {
+		return fmt.Errorf("decode request body: %w", err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return acl.Rule{}, fmt.Errorf("decode request body: request body must contain a single JSON object")
+			return fmt.Errorf("decode request body: request body must contain a single JSON object")
 		}
-		return acl.Rule{}, fmt.Errorf("decode request body: %w", err)
+		return fmt.Errorf("decode request body: %w", err)
 	}
+	return nil
+}
 
+func ruleFromRequest(input aclRuleRequest) acl.Rule {
 	return acl.Rule{
 		Selector:    input.Selector,
 		Scope:       input.Scope,
@@ -206,7 +251,7 @@ func decodeRuleRequest(r *http.Request) (acl.Rule, error) {
 		TopicFilter: input.TopicFilter,
 		Permission:  input.Permission,
 		Description: input.Description,
-	}, nil
+	}
 }
 
 func writeAPIError(w http.ResponseWriter, err error) {
@@ -221,6 +266,8 @@ func writeAPIError(w http.ResponseWriter, err error) {
 		})
 	case errors.Is(err, acl.ErrRuleNotFound):
 		writeJSON(w, http.StatusNotFound, aclErrorResponse{Error: "acl rule not found"})
+	case errors.Is(err, acl.ErrPrincipalMismatch):
+		writeJSON(w, http.StatusConflict, aclErrorResponse{Error: "acl principal precondition failed"})
 	default:
 		writeJSON(w, http.StatusBadRequest, aclErrorResponse{Error: err.Error()})
 	}
@@ -245,6 +292,8 @@ func reasonForACLError(err error) string {
 		return "validation_failed"
 	case errors.Is(err, acl.ErrRuleNotFound):
 		return "rule_not_found"
+	case errors.Is(err, acl.ErrPrincipalMismatch):
+		return "principal_mismatch"
 	default:
 		return "request_failed"
 	}

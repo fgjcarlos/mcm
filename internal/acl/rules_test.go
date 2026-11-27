@@ -119,7 +119,7 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 			Description: "updated",
 		}
 
-		result, err := freshStore.UpdateRule(ctx, created.ID, updated)
+		result, err := freshStore.UpdateRule(ctx, created.ID, updated, nil)
 		if err != nil {
 			t.Fatalf("UpdateRule returned error: %v", err)
 		}
@@ -150,7 +150,7 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 			Permission:  acl.PermissionRead,
 		}
 
-		_, err := freshStore.UpdateRule(ctx, "999", r)
+		_, err := freshStore.UpdateRule(ctx, "999", r, nil)
 		if !errors.Is(err, acl.ErrRuleNotFound) {
 			t.Errorf("UpdateRule missing ID returned %v, want ErrRuleNotFound", err)
 		}
@@ -170,7 +170,7 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 			t.Fatalf("CreateRule returned error: %v", err)
 		}
 
-		err = freshStore.DeleteRule(ctx, created.ID)
+		err = freshStore.DeleteRule(ctx, created.ID, nil)
 		if err != nil {
 			t.Fatalf("DeleteRule returned error: %v", err)
 		}
@@ -187,7 +187,7 @@ func RunACLRulesContractTests(t *testing.T, store acl.Store) {
 	t.Run("delete missing ID returns ErrRuleNotFound", func(t *testing.T) {
 		freshStore := acl.NewMemoryStore()
 
-		err := freshStore.DeleteRule(ctx, "999")
+		err := freshStore.DeleteRule(ctx, "999", nil)
 		if !errors.Is(err, acl.ErrRuleNotFound) {
 			t.Errorf("DeleteRule missing ID returned %v, want ErrRuleNotFound", err)
 		}

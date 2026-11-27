@@ -479,6 +479,71 @@ func TestCreateACLRuleWritesAuditEvent(t *testing.T) {
 	}
 }
 
+func TestACLPrincipalPrecondition(t *testing.T) {
+	app, store := newTestApp(t)
+	t.Cleanup(func() { _ = store.Close() })
+	token := loginAsSeededUser(t, app, store, "admin", "secret-password")
+	handler := app.Handler()
+	request := func(method, path, body string, status int) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != status {
+			t.Fatalf("%s %s: got %d, want %d: %s", method, path, rec.Code, status, rec.Body)
+		}
+		return rec
+	}
+	const endpoint = "/api/v1/acls"
+	const aliceRule = `{"principal":"alice","topic_filter":"telemetry/#","permission":"write"}`
+	const bobRule = `{"principal":"bob","topic_filter":"telemetry/#","permission":"write"}`
+	created := request(http.MethodPost, endpoint, aliceRule, http.StatusCreated)
+	var rule acl.Rule
+	if err := json.Unmarshal(created.Body.Bytes(), &rule); err != nil || rule.ID == "" {
+		t.Fatalf("invalid created rule: %s (%v)", created.Body, err)
+	}
+	path := endpoint + "/" + rule.ID
+	// The global editor can still reassign a rule without a precondition.
+	request(http.MethodPut, path, bobRule, http.StatusOK)
+	before := request(http.MethodGet, endpoint, "", http.StatusOK).Body.String()
+	if !strings.Contains(before, `"principal":"bob"`) {
+		t.Fatalf("unconditional reassignment not persisted: %s", before)
+	}
+	stale := `{"principal":"alice","topic_filter":"telemetry/#","permission":"read","expected_principal":"alice"}`
+	updated := request(http.MethodPut, path, stale, http.StatusConflict)
+	deleted := request(http.MethodDelete, path+"?expected_principal=BOB", "", http.StatusConflict)
+	for _, rec := range []*httptest.ResponseRecorder{updated, deleted} {
+		if got := rec.Body.String(); got != "{\"error\":\"acl principal precondition failed\"}\n" {
+			t.Fatalf("unexpected conflict response: %q", got)
+		}
+	}
+	if after := request(http.MethodGet, endpoint, "", http.StatusOK).Body.String(); after != before {
+		t.Fatalf("conflict changed rule: before %s; after %s", before, after)
+	}
+
+	audit := request(http.MethodGet, "/api/v1/audit-events?limit=10", "", http.StatusOK)
+	var payload struct{ Events []storage.AuditEvent }
+	if err := json.Unmarshal(audit.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	failed := map[string]int{}
+	for _, event := range payload.Events {
+		if event.Actor == "admin" && event.ResourceType == "acl_rule" && event.ResourceID == rule.ID && event.Result == "failure" && strings.Contains(string(event.Metadata), `"reason":"acl principal precondition failed"`) {
+			failed[event.Action]++
+		}
+	}
+	if len(failed) != 2 || failed["acl.update"] != 1 || failed["acl.delete"] != 1 {
+		t.Fatalf("expected one failed audit event for each mutation: %s", audit.Body)
+	}
+
+	matched := `{"principal":"alice","topic_filter":"telemetry/#","permission":"read","expected_principal":"bob"}`
+	request(http.MethodPut, path, matched, http.StatusOK)
+	request(http.MethodDelete, path+"?expected_principal=alice", "", http.StatusNoContent)
+	request(http.MethodDelete, path+"?expected_principal=alice", "", http.StatusNotFound)
+}
+
 func TestListAuditEventsEndpointRequiresAuthAndPaginates(t *testing.T) {
 	app, store := newTestApp(t)
 	t.Cleanup(func() { _ = store.Close() })

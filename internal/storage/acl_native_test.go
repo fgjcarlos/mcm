@@ -157,7 +157,7 @@ func TestACLRulesNativeSelectorRoundTrip(t *testing.T) {
 		Principal:   "alice",
 		TopicFilter: "public/#",
 		Permission:  acl.PermissionRead,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("UpdateRule: %v", err)
 	}

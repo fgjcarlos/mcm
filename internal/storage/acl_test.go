@@ -47,7 +47,7 @@ func TestACLStorePersistsRulesAcrossReopen(t *testing.T) {
 		TopicFilter: "sensors/+/humidity",
 		Permission:  acl.PermissionReadWrite,
 		Description: "promoted to readwrite",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("UpdateRule returned error: %v", err)
 	}
@@ -81,11 +81,11 @@ func TestACLStorePersistsRulesAcrossReopen(t *testing.T) {
 		t.Fatalf("rule[1] after reopen = %#v, want bob rule", rules[1])
 	}
 
-	if err := aclStore.DeleteRule(ctx, second.ID); err != nil {
+	if err := aclStore.DeleteRule(ctx, second.ID, nil); err != nil {
 		t.Fatalf("DeleteRule returned error: %v", err)
 	}
 
-	if err := aclStore.DeleteRule(ctx, second.ID); !errors.Is(err, acl.ErrRuleNotFound) {
+	if err := aclStore.DeleteRule(ctx, second.ID, nil); !errors.Is(err, acl.ErrRuleNotFound) {
 		t.Fatalf("DeleteRule of removed rule returned %v, want acl.ErrRuleNotFound", err)
 	}
 
@@ -121,16 +121,16 @@ func TestACLStoreReturnsErrRuleNotFound(t *testing.T) {
 		Permission:  acl.PermissionRead,
 	}
 
-	if _, err := aclStore.UpdateRule(ctx, "999", valid); !errors.Is(err, acl.ErrRuleNotFound) {
+	if _, err := aclStore.UpdateRule(ctx, "999", valid, nil); !errors.Is(err, acl.ErrRuleNotFound) {
 		t.Fatalf("UpdateRule missing id = %v, want acl.ErrRuleNotFound", err)
 	}
-	if _, err := aclStore.UpdateRule(ctx, "not-a-number", valid); !errors.Is(err, acl.ErrRuleNotFound) {
+	if _, err := aclStore.UpdateRule(ctx, "not-a-number", valid, nil); !errors.Is(err, acl.ErrRuleNotFound) {
 		t.Fatalf("UpdateRule non-numeric id = %v, want acl.ErrRuleNotFound", err)
 	}
-	if err := aclStore.DeleteRule(ctx, "999"); !errors.Is(err, acl.ErrRuleNotFound) {
+	if err := aclStore.DeleteRule(ctx, "999", nil); !errors.Is(err, acl.ErrRuleNotFound) {
 		t.Fatalf("DeleteRule missing id = %v, want acl.ErrRuleNotFound", err)
 	}
-	if err := aclStore.DeleteRule(ctx, "not-a-number"); !errors.Is(err, acl.ErrRuleNotFound) {
+	if err := aclStore.DeleteRule(ctx, "not-a-number", nil); !errors.Is(err, acl.ErrRuleNotFound) {
 		t.Fatalf("DeleteRule non-numeric id = %v, want acl.ErrRuleNotFound", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestACLStoreValidatesOnCreateAndUpdate(t *testing.T) {
 		t.Fatalf("CreateRule returned error: %v", err)
 	}
 
-	if _, err := aclStore.UpdateRule(ctx, created.ID, invalid); err == nil {
+	if _, err := aclStore.UpdateRule(ctx, created.ID, invalid, nil); err == nil {
 		t.Fatal("UpdateRule accepted invalid rule")
 	} else {
 		var validationErr *acl.ValidationError

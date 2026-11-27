@@ -312,11 +312,11 @@ func (f *fakeACLStore) CreateRule(_ context.Context, rule acl.Rule) (acl.Rule, e
 	return rule, nil
 }
 
-func (f *fakeACLStore) UpdateRule(_ context.Context, id string, rule acl.Rule) (acl.Rule, error) {
+func (f *fakeACLStore) UpdateRule(_ context.Context, id string, rule acl.Rule, _ *string) (acl.Rule, error) {
 	return rule, nil
 }
 
-func (f *fakeACLStore) DeleteRule(_ context.Context, id string) error {
+func (f *fakeACLStore) DeleteRule(_ context.Context, id string, _ *string) error {
 	return nil
 }
 
