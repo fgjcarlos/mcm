@@ -141,18 +141,57 @@ describe('direct ACL rules from the account of an existing MQTT user (#360)', ()
     await user.type(topic, 'plant/temp/#')
     await user.click(within(panel).getByRole('button', { name: 'Save rule' }))
     expect(await within(panel).findByText('plant/temp/#')).toBeInTheDocument()
-    expect(bodyOf(fetchMock, 'PUT')).toMatchObject({ principal: 'sensor', selector: 'user', topic_filter: 'plant/temp/#' })
+    expect(bodyOf(fetchMock, 'PUT')).toMatchObject({ principal: 'sensor', expected_principal: 'sensor', selector: 'user', topic_filter: 'plant/temp/#' })
 
     await user.click(within(panel).getByRole('button', { name: 'Remove rule plant/cmd/#' }))
     await user.click(within(panel).getByRole('button', { name: 'Confirm' }))
     await waitFor(() => expect(within(panel).queryByText('plant/cmd/#')).not.toBeInTheDocument())
 
+    expect(fetchMock.mock.calls.find(([, init]) => init?.method === 'DELETE')?.[0]).toBe('/api/v1/acls/3?expected_principal=sensor')
     expect(onMutationStart).toHaveBeenCalledTimes(3)
     expect(onMutation).toHaveBeenCalledTimes(3)
     expect(onMutation).toHaveBeenCalledWith(7)
     // The other account keeps its rule, and nothing is deployed on the way.
     expect(stored.find((r) => r.id === '2')).toEqual(rule('2', 'sensor-2', 'plant/other'))
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/deploy'))).toBe(false)
+  })
+
+  it.each([
+    { method: 'PUT', edit: true },
+    { method: 'DELETE', edit: false },
+  ])('handles a stale $method principal conflict without marking success', async ({ method, edit }) => {
+    const stored = [rule('1', 'other', 'plant/stale')]
+    let loads = 0
+    const onMutationStart = vi.fn(() => 7)
+    const onMutation = vi.fn()
+    const { panel, user, fetchMock } = await openRules('operator', {
+      'GET /api/v1/acls': (init, url) => pagedRules(++loads === 1 ? [rule('1', 'sensor', 'plant/stale')] : stored)(init, url),
+      'PUT /api/v1/acls/1': () => jsonResponse({ error: 'principal conflict' }, { status: 409 }),
+      'DELETE /api/v1/acls/1': () => jsonResponse({ error: 'principal conflict' }, { status: 409 }),
+    }, { onMutationStart, onMutation })
+
+    await within(panel).findByText('plant/stale')
+    if (edit) {
+      await user.click(within(panel).getByRole('button', { name: 'Edit rule plant/stale' }))
+      await user.clear(within(panel).getByRole('textbox', { name: /^Topic filter/ }))
+      await user.type(within(panel).getByRole('textbox', { name: /^Topic filter/ }), 'plant/changed')
+      await user.click(within(panel).getByRole('button', { name: 'Save rule' }))
+    } else {
+      await user.click(within(panel).getByRole('button', { name: 'Remove rule plant/stale' }))
+      await user.click(within(panel).getByRole('button', { name: 'Confirm' }))
+    }
+
+    expect(await within(panel).findByRole('status')).toHaveTextContent('No change was made.')
+    expect(await within(panel).findByText('sensor has no direct ACL rule.')).toBeInTheDocument()
+    expect(within(panel).queryByText('plant/stale')).not.toBeInTheDocument()
+    expect(loads).toBe(2)
+    expect(fetchMock.mock.calls.find(([, init]) => init?.method === method)?.[0]).toBe(method === 'PUT' ? '/api/v1/acls/1' : '/api/v1/acls/1?expected_principal=sensor')
+    if (method === 'PUT') expect(bodyOf(fetchMock, 'PUT')).toMatchObject({ expected_principal: 'sensor' })
+    expect(onMutationStart).toHaveBeenCalledTimes(1)
+    expect(onMutation).not.toHaveBeenCalled()
+    expect(within(panel).queryByText(/Saved in MCM, not applied/)).not.toBeInTheDocument()
+    expect(within(panel).getByRole('status')).toHaveTextContent('This rule no longer belongs to this user.')
+    expect(stored).toEqual([rule('1', 'other', 'plant/stale')])
   })
 
   it('keeps a read-only role from changing the rules', async () => {

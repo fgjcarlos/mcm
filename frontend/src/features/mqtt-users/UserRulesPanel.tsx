@@ -56,6 +56,7 @@ export default function UserRulesPanel({ token, onLogout, role, username, onMuta
   const [submitting, setSubmitting] = useState(false)
   const [removeId, setRemoveId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [conflict, setConflict] = useState(false)
 
   // Bumped after every save so the list is read again from the server.
   const [revision, setRevision] = useState(0)
@@ -80,7 +81,19 @@ export default function UserRulesPanel({ token, onLogout, role, username, onMuta
     const mutationID = onMutationStart?.() ?? 0
     try {
       const response = await authenticatedFetch(url, { token, onUnauthorized: onLogout, method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body })
-      if (!response.ok && response.status !== 204) { fail(await errorText(response, 'Request failed.')); return false }
+      if (!response.ok && response.status !== 204) {
+        if (response.status === 409 && method !== 'POST') {
+          setConflict(true)
+          setDraft(null)
+          setRemoveId(null)
+          setError('')
+          setRules(null)
+          setRevision((value) => value + 1)
+          return false
+        }
+        fail(await errorText(response, 'Request failed.'))
+        return false
+      }
       onMutation?.(mutationID)
       setSaved(true)
       setRevision((value) => value + 1)
@@ -99,6 +112,7 @@ export default function UserRulesPanel({ token, onLogout, role, username, onMuta
     setFormError('')
     const body = JSON.stringify({
       principal: username,
+      ...(draft.id ? { expected_principal: username } : {}),
       selector: 'user',
       topic_filter: draft.topic.trim(),
       permission: draft.permission,
@@ -112,7 +126,7 @@ export default function UserRulesPanel({ token, onLogout, role, username, onMuta
   }
 
   const handleRemove = async (id: string) => {
-    if (await mutate(`/api/v1/acls/${id}`, 'DELETE', undefined, setError)) setRemoveId(null)
+    if (await mutate(`/api/v1/acls/${id}?expected_principal=${encodeURIComponent(username)}`, 'DELETE', undefined, setError)) setRemoveId(null)
   }
 
   const headingId = `user-rules-${username}`
@@ -143,6 +157,7 @@ export default function UserRulesPanel({ token, onLogout, role, username, onMuta
         </div>
       </div>
 
+      {conflict ? <div role="status" className={`mt-4 ${notice.caution}`}>This rule no longer belongs to this user. No change was made. Check the refreshed list before trying again.</div> : null}
       {error ? <div role="alert" className={`mt-4 ${notice.failed}`}>{error}</div> : null}
 
       {saved ? (
