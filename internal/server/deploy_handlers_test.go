@@ -39,11 +39,11 @@ func (f *fakeDeployACLStore) CreateRule(_ context.Context, rule acl.Rule) (acl.R
 	return rule, nil
 }
 
-func (f *fakeDeployACLStore) UpdateRule(_ context.Context, _ string, rule acl.Rule) (acl.Rule, error) {
+func (f *fakeDeployACLStore) UpdateRule(_ context.Context, _ string, rule acl.Rule, _ *string) (acl.Rule, error) {
 	return rule, nil
 }
 
-func (f *fakeDeployACLStore) DeleteRule(_ context.Context, _ string) error {
+func (f *fakeDeployACLStore) DeleteRule(_ context.Context, _ string, _ *string) error {
 	return nil
 }
 

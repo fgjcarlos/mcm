@@ -19,12 +19,15 @@ type Store interface {
 	// that principal, case-sensitive like Mosquitto, on a user-scoped rule.
 	ListRulesPaged(ctx context.Context, user, principal, topic string, limit, offset int) ([]Rule, int, error)
 	CreateRule(ctx context.Context, rule Rule) (Rule, error)
-	UpdateRule(ctx context.Context, id string, rule Rule) (Rule, error)
-	DeleteRule(ctx context.Context, id string) error
+	UpdateRule(ctx context.Context, id string, rule Rule, expectedPrincipal *string) (Rule, error)
+	DeleteRule(ctx context.Context, id string, expectedPrincipal *string) error
 }
 
 // ErrRuleNotFound is returned when a rule ID does not exist.
 var ErrRuleNotFound = fmt.Errorf("acl rule not found")
+
+// ErrPrincipalMismatch indicates the rule principal did not match a precondition.
+var ErrPrincipalMismatch = fmt.Errorf("acl principal precondition failed")
 
 // MemoryStore is an in-memory ACL store suitable for tests and the initial MVP.
 type MemoryStore struct {
@@ -97,7 +100,7 @@ func (s *MemoryStore) CreateRule(_ context.Context, rule Rule) (Rule, error) {
 }
 
 // UpdateRule validates and replaces an existing rule.
-func (s *MemoryStore) UpdateRule(_ context.Context, id string, rule Rule) (Rule, error) {
+func (s *MemoryStore) UpdateRule(_ context.Context, id string, rule Rule, expectedPrincipal *string) (Rule, error) {
 	if err := ValidateRule(rule); err != nil {
 		return Rule{}, err
 	}
@@ -106,8 +109,12 @@ func (s *MemoryStore) UpdateRule(_ context.Context, id string, rule Rule) (Rule,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.records[id]; !ok {
+	current, ok := s.records[id]
+	if !ok {
 		return Rule{}, ErrRuleNotFound
+	}
+	if expectedPrincipal != nil && current.Principal != *expectedPrincipal {
+		return Rule{}, ErrPrincipalMismatch
 	}
 
 	rule.ID = id
@@ -116,12 +123,16 @@ func (s *MemoryStore) UpdateRule(_ context.Context, id string, rule Rule) (Rule,
 }
 
 // DeleteRule removes an existing rule.
-func (s *MemoryStore) DeleteRule(_ context.Context, id string) error {
+func (s *MemoryStore) DeleteRule(_ context.Context, id string, expectedPrincipal *string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.records[id]; !ok {
+	current, ok := s.records[id]
+	if !ok {
 		return ErrRuleNotFound
+	}
+	if expectedPrincipal != nil && current.Principal != *expectedPrincipal {
+		return ErrPrincipalMismatch
 	}
 
 	delete(s.records, id)

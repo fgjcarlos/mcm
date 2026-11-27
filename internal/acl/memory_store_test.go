@@ -164,7 +164,7 @@ func TestMemoryStoreUpdateRule(t *testing.T) {
 		Permission:  PermissionReadWrite,
 	}
 
-	result, err := store.UpdateRule(ctx, created.ID, updated)
+	result, err := store.UpdateRule(ctx, created.ID, updated, nil)
 	if err != nil {
 		t.Fatalf("UpdateRule returned error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestMemoryStoreUpdateRule(t *testing.T) {
 	}
 
 	// Test missing ID
-	_, err = store.UpdateRule(ctx, "999", updated)
+	_, err = store.UpdateRule(ctx, "999", updated, nil)
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("UpdateRule missing ID returned %v, want ErrRuleNotFound", err)
 	}
@@ -192,7 +192,7 @@ func TestMemoryStoreUpdateRule(t *testing.T) {
 		Permission:  PermissionRead,
 	}
 
-	_, err = store.UpdateRule(ctx, created.ID, invalid)
+	_, err = store.UpdateRule(ctx, created.ID, invalid, nil)
 	if err == nil {
 		t.Fatal("UpdateRule accepted invalid rule")
 	}
@@ -220,7 +220,7 @@ func TestMemoryStoreDeleteRule(t *testing.T) {
 	}
 
 	// Delete should succeed
-	err = store.DeleteRule(ctx, created.ID)
+	err = store.DeleteRule(ctx, created.ID, nil)
 	if err != nil {
 		t.Fatalf("DeleteRule returned error: %v", err)
 	}
@@ -235,13 +235,13 @@ func TestMemoryStoreDeleteRule(t *testing.T) {
 	}
 
 	// Delete non-existent rule should return ErrRuleNotFound
-	err = store.DeleteRule(ctx, "999")
+	err = store.DeleteRule(ctx, "999", nil)
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("DeleteRule missing ID returned %v, want ErrRuleNotFound", err)
 	}
 
 	// Delete missing rule again should still return ErrRuleNotFound
-	err = store.DeleteRule(ctx, "999")
+	err = store.DeleteRule(ctx, "999", nil)
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("second DeleteRule missing ID returned %v, want ErrRuleNotFound", err)
 	}

@@ -318,7 +318,7 @@ func TestApplyRemovesTheListenerFileOfARemovedScope(t *testing.T) {
 		if !rule.IsListenerScoped() {
 			continue
 		}
-		if err := store.DeleteRule(context.Background(), rule.ID); err != nil {
+		if err := store.DeleteRule(context.Background(), rule.ID, nil); err != nil {
 			t.Fatalf("DeleteRule() error = %v", err)
 		}
 		removed++
